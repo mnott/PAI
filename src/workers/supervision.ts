@@ -62,6 +62,7 @@ import { itermForClaudeSession, itermUuid } from "./scope.js";
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
 import {
   detectRunningWorkerErrors,
+  isBenchWorker,
   toolErrorSummary,
   classifyToolError,
   benignNote,
@@ -450,7 +451,9 @@ export const aibrokerPush: PushFn = async (logDir, target, ev) => {
     return false;
   }
   try {
-    const r = await sendToSession(iterm, ev.text);
+    // tool-error alerts are mailbox-only: the hook delivers them at the session's next turn,
+    // nothing is typed into the operator's input line
+    const r = await sendToSession(iterm, ev.text, undefined, ev.kind === "toolerror" ? { mailboxOnly: true } : undefined);
     return r.ok || r.timedOut === true;
   } catch {
     return false;
@@ -593,7 +596,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
     harnessOnly
   )) {
     const owner = byId.get(p.worker);
-    if (!owner) continue;
+    if (!owner || isBenchWorker(owner)) continue;
     pending.push({
       id: `${owner.id}#toolerror@${toolErrorSigTag(p.signature)}`,
       ts: nowStamp(now),
@@ -608,7 +611,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   }
   for (const g of detectToolErrors(records.filter((r) => !ownedIds.has(r.worker) && (!harnessOnly || pushable(classifyToolError(r).cls))), now.getTime(), sent)) {
     const owner = [...g.workers].reverse().map((w) => byId.get(w)).find((s) => s && ownershipKey(s));
-    if (!owner) continue;
+    if (!owner || isBenchWorker(owner)) continue;
     pending.push({
       id: `${owner.id}#toolerror@${now.getTime()}`,
       ts: nowStamp(now),
@@ -896,6 +899,7 @@ async function pointPass(
         const ev = JSON.parse(l) as SupervisionEvent;
         if (ev.session && ev.session !== session) continue; // foreign event: never this session's
         const age = now.getTime() - new Date(ev.ts.replace(" ", "T")).getTime();
+        if (ev.kind === "toolerror") continue; // mailbox-only: never pointed into the pane
         if (receipts.has(ev.id) || pointered[ev.id]) continue;
         if (age > BACKLOG_AGE_MS) stale.push(ev);
         else if (age > POINTER_AFTER_MS) due.push(ev);
