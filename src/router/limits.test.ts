@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+// (afterAll imported above; used for the shared timeout sink below)
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { execFile } from "node:child_process";
@@ -32,6 +33,7 @@ import {
   type LastGoodEntry,
   type LimitWindow,
   staleText,
+  type ProviderLimits,
   fetchAnthropicUsage,
   isAnthropicHost,
   keychainCredentialArgs,
@@ -401,6 +403,32 @@ describe("local server up/down and prefix cache", () => {
     const stub = (tcp: "open" | "refused" | "timeout", served: { alive: boolean; timeout?: boolean; ids?: string[] }) => ({ probes: { tcp: async () => tcp, served: async () => served }, timeoutStrikes: undefined as number | undefined });
     const run = (n: string, o: ReturnType<typeof stub>) => localLimits(n, local(9), [], Date.now(), undefined, { ...o, listenerRssMb: noRss });
 
+    // a sink that accepts the connection but never answers the request (no response written, socket kept):
+    // the timeout comes from the injected servedTimeoutMs, not from machine load racing the 5 s default
+    const sinkTimeout = async (n: string, strikes?: number): Promise<ProviderLimits[]> => {
+      // a sink that accepts the connection but never answers the request (no response written, socket kept):
+      // the timeout comes from the injected servedTimeoutMs, not from machine load racing the 5 s default
+      const sockets = new Set<net.Socket>();
+      const sink = net.createServer((sock) => { sockets.add(sock); sock.on("close", () => sockets.delete(sock)); });
+      const port = await listen(sink);
+      try {
+        const runOnce = async () => {
+          try {
+            return await localLimits(n, local(port), [], Date.now(), undefined, { listenerRssMb: noRss, servedTimeoutMs: 150, timeoutStrikes: strikes });
+          } finally {
+            // drop the timed-out request socket so it cannot hold close() open
+            for (const sock of sockets) sock.destroy();
+          }
+        };
+        const out: ProviderLimits[] = [];
+        for (let i = 0; i < (strikes === undefined ? 3 : 1); i++) out.push(await runOnce());
+        return out;
+      } finally {
+        for (const sock of sockets) sock.destroy();
+        await close(sink);
+      }
+    };
+
     it("a slow answer after a known-up state stays up, no downReason", async () => {
       expect((await run("busy-a", stub("open", { alive: true, ids: ["m-served"] }))).up).toBe(true);
       const slow = await run("busy-a", stub("open", { alive: false, timeout: true }));
@@ -426,23 +454,19 @@ describe("local server up/down and prefix cache", () => {
       expect([r.up, r.downReason]).toEqual([false, "no HTTP answer"]);
     });
     it("fresh state: a first timeout is unknown, not down; timeoutStrikes timeouts from start are down", async () => {
-      // port 9 is discard (sink): connect is accepted instantly, so the served probe always times out
-      // deterministically — no real TCP connect timeout racing the machine load
-      const t = stub("open", { alive: false, timeout: true });
-      const r = [await run("busy-f", t), await run("busy-f", t), await run("busy-f", t)];
+      const r = await sinkTimeout("busy-f");
       expect(r.map((x) => x.up)).toEqual([true, true, false]);
       expect(r[0]!.downReason).toBeUndefined();
       expect(r[2]!.downReason).toBe("probe timeout");
       await run("busy-g", stub("open", { alive: true, ids: ["m-served"] }));
-      const g = [await run("busy-g", { ...t }), await run("busy-g", t), await run("busy-g", t)];
+      const g = await sinkTimeout("busy-g");
       expect(g.map((x) => x.up)).toEqual([true, true, false]);
       expect(g[2]!.downReason).toBe("probe timeout");
     });
     it("timeoutStrikes 1 via opts turns a known-up server down after one timeout", async () => {
-      const t = stub("open", { alive: false, timeout: true });
       await run("busy-h", stub("open", { alive: true, ids: ["m-served"] }));
-      const r = await run("busy-h", { ...t, timeoutStrikes: 1 });
-      expect([r.up, r.downReason]).toEqual([false, "probe timeout"]);
+      const [r] = await sinkTimeout("busy-h", 1);
+      expect([r!.up, r!.downReason]).toEqual([false, "probe timeout"]);
     });
   });
 
