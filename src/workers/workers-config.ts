@@ -142,6 +142,8 @@ export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, un
   if (y.quota_probe !== undefined) raw.quotaProbe = y.quota_probe;
   if (y.quota_skip_at !== undefined) raw.quotaSkipAt = y.quota_skip_at;
   if (y.worker_model !== undefined) raw.workerModel = y.worker_model;
+  if (y.toolParsing !== undefined) raw.toolParsing = y.toolParsing;
+  if (y.tool_parsing !== undefined) raw.toolParsing = y.tool_parsing;
   if (y.context_window !== undefined) raw.contextWindow = y.context_window;
   if (y.thinking !== undefined) raw.thinking = y.thinking;
   if (y.maxConcurrent !== undefined) raw.maxConcurrent = y.maxConcurrent;
@@ -181,6 +183,7 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   if (p.quotaProbe) y.quota_probe = p.quotaProbe;
   if (p.quotaSkipAt !== undefined) y.quota_skip_at = p.quotaSkipAt;
   if (p.workerModel) y.worker_model = p.workerModel;
+  if (p.toolParsing) y.toolParsing = p.toolParsing;
   if (p.contextWindow !== undefined) y.context_window = p.contextWindow;
   if (p.thinking !== undefined) y.thinking = p.thinking ? "on" : "off";
   if (p.maxConcurrent !== undefined) y.maxConcurrent = p.maxConcurrent;

@@ -8,12 +8,12 @@ Every local model runtime, its models, memory and users; start/stop a runtime
 pai models [OP] [RUNTIME] [options]
 ```
 
-One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A disabled provider (workers.yaml provider enabled:false) is not listed at all. A duplicates hint appears only when the same model id runs on two runtimes. The table is read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now. `pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> (start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here. `pai models add <hf-id|path>` registers a new local model: it resolves the weights (HF ids are downloaded only with --download), picks the runtime by format (MLX: mlx_lm.server; GGUF: llama-server if installed, else refused with the reason), assigns a free port and writes a DISABLED registry entry (workers.yaml) with location, start, health and port filled. It never enables or routes to the model. --try then starts it, waits for health, runs one 16-token completion, stops it and reports tok/s and memory.
+One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A disabled provider (workers.yaml provider enabled:false) is not listed at all. A duplicates hint appears only when the same model id runs on two runtimes. The table is read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now. `pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> (start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here. `pai models add <hf-id|path>` registers a new local model: it resolves the weights (HF ids are downloaded only with --download), picks the runtime by format (MLX: mlx_lm.server; GGUF: llama-server if installed, else refused with the reason), assigns a free port and writes a DISABLED registry entry (workers.yaml) with location, start, health and port filled. It never enables or routes to the model. --try then starts it, waits for health, runs one 16-token completion, stops it and reports tok/s and memory. `pai models rules list|test|probe|reload` manages the tool-call repair rules the router applies to local models' tool calls (see the rules file format below): list shows each rule with its hits, last hit and stale marker (no hit within router.toolCallRulesStaleDays, default 14; nothing is ever deleted); test runs every rule's example through the repair with all rules (must equal expect) and without that rule (must differ, else redundant); probe --provider P sends each rule's probe --rounds times (default 3) to a provider, reports per rule fired/never fired, writes an adapted rules file (--out; never-fired rules are marked unconfirmed and kept) and <out>.CANDIDATES (tool calls that still show markup or miss a required argument, for writing a new rule); reload validates every rules file and asks the running router to re-read them now (it also re-reads a changed file within 5 s). --from FILE picks the rules file (default: the one config router.toolCallRules maps to --provider/--model, else the shipped rules).
 
 | Argument | Required | Description |
 |---|---|---|
-| `OP` | no | start | stop | add (omit for the inventory table) |
-| `RUNTIME` | no | start/stop: the runtime (a name under models.runtimes); add: the HF id or weights path |
+| `OP` | no | start | stop | add | rules (omit for the inventory table) |
+| `RUNTIME` | no | start/stop: the runtime (a name under models.runtimes); add: the HF id or weights path; rules: list | test | probe | reload |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -22,9 +22,17 @@ One table of what runs on this machine: runtime, status, model, kind, memory, wh
 | `--name STRING` | string | — | add: registry name of the new model (default: from the id or path) |
 | `--download` | flag | — | add: fetch an HF id that is not on disk (otherwise the weights must exist locally) |
 | `--try` | flag | — | add: smoke test (start, health, one 16-token completion, stop; reports tok/s and memory) |
-| `--model STRING` | string | — | start/stop: the model to load or unload (docker model run|unload) |
+| `--model STRING` | string | — | start/stop: the model to load or unload (docker model run|unload); rules: the model whose rules file to use |
+| `--from FILE` | string | — | rules: the rules file (probe: the file to start from) |
+| `--provider NAME` | string | — | rules: the provider whose rules file to use; probe: the provider to send the probes to |
+| `--rounds NUMBER` | number | — | rules probe: times each rule's probe is sent (default 3) |
+| `--out FILE` | string | — | rules probe: where the adapted rules file is written (default <PAI home>/tool-call-rules/probe-<provider>.yaml) |
 
 ```sh
+pai models rules list
+pai models rules test
+pai models rules probe --provider strata --rounds 5 --out /tmp/rules.yaml
+pai models rules reload
 pai models add mlx-community/Qwen3-4B-4bit --try
 pai models add ~/models/x.gguf --name x
 pai models
@@ -34,6 +42,56 @@ pai models stop docker-model-runner --model e5
 ```
 
 See also: `pai worker local`
+
+## Examples
+
+## Tool-call repair rules
+
+The router repairs local models' tool calls before Claude Code sees them. Which forms get repaired is decided by a versioned YAML rules file, not by code: the shipped `tool-call-rules.default.yaml`, plus your own files in `<PAI home>/tool-call-rules/`. Config `router.toolCallRules` maps a provider (or provider and model, `"*"` for any) to a file:
+
+```yaml
+router:
+  toolCallRules:
+    dir: tool-call-rules          # under the PAI home
+    providers:
+      strata: { Coder-L: coder-l.yaml, "*": strata.yaml }
+  toolCallRulesStaleDays: 14
+```
+
+```yaml
+version: 1
+inherits: default                 # the shipped file, or a path relative to this file
+rules:
+  - id: open-parameter-eq         # unique; a rule of the same id replaces the inherited one
+    kind: opener                  # opener | junk_line | closer | name_cut | bool_true | bool_false
+    pattern: '<[ \t]*parameter[ \t]*=[ \t]*([\w\-]+)[ \t]*>[ \t]*\r?\n?'   # regex; opener and name_cut capture the parameter name in group 1
+    added: 2026-10-25
+    sample: af04af55f0e2          # raw log id the form was first seen in
+    note: why the rule exists
+    example:                      # the broken tool_use input (or `text:` raw tool-call markup) ...
+      tool: Grep
+      input: { pattern: x, "-n": "true\n</parameter\n<parameter=-C>\n15" }
+    expect:                       # ... and what it must be repaired to
+      { pattern: x, "-n": true, "-C": 15 }
+    probe:                        # optional: a prompt and tool schema that provoke the form (rules probe)
+      prompt: "Use the Grep tool: ..."
+      tool: { name: Grep, input_schema: { type: object, properties: { pattern: { type: string } } } }
+    # optional: disabled: true, expires: 2027-01-01, scope: text (only for markup parsed out of answer text), typed_only: true (junk_line: never strip from string values)
+```
+
+What the kinds do, for every tool_use input against the request's declared tool schema:
+
+- `opener`: a value that holds an opener of another declared, not yet set parameter is split there (`"true\n</parameter\n<parameter=-C>\n15"` becomes `-n: true`, `-C: 15`).
+- `closer`: a whole line that ends the value; it and everything after it are dropped.
+- `junk_line`: whole lines stripped from the tail of a value (anywhere in a number or boolean value).
+- `name_cut`: a parameter name that swallowed markup (`command </parameter`) is cut to its clean name; a cut name that is not declared is dropped.
+- `bool_true` / `bool_false`: whole-value spellings coerced for boolean parameters. Numbers and integers are coerced from digit strings.
+
+A value no rule matches is never touched; file content stays verbatim unless a rule matches a whole line. Edits to a rules file are picked up within 5 seconds, or at once with `pai models rules reload`. Every regex is validated first; a bad file is refused, the previous rules stay in force and the reason is logged. Hit counts per rule are kept in `<PAI home>/logs/tool-call-rule-hits.json` (flushed every minute); `rules list` marks a rule stale when it has not hit for `toolCallRulesStaleDays` days. Nothing is deleted automatically.
+
+For a local engine that does not parse tool calls at all and returns them as answer text, set `toolParsing: router` on its provider in `workers.yaml`: the router then parses `<tool_call>`, `<function=...>` and `<invoke>` markup (and JSON arguments) into tool_use blocks with the same rules, and only falls back to the one-shot retry when that fails.
+
+For a new model or another quantisation: `pai models rules probe --provider NEW --from existing.yaml --out new.yaml` shows which rules still fire, keeps the others as `unconfirmed: true` and writes `new.yaml.CANDIDATES` with the calls that still show markup or miss a required argument, as raw material for a new rule.
 
 ## See also
 
