@@ -29,6 +29,8 @@ import {
   type AnthropicRequest,
 } from "./translate.js";
 import { LOOPBACK_HOST } from "../../utils/loopback.js";
+import { loadConfig } from "../../daemon/config.js";
+import { GUARD_MAX_BYTES, monitorOpenAiReply, type ProxyGuardDeps } from "../../router/proxy-guard.js";
 
 /** The configured proxy port (workers.proxy.port; shipped default in defaults/workers.yaml). */
 export function proxyPort(): number {
@@ -54,6 +56,23 @@ interface ProxyServerOptions {
   resolveProvider?: ProviderResolver;
   /** Test hook: called with every (translated) upstream request body. */
   onUpstreamRequest?: (url: string, body: unknown) => void;
+  /** Monitor-only guard on replies; default router.guard.mode (off). `deps` replaces evaluate/rules (tests). */
+  guard?: { mode?: "off" | "monitor"; deps?: ProxyGuardDeps };
+}
+
+function guardMode(opts: ProxyServerOptions): "off" | "monitor" {
+  try {
+    return opts.guard?.mode ?? loadConfig().router.guard?.mode ?? "off";
+  } catch {
+    return "off";
+  }
+}
+
+/** Evaluate a finished upstream reply after the client got everything; never throws, never touches the response. */
+function tapReply(opts: ProxyServerOptions, raw: string, contentType: string, model: string): void {
+  if (guardMode(opts) !== "monitor" || Buffer.byteLength(raw) > GUARD_MAX_BYTES) return;
+  const log = (line: string) => console.error(line);
+  setImmediate(() => monitorOpenAiReply(raw, contentType, model, { log, ...opts.guard?.deps }));
 }
 
 /**
@@ -158,16 +177,20 @@ async function handleMessages(
     });
     const translator = new OpenAiStreamTranslator(model);
     let buf = "";
+    let tapped = "";
     if (!upstream.body) {
       res.end(translator.finish());
       return;
     }
     const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        buf += new TextDecoder().decode(value, { stream: true });
+        const text = decoder.decode(value, { stream: true });
+        if (tapped.length <= GUARD_MAX_BYTES) tapped += text;
+        buf += text;
         let nl: number;
         while ((nl = buf.indexOf("\n")) >= 0) {
           const line = buf.slice(0, nl).trim();
@@ -188,17 +211,26 @@ async function handleMessages(
     } finally {
       res.write(translator.finish()); // no-op when [DONE] already finished it
       res.end();
+      tapReply(opts, tapped, "text/event-stream", model);
     }
     return;
   }
 
-  const json = (await upstream.json().catch(() => null)) as unknown;
+  const rawText = await upstream.text().catch(() => "");
+  const json = ((): unknown => {
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      return null;
+    }
+  })();
   if (!json) {
     fail(502, "upstream returned a non-JSON body");
     return;
   }
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify(openAiToAnthropic(json as Parameters<typeof openAiToAnthropic>[0], model)));
+  tapReply(opts, rawText, "application/json", model);
 }
 
 // ---------------------------------------------------------------------------

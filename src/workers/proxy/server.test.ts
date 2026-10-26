@@ -176,7 +176,7 @@ describe("proxy server", () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/event-stream");
-    const text = await res.text();
+    const text = (await res.text()).replace(/msg_[a-z0-9]+/g, "msg_X");
     expect(text).toContain("event: message_start");
     expect(text).toContain('"text_delta","text":"Hi"');
     expect(text).toContain('"type":"tool_use","id":"c1","name":"Bash"');
@@ -234,5 +234,91 @@ describe("proxy server", () => {
     const body = (await res.json()) as { error: { type: string; message: string } };
     expect(body.error.type).toBe("rate_limit_error");
     expect(body.error.message).toBe("quota blown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Monitor-only guard on replies
+// ---------------------------------------------------------------------------
+
+describe("proxy server guard tap", () => {
+  const sse = (chunks: unknown[]) => chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n";
+  const call = (args: string) => ({
+    choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "Bash", arguments: args } }] }, finish_reason: "tool_calls" }],
+  });
+
+  async function run(mode: "off" | "monitor", upstreamBody: unknown, stream: boolean, contentType = "application/json") {
+    const fired: Array<{ kind: string; tool?: string; input?: unknown; source?: string }> = [];
+    const up = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": contentType });
+        if (stream) {
+          // split the body mid-line so chunk boundaries do not align with SSE lines
+          const s = String(upstreamBody);
+          res.write(s.slice(0, 40));
+          setTimeout(() => res.end(s.slice(40)), 10);
+        } else res.end(typeof upstreamBody === "string" ? upstreamBody : JSON.stringify(upstreamBody));
+      });
+    });
+    await new Promise<void>((r) => up.listen(0, "127.0.0.1", r));
+    servers.push(up);
+    const upPort = (up.address() as { port: number }).port;
+    const server = createProxyServer({
+      resolveProvider: () => ({ mockoai: openaiProvider(`http://127.0.0.1:${upPort}/v1`) }),
+      guard: {
+        mode,
+        deps: {
+          rules: () => [],
+          evaluate: (e) => {
+            fired.push(e as never);
+            return { action: "allow" } as never;
+          },
+        },
+      },
+    });
+    servers.push(server);
+    const port = await listenProxy(server, 0);
+    const res = await fetch(`http://127.0.0.1:${port}/mockoai/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "m", max_tokens: 32, stream, messages: [{ role: "user", content: "x" }] }),
+    });
+    const text = (await res.text()).replace(/msg_[a-z0-9]+/g, "msg_X");
+    await new Promise((r) => setTimeout(r, 50));
+    return { text, fired };
+  }
+
+  it("non-streaming tool_calls: one proxy event, response unchanged by the tap", async () => {
+    const body = call(JSON.stringify({ command: "git reset --hard" }));
+    const off = await run("off", body, false);
+    const on = await run("monitor", body, false);
+    expect(off.fired).toHaveLength(0);
+    expect(on.fired).toHaveLength(1);
+    expect(on.fired[0]).toMatchObject({ kind: "tool_call", tool: "Bash", input: { command: "git reset --hard" }, source: "proxy" });
+    expect(on.text).toBe(off.text);
+  });
+
+  it("streaming: split arguments accumulate into one event", async () => {
+    const chunk = (tc: unknown, fin: string | null = null) => ({ choices: [{ index: 0, delta: { tool_calls: [tc] }, finish_reason: fin }] });
+    const body = sse([
+      chunk({ index: 0, id: "c1", type: "function", function: { name: "Bash", arguments: "" } }),
+      chunk({ index: 0, function: { arguments: '{"command":"git re' } }),
+      chunk({ index: 0, function: { arguments: 'set --hard"}' } }),
+      { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+    ]);
+    const off = await run("off", body, true, "text/event-stream");
+    const on = await run("monitor", body, true, "text/event-stream");
+    expect(off.fired).toHaveLength(0);
+    expect(on.fired).toHaveLength(1);
+    expect(on.fired[0]).toMatchObject({ tool: "Bash", input: { command: "git reset --hard" }, source: "proxy" });
+    expect(on.text).toBe(off.text);
+  });
+
+  it("invalid JSON arguments: no crash, raw string input", async () => {
+    const r = await run("monitor", call("{not json"), false);
+    expect(r.text).toContain("tool_use");
+    expect(r.fired).toHaveLength(1);
+    expect(r.fired[0].input).toBe("{not json");
   });
 });
