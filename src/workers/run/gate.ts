@@ -56,7 +56,7 @@ import { resolveLocalProvider } from "../local-provider.js";
 import { routeRun } from "../policy.js";
 import { runWorker } from "./worker-ref.js";
 import { UNLABELED } from "../status.js";
-import { followCommand, resolveHostSession } from "../pane.js";
+import { followCommand } from "../pane.js";
 import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../worktree.js";
 import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
@@ -73,7 +73,7 @@ import {
 } from "../pool.js";
 import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
-import { requireVisiblePane, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
+import { requireVisiblePane, runTerm, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
 import { SIGNAL_SALVAGE_MS, printResult, identityExtras } from "./finalise.js";
 import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { executeRun } from "./execute.js";
@@ -238,7 +238,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     }
     if (a.panePrepared) return;
     const paneT0 = Date.now();
-    const term = (await resolveHostSession()).term;
+    const term = await runTerm(a.opts._hostTerm);
     const ledger = ledgerPath(a.logDir);
     const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger);
     a.panePrepared = { verified };
@@ -793,7 +793,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   const ledger = ledgerPath(a.logDir);
   const paneT0 = Date.now();
   a.paneOpening = (async () => {
-    const term = (await resolveHostSession()).term;
+    const term = await runTerm(a.opts._hostTerm);
     const hostSession = resolveSession(term);
     if (hostSession) {
       status.session = hostSession;
