@@ -445,3 +445,33 @@ describe("set", () => {
   });
 });
 const shippedAntipatternParam = (k: string): unknown => shippedAntipattern("identical-write").detector.params[k];
+
+describe("firing model attribution", () => {
+  const status = (id: string, model: string): void => {
+    mkdirSync(join(home, "logs", "workers"), { recursive: true });
+    writeFileSync(join(home, "logs", "workers", `${id}.status`), JSON.stringify({ id, provider: "gyro-m", model }));
+  };
+  it("recordFiring falls back to the status file model when the env has none", () => {
+    status("w-1", "qwen-x");
+    recordFiring({ id: "a", category: "shell", action: "deny", mode: "enforce", input: "x", env: { PAI_WORKER_ID: "w-1", PAI_WORKER_PROVIDER: "gyro-m" } });
+    recordFiring({ id: "a", category: "shell", action: "deny", mode: "enforce", input: "x", env: { PAI_WORKER_ID: "w-none" } });
+    recordFiring({ id: "a", category: "shell", action: "deny", mode: "enforce", input: "x", env: { PAI_WORKER_ID: "w-1", PAI_WORKER_MODEL: "env-m" } });
+    expect(readFirings().map((f) => f.model)).toEqual(["qwen-x", "session", "env-m"]);
+  });
+  it("stats resolve stored session firings of a worker; no workerId stays session", () => {
+    status("w-2", "qwen-y");
+    const base = { id: "identical-write", version: 1, category: "tool-loop", action: "stop", mode: "monitor", provider: "gyro-m", model: "session", project: "p", inputHash: "h", excerpt: "e", disposition: "undetermined" };
+    mkdirSync(join(home, "antipatterns"), { recursive: true });
+    const rows = [
+      { ...base, ts: "2026-10-25T18:42:00.001Z", workerId: "w-2" },
+      { ...base, ts: "2026-10-25T18:42:00.002Z", workerId: "w-2" },
+      { ...base, ts: "2026-10-25T18:42:00.003Z" },
+    ];
+    writeFileSync(firingsPath(), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const before = readFileSync(firingsPath(), "utf8");
+    const row = stats().find((r) => r.id === "identical-write")!;
+    expect(row.byModel).toEqual({ "qwen-y": 2, session: 1 });
+    expect(stats({ model: "qwen-y" }).find((r) => r.id === "identical-write")!.count).toBe(2);
+    expect(readFileSync(firingsPath(), "utf8")).toBe(before);
+  });
+});
