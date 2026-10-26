@@ -72,7 +72,7 @@ export const benchCommand: CommandDef = {
       name: "table",
       summary: "Print the comparison table (markdown) from the results",
       description:
-        "Counts a run only if its route line, its ending provider and its single worker id all name the model. Loop-stopped and killed runs count for pass % but not for time; real tasks over 900 s are left out of s/task. Each entry is KEY, KEY:PROVIDER or NAME=KEY:PROVIDER (provider defaults to the key). --ref adds cloud reference rows from results of the same layout.",
+        "Counts a run only if its route line, its ending provider and its single worker id all name the model. Loop-stopped and killed runs count for pass % but not for time; real tasks over 900 s are left out of s/task. Each entry is KEY, KEY:PROVIDER or NAME=KEY:PROVIDER (without a provider it is inferred from the runs; runs that ended on another provider are left out). --ref adds cloud reference rows from results of the same layout.",
       options: [
         { name: "keys", type: "string", value: "LIST", summary: "Comma list of local results keys (default: every key found)" },
         { name: "ref", type: "string", value: "LIST", summary: "Comma list of cloud reference keys" },
