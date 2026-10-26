@@ -5,6 +5,7 @@ storageBackend: postgres
 postgres:
   connectionString: postgresql://pai:pai@localhost:5432/pai_eval
 workers:
+  enabled: true              # shipped default is off; bench runs need workers
   panes:
     required: false          # headless workers have no terminal
   routing:
