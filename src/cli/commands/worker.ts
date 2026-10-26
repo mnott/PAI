@@ -7,6 +7,7 @@
 
 import { isCi } from "../../utils/ci.js";
 import { currentWorkerId } from "../../workers/worker-id.js";
+import { resumePlan } from "../../workers/resume-args.js";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -172,6 +173,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
   return {
     kind: "run",
     run: {
+      harnessFlag: str(o.harness),
       providerFlag: str(o.provider),
       localFlag: o.local === true || typeof o.local === "string" ? true : undefined,
       localName: typeof o.local === "string" ? o.local : undefined,
@@ -261,6 +263,7 @@ const runCommand: CommandDef = {
   allowUnknown: true,
   options: [
     { ...OPT.provider, summary: "Provider to run on (default: the active one, else the routing order)" },
+    { name: "harness", type: "string", value: "uhp:ID", summary: "Run on a Unified Harness Protocol harness: resolves the engine-uhp provider and sets its harness id (docs/uhp.md)" },
     { name: "class", type: "string", value: "NAME", summary: "Use the provider set for this kind of work (draft, implement, review, research, spotcheck, simple, complex, image)" },
     { name: "role", type: "string", value: "NAME", summary: "Old name of --class" },
     { name: "capability", type: "string", value: "NAME", summary: "Run on whichever provider serves this capability (see `pai worker capability`), e.g. image" },
@@ -350,16 +353,20 @@ const resumeCommand: CommandDef = {
           `worker ${id} recorded no Claude session id — it predates resume support or ran through an engine that does not expose one`
         );
       }
-      const claudeArgs = ["--resume", old.claudeSession, "-p", text];
+      const plan = resumePlan(old, text);
+      if (plan.note) process.stderr.write(`pai worker: ${plan.note}\n`);
+      const claudeArgs = plan.claudeArgs;
       const fmt = str(ctx.opts["output-format"]);
       if (fmt !== undefined) claudeArgs.push("--output-format", fmt);
       let newId = "";
       const rc = await runWorker({
         providerFlag: old.provider,
+        ...(old.uhpHarnessId ? { harnessId: old.uhpHarnessId } : {}),
         modelFlag: old.model,
         label: str(ctx.opts.label) || `↩ ${old.label}`,
         claudeArgs,
         resumeOf: id,
+        ...(plan.cwd ? { cwd: plan.cwd } : {}),
         onWorkerStart: (wid) => {
           newId = wid;
         },

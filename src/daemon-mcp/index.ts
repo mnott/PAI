@@ -106,6 +106,7 @@ import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
 import { setWorkerPaused } from "../workers/engine-control.js";
+import { resumePlan } from "../workers/resume-args.js";
 import { applyPriority } from "../workers/preempt.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../workers/scheduler.js";
@@ -1884,12 +1885,15 @@ async function startShim(): Promise<void> {
             )
           );
         }
+        const plan = resumePlan(old, text);
         let newId = "";
         const rc = await runWorker({
           providerFlag: old.provider,
           modelFlag: old.model,
           label: `↩ ${old.label}`,
-          claudeArgs: ["--resume", old.claudeSession, "-p", text],
+          claudeArgs: plan.claudeArgs,
+          ...(plan.cwd ? { cwd: plan.cwd } : {}),
+          ...(old.uhpHarnessId ? { harnessId: old.uhpHarnessId } : {}),
           resumeOf: args.id,
           onWorkerStart: (wid) => {
             newId = wid;
