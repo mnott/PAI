@@ -25,10 +25,8 @@ import { isSharedCheckout } from '../lib/shared-checkout.js';
 import { maskSecrets } from '../lib/loop-guard.js';
 import { decideWorkerGitGuard, workerGitGuardMessage } from '../lib/worker-git-guard.js';
 import { detectUnsafePlutil, plutilGuardMessage } from '../lib/plutil-guard.js';
-import { loadRules, projectRuleDirs, allRuleDirs, ruleLifecycle } from '../lib/rules/load.js';
-import { dispositionOf } from '../lib/antipattern-lifecycle.js';
-import { recordFiring } from '../lib/antipattern-log.js';
-import { evaluateRules } from '../lib/rules/eval.js';
+import { loadRules, projectRuleDirs, allRuleDirs } from '../lib/rules/load.js';
+import { evaluate } from '../../../guard/evaluate.js';
 import { readWorkersSection } from '../../../workers/config.js';
 import { workersLogDir } from '../../../workers/paths.js';
 import { worktreesDir } from '../../../workers/worktree.js';
@@ -101,32 +99,15 @@ interface DetectionResult {
   pattern?: string;
 }
 
-/**
- * First block hit, else first confirm hit, else first warn hit (category = the rule's group, else its id).
- * A rule in monitor mode (or retired, or excepted for this command) is recorded and skipped: the next rule decides.
- * Every acting hit is recorded in the firing log.
- */
+/** Shell-rule verdict for a command, decided by evaluate(); the hook only maps it to its block/confirm/warn outcomes. */
 function detectAttack(content: string, ctx: { cwd?: string; sessionId?: string } = {}): DetectionResult {
-  let pool = RULES;
-  while (pool.length) {
-    const hit = evaluateRules(pool, 'Bash', content);
-    if (!hit) return { blocked: false };
-    const lc = ruleLifecycle(hit.rule);
-    const disp = dispositionOf(lc, content);
-    const action = hit.rule.severity === 'warn' ? 'note' : 'deny';
-    if (disp !== 'off') {
-      recordFiring({ id: hit.rule.id, version: lc.version, category: 'shell', action, mode: disp, input: content, cwd: ctx.cwd, sessionId: ctx.sessionId });
-    }
-    if (disp !== 'enforce') {
-      pool = pool.filter((r) => r !== hit.rule);
-      continue;
-    }
-    if (hit.timedOut) logSecurityEvent({ type: 'project_rule_timeout', note: `${hit.rule.id}: regex over the time guard, counted as a hit` });
-    if (hit.rule.severity === 'block') return { blocked: true, category: hit.rule.category ?? hit.rule.id, pattern: hit.rule.match };
-    if (hit.rule.severity === 'confirm') return { blocked: false, requiresConfirmation: true, category: hit.rule.category ?? hit.rule.id, pattern: hit.rule.match };
-    return { blocked: false, warned: true, category: hit.rule.category ?? hit.rule.id, pattern: hit.rule.match };
-  }
-  return { blocked: false };
+  const d = evaluate({ kind: 'tool_call', tool: 'Bash', input: { command: content }, cwd: ctx.cwd ?? process.cwd(), sessionId: ctx.sessionId }, { env: process.env, shellRules: RULES });
+  if (d.mode !== 'enforce' || !d.rule) return { blocked: false };
+  if (d.rule.timedOut) logSecurityEvent({ type: 'project_rule_timeout', note: `${d.patternId}: regex over the time guard, counted as a hit` });
+  const hit = { category: d.rule.category, pattern: d.rule.pattern };
+  if (d.rule.severity === 'block') return { blocked: true, ...hit };
+  if (d.rule.severity === 'confirm') return { blocked: false, requiresConfirmation: true, ...hit };
+  return { blocked: false, warned: true, ...hit };
 }
 
 // ============================================================================

@@ -26,7 +26,8 @@ import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { decideOrchestratorBash } from "../lib/edit-gate.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
-import { loopDenyReason, actionKey, stepLoopGuard, worktreeFingerprint } from "../lib/loop-guard.js";
+import { evaluate } from "../../../guard/evaluate.js";
+import { loopDenyReason, actionKey, worktreeFingerprint } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
@@ -88,15 +89,20 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
     const state = loadLoopState(file);
     const command = (input.tool_input as { command?: unknown } | undefined)?.command;
     const bashCmd = input.tool_name === "Bash" && typeof command === "string" ? command : undefined;
-    const r = stepLoopGuard(
-      state,
-      input.tool_name,
-      input.tool_name === "Bash" ? bashCmd : ((input.tool_input ?? {}) as Record<string, unknown>),
-      bashCmd !== undefined && actionKey(bashCmd) !== null ? worktreeFingerprint(input.cwd || process.cwd()) : null,
-      Date.now(),
-      input.cwd || process.cwd(),
-      readWorkersSection().workers.loopGuard,
+    const cwd = input.cwd || process.cwd();
+    const decision = evaluate(
+      { kind: "tool_call", tool: input.tool_name, input: input.tool_input, cwd, workerId: id },
+      {
+        env,
+        loop: {
+          state,
+          fingerprint: bashCmd !== undefined && actionKey(bashCmd) !== null ? worktreeFingerprint(cwd) : null,
+          now: Date.now(),
+          echo: readWorkersSection().workers.loopGuard,
+        },
+      },
     );
+    const r = decision.loop!;
     if (r.state !== state) saveLoopState(file, r.state);
     recordLoopTelemetry(r, { cwd: input.cwd, sessionId: (input as { session_id?: string }).session_id, fallbackText: input.tool_name });
     if (r.deny) {
