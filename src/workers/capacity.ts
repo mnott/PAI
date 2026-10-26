@@ -549,6 +549,8 @@ export interface CapacityOpts {
   priority?: "front";
   /** Admission priority (high before normal before low); default normal. */
   tier?: QueuePriority;
+  /** A "front" run on a local provider: called once before the first check; it pauses the provider's other workers (preempt.ts), which then stop counting as holders. */
+  preempt?: () => void;
   log?: (line: string) => void;
   /** Waited this long (default `config.maxTotalWaitMs`): call onAlarm once. The alarm only tells the owner; it never kills or skips the run. */
   alarmMs?: number;
@@ -595,13 +597,17 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     const loaded = load(logDir);
     const queue = liveQueue(logDir, queueKey, isAlive, loaded, now(), cfg.agingMs);
     const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
+    // a worker paused by a --now run holds no slot while paused
     const holders = loaded.filter(
-      (s) => s.id !== self.id && holds(s) && s.state === "running" && isLive(s, owns),
+      (s) => s.id !== self.id && holds(s) && s.state === "running" && !(s.paused && s.pausedBy) && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
     return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length };
   };
 
+  if (o.priority === "front") {
+    try { o.preempt?.(); } catch { /* preemption is best effort: the run then queues as before */ }
+  }
   let c = check();
   if (c.position === 1 && c.holding < cap && held === undefined) {
     rmSync(entry, { force: true });

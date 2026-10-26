@@ -11,6 +11,7 @@
  */
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { statusPath } from "./paths.js";
 
 interface WaitFile {
   ms: number;
@@ -100,7 +101,17 @@ export function routerWaitMs(logDir: string, id: string, now: number = Date.now(
   return (Number(a.waitMsTotal) || 0) + open;
 }
 
-/** Everything that does not count against the deadline: build-gate waits plus router-queue waits. */
+/** Total ms the worker was paused by a `--now` run (status pausedMs), the pause in progress included. */
+export function preemptedMsOf(logDir: string, id: string, now: number = Date.now()): number {
+  try {
+    const s = JSON.parse(readFileSync(statusPath(logDir, id), "utf8")) as { pausedMs?: number; pausedAt?: number };
+    return (Number(s.pausedMs) || 0) + (typeof s.pausedAt === "number" ? Math.max(0, now - s.pausedAt) : 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Everything that does not count against the deadline: build-gate waits plus router-queue waits plus preemption pauses. */
 export function blockedMsOf(logDir: string, id: string, now: number = Date.now()): number {
-  return buildWaitMs(logDir, id, now) + routerWaitMs(logDir, id, now);
+  return buildWaitMs(logDir, id, now) + routerWaitMs(logDir, id, now) + preemptedMsOf(logDir, id, now);
 }

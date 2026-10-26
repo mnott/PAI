@@ -31,6 +31,7 @@ import { removeRunSettings } from "../settings-file.js";
 import { type RunLimit } from "../deadline.js";
 import { reapWorkerProcesses } from "../reap.js";
 import { blockedMsOf } from "../active-time.js";
+import { resumePreempted } from "../preempt.js";
 import { resultFromOutput } from "./provider-test.js";
 import {
   type RunOptions,
@@ -98,6 +99,7 @@ export function recordKilledEnd(p: {
   label: string;
 }): void {
   const { logDir, status, sig, ledger } = p;
+  resumePreempted(logDir, status.id);
   status.state = "killed";
   status.rc = 143;
   status.secs = Math.floor((Date.now() - p.t0) / 1000);
@@ -178,6 +180,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
   const wid = status.id;
+  // workers this run preempted (--now on a local provider) go on
+  resumePreempted(logDir, wid);
   // the settings files carried the provider token: gone with the run
   removeRunSettings(logDir, wid);
   // nothing the worker started outlives it: descendants and detached processes parked in its worktree

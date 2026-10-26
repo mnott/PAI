@@ -25,6 +25,8 @@ export type EnginePriority = QueuePriority;
 export interface EngineControl {
   priority: EnginePriority;
   paused: boolean;
+  /** Set when the pause is a preemption by a `--now` run (the router then also aborts the request in flight). */
+  preemptedBy?: string;
 }
 
 export const PRIORITY_EVENT = "WORKER-PRIORITY";
@@ -54,14 +56,40 @@ export function setWorkerPriority(logDir: string, id: string, level: EnginePrior
 }
 
 /** Pause or resume a worker's engine requests. Returns false when it was already in that state. */
-export function setWorkerPaused(logDir: string, id: string, paused: boolean, who = "cli"): boolean {
+export function setWorkerPaused(logDir: string, id: string, paused: boolean, who = "cli", preemptedBy?: string, now = Date.now()): boolean {
   const status = load(logDir, id);
-  if (!!status.paused === paused) return false;
+  if (!!status.paused === paused) {
+    // an operator pausing a preempted worker takes it over: the --now run's end no longer resumes it
+    if (paused && !preemptedBy && status.pausedBy) {
+      delete status.pausedBy;
+      saveStatus(logDir, status, new Date(now), true);
+      appendLedger(ledgerPath(logDir), PAUSE_EVENT, { who, id, priority: status.priority ?? "normal" });
+    }
+    return false;
+  }
   if (paused && status.state !== "running" && status.state !== "queued") throw new Error(`worker ${id} is ${status.state}; only a running worker can be paused`);
   status.paused = paused;
+  if (paused && preemptedBy) {
+    status.pausedBy = preemptedBy;
+    status.pausedAt = now;
+  } else if (!paused) {
+    // preemption time is not work: closed here, added to the deadline (active-time.ts)
+    if (status.pausedAt !== undefined) status.pausedMs = (status.pausedMs ?? 0) + Math.max(0, now - status.pausedAt);
+    delete status.pausedBy;
+    delete status.pausedAt;
+  }
   saveStatus(logDir, status, new Date(), true);
-  appendLedger(ledgerPath(logDir), paused ? PAUSE_EVENT : RESUME_EVENT, { who, id, priority: status.priority ?? "normal" });
+  appendLedger(ledgerPath(logDir), paused ? PAUSE_EVENT : RESUME_EVENT, { who, id, priority: status.priority ?? "normal", ...(preemptedBy ? { preemptedBy } : {}) });
   return true;
+}
+
+function stillRunning(logDir: string, id: string): boolean {
+  try {
+    const j = JSON.parse(readFileSync(statusPath(logDir, id), "utf8")) as Partial<WorkerStatus>;
+    return j.state === "running" || j.state === "queued";
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -84,12 +112,16 @@ export function engineControlReader(logDir: () => string): (worker: string, hint
         c = {
           ...((QUEUE_PRIORITIES as readonly unknown[]).includes(j.priority) ? { priority: j.priority } : {}),
           paused: j.paused === true && (j.state === "running" || j.state === "queued"),
+          ...(j.paused === true && j.pausedBy ? { preemptedBy: j.pausedBy } : {}),
         };
         cache.set(worker, { path, mtimeMs: st.mtimeMs, size: st.size, control: c });
       }
     } catch {
       /* no status for this id (a bare client): header hint or normal */
     }
-    return { priority: c.priority ?? hint ?? "normal", paused: c.paused === true };
+    let paused = c.paused === true;
+    // failsafe: a preempting run that ended without resuming (crash) releases its victims
+    if (paused && c.preemptedBy && !stillRunning(logDir(), c.preemptedBy)) paused = false;
+    return { priority: c.priority ?? hint ?? "normal", paused, ...(paused && c.preemptedBy ? { preemptedBy: c.preemptedBy } : {}) };
   };
 }

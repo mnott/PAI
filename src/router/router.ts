@@ -710,7 +710,13 @@ export function routerHandler(
       const mayCount = target.kind === "provider" && !isCount && wire!.id === "messages" && isLocal(up.url);
       const counted: Promise<number | null> = mayCount ? promptTokenCount(safeBody(up.body) ?? {}, target.model) : Promise.resolve(null);
       const mod = up.url.protocol === "https:" ? https : http;
-      const forward = (release: (u?: Usage, opts?: { gate?: boolean }) => void): void => {
+      // Preemption (scheduled local requests only): `yielded` polls whether a --now run paused this worker;
+      // `onYield` frees the engine and parks the same request again (see the abort below).
+      const forward = (release: (u?: Usage, opts?: { gate?: boolean }) => void, preempt?: { yielded: () => boolean; onYield: () => void }): void => {
+      let aborted = false;
+      // true once upstream bytes went to the client: a replay would duplicate them
+      let streamed = false;
+      let gatePings: NodeJS.Timeout | undefined;
       const retryOn =
         target.kind === "provider" && !isCount && wire!.id === "messages" && isLocal(up.url) && (options?.localToolCallRetry ?? loadConfig().router.localToolCallRetry) !== false;
       // one buffered POST to the same upstream (the retry)
@@ -746,6 +752,7 @@ export function routerHandler(
           res.writeHead(200, rh0);
           pings = setInterval(() => !res.writableEnded && res.write(wire!.keepalive()), pingMs());
           pings.unref();
+          gatePings = pings;
         }
         const bits: Buffer[] = [];
         ures0.on("data", (c: Buffer) => bits.push(c));
@@ -795,6 +802,7 @@ export function routerHandler(
         });
       };
       const respond = (ures: http.IncomingMessage): void => {
+        streamed = true;
         if (!isLocal(up.url)) upstreamStreak().success();
           if (isCount && target.kind === "provider" && (ures.statusCode ?? 0) >= 400) {
             // provider has no count_tokens: estimate instead of failing the client
@@ -900,6 +908,7 @@ export function routerHandler(
       };
       const ureq = mod.request(up.url, { method: "POST", headers: up.headers }, gate);
       ureq.on("error", (e: NodeJS.ErrnoException) => {
+        if (aborted) return;
         release();
         record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());
         if (!isLocal(up.url)) upstreamStreak().failure(e.code);
@@ -922,6 +931,23 @@ export function routerHandler(
         release();
         ureq.destroy();
       });
+      if (preempt) {
+        // A --now run paused this worker: abort the request in flight so the engine frees at once; the client
+        // connection stays open (keepalives) and the same body is sent again after resume. Once upstream bytes
+        // reached the client (`streamed`) the request is NOT aborted - a replay would duplicate content - and the
+        // pause then takes effect at the worker's next request, like a plain pause.
+        const watch = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return clearInterval(watch);
+          if (streamed || aborted || !preempt.yielded()) return;
+          aborted = true;
+          clearInterval(watch);
+          if (gatePings) clearInterval(gatePings);
+          ureq.destroy();
+          preempt.onYield();
+        }, 100);
+        watch.unref();
+        ureq.on("close", () => clearInterval(watch));
+      }
       ureq.end(up.body);
       };
       // Local engine: one request in flight, the rest wait here (scheduler.ts). Any scheduler fault forwards directly.
@@ -941,7 +967,8 @@ export function routerHandler(
             if (pings) clearInterval(pings);
             pings = undefined;
           };
-          if (streaming) {
+          const startPings = () => {
+            if (!streaming || pings) return;
             // keep the client's stream-idle timers quiet while queued: 200 + the wire's keepalive bytes
             pings = setInterval(() => {
               if (res.writableEnded || gone) return stopPings();
@@ -949,29 +976,40 @@ export function routerHandler(
               res.write(wire!.keepalive());
             }, pingMs());
             pings.unref();
-          }
+          };
+          res.on("close", () => {
+            gone = true;
+          });
           scheduled = true;
-          sched
-            .acquire(engine, sess, worker, {
-              onAbort: (cb) =>
-                res.on("close", () => {
-                  gone = true;
-                  cb();
-                }),
-            }, hint)
-            .then(
-              (ticket) => {
-                stopPings();
-                const go = () =>
-                  forward((u, opts) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined, opts));
-                // a parked conversation is restored while this request holds the engine (active time), never failing it
-                sharedParker().restoreIfParked(engine, worker, sched.slotHolder(engine)).then(go, go);
-              },
-              () => {
-                stopPings();
-                if (!gone) forward(() => {});
-              }
-            );
+          const queue = (): void => {
+            startPings();
+            sched
+              .acquire(engine, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint)
+              .then(
+                (ticket) => {
+                  stopPings();
+                  const go = () =>
+                    forward(
+                      (u, opts) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined, opts),
+                      {
+                        yielded: () => sched.preemptedBy(worker) !== undefined,
+                        // free the engine for the --now run, then wait for the resume with the same body
+                        onYield: () => {
+                          ticket.release();
+                          if (!gone) queue();
+                        },
+                      }
+                    );
+                  // a parked conversation is restored while this request holds the engine (active time), never failing it
+                  sharedParker().restoreIfParked(engine, worker, sched.slotHolder(engine)).then(go, go);
+                },
+                () => {
+                  stopPings();
+                  if (!gone) forward(() => {});
+                }
+              );
+          };
+          queue();
           return;
         } catch (e) {
           log(`${new Date().toISOString()} scheduler error, forwarding directly: ${(e as Error).message}`);

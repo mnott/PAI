@@ -88,7 +88,7 @@ export interface ReleaseOpts {
 export type IdleHook = (engine: string, worker: string, waiting: number) => Promise<void>;
 
 /** A worker's current engine controls (priority, pause): read at every admission decision. */
-export type ControlSource = (worker: string, hint?: Priority) => { priority: Priority; paused: boolean };
+export type ControlSource = (worker: string, hint?: Priority) => { priority: Priority; paused: boolean; preemptedBy?: string };
 export type Priority = "high" | "normal" | "low";
 const LEVELS: readonly Priority[] = ["high", "normal", "low"];
 
@@ -231,6 +231,16 @@ export class RequestScheduler {
     let oldest = 0;
     for (const e of this.engines.values()) for (const w of e.waiting) if (w.worker === worker && (!oldest || w.at < oldest)) oldest = w.at;
     a.waitingSince = oldest;
+  }
+
+  /** The `--now` run that preempted this worker (paused it, request in flight to be aborted), if it is paused by one now. */
+  preemptedBy(worker: string): string | undefined {
+    try {
+      const c = this.control?.(worker);
+      return c?.paused ? c.preemptedBy : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private ctl(w: Waiter): { priority: Priority; paused: boolean } {
