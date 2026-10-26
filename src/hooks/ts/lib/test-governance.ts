@@ -34,6 +34,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ensureScratchExcluded, isGitRepo } from "../../../workers/worktree.js";
+import { isTestPath as auditIsTestPath } from "../../../testgov/audit.js";
+import { parseKept } from "../../../testgov/kept.js";
 import { parseCommand } from "./worker-guard.js";
 import { scriptWritesRepoCode } from "./orchestrator-script-writes.js";
 
@@ -42,20 +44,12 @@ export const SCRATCH_DIR = ".pai-scratch";
 export const KEPT_LEDGER = join("tests", "KEPT.md");
 
 const DENY_TEXT =
-  `No new test files (operator rule): a new test is a one-time test and may only be created under ${SCRATCH_DIR}/ ` +
-  `(gitignored, deleted when the worktree goes). Creating a test file anywhere else is denied unless it is promoted ` +
-  `with evidence: an entry in the project's ${KEPT_LEDGER} naming the file and its evidence — the real bug it guards, ` +
-  `a security or destructive-op guard, or an external contract. Editing an EXISTING test file is allowed; ` +
-  `prove a change with the command you ran and its output, not a new test file.`;
+  `No new test files (operator rule). One-time checks go under ${SCRATCH_DIR}/ (never committed, removed when the worker lands); ` +
+  `a kept test needs an entry in ${KEPT_LEDGER} with its evidence.`;
 
-/** Test-file names: *.test.*, *.spec.*, test_*.py, *_test.py, *_test.go, and files under tests/, __tests__/, spec/. */
+/** Test-file shapes (names, tests/ dirs, UI targets, snapshot baselines): the audit's classification. */
 export function isTestPath(p: string): boolean {
-  const segs = p.split(/[\\/]/).filter((s) => s && s !== ".");
-  const base = segs[segs.length - 1] ?? "";
-  if (/\.[^./]*test\.[A-Za-z0-9]+$/.test(base)) return true; // foo.test.ts, foo.test.tsx, a.spec.js
-  if (/^test_[^/\\]*\.py$/.test(base) || /_[^/\\]*_test\.py$/.test(base)) return true;
-  if (/[^/\\]._test\.go$/.test(base)) return true;
-  return segs.some((s) => s === "tests" || s === "__tests__" || s === "spec");
+  return auditIsTestPath(p.split(/[\\/]/).filter((s) => s && s !== ".").join("/"));
 }
 
 /** True when a path segment of p is the scratch dir. */
@@ -178,8 +172,7 @@ function promoted(abs: string, cwd: string): boolean {
         return false;
       }
       const rel = abs.startsWith(dir + "/") ? abs.slice(dir.length + 1) : abs;
-      const base = abs.split("/").pop() ?? "";
-      return text.split("\n").some((l) => l.includes(rel) || (base && l.includes(base)));
+      return parseKept(text).some((e) => e.file === rel);
     }
     const parent = dirname(dir);
     if (parent === dir) return false;
