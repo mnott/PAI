@@ -20,6 +20,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync
 import { join } from "node:path";
 import { escalationPolicy } from "./config.js";
 import { appendLedger } from "./ledger.js";
+import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -159,7 +160,7 @@ export async function startDetachedWorker(
   const outPath = join(runs, `start-${tag}.out`);
   const pid = (o.start ?? spawnSession)(process.env.PAI_BIN || "pai", ["worker", ...args], {
     cwd: o.cwd || process.cwd(),
-    env: { ...(o.env ?? process.env), [ID_FILE_ENV]: idFile },
+    env: { ...withCallerPath(o.env ?? process.env), [ID_FILE_ENV]: idFile },
     outPath,
   });
   const alive = (): boolean => {
@@ -190,7 +191,7 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
     mkdirSync(join(logDir, "runs"), { recursive: true });
     start(process.env.PAI_BIN || "pai", args, {
       cwd: st.cwd || process.cwd(),
-      env: { ...process.env, [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why },
+      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why },
       outPath: join(logDir, "runs", `reroute-${s.id}.out`),
     });
   };
