@@ -60,7 +60,7 @@ import { followCommand } from "../pane.js";
 import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../worktree.js";
 import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
-import { preemptLocal } from "../preempt.js";
+import { preemptLocal, resumePreempted } from "../preempt.js";
 import { aibrokerMessenger } from "../run-events.js";
 import { ownerOf } from "../local-idle.js";
 import { batteryGateRefusal, isBenchmarkLabel } from "../../daemon/battery-guard.js";
@@ -634,12 +634,29 @@ function queuedOf(q: QueuedFile, label: string | undefined, logDir: string): Que
  * run's saved status; its capacity/warmup/last fields carry the queue line.
  */
 export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
+  try {
+    await runGatesInner(a, wid, status);
+  } catch (e) {
+    // a run that preempted others and then failed to start must give them back
+    resumePreempted(a.logDir, wid);
+    throw e;
+  }
+}
+
+async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
   const { logDir, target, config } = a;
   const saved = status.last;
   const tier = queuePriorityOf(a.queuePriority, status, config);
   // the same level orders this run's requests at a serial local engine (the router reads it from the status file)
   if (!status.priority) {
     status.priority = tier;
+    saveStatus(logDir, status);
+  }
+  const local = isLocalProvider(target.provider.baseUrl);
+  // an urgent run (--now, the operator's urgency window): its engine requests go first and the others yield (preempt.ts)
+  if (a.priority === "front" && !status.now) {
+    status.now = true;
+    status.priority = "high";
     saveStatus(logDir, status);
   }
   const gate: CapacityOpts = {
@@ -668,8 +685,11 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
     disabled: a.noQueue,
     priority: a.priority,
     tier,
-    ...(a.priority === "front" && isLocalProvider(target.provider.baseUrl)
-      ? { preempt: () => { preemptLocal(logDir, target.providerName, wid); } }
+    ...(local
+      ? {
+          preempt: () => { preemptLocal(logDir, target.providerName, wid); },
+          urgent: () => loadStatus(logDir, wid)?.now === true,
+        }
       : {}),
     log: (line) => {
       process.stderr.write(`${line}\n`);

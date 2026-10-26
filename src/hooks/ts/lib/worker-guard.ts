@@ -30,7 +30,7 @@ import { isScratchRootFile } from "./worker-scratch-name.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
 import { benchStartReason } from "./worker-bench-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
-import { PAUSE_DENY, workerPaused } from "../../../workers/pane-bar.js";
+import { PAUSE_DENY, preemptDeny, workerPaused, workerPreemptedBy } from "../../../workers/pane-bar.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
@@ -575,7 +575,10 @@ export function decideWorkerGuard(
       logDir = ""; // unresolvable logDir: no pause to read, work goes on
     }
     const wid = logDir && currentWorkerId(env, logDir);
-    if (wid && workerPaused(logDir, wid)) return deny(PAUSE_DENY);
+    if (wid && workerPaused(logDir, wid)) {
+      const by = workerPreemptedBy(logDir, wid);
+      return deny(by ? preemptDeny(by) : PAUSE_DENY);
+    }
   }
 
   if (env.PAI_WORKER_NO_BROWSER === "1" && tool?.startsWith("mcp__") && isBrowserTool(tool)) {
