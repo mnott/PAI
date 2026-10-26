@@ -18,6 +18,7 @@ import { raiseWaitTimeout } from "../hooks/ts/lib/wait-timeout.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 import { decideEditGate, decideOrchestratorBash, decideOrchestratorEdit } from "../hooks/ts/lib/edit-gate.js";
 import { checkCredentialLiteral } from "../hooks/ts/lib/credential-guard.js";
+import { dropDataHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import type { Decision } from "./evaluate.js";
 
 export interface GateSet {
@@ -46,10 +47,14 @@ const commandOf = (input: unknown): string | undefined => {
   return typeof c === "string" && c ? c : undefined;
 };
 
+/** The command text shell rules and gates match: heredoc bodies that only feed a file are dropped (see dropDataHeredocBodies). */
+export const scannedCommand = (command: string | undefined): string | undefined => (command === undefined ? undefined : dropDataHeredocBodies(command));
+
 /** Gates that run before the shell rules. A deny wins; an allow that rewrites the input is returned only when nothing denies. */
 export function decidePreGates(c: Call, g: GateSet): Decision | null {
   const isBash = c.tool === "Bash";
-  const command = isBash ? commandOf(c.input) : undefined;
+  // heredoc bodies written to a file are data, not commands: the gates match what runs
+  const command = isBash ? scannedCommand(commandOf(c.input)) : undefined;
 
   if (g.orchestrator && isBash && c.env.PAI_WORKER_ORCHESTRATOR === "1" && c.env.PAI_WORKER === "1" && typeof (c.input as { command?: unknown } | undefined)?.command === "string") {
     const o = decideOrchestratorBash((c.input as { command: string }).command);
@@ -87,9 +92,9 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
     const why = !isBash
       ? null
       : (typeof ti?.command === "string"
-        ? (c.env.PAI_WORKER !== "1" ? mainSessionBashReason(ti.command, c.cwd) : null) ??
-          buildGateReason(ti.command, c.cwd) ??
-          modelServerReason(ti.command, c.env, g.bash.localAnswer())
+        ? (c.env.PAI_WORKER !== "1" ? mainSessionBashReason(command ?? ti.command, c.cwd) : null) ??
+          buildGateReason(command ?? ti.command, c.cwd) ??
+          modelServerReason(command ?? ti.command, c.env, g.bash.localAnswer())
         : null) ?? backgroundReason(ti, c.env);
     if (why) return deny(why, "bash-gate");
     const sp = decideSleepPollGate({ tool_name: c.tool, tool_input: ti }, c.env);
