@@ -251,7 +251,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai plan validate` | Check a plan file and list its parts |
 | `pai power` | Battery: status, keep-above wait for the next local job, charge-rate calibration |
 | `pai power calibrate` | Measure the charge rate (%/h) and store it in power.calibration |
-| `pai power status` | Battery %, charging state, thresholds, calibration, minutes until resume |
+| `pai power status` | Battery %, charging state, thresholds, calibration, minutes until resume, Low Power Mode |
 | `pai power wait` | Block until the battery allows the next local job |
 | `pai project` | Your registered projects: list, add, rename, check |
 | `pai project add` | Register a folder as a project |

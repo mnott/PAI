@@ -148,6 +148,12 @@ sessions:
 # on AC is warned to the daemon log and the cockpit, never acted on.
 # Cloud workers and interactive sessions are never touched.
 power:
+  # macOS Low Power Mode (pmset "powermode 1", also "lowpowermode 1" on older
+  # macOS): minutes spent in it count as 1/factor minutes against worker time
+  # limits (the deadline timer, the stall and escalation thresholds). Set
+  # factor 1 to turn the stretch off (src/daemon/low-power.ts).
+  lowPower:
+    factor: 2
   batteryGuard:
     enabled: true
     # Seconds between pmset readings.

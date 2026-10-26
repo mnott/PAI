@@ -30,7 +30,7 @@ export const powerCommand: CommandDef = {
   name: "power",
   summary: "Battery: status, keep-above wait for the next local job, charge-rate calibration",
   description:
-    "The battery guard's toolkit (config power.batteryGuard). `status` shows the reading, thresholds, the stored calibration and the estimated minutes until the keep-above gate opens. " +
+    "The battery guard's toolkit (config power.batteryGuard). `status` shows the reading, thresholds, the stored calibration, the estimated minutes until the keep-above gate opens, and whether macOS Low Power Mode is on (power.lowPower.factor stretches worker time limits while it is). " +
     "`wait` blocks until the battery allows the next local job: at or above keepAbovePct it returns at once, below it it pauses in 10-minute steps (one line each) until resumeAtPct, then exits 0. " +
     "`calibrate` measures the idle charge rate (%/h) over N minutes and stores it in power.calibration; it refuses while a worker runs on a local provider. New local workers honour keepAbovePct by queueing; running ones are never stopped by it.",
   examples: ["pai power status", "pai power wait --above 40 --resume 45", "pai power calibrate --minutes 10", "pai power calibrate --load --minutes 10"],
@@ -38,8 +38,8 @@ export const powerCommand: CommandDef = {
   subcommands: [
     {
       name: "status",
-      summary: "Battery %, charging state, thresholds, calibration, minutes until resume",
-      description: "Reads the battery once and prints the guard thresholds, the keep-above gate state and the stored calibration.",
+      summary: "Battery %, charging state, thresholds, calibration, minutes until resume, Low Power Mode",
+      description: "Reads the battery once and prints the guard thresholds, the keep-above gate state, the stored calibration and whether Low Power Mode is on.",
       examples: ["pai power status"],
       run: async () => {
         for (const l of powerStatusLines(await powerStatus({ read: () => readBattery() }))) out(l);
