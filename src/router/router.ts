@@ -46,6 +46,7 @@ import { declaredToolNames, fixJsonReply, ToolCaseSse } from "./tool-case.js";
 import { declaredToolSchemas } from "./tool-args.js";
 import { convertTextAnswer } from "./tool-args-convert.js";
 import { adapterFor, splitProviderPrefix } from "./wire/index.js";
+import { RUN_TOKEN_PATH, RUN_TOKEN_PREFIX, requestToken, runTokens as sharedRunTokens, type RunTokens } from "./run-tokens.js";
 import type { WireId } from "./wire/types.js";
 import { activeRules, RulesStore } from "./tool-call-rules.js";
 import { ruleHits } from "./tool-call-hits.js";
@@ -241,6 +242,8 @@ export interface Upstream {
 }
 
 export interface RouterOptions {
+  /** per-run placeholder credentials (default: the process-wide registry) */
+  runTokens?: RunTokens;
   /**
    * Remote-address gate for the /v1 routes, set whenever the router listens
    * beyond loopback (router.bind): a request whose socket address fails it is
@@ -513,6 +516,44 @@ function safeBody(raw: Buffer): Record<string, unknown> | null {
   }
 }
 
+/**
+ * POST /_pai/run-tokens {token, provider, runId, ttlMs, pid?} registers a run's placeholder;
+ * DELETE {token?|runId?} revokes. Loopback + host/origin checks (the mutating-method gate above) are its auth;
+ * no response or log line carries a token value.
+ */
+function runTokenControl(req: http.IncomingMessage, res: http.ServerResponse, raw: string, tokens: RunTokens, log: (l: string) => void): void {
+  const reply = (status: number, body: object) => {
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
+  let b: Record<string, unknown>;
+  try {
+    b = JSON.parse(raw || "{}") as Record<string, unknown>;
+  } catch {
+    return reply(400, { error: "invalid JSON body" });
+  }
+  const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  if (req.method === "POST") {
+    const token = str(b.token);
+    const provider = str(b.provider);
+    const runId = str(b.runId);
+    const ttl = typeof b.ttlMs === "number" && b.ttlMs > 0 ? b.ttlMs : 0;
+    if (!token?.startsWith(RUN_TOKEN_PREFIX) || !provider || !runId || !ttl) return reply(400, { error: "token (pai-run-…), provider, runId and ttlMs are required" });
+    tokens.register(token, provider, runId, ttl, typeof b.pid === "number" ? b.pid : undefined);
+    log(`${new Date().toISOString()} run-token registered ${provider} run ${runId}`);
+    return reply(200, { ok: true });
+  }
+  if (req.method === "DELETE") {
+    const token = str(b.token);
+    const runId = str(b.runId);
+    if (!token && !runId) return reply(400, { error: "token or runId required" });
+    const n = tokens.revoke({ ...(token ? { token } : {}), ...(runId ? { runId } : {}) });
+    log(`${new Date().toISOString()} run-token revoked ${n} (run ${runId ?? "-"})`);
+    return reply(200, { ok: true, revoked: n });
+  }
+  reply(405, { error: "POST or DELETE only" });
+}
+
 /** A server on `routerHandler(...)`; takes exactly its parameters. */
 export function createRouter(...args: Parameters<typeof routerHandler>): http.Server {
   return http.createServer(routerHandler(...args));
@@ -534,6 +575,9 @@ export function routerHandler(
   options?: RouterOptions
 ): (req: http.IncomingMessage, res: http.ServerResponse) => void {
   const busts = new BustDetector();
+  const tokens = options?.runTokens ?? sharedRunTokens;
+  // runs that died without revoking: their tokens go with the next sweep
+  setInterval(() => tokens.sweep(), 30_000).unref();
   const gaps = new GapTracker();
   const warned = new Set<string>();
   const instancesOf = options?.instances ?? stateFileInstances();
@@ -578,7 +622,7 @@ export function routerHandler(
       log(`${new Date().toISOString()} ${req.method ?? "-"} ${(req.url ?? "/").split("?")[0]} 403 remote-not-allowed`);
       return;
     }
-    if (req.method === "POST" && refuseUnlessLoopback(req, res, { allowHost: isTailnetOrLocalName })) return;
+    if ((req.method === "POST" || req.method === "DELETE") && refuseUnlessLoopback(req, res, { allowHost: isTailnetOrLocalName })) return;
     const started = Date.now();
     const { path, provider: pathProvider } = splitProviderPrefix(req.url ?? "/");
     const chunks: Buffer[] = [];
@@ -591,6 +635,11 @@ export function routerHandler(
         } else res.end();
         log(`${new Date().toISOString()} ${model} ${prov} ${status} ${Date.now() - started}ms`);
       };
+      if (path === RUN_TOKEN_PATH) return runTokenControl(req, res, Buffer.concat(chunks).toString("utf8"), tokens, log);
+      // a run's placeholder credential: it names the provider, the router supplies the real key
+      const presented = requestToken(req.headers);
+      const runProvider = presented?.startsWith(RUN_TOKEN_PREFIX) ? tokens.resolve(presented) : undefined;
+      if (presented?.startsWith(RUN_TOKEN_PREFIX) && !runProvider) return fail(401, "pai router: unknown, expired or revoked run token");
       const isModels = req.method === "GET" && MODELS_PATH.test(path);
       const wire = adapterFor(req.method ?? "", path);
       if (!isModels && !wire) {
@@ -613,7 +662,7 @@ export function routerHandler(
         // claude ids (and the list) pass to the anthropic upstream unchanged
         const headers: Record<string, string> = {};
         for (const [k, v] of Object.entries(req.headers)) {
-          if (!HOP.has(k.toLowerCase()) && v !== undefined) headers[k.toLowerCase()] = Array.isArray(v) ? v.join(", ") : v;
+          if (!HOP.has(k.toLowerCase()) && !(runProvider && AUTH.has(k.toLowerCase())) && v !== undefined) headers[k.toLowerCase()] = Array.isArray(v) ? v.join(", ") : v;
         }
         const url = joinUrl(claudeBase, path);
         const ureq = (url.protocol === "https:" ? https : http).request(url, { method: "GET", headers }, (ures) => {
@@ -635,7 +684,9 @@ export function routerHandler(
         warnedCompressed = true;
         log(`${new Date().toISOString()} router: request bodies arrive ${String(req.headers["content-encoding"]).trim().toLowerCase()}-compressed`);
       }
-      const inHeaders = pathProvider && !req.headers["x-pai-provider"] ? { ...req.headers, "x-pai-provider": pathProvider } : req.headers;
+      const inHeaders = runProvider
+        ? { ...req.headers, "x-pai-provider": runProvider }
+        : pathProvider && !req.headers["x-pai-provider"] ? { ...req.headers, "x-pai-provider": pathProvider } : req.headers;
       const prep = prepare(path, inHeaders, dec.body, providers, claudeBase, {
         ...(options?.isUp ? { isUp: options.isUp } : {}),
         onDuplicate,

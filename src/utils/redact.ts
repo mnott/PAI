@@ -185,8 +185,21 @@ function redactLine(line: string): string {
   return out;
 }
 
+/** Exact secret values loaded in this process (provider keys): redacted wherever they appear, in any text. */
+const knownSecrets = new Set<string>();
+const MIN_SECRET_LEN = 8;
+
+/** Add a loaded key's exact value and its JSON-escaped form to the redaction set. */
+export function registerSecretValue(value: string): void {
+  if (value.length < MIN_SECRET_LEN) return;
+  knownSecrets.add(value);
+  const escaped = JSON.stringify(value).slice(1, -1);
+  if (escaped !== value) knownSecrets.add(escaped);
+}
+
 /** Text with every secret value replaced by [REDACTED]; labels, schemes and hosts survive. */
 export function redactSecrets(text: string): string {
+  for (const v of knownSecrets) if (text.includes(v)) text = text.split(v).join(REDACTED);
   // PEM first: a block swallows its lines so line rules cannot touch the markers
   const withPem = text.replace(PEM_BLOCK, `-----BEGIN PRIVATE KEY----- ${REDACTED}`);
   return withPem.split("\n").map(redactLine).join("\n");
