@@ -101,6 +101,23 @@ function history(repo: string): Commit[] {
 }
 
 const FIX = /^(fix|hotfix)(\(.*\))?!?:/i;
+/** The subject must say what broke: at least four words after the type prefix. */
+const namesBug = (subject: string): boolean => subject.replace(FIX, "").trim().split(/\s+/).filter(Boolean).length >= 4;
+const stem = (f: string): string => f.replace(/\.[a-z0-9]+$/i, "").replace(/\/index$/, "");
+/** Repo-relative stems of the relative modules a test file imports. */
+function importedStems(file: string, text: string): Set<string> {
+  const out = new Set<string>();
+  const dir = file.split("/").slice(0, -1);
+  for (const m of text.matchAll(/(?:from|import\()\s*["'](\.[^"']*)["']/g)) {
+    const parts = [...dir];
+    for (const seg of m[1].split("/")) {
+      if (seg === "..") parts.pop();
+      else if (seg !== ".") parts.push(seg);
+    }
+    out.add(stem(parts.join("/")));
+  }
+  return out;
+}
 
 export function auditRepo(repo: string): Audit {
   const kept = new Map<string, KeptEntry>(readKept(repo).map((k) => [k.file, k]));
@@ -109,22 +126,39 @@ export function auditRepo(repo: string): Audit {
   const tracked = [...listed].filter((f) => f && isTestPath(f));
   const commits = history(repo);
 
-  // fix evidence: a commit named fix that touched the file and also non-test code
-  const fixes = new Map<string, string[]>();
+  // fix evidence (class a): a fix commit AFTER the test was created whose subject names the bug and whose
+  // diff changes, in the same commit, non-test code the test imports. Touching only the test does not count.
+  interface FixCommit { hash: string; idx: number; code: Set<string>; tests: Set<string> }
+  const fixCommits: FixCommit[] = [];
+  const created = new Map<string, number>();
   const live = new Set<string>();
   const trend: { month: string; files: number }[] = [];
-  for (const c of commits) {
+  commits.forEach((c, idx) => {
     for (const { status, file } of c.files) {
       if (!isTestPath(file)) continue;
-      if (status.startsWith("D")) live.delete(file);
-      else live.add(file);
+      if (status.startsWith("D")) {
+        live.delete(file);
+        created.delete(file);
+      } else {
+        live.add(file);
+        if (!created.has(file)) created.set(file, idx);
+      }
     }
-    if (FIX.test(c.subject) && c.files.length <= 30 && c.files.some((f) => !isTestPath(f.file) && !f.status.startsWith("D"))) {
-      for (const f of c.files) if (isTestPath(f.file) && !f.status.startsWith("D")) fixes.set(f.file, [...(fixes.get(f.file) ?? []), c.hash]);
+    if (FIX.test(c.subject) && namesBug(c.subject) && c.files.length <= 30) {
+      const changed = c.files.filter((f) => !f.status.startsWith("D"));
+      const code = new Set(changed.filter((f) => !isTestPath(f.file)).map((f) => stem(f.file)));
+      if (code.size) fixCommits.push({ hash: c.hash, idx, code, tests: new Set(changed.filter((f) => isTestPath(f.file)).map((f) => f.file)) });
     }
     if (trend.length && trend[trend.length - 1].month === c.month) trend[trend.length - 1].files = live.size;
     else trend.push({ month: c.month, files: live.size });
-  }
+  });
+  const fixesFor = (file: string, text: string): string[] => {
+    const born = created.get(file);
+    if (born === undefined) return [];
+    const exercised = importedStems(file, text);
+    if (!exercised.size) return [];
+    return fixCommits.filter((f) => f.idx > born && f.tests.has(file) && [...f.code].some((c) => exercised.has(c))).map((f) => f.hash);
+  };
 
   const runnerText = ["vitest.config.ts", "vitest.config.js", "jest.config.js", "jest.config.ts", "package.json", "bunfig.toml", "pytest.ini", "pyproject.toml"]
     .map((f) => (existsSync(join(repo, f)) ? readFileSync(join(repo, f), "utf8") : ""))
@@ -142,8 +176,8 @@ export function auditRepo(repo: string): Audit {
     if (kind === "artefact") return { file, kind, classes: [], verdict: "DROP", evidence: "run output (not listed in KEPT.md)", tests: 0, registered: false };
     const classes: string[] = [];
     const ev: string[] = [];
-    const fx = fixes.get(file);
-    if (fx) {
+    const fx = fixesFor(file, text);
+    if (fx.length) {
       classes.push("a");
       ev.push(`fix commits ${fx.slice(-3).join(", ")}`);
     }
