@@ -479,7 +479,10 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     const onError = (e: Error) => void failRun(e).then(() => reject(e), () => reject(e));
     if (earlyError) onError(earlyError);
     else proc.on("error", onError);
-    proc.on("close", (code) => resolve(code ?? (state.killed ? 143 : 1)));
+    proc.on("close", (code, sig) => {
+      if (sig && !state.killed) status.childSignal = sig;
+      resolve(code ?? (state.killed ? 143 : 1));
+    });
   });
   if (state.troubleTimer) clearInterval(state.troubleTimer);
   if (state.trouble) {

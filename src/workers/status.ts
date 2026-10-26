@@ -234,6 +234,8 @@ export interface WorkerStatus {
   parentPid?: number;
   parentComm?: string;
   parentBackground?: boolean;
+  /** Signal that ended the claude child (close event) when the runner itself got none. */
+  childSignal?: string;
   /** Why the run ended (endreason.ts): exit, deadline, pai-worker-kill, parent-gone, external-signal. */
   endReason?: string;
   /** Who asked for the stop, when known (kill caller, daemon:<reason>). */

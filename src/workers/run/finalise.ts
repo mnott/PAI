@@ -219,8 +219,10 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     report = { ...(report ?? {}), notes: orphanReason, result: "-" };
     appendLedger(ledger, "WORKER-ORPHAN-CHILDREN", { id: wid, reason: orphanReason });
   }
-  const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined, loopStopped: !!loopStop });
+  const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined, loopStopped: !!loopStop, childSignal: status.childSignal });
   status.endReason = end.reason;
+  status.endBy = end.by;
+  status.endNote = end.note;
   if (end.reason === "exit" && hasMalformedToolCall(report?.notes ?? f.fallbackText)) status.endReason = MALFORMED_TOOL_CALL;
   // PAI itself stopped the child (not the deadline, not a signal): the report says which timer or check did
   if (end.reason === "pai-worker-kill" && !f.timedOut && end.killReason && !succeeded) {
