@@ -62,26 +62,52 @@ export function powerGate(): (() => void) | null {
   return () => void spawnSync("pai", ["power", "wait"], { stdio: "inherit" });
 }
 
-function runScript(script: string, args: string[], env: NodeJS.ProcessEnv, tick: () => Verdict | null): Promise<{ code: number | null; stopped?: Verdict }> {
+const KILL_GRACE_MS = 5000;
+
+/** SIGTERM the whole process group, SIGKILL it after the grace period if anything is left. */
+function killGroup(pid: number, graceMs: number): void {
+  try {
+    process.kill(-pid, "SIGTERM"); // the whole group: script, pai worker run and its children
+  } catch {
+    return; // already gone
+  }
+  setTimeout(() => {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      /* group gone */
+    }
+  }, graceMs).unref();
+}
+
+export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv, tick: () => Verdict | null, graceMs = KILL_GRACE_MS): Promise<{ code: number | null; stopped?: Verdict }> {
   return new Promise((resolve) => {
     const child = spawn(script, args, { env, stdio: "ignore", detached: true });
     let stopped: Verdict | undefined;
+    const sigs = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+    // a stopped bench process must leave nothing running: the detached group would otherwise outlive it
+    const onSignal = (sig: NodeJS.Signals): void => {
+      for (const s of sigs) process.removeListener(s, onSignal);
+      if (child.pid) killGroup(child.pid, graceMs);
+      setTimeout(() => process.exit(128 + (sig === "SIGINT" ? 2 : sig === "SIGHUP" ? 1 : 15)), graceMs + 200);
+    };
+    for (const s of sigs) process.on(s, onSignal);
+    const done = (): void => {
+      clearInterval(timer);
+      for (const s of sigs) process.removeListener(s, onSignal);
+    };
     const timer = setInterval(() => {
       const v = tick();
       if (!v || stopped) return;
       stopped = v;
-      try {
-        process.kill(-child.pid!, "SIGTERM"); // the whole group: script, pai worker run and its children
-      } catch {
-        /* already gone */
-      }
+      if (child.pid) killGroup(child.pid, graceMs);
     }, 3000);
     child.on("exit", (code) => {
-      clearInterval(timer);
+      done();
       resolve({ code, stopped });
     });
     child.on("error", () => {
-      clearInterval(timer);
+      done();
       resolve({ code: 127, stopped });
     });
   });
