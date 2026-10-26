@@ -28,6 +28,7 @@ import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
+import { rerunFromEnv } from "../../workers/reroute.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
 import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -313,6 +314,7 @@ const runCommand: CommandDef = {
       const plan = buildRunPlan(ctx);
       if (flag(ctx, "batch")) process.env[BATCH_ENV] = "1";
       await applyTarget(ctx, plan);
+      if (plan.kind === "run") rerunFromEnv(plan.run, logDir());
       return plan.kind === "chain" ? await runChain(plan.chain) : await runWorker(plan.run);
     }),
 };
