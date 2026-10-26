@@ -111,7 +111,7 @@ export function evaluate(event: GuardEvent, ctx: GuardContext): Decision {
   const worker = ctx.gates ? decideWorkerGate(call, ctx.gates) : null;
   if (worker?.action === "deny") return worker;
   const updatedInput = worker?.updatedInput ?? pre?.updatedInput;
-  return { ...d, ...(updatedInput && { updatedInput }), ...(worker?.message && { message: worker.message }) };
+  return { ...d, ...(updatedInput && { updatedInput }), ...((worker?.message ?? pre?.message) && { message: worker?.message ?? pre?.message }) };
 }
 
 /** Shell rules, then the loop guard. */
