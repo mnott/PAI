@@ -37,13 +37,32 @@ export interface UrgencyState {
   where?: "local";
 }
 
-/** The explicit marker: the literal token `/now`, anywhere in a line. `/now local` forces where=local. */
-const NOW_TOKEN = /(^|[^\w/])\/now(?![\w/])/;
-const LOCAL_AFTER = /\/now(?:\s+|-)local\b/i;
+/** The explicit marker: the literal token `/now`, standing alone (start or after whitespace, before whitespace/end). */
+const NOW_TOKEN = /(^|\s)\/now(?=\s|$)/;
+const LOCAL_AFTER = /(^|\s)\/now\s+local(?=\s|$)/i;
 
-/** Whether a delivered prompt carries the explicit `/now` marker, and asked for local. */
+/** Harness-injected blocks and lines: never the operator's typing. */
+const SYSTEM_BLOCKS = [
+  /<task-notification\b[\s\S]*?<\/task-notification>/gi,
+  /<system-reminder\b[\s\S]*?<\/system-reminder>/gi,
+  /\[SYSTEM NOTIFICATION\b[\s\S]*?(?:\n\s*\n|$)/gi,
+];
+const SYSTEM_LINE = /^\s*\[(?:pai (?:escalation|supervision)|Session:|Inbound:)[^\n]*$/gim;
+/** Operator's own channels: the tag stays out of the body, only the message text counts. */
+const CHANNEL_TAG = /^\s*\[(?:PAILot|Whazaa|Telex|Task(?::comment)?)\b[^\]\n]*\]/i;
+
+/** The part of a prompt the operator typed (or delivered via their own channels). */
+export function operatorText(prompt: string): string {
+  let t = prompt;
+  for (const re of SYSTEM_BLOCKS) t = t.replace(re, "\n");
+  t = t.replace(SYSTEM_LINE, "");
+  return t.replace(CHANNEL_TAG, "");
+}
+
+/** Whether a delivered prompt carries the explicit `/now` marker in operator text, and asked for local. */
 export function urgencyOf(prompt: string): { urgent: boolean; local: boolean } {
-  return { urgent: NOW_TOKEN.test(prompt), local: LOCAL_AFTER.test(prompt) };
+  const t = operatorText(prompt);
+  return { urgent: NOW_TOKEN.test(t), local: LOCAL_AFTER.test(t) };
 }
 
 const stateFile = (key: string): string => paiHomePath("state", `urgency-${key.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
