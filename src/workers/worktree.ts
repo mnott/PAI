@@ -941,7 +941,7 @@ function mergeSnapshotWorker(
     verify,
     revert,
     () => scanDiffForStub(git(st.cwd, ["diff", "-U0", "--no-color", snapshot, branch, "--", "src/"])),
-    () => scanDiffForTestLoss(git(st.cwd, ["diff", "-U0", "--no-color", "--no-renames", snapshot, branch]))
+    () => testLossOver(st.cwd, snapshot, branch)
   );
   if (noCommit) return withGate(gate, noCommitNextSteps(id, branch, worktreeDir, changedPaths));
   for (const l of salvageNotes(st.cwd, worktreeDir, id)) console.log(l);
@@ -1444,7 +1444,7 @@ function assertStaticScans(cwd: string, from: string, to: string): void {
   const hit = scanDiffForStub(git(cwd, ["diff", "-U0", "--no-color", from, to, "--", "src/"]));
   if (hit) throw new Error(`stub scan failed: ${hit}: nothing merged; the worker branch is kept`);
   if (process.env.PAI_MERGE_ALLOW_TEST_LOSS === "1") return;
-  const loss = scanDiffForTestLoss(git(cwd, ["diff", "-U0", "--no-color", "--no-renames", from, to]));
+  const loss = testLossOver(cwd, from, to);
   if (loss) {
     throw new Error(
       `test scan failed: ${loss}: nothing merged; the worker branch is kept (a deliberate removal: re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
@@ -1615,8 +1615,9 @@ const TEST_CASE = /^\s*(it|test)(\.\w+)?\(/;
  * First test file in the diff (-U0, no renames) whose net loss of test cases
  * exceeds the total net gain across all test files (moving cases is fine), as
  * "<file> loses N test case(s)"; null when none. A deleted file loses all its cases.
+ * With `kept` (a governed prune: the same change edits tests/KEPT.md) only files in it can lose cases.
  */
-export function scanDiffForTestLoss(diff: string): string | null {
+export function scanDiffForTestLoss(diff: string, kept?: ReadonlySet<string>): string | null {
   const net = new Map<string, number>();
   let file = "";
   for (const l of diff.split("\n")) {
@@ -1628,14 +1629,32 @@ export function scanDiffForTestLoss(diff: string): string | null {
   }
   let gain = 0;
   for (const n of net.values()) if (n > 0) gain += n;
-  for (const [f, n] of net) if (n < 0 && -n > gain) return `${f} loses ${-n} test case(s)`;
+  for (const [f, n] of net) if (n < 0 && -n > gain && (!kept || kept.has(f))) return `${f} loses ${-n} test case(s)`;
   return null;
+}
+
+/** Test-loss scan over `from..to`; a change that edits tests/KEPT.md is a governed prune and only KEPT.md files are protected. */
+export function testLossOver(cwd: string, from: string, to: string): string | null {
+  const diff = git(cwd, ["diff", "-U0", "--no-color", "--no-renames", from, to]);
+  if (!git(cwd, ["diff", "--name-only", from, to, "--", "tests/KEPT.md"]).trim()) return scanDiffForTestLoss(diff);
+  let ledger = "";
+  try {
+    ledger = git(cwd, ["show", `${to}:tests/KEPT.md`]);
+  } catch {
+    // KEPT.md deleted: nothing is protected
+  }
+  const kept = new Set<string>();
+  for (const l of ledger.split("\n")) {
+    const m = /^\|\s*(\S+)\s*\|/.exec(l);
+    if (m) kept.add(m[1]);
+  }
+  return scanDiffForTestLoss(diff, kept);
 }
 
 /** Built-in stub scan after a merge: a hit reverts it exactly like a failed verify. */
 export function stubScan(cwd: string, oldHead: string): string {
   return gateLines(cwd, undefined, () => revertMerge(cwd, oldHead), () => findAddedStub(cwd, oldHead), () =>
-    scanDiffForTestLoss(git(cwd, ["diff", "-U0", "--no-color", "--no-renames", oldHead, "HEAD"])),
+    testLossOver(cwd, oldHead, "HEAD"),
     () => findNewDuplicates(cwd)
   );
 }
