@@ -560,11 +560,11 @@ export async function localLimits(
   rows: UsageRow[],
   now: number,
   background?: (stats: Promise<PrefixCacheStats | undefined>) => void,
-  opts: { probes?: LocalProbes; timeoutStrikes?: number; servedTimeoutMs?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined>; engineInfo?: (port: number) => Promise<{ engineVersion?: string; engineDir?: string }>; strataSpeed?: (base: URL, key: string) => Promise<EndpointSpeed | null> } = {}
+  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined>; engineInfo?: (port: number) => Promise<{ engineVersion?: string; engineDir?: string }>; strataSpeed?: (base: URL, key: string) => Promise<EndpointSpeed | null> } = {}
 ): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
-  const probes = opts.probes ?? { tcp: (port, host) => probeTcp(port, host, opts.tcpTimeoutMs ?? TCP_TIMEOUT_MS), served: (base) => servedModels(base, opts.servedTimeoutMs) };
+  const probes = opts.probes ?? { tcp: (port, host) => probeTcp(port, host, opts.tcpTimeoutMs ?? TCP_TIMEOUT_MS), served: servedModels };
   const strikesToDown = opts.timeoutStrikes ?? PROBE_TIMEOUT_STRIKES;
   const endpoint = `${u.hostname}:${port}`;
   const stateKey = `${name}@${endpoint}`;
@@ -697,9 +697,9 @@ async function listenerRssMb(port: number): Promise<number | undefined> {
 const lastServed = new Map<string, string[]>();
 
 /** GET /v1/models: `alive` = the server answered HTTP at all (any status); `ids` = the models it lists, when it can say. */
-async function servedModels(base: URL, timeoutMs = 5000): Promise<ServedAnswer> {
+async function servedModels(base: URL): Promise<ServedAnswer> {
   try {
-    const body = JSON.parse(await getJson(new URL("/v1/models", base), {}, timeoutMs)) as { data?: Array<{ id?: unknown }> };
+    const body = JSON.parse(await getJson(new URL("/v1/models", base), {})) as { data?: Array<{ id?: unknown }> };
     const ids = (body.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
     return ids.length ? { alive: true, ids } : { alive: true };
   } catch (e) {

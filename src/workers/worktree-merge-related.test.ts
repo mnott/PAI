@@ -36,7 +36,6 @@ function task(id: string): void {
 const cfg = (verify: string) => ({ generated: [], regenerate: "", union: [], verify, verifyTimeoutSec: 60, alwaysTests: [] });
 const tree = () => git(repo, ["rev-parse", "HEAD^{tree}"]);
 const failAlways = (id: string) => `echo "FAIL  ${id}.test.ts"; exit 1 #`;
-// The verify commands run through a shell; keep its PATH so npx/git stay found under vitest's env.
 
 afterEach(() => {
   delete process.env.PAI_MERGE_KEEP_ON_FAIL;

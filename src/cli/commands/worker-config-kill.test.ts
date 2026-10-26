@@ -26,15 +26,15 @@ const freePort = (): Promise<number> =>
     });
   });
 
-/** A "start script": the parent forks a detached child that holds the port (and optionally ignores SIGTERM); the parent stays or exits. Resolves only once the child actually listens on the port. */
+/** A "start script": the parent forks a detached child that holds the port (and optionally ignores SIGTERM); the parent stays or exits. */
 function fakeServer(dir: string, port: number, opts: { parentExits?: boolean; ignoreTerm?: boolean }): Promise<{ parent: number; child: number }> {
   const child = join(dir, "child.cjs");
-  writeFileSync(child, `${opts.ignoreTerm ? "process.on('SIGTERM',()=>{});" : ""}require('net').createServer().listen(${port},'127.0.0.1',()=>console.log(JSON.stringify({up:true})));setInterval(()=>{},1000);`);
+  writeFileSync(child, `${opts.ignoreTerm ? "process.on('SIGTERM',()=>{});" : ""}require('net').createServer().listen(${port},'127.0.0.1',()=>console.log('up'));setInterval(()=>{},1000);`);
   const parent = join(dir, "parent.cjs");
   writeFileSync(
     parent,
     `const {spawn}=require('child_process');const c=spawn(process.execPath,[${JSON.stringify(child)}],{detached:true,stdio:['ignore','pipe','ignore']});` +
-      `c.stdout.once('data',(d)=>{if(!String(d).includes('"up"'))return;console.log(JSON.stringify({parent:process.pid,child:c.pid}));${opts.parentExits ? "process.exit(0)" : "c.unref();c.stdout.destroy();setInterval(()=>{},1000)"}});`,
+      `c.stdout.once('data',()=>{console.log(JSON.stringify({parent:process.pid,child:c.pid}));${opts.parentExits ? "process.exit(0)" : "c.unref();c.stdout.destroy();setInterval(()=>{},1000)"}});`,
   );
   return new Promise((res, rej) => {
     const p = spawn(process.execPath, [parent], { stdio: ["ignore", "pipe", "ignore"] });
@@ -50,9 +50,7 @@ afterEach(() => {
 
 const inst = (port: number, pid?: number) => ({ id: "t#1", model: "t", provider: "tp", url: `http://127.0.0.1:${port}`, origin: "managed" as const, port, ...(pid !== undefined ? { pid } : {}), state: "ready" as const, startedAt: 0, log: "" });
 
-// Each test spawns real node processes (and lsof); under load that setup alone can pass vitest's 5 s default.
-// The outcome is decided by signals and the port state, not by this cap, so it only has to be generous.
-describe("killInstance", { timeout: 60_000 }, () => {
+describe("killInstance", () => {
   it("kills a script and the detached child that holds the port, and the port is closed", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pai-kill-"));
     const port = await freePort();
@@ -61,9 +59,7 @@ describe("killInstance", { timeout: 60_000 }, () => {
     expect(await portOpen(port)).toBe(true);
     await killInstance(inst(port, parent), portOpen, 3000);
     expect(await portOpen(port)).toBe(false);
-    // wait for both pids to actually die (process.kill(pid,0) answers immediately); no fixed sleep
-    const deadline = Date.now() + 3000;
-    while ((alive(parent) || alive(child)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 200));
     expect([alive(parent), alive(child)]).toEqual([false, false]);
   });
 
