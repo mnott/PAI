@@ -163,8 +163,6 @@ export interface WorkerStatus {
   /** Fall-through link: the local run this cloud run repeats, and (on the local run) its repeat. */
   fallThroughOf?: string;
   fallThroughTo?: string;
-  /** PATH of the process that started this run; a daemon-side restart spawns under it (caller-env.ts). */
-  callerPath?: string;
   /** Escalated one tier up: "escalated t2→t1: context 74%" (escalation.ts). */
   escalated?: string;
   /** Escalation link: the run this one was escalated to (set on the ended run). */
