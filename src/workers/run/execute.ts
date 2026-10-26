@@ -27,10 +27,13 @@ import {
 } from "../worktree.js";
 import { parseWorkerReport, verifyReportChanges, verifyFailNote } from "../report.js";
 import { armDeadline, deadlinePromptLine } from "../deadline.js";
+import { acquireRunToken, revokeRunToken } from "../run-token.js";
+import { routerUrl } from "../run-env.js";
 import { blockedMsOf } from "../active-time.js";
 import {
   buildCodexArgs,
   buildCodexEnv,
+  codexKeyless,
   codexDroppedFlags,
   emptyCodexResult,
   foldCodexLine,
@@ -186,7 +189,9 @@ interface CliEngineRun {
   /** Env from the engine module (before worker identity/scratch are applied). */
   env: NodeJS.ProcessEnv;
   /** Env built once the scratch dir exists (opencode writes its config into it). */
-  envThunk?: (scratch: string) => NodeJS.ProcessEnv;
+  envThunk?: (scratch: string, token: string | null) => NodeJS.ProcessEnv;
+  /** True when this run goes through the router with a per-run placeholder instead of the provider's key. */
+  keyless?: boolean;
   /** Flags the engine drops from the claude argv (ledgered as a WORKER-NOTE). */
   dropped: string[];
   /** Spawn argv (binary first), called with the run's prompt. */
@@ -211,6 +216,14 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   // after applyScratchEnv below; codex's env is ready here
   const env = spec.envThunk ? {} : spec.env;
   const wid = a.id ?? newWorkerId();
+  // keyless: the engine gets a registered placeholder and the router base, the router holds the key
+  let runToken: string | null = null;
+  if (spec.keyless) {
+    runToken = await acquireRunToken(target.providerName, wid, a.limit?.deadlineAt);
+    if (!runToken && spec.engine === "codex") {
+      throw new Error(`provider "${target.providerName}" needs the PAI router for a keyless run, but it did not take the run token — start it with \`pai router start\``);
+    }
+  }
   const cwd = a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
   const paneVerified = await requireVisiblePane(logDir, config, wid, term, systemWaiver, false, ledgerPath(logDir));
@@ -225,7 +238,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   }
   env.PAI_WORKER_ID = wid;
   const scratch = applyScratchEnv(env, wid, worktree?.dir ?? cwd);
-  if (spec.envThunk) Object.assign(env, spec.envThunk(scratch));
+  if (spec.envThunk) Object.assign(env, spec.envThunk(scratch, runToken));
   // CLI engines take instructions through the prompt, not a system prompt flag
   const prompt =
     scratchPromptLine(scratch) + "\n\n" +
@@ -305,6 +318,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   let stopDeadline: (() => void) | null = null;
   let stopTrack: (() => void) | null = null;
   const cleanup = () => {
+    void revokeRunToken(wid);
     stopDeadline?.();
     stopTrack?.();
     if (eventsFd !== null) {
@@ -481,7 +495,10 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
 export async function executeCodexRun(a: CodexArgs): Promise<number> {
   return executeCliEngineRun(a, {
     engine: "codex",
-    env: buildCodexEnv(a.target.provider),
+    env: {},
+    keyless: codexKeyless(a.target.provider),
+    envThunk: (_scratch, token) =>
+      buildCodexEnv(a.target.provider, token ? { token, baseUrl: `${routerUrl()}/p/${a.target.providerName}/v1` } : undefined),
     dropped: codexDroppedFlags(a.claudeArgs),
     buildCmd: (prompt) => ["codex", ...buildCodexArgs(prompt, a.parsed.callerModel ? undefined : a.model)],
     parse: parseCodexLine,
@@ -497,7 +514,9 @@ export async function executeOpencodeRun(a: OpencodeArgs): Promise<number> {
   return executeCliEngineRun(a, {
     engine: "opencode",
     env: {},
-    envThunk: (scratch) => buildOpencodeEnv(a.target.provider, a.target.providerName, a.model, scratch),
+    keyless: true,
+    envThunk: (scratch, token) =>
+      buildOpencodeEnv(a.target.provider, a.target.providerName, a.model, scratch, routerUrl(), token ?? undefined),
     dropped: opencodeDroppedFlags(a.claudeArgs),
     buildCmd: (prompt) => ["opencode", ...buildOpencodeArgs(prompt, a.parsed.callerModel ? undefined : a.model)],
     parse: parseOpencodeLine,

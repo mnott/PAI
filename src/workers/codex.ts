@@ -16,6 +16,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { loadConfig } from "../daemon/config.js";
 import { providerKeyPath, resolveProviderKey, type WorkerProvider } from "./config.js";
 
 /** Build the codex exec argument vector (without the binary itself). */
@@ -30,8 +31,12 @@ export function buildCodexArgs(prompt: string, model: string | undefined): strin
   ];
 }
 
-/** Env for a codex run: caller's env, Anthropic vars stripped, key applied. */
-export function buildCodexEnv(provider: WorkerProvider): NodeJS.ProcessEnv {
+/**
+ * Env for a codex run: caller's env, Anthropic vars stripped, key applied.
+ * `route` (a registered run token + the router's base for this provider) makes
+ * the run keyless: the engine gets the token and the router URL, never the key.
+ */
+export function buildCodexEnv(provider: WorkerProvider, route?: { token: string; baseUrl: string }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_BASE_URL;
@@ -44,13 +49,24 @@ export function buildCodexEnv(provider: WorkerProvider): NodeJS.ProcessEnv {
   // does not exist is tolerated here (unlike resolveProviderKey's other
   // callers) — that is the ChatGPT-login shape, not a broken config.
   const keyPath = providerKeyPath(provider);
-  if (provider.key || (keyPath && existsSync(keyPath))) {
-    env.OPENAI_API_KEY = resolveProviderKey(provider) ?? "";
+  if (route) {
+    env.OPENAI_API_KEY = route.token;
+    env.OPENAI_BASE_URL = route.baseUrl;
+  } else {
+    if (provider.key || (keyPath && existsSync(keyPath))) {
+      env.OPENAI_API_KEY = resolveProviderKey(provider) ?? "";
+    }
+    if (provider.upstreamUrl) env.OPENAI_BASE_URL = provider.upstreamUrl;
   }
-  if (provider.upstreamUrl) env.OPENAI_BASE_URL = provider.upstreamUrl;
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
   env.PAI_WORKER = "1";
   return env;
+}
+
+/** A codex run is keyless when the router is on and the provider has an API key (ChatGPT-login codex has none). */
+export function codexKeyless(provider: WorkerProvider, routerEnabled: boolean = loadConfig().router.enabled): boolean {
+  const keyPath = providerKeyPath(provider);
+  return routerEnabled && !!(provider.key || (keyPath && existsSync(keyPath)));
 }
 
 /** Codex "not applicable" flags the runner drops with a ledger note. */
