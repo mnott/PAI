@@ -86,7 +86,7 @@ function decideLoop(ev: Extract<GuardEvent, { kind: "tool_call" }>, ctx: GuardCo
   const l = ctx.loop!;
   const command = (ev.input as { command?: unknown } | undefined)?.command;
   const input = ev.tool === "Bash" ? (typeof command === "string" ? command : undefined) : ((ev.input ?? {}) as Record<string, unknown>);
-  const r = stepLoopGuard(l.state, ev.tool, input, l.fingerprint, l.now ?? Date.now(), ev.cwd, l.echo, l.failLedger);
+  const r = stepLoopGuard(l.state, ev.tool, input, l.fingerprint, l.now ?? Date.now(), ev.cwd, l.echo, l.failLedger, ev.source);
   if (r.monitored) return { action: "allow", patternId: r.id, mode: "monitor", loop: r };
   if (r.deny) return { action: r.stop ? "stop" : "deny", patternId: r.id, message: r.reason, mode: "enforce", loop: r };
   if (r.note) return { action: "note", patternId: r.id, message: r.note, mode: "enforce", loop: r };

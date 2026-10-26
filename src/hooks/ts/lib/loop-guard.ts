@@ -774,22 +774,22 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
  * One step of the loop guard. A pattern in monitor mode (or retired, or excepted) is neutralised here, in one place:
  * the step still counts, but nothing is denied, stopped or noted; a monitored one says what it would have done.
  */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, ledger = false): LoopStep {
-  const r = stepLoopGuardCore(state, tool, input, fingerprint, now, cwd, echo);
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, ledger = false, source: "hook" | "proxy" = "hook"): LoopStep {
+  const r = stepLoopGuardCore(state, tool, input, fingerprint, now, cwd, echo, source);
   if (!ledger) return r;
   const obj = typeof input === "object" ? input : undefined;
   const file = tool === "Write" ? String(obj?.file_path ?? "") || null : null;
-  return { ...r, state: ledgerStep({ ...r.state, fail: state.fail }, tool, file ? callKey(tool, input) : null, file, missingProbe(tool, obj, cwd ?? process.cwd())) };
+  return { ...r, state: ledgerStep({ ...r.state, fail: state.fail }, tool, file ? callKey(tool, input) : null, file, source === "proxy" ? null : missingProbe(tool, obj, cwd ?? process.cwd())) };
 }
 
-function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
+function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, source: "hook" | "proxy" = "hook"): LoopStep {
   let r = stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
   const command = tool === "Bash" ? bashCommand(input) : undefined;
   const bashWrites = command !== undefined ? bashWriteTargets(command) : null;
   // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file; a bare Bash write does not, it is a write
   if (READ_TOOLS.has(tool) && !bashWrites && r.state.rewrites) r = { ...r, state: { ...r.state, rewrites: undefined } };
   if (bashWrites && command !== undefined) r = countBashRewrites(r, bashWrites, command);
-  return applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd));
+  return applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd, source));
 }
 
 /** distinct-rewrites for files written through Bash (heredoc, redirect, tee): the command text is the version. */
@@ -811,8 +811,15 @@ function countBashRewrites(r: LoopStep, files: string[], command: string): LoopS
 
 /** A Read/Glob/Grep path argument that points at nothing; null when the call names no path or it exists. */
 function missingProbe(tool: string, input: Record<string, unknown> | undefined, cwd: string): string | null {
-  const p = tool === "Read" ? input?.file_path : tool === "Glob" || tool === "Grep" ? input?.path : undefined;
-  return typeof p === "string" && p && !existsSync(resolve(cwd, p)) ? p : null;
+  const p = probePath(tool, input);
+  return p && !existsSync(resolve(cwd, p)) ? p : null;
+}
+
+/** The path a Read/Glob/Grep call points at; null for other tools or a call without a path. */
+export function probePath(tool: string, input: unknown): string | null {
+  const o = (input && typeof input === "object" ? input : undefined) as Record<string, unknown> | undefined;
+  const p = tool === "Read" ? o?.file_path : tool === "Glob" || tool === "Grep" ? o?.path : undefined;
+  return typeof p === "string" && p ? p : null;
 }
 
 /**
@@ -820,17 +827,21 @@ function missingProbe(tool: string, input: Record<string, unknown> | undefined, 
  * runaway-new-files (Writes of paths that do not exist yet since the last Read/Bash/Grep/Glob) and
  * missing-path-streak (Read/Glob/Grep of missing paths with no other tool call in between).
  */
-function trackStreaks(r: LoopStep, prev: LoopState, tool: string, input: string | Record<string, unknown> | undefined, bashWrites: string[] | null, cwd = process.cwd()): LoopStep {
+function trackStreaks(r: LoopStep, prev: LoopState, tool: string, input: string | Record<string, unknown> | undefined, bashWrites: string[] | null, cwd = process.cwd(), source: "hook" | "proxy" = "hook"): LoopStep {
   const obj = typeof input === "object" ? input : undefined;
   let nf = prev.streaks?.newFiles ?? { n: 0 };
   let missing = prev.streaks?.missing ?? 0;
-  const isNew = (f: unknown): boolean => typeof f === "string" && !!f && !existsSync(resolve(cwd, f));
+  // a proxy event has no disk to ask (the client may be another machine): no new-file signal, and the missing count
+  // comes from the tool results (proxy-loop.ts), so a probe call keeps the count its predecessors' results built
+  const proxy = source === "proxy";
+  const isNew = (f: unknown): boolean => !proxy && typeof f === "string" && !!f && !existsSync(resolve(cwd, f));
   if (tool === "Write") {
     if (isNew(obj?.file_path)) nf = { ...nf, n: nf.n + 1 };
   } else if (bashWrites) nf = { ...nf, n: nf.n + bashWrites.filter(isNew).length };
   else if (READ_TOOLS.has(tool) || tool === "Glob") nf = { n: 0 };
-  const probe = missingProbe(tool, obj, cwd);
-  missing = probe ? missing + 1 : 0;
+  const probe = proxy ? probePath(tool, obj) : missingProbe(tool, obj, cwd);
+  if (!proxy) missing = probe ? missing + 1 : 0;
+  else if (!probe) missing = 0;
 
   let out = r;
   const rn = live("runaway-new-files");
@@ -862,14 +873,14 @@ function applyLifecycle(r: LoopStep): LoopStep {
  * so when Pre did not record this call (no pending window entry) the call is stepped here first.
  * `deny` then means the 4th identical failure: hand `reason` back as context and stop the session if `stop`.
  */
-export function recordLoopFailure(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, error: unknown, now = Date.now(), cwd?: string, ledger = false): LoopStep {
+export function recordLoopFailure(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, error: unknown, now = Date.now(), cwd?: string, ledger = false, source: "hook" | "proxy" = "hook"): LoopStep {
   const key = callKey(tool, input);
   if (key === null || EDIT_TOOLS.has(tool)) return { state, deny: false };
   const last = state.window.length - 1;
   const seenByPre = last >= 0 && state.window[last] === key && (state.outs?.[last] ?? null) === null;
   let step: LoopStep = { state, deny: false };
   if (!seenByPre) {
-    step = stepLoopGuard(state, tool, input, null, now, cwd, undefined, ledger);
+    step = stepLoopGuard(state, tool, input, null, now, cwd, undefined, ledger, source);
     if (step.deny) return { ...step, reason: step.reason ?? loopDenyReason(tool, step.count) };
   }
   return { ...step, state: recordLoopResult(step.state, tool, input, `error: ${resultSig(error)}`, now, ledger) };
