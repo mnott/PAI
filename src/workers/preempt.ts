@@ -13,7 +13,7 @@ import { readUrgencyFor } from "./urgency.js";
 import { setWorkerPaused, setWorkerPriority } from "./engine-control.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { isLive, loadStatuses, loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { isLive, loadStatuses, loadStatus, saveStatus, slotLent, type WorkerStatus } from "./status.js";
 
 /** Slots free on `provider`: its cap minus the live running workers that are not paused by a preemption. Unlimited when uncapped. */
 function roomOn(statuses: WorkerStatus[], provider: string): number {
@@ -24,7 +24,7 @@ function roomOn(statuses: WorkerStatus[], provider: string): number {
     cap = undefined;
   }
   if (cap === undefined) return Number.MAX_SAFE_INTEGER;
-  const holding = statuses.filter((s) => s.provider === provider && s.state === "running" && !(s.paused && s.pausedBy) && isLive(s)).length;
+  const holding = statuses.filter((s) => s.provider === provider && s.state === "running" && !slotLent(s) && !(s.paused && s.pausedBy) && isLive(s)).length;
   return cap - holding;
 }
 

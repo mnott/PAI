@@ -19,7 +19,7 @@ import { shortText } from "./args.js";
 import { denialMark, parseDenialText } from "./denials.js";
 import { bashExitCode, WAIT_EXIT_STILL_RUNNING } from "./wait.js";
 import { fmtElapsed,waitingLine, waitOnCallLine, waitOnResultLine, detachedLine, realWaitDeps } from "./waiting.js";
-import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, UNLABELED } from "./status.js";
+import { ageOf, elapsedOf, contextLabel, contextFooter,contextPercent, isChatPane, type WorkerStatus, isLive, slotLent, UNLABELED } from "./status.js";
 import { ownedTree } from "./worktree.js";
 import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
@@ -590,7 +590,7 @@ export function renderTable(
 
   // engine controls: "paused" or a non-normal priority, only while set
   const engineMark = (s: WorkerStatus): string => {
-    const m = [s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
+    const m = [slotLent(s) ? "waiting on tool (slot lent)" : "", s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
     return m ? "  " + c(s.paused ? "yellow" : "dim", m) : "";
   };
 
