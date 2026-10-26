@@ -87,12 +87,26 @@ function fileNotInlineBlock(): string[] {
   ];
 }
 
-/** The two guard rules workers hit first (pai worker errors 2026-10-26: /tmp 36 hits in 35 workers, cd 8 in 8) — stated before the first denial, kept in both contracts. */
-function guardRulesBlock(): string[] {
+/**
+ * The guard rules workers hit first (pai worker errors 2026-10-26: /tmp 36 hits in 35
+ * workers, cd 8 in 8, pattern kill 9 in 9, scratch-path double 3 in 3, tsx-vs-dist import 5 in 5)
+ * — stated before the first denial, kept in both contracts. `scratch` is this worker's
+ * resolved scratch dir: $TMPDIR is already <systmp>/pai-scratch/<id>, so a Bash path that
+ * prepends it again doubles the id and misses the file; stating the absolute path stops
+ * the guess.
+ */
+function guardRulesBlock(scratch: string): string[] {
   return [
-    "Scratch files go to \"$TMPDIR/<name>\" (private to this worker, Bash expands it): a literal /tmp/<name>",
-    "is shared by every concurrent worker and gets denied. Stay in the worktree with relative paths —",
-    "never cd into the main checkout.",
+    scratch
+      ? `Scratch dir: ${scratch} (= $TMPDIR in Bash — so a Bash path is "$TMPDIR/<name>", never "$TMPDIR/pai-scratch/<id>/…").`
+      : "Scratch files go to \"$TMPDIR/<name>\" (private to this worker, Bash expands it): a literal /tmp/<name>",
+    ...(scratch
+      ? ["Use this absolute path in Write/Read/Edit — the Write tool does not expand $TMPDIR."]
+      : ["is shared by every concurrent worker and gets denied."]),
+    "Stay in the worktree with relative paths — never cd into the main checkout.",
+    "Background processes you start: `cmd & echo $! > \"$TMPDIR/x.pid\"`, stop them with",
+    "`kill $(cat \"$TMPDIR/x.pid\")`; never `pkill`/`killall`/`kill` by name or pattern.",
+    "Probe scripts import src/ via npx tsx; dist/ is bundled.",
   ];
 }
 
@@ -106,13 +120,13 @@ function fileNotInlineBlockShort(): string[] {
 }
 
 /** spotcheck/simple: headless, bounded, no delegation language — under 2100 chars in ag2 format. */
-function shortContractPrompt(format: "ag2" | "json"): string {
+function shortContractPrompt(format: "ag2" | "json", scratch?: string): string {
   const lines = [
     "You are a headless implementation worker, run non-interactively.",
     "This task is yours: answer the question or do the bounded task now. Run at most one command",
     "to confirm a result and never re-derive a number you already have. No child workers, no handoff.",
     ...fileNotInlineBlockShort(),
-    ...guardRulesBlock(),
+    ...guardRulesBlock(scratch ?? ""),
   ];
   lines.push(
     ...(format === "ag2"
@@ -125,7 +139,7 @@ function shortContractPrompt(format: "ag2" | "json"): string {
 }
 
 /** Every other class (and no class): the full worker/orchestrator contract. */
-function fullContractPrompt(format: "ag2" | "json"): string {
+function fullContractPrompt(format: "ag2" | "json", scratch?: string): string {
   const lines = [
     "You are a headless implementation worker, run non-interactively by an orchestrating session.",
     "You are the worker: this task is yours to finish in this process. Never hand your whole task to a",
@@ -140,14 +154,14 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "will pick something up later, never leave a background command as your final action. Finish, then",
     "report.",
     "No narration, no timestamps, no greetings, no summaries of what you read; act, verify, then stop.",
-    ...guardRulesBlock(),
+    ...guardRulesBlock(scratch ?? ""),
     "Never sleep-poll: no `sleep N` over 60 seconds, anywhere in a command — standalone, after `&&`/`||`/",
     "`;`/`|`, or inside a loop or subshell — and the sleeps of one command add up (`sleep 58; sleep 58` is",
     "116 s). Ending your turn ends this process, so a background job gets no later wake-up here:",
     "run_in_background is denied. Foreground Bash calls stay under 2 min (longer ones block operator messages and supervision and are denied);",
     WAIT_VERBS,
     `Prefer the project's own blocking command for builds and tests (e.g. a build script's --wait, repeated while it says to call again); for a long job that has none, run it detached: ${WAIT_RECIPE}.`,
-    "Kill only processes you started, by PID (`cmd & echo $! > /tmp/x.pid`, then `kill $(cat /tmp/x.pid)`); never `pkill`/`killall`/`kill $(pgrep ...)` — other workers' command lines contain your spec text.",
+    "Kill only processes you started, by PID (`cmd & echo $! > \"$TMPDIR/x.pid\"`, then `kill $(cat \"$TMPDIR/x.pid\")`); never `pkill`/`killall`/`kill $(pgrep ...)` — other workers' command lines contain your spec text.",
     ...fileNotInlineBlock(),
     "",
     `Operator messages: a user turn starting with ${OPERATOR_MARK} was typed by the operator while you`,
@@ -198,9 +212,10 @@ export function workerContractPrompt(
   cls: string | undefined,
   format: "ag2" | "json",
   orchestrate?: boolean,
-  noteToken?: string
+  noteToken?: string,
+  scratch?: string
 ): string {
-  let base = SHORT_CONTRACT_CLASSES.has(cls ?? "") ? shortContractPrompt(format) : fullContractPrompt(format);
+  let base = SHORT_CONTRACT_CLASSES.has(cls ?? "") ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch);
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   return orchestrate ? `${base}\n${ORCHESTRATOR_CONTRACT}` : base;
 }
