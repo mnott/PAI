@@ -10,6 +10,7 @@ import { currentWorkerId } from "../../workers/worker-id.js";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { applyUrgency } from "../../workers/urgency.js";
 import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
@@ -206,10 +207,15 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
 
 /** --where / --model / --now through resolveTarget (target.ts), the one resolver every delegation entry point uses. */
 export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: TargetResolver = resolveTarget): Promise<void> {
-  let where = str(ctx.opts.where);
-  const model = str(ctx.opts.model);
-  const now = flag(ctx, "now");
   const target = plan.kind === "chain" ? plan.chain : plan.run;
+  // the operator's urgency window (urgency.ts) fills now/where when the model left them out; an explicit target is never replaced
+  const urgent = applyUrgency(
+    { where: str(ctx.opts.where), now: flag(ctx, "now") ? true : undefined },
+    !!ctx.opts.local || !!target.providerFlag || flag(ctx, "cloud") === true
+  );
+  let where = urgent.where;
+  const model = str(ctx.opts.model);
+  const now = urgent.now;
   const forceLocal = flag(ctx, "force-local");
   const task = plan.kind === "chain" ? plan.chain.brief : parseRunnerArgs(plan.run.claudeArgs).prompt ?? undefined;
   const label = plan.kind === "run" ? plan.run.label : plan.chain.label;
