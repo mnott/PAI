@@ -1440,7 +1440,13 @@ function rebuildDist(
 export class RelatedTestsFailedError extends Error {}
 
 /** Stub and test-loss scans over `from..to`; throws before any merge exists, so the advised re-run works. */
-function assertStaticScans(cwd: string, from: string, to: string): void {
+export function assertStaticScans(cwd: string, from: string, to: string): void {
+  const backups = git(cwd, ["diff", "--name-only", "--diff-filter=A", from, to])
+    .split("\n")
+    .filter((f) => /(-e|\.orig|\.rej|\.bak|~|\.swp)$/.test(f));
+  if (backups.length) {
+    throw new Error(`backup files added: ${backups.join(", ")}: nothing merged; remove them (BSD \`sed -i -e\` leaves file-e) and re-commit; the worker branch is kept`);
+  }
   const hit = scanDiffForStub(git(cwd, ["diff", "-U0", "--no-color", from, to, "--", "src/"]));
   if (hit) throw new Error(`stub scan failed: ${hit}: nothing merged; the worker branch is kept`);
   if (process.env.PAI_MERGE_ALLOW_TEST_LOSS === "1") return;
