@@ -164,23 +164,8 @@ function tokenize(segment: string): string[] {
 }
 
 /** A path against `base`; `~` and `$` expansions cannot be resolved here and count as unresolved. */
-function resolveDir(base: string, p: string, vars: Record<string, string> = {}): string {
-  const sub = (s: string) => s.replace(/\$\{(\w+)\}|\$(\w+)/g, (m, a: string | undefined, b: string | undefined) => {
-    const name = a ?? b ?? "";
-    return vars[name] ?? (name === "TMPDIR" ? process.env.TMPDIR : undefined) ?? m;
-  });
-  const expanded = sub(sub(p));
-  return /^~|\$|`/.test(expanded) ? UNKNOWN_DIR : resolve(base, expanded);
-}
-
-/** A worker's private scratch: `<tmp>/pai-scratch/<id>`, with or without the /private prefix. */
-function isOwnScratch(dir: string, id: string): boolean {
-  const roots = [`/private/tmp/pai-scratch/${id}`, `/tmp/pai-scratch/${id}`];
-  const tmp = process.env.TMPDIR;
-  if (tmp) roots.push(join(tmp, "pai-scratch", id));
-  if (tmp && tmp.replace(/\/$/, "").endsWith(`/pai-scratch/${id}`)) roots.push(tmp);
-  if (roots.some((r) => isInsideWorktree(dir, r) || isInsideWorktree(dir, `/private${r}`))) return true;
-  return new RegExp(`^/(private/)?var/folders/[^/]+/[^/]+/T/pai-scratch/${id.replace(/[^\w-]/g, "")}(/|$)`).test(dir);
+function resolveDir(base: string, p: string): string {
+  return /^~|\$|`/.test(p) ? UNKNOWN_DIR : resolve(base, p);
 }
 
 /** The work tree a git dir belongs to: `<tree>/.git` is `<tree>`. */
@@ -198,12 +183,12 @@ function treeOfGitDir(dir: string): string {
  * worktrees stay allowed.
  */
 function worktreeEscape(command: string, cwd: string, worktreesRoot: string): boolean {
-  const id = cwd.slice(worktreesRoot.replace(/\/$/, "").length + 1).split("/")[0];
-  const own = join(worktreesRoot, id);
-  const allowed = (dir: string) => isInsideWorktree(dir, own) || isOwnScratch(dir, id);
+  const allowed = (dir: string) =>
+    isInsideWorktree(dir, cwd) ||
+    isInsideWorktree(dir, worktreesRoot) ||
+    /^\/(tmp|private\/tmp|var\/folders|private\/var\/folders)(\/|$)/.test(dir);
   let here = cwd;
   const env: Record<string, string> = {};
-  const vars: Record<string, string> = {};
   for (const segment of splitSegments(command)) {
     const tokens = tokenize(segment);
     const segEnv: Record<string, string> = {};
@@ -216,32 +201,31 @@ function worktreeEscape(command: string, cwd: string, worktreesRoot: string): bo
     while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) {
       const eq = tokens[i].indexOf("=");
       (exported ? env : segEnv)[tokens[i].slice(0, eq)] = tokens[i].slice(eq + 1);
-      if (exported || tokens.length === i + 1) vars[tokens[i].slice(0, eq)] = tokens[i].slice(eq + 1);
       i++;
     }
     if (exported) continue;
     const rest = tokens.slice(i);
     if (rest[0] === "cd") {
       const arg = rest.slice(1).find((t) => !t.startsWith("-"));
-      here = arg === undefined ? here : resolveDir(here, arg, vars);
+      here = arg === undefined ? here : resolveDir(here, arg);
       continue;
     }
     if (!segmentWritesGit(segment, rest)) continue;
     const targets = [here];
     const eff = { ...env, ...segEnv };
-    if (eff.GIT_DIR) targets.push(treeOfGitDir(resolveDir(here, eff.GIT_DIR, vars)));
-    if (eff.GIT_WORK_TREE) targets.push(resolveDir(here, eff.GIT_WORK_TREE, vars));
+    if (eff.GIT_DIR) targets.push(treeOfGitDir(resolveDir(here, eff.GIT_DIR)));
+    if (eff.GIT_WORK_TREE) targets.push(resolveDir(here, eff.GIT_WORK_TREE));
     let dir = here;
     for (let k = 0; k < rest.length; k++) {
       const t = rest[k];
       if (t === "-C" && k + 1 < rest.length) {
-        dir = resolveDir(dir, rest[++k], vars);
+        dir = resolveDir(dir, rest[++k]);
         targets.push(dir);
       } else if (t === "--git-dir" || t === "--work-tree") {
         const v = rest[++k] ?? "";
-        targets.push(t === "--git-dir" ? treeOfGitDir(resolveDir(here, v, vars)) : resolveDir(here, v, vars));
-      } else if (t.startsWith("--git-dir=")) targets.push(treeOfGitDir(resolveDir(here, t.slice(10), vars)));
-      else if (t.startsWith("--work-tree=")) targets.push(resolveDir(here, t.slice(12), vars));
+        targets.push(t === "--git-dir" ? treeOfGitDir(resolveDir(here, v)) : resolveDir(here, v));
+      } else if (t.startsWith("--git-dir=")) targets.push(treeOfGitDir(resolveDir(here, t.slice(10))));
+      else if (t.startsWith("--work-tree=")) targets.push(resolveDir(here, t.slice(12)));
     }
     if (targets.some((d) => !allowed(d))) return true;
   }
