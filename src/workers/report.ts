@@ -36,12 +36,12 @@ function ag2ReportBlock(proofNote = false): string[] {
     spec.spec,
     spec.extensions,
     "Final message: one AG2 `R` message only — no prose, no code fence, no markdown.",
-    "R requires i (id), r (+ - ~ ? !), t (tests, Name+ Name-), c (files you modified or created, never files you",
+    "R requires i (id), r (+ - ~ ? !), t (checks, Name+ Name-; may name a typecheck or probe), c (files you modified or created, never files you",
     "only read; `path summary`; c=none when none). r=+ needs G=+ and p, every t entry +.",
     "z= the answer/note, one line, always present. x= what is left (omit if nothing).",
     "y= one line why when r is not +.",
     "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",
-    ...(proofNote ? ["p= is the command exactly as you ran it; a result may follow after →, e.g. p=npx vitest run src/foo → 12 passed"] : []),
+    ...(proofNote ? ["p= is the command exactly as you ran it; a result may follow after →, e.g. p=npx tsc --noEmit → exit 0; p is the command you ran and its output (typecheck, probe, live run)"] : []),
     "Example:",
     "R",
     "i=count-audit-ts",
@@ -169,7 +169,7 @@ export const ORCHESTRATOR_CONTRACT =
   "Orchestrator mode: you plan, delegate and review; code edits are denied to you (Edit/Write on code files and in-place Bash writes) and go to local units. " +
   "Write each unit spec to a file under /tmp, start it with `pai worker run --provider <the local provider named in your brief> --class implement -p \"$(cat <spec>)\"` (at most 3 at once), wait with `pai worker wait <ids> --max 100`, then read its report and diff, run its proof and merge. " +
   "Pending deletions that local workers report as `delete: <file> (<reason>)` are done by you with `git rm`. " +
-  "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them with `npx vitest run --dir .pai-scratch`. " +
+  "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them directly; do not commit new tests (tests are governed: tests/KEPT.md). " +
   "When several unit specs share rules, the AG2 report format or a Do-not list, write that block once at the top of each spec between a line `--- shared ---` and a line `--- unit ---` (byte-identical across the specs), then the unit's own goal after the second marker: the pool puts the shared block into the slot's cached system prompt.";
 
 /**
@@ -488,7 +488,7 @@ export function newUntracked(cwd: string, before: ReadonlySet<string>): string[]
 
 export function untrackedPaths(cwd: string): string[] {
   try {
-    return execFileSync("git", ["status", "--porcelain", "-uall"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+    return execFileSync("git", ["status", "--porcelain", "-uall"], { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] })
       .split("\n")
       .filter((l) => l.startsWith("?? "))
       .map((l) => l.slice(3));

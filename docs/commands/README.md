@@ -70,6 +70,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai skill`](skill.md) | How your skills are used |
 | [`pai task`](task.md) | Cross-session task list: list, add, dispatch, done |
 | [`pai tasks`](tasks.md) | Same as task |
+| [`pai tests`](tests.md) | Test governance: audit a repo's tests, prune them to the governed core |
 | [`pai topic`](topic.md) | Detect when a conversation moved to another project |
 | [`pai update`](update.md) | Update PAI (or another package) to the latest GitHub Release |
 | [`pai worker`](worker.md) | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
@@ -423,6 +424,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai tasks schedule install` | Install the timer (default: every 15 minutes) |
 | `pai tasks schedule status` | Show whether the timer is installed and running |
 | `pai tasks schedule uninstall` | Remove the timer |
+| `pai tests` | Test governance: audit a repo's tests, prune them to the governed core |
+| `pai tests audit` | List test files with a proposed class and the file-count trend |
+| `pai tests prune` | Plan, or with --apply start a worker, that prunes the suite to the governed core |
 | `pai topic` | Detect when a conversation moved to another project |
 | `pai topic check` | Check whether a text belongs to a different project than the current one |
 | `pai update` | Update PAI (or another package) to the latest GitHub Release |

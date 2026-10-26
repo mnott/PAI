@@ -65,7 +65,7 @@
     "build": "node scripts/sync-versions.mjs && node scripts/gen-builtin-rules.mjs && tsdown && node scripts/prune-dist.mjs && node scripts/copy-defaults.mjs && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
     "version": "node scripts/sync-versions.mjs && git add .claude-plugin pai-plugin.json gemini-extension.json .cursor plugins",
     "dev": "tsdown --watch",
-    "test": "vitest",
+    "test": "vitest run",
     "lint": "tsc --noEmit",
     "check:duplicates": "node scripts/check-duplicates.mjs",
     "prepublishOnly": "bun run build && node dist/cli/index.mjs worker pending --gate && node dist/cli/index.mjs build npm-auth"

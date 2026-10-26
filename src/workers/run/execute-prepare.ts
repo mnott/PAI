@@ -174,12 +174,12 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // a resume takes over the old id's tree and runs against its repo
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
-  const term = await runTerm(a.opts._hostTerm);
+  const term = await runTerm(a.opts?._hostTerm);
   await a.paneOpening;
   if (a.paneError) throw a.paneError;
   const paneVerified = a.panePrepared
     ? a.panePrepared.verified
-    : headless && (await requireVisiblePane(logDir, config, wid, term, systemWaiver, a.printCmd === true, ledgerPath(logDir)));
+    : headless && (await requireVisiblePane(logDir, config, wid, term, systemWaiver, a.printCmd === true, ledgerPath(logDir), !!a.opts?._fallThroughOf));
   a.spawnT0 = Date.now();
   const session = resolveSession(term);
   const sessionKey = await detectSessionName();

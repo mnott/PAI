@@ -14,7 +14,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptJxa, saveEntry, type PaneEntry } from "./pane.js";
+import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptListing, saveEntry, type PaneEntry } from "./pane.js";
 import { readWorkersSection } from "./config.js";
 import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
 import { itermUuid, scopeKey } from "./scope.js";
@@ -142,7 +142,7 @@ const TABS_SCRIPT = `function run(argv) {
 }`;
 
 /** Every iTerm session with its window:tab. Rejects when iTerm cannot be listed (no verdict is then given). */
-export async function listItermTabs(run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascriptJxa, sizes?: SizeMap): Promise<TabMap> {
+export async function listItermTabs(run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascriptListing, sizes?: SizeMap): Promise<TabMap> {
   const p = await run(TABS_SCRIPT, []);
   const m: TabMap = new Map();
   for (const l of p.stdout.split("\n")) {

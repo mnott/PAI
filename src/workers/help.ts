@@ -191,7 +191,7 @@ export function parsePorcelainZ(out: string): string[] {
 /** Real changed-file lister: git porcelain paths, empty outside git. */
 export function gitChangedFiles(cwd: string): string[] {
   try {
-    const out = execFileSync("git", ["status", "--porcelain", "-z"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync("git", ["status", "--porcelain", "-z"], { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
     return parsePorcelainZ(out);
   } catch {
     return [];

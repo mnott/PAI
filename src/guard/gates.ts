@@ -11,6 +11,7 @@ import { detectUnsafePlutil, plutilGuardMessage } from "../hooks/ts/lib/plutil-g
 import { decideWorkerGitGuard, workerGitGuardMessage } from "../hooks/ts/lib/worker-git-guard.js";
 import { mainSessionBashReason } from "../hooks/ts/lib/main-session-git-gate.js";
 import { buildGateReason } from "../hooks/ts/lib/build-gate.js";
+import { memoryBashRules } from "../hooks/ts/lib/memory-bash-gate.js";
 import { modelServerReason } from "../hooks/ts/lib/model-server-guard.js";
 import { backgroundReason } from "../hooks/ts/lib/background-gate.js";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
@@ -87,6 +88,7 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
       return deny(workerGitGuardMessage(w.cmd || "this git command"), "worker-git-guard", { category: "worker_git_guard", pattern: w.cmd });
     }
   }
+  let memoNote: string | undefined;
   if (g.bash) {
     const ti = c.input as { run_in_background?: boolean; command?: string; timeout?: number } | undefined;
     const why = !isBash
@@ -97,14 +99,19 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
           modelServerReason(command ?? ti.command, c.env, g.bash.localAnswer())
         : null) ?? backgroundReason(ti, c.env);
     if (why) return deny(why, "bash-gate");
+    if (isBash && typeof ti?.command === "string") {
+      const m = memoryBashRules(command ?? ti.command, c.env, c.cwd);
+      if (m.deny) return deny(m.deny, "memory-bash-gate");
+      if (m.note) memoNote = m.note;
+    }
     const sp = decideSleepPollGate({ tool_name: c.tool, tool_input: ti }, c.env);
     if (sp.decision === "deny") return deny(sp.reason, "sleep-poll-gate");
     if (c.env.PAI_WORKER !== "1") {
       const raised = raiseWaitTimeout(ti);
-      if (raised) return { action: "allow", updatedInput: raised };
+      if (raised) return { action: "allow", updatedInput: raised, message: memoNote };
     }
   }
-  return null;
+  return memoNote ? { action: "note", patternId: "memory-bash-gate", message: memoNote } : null;
 }
 
 /** The worker guard as a Decision: deny with its reason, or allow with the rewritten input / advisory context. */

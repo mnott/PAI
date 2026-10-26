@@ -30,6 +30,7 @@ export function releasePane(wid: string | undefined): void {
  * (see pane-exec.ts). Resolves true when the pane exists and waits for the command (spawnOwned starts it in
  * there). false, with no failure: no terminal at all (recorded "no terminal"), `dryRun` (--print-cmd), an
  * a typed system waiver, the operator's override, or workers.pane.enabled false; the command then runs directly.
+ * `restart`: the run repeats an earlier one (reroute, fall-through); no terminal then runs it headless, not refused.
  * A pane that cannot be opened for any other reason rejects: the command does not run unseen.
  */
 export async function requireVisiblePane(
@@ -39,7 +40,8 @@ export async function requireVisiblePane(
   term: string,
   systemWaiver: SystemJob | undefined,
   dryRun: boolean,
-  ledger: string
+  ledger: string,
+  restart = false
 ): Promise<boolean> {
   if (dryRun) return false;
   // the typed system waiver (daemon jobs) is the only per-start waiver; a caller's own "no pane" request does not exist any more
@@ -62,7 +64,14 @@ export async function requireVisiblePane(
   };
   try {
     const pane = await launchPane({ logDir, config, id: wid, kind: "worker", term });
-    if (!pane) return refuse(noTerminalReasons.get(wid) ?? "no terminal to open one in");
+    if (!pane) {
+      const why = noTerminalReasons.get(wid) ?? "no terminal to open one in";
+      // a restart of an earlier run (reroute, fall-through) must not drop the work: with no terminal anywhere it runs headless
+      if (!restart) return refuse(why);
+      appendLedger(ledger, "PANE-WAIVED", { id: wid, kind: "restart", why });
+      process.stderr.write(`[pai worker] pane waived for ${wid}: restart with ${why}\n`);
+      return false;
+    }
     paneHandles.set(wid, pane);
     process.stderr.write(`[pai worker] pane opened for ${wid}: ${pane.where}\n`);
     return true;

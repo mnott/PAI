@@ -31,7 +31,7 @@ import { loadConfig } from "../daemon/config.js";
 import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
 import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
-import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, release, routerService, workerGc, workerKill, updateCheck, workerMerge } from "./tools/ops.js";
+import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, release, routerService, testsAudit, testsPrune, workerGc, workerKill, updateCheck, workerMerge } from "./tools/ops.js";
 import { dropItermBundleId } from "../utils/env.js";
 
 dropItermBundleId();
@@ -1952,6 +1952,23 @@ async function startShim(): Promise<void> {
     "The worker pool (`pai worker pool status`): config, host, slots, carry and why recent runs were not pooled.",
     {},
     async () => poolStatus()
+  );
+
+  server.tool(
+    "tests_audit",
+    "Audit a repo's tests (`pai tests audit`): every test file (unit, UI/simulator targets, snapshot baselines, run outputs) with a proposed class KEEP-a (fix evidence) / KEEP-b (security or destructive guard) / KEEP-c (external contract) or DROP, the test-file count per month, and a proposed tests/KEPT.md. Read-only; never runs a test. First step of `clean up tests`.",
+    { repo: z.string().optional().describe("Repository path (default: the current project).") },
+    async (args) => testsAudit(args)
+  );
+
+  server.tool(
+    "tests_prune",
+    "Prune a repo's tests to the governed core (`pai tests prune`). Without apply it returns the plan. With apply=true it starts a worker (orchestrate class) in the repo that git rm's the DROP files, writes tests/KEPT.md, keeps the test script and build working and makes one commit on its own branch; it does not merge, the user lands it. Run tests_audit first and show the user the result; apply only when they asked to clean up tests.",
+    {
+      repo: z.string().optional().describe("Repository path (default: the current project)."),
+      apply: z.boolean().optional().describe("Start the pruning worker (default false: plan only)."),
+    },
+    async (args) => testsPrune(args)
   );
 
   server.tool(

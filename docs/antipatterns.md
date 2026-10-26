@@ -64,5 +64,5 @@ Detector code stays in TypeScript and reads these values on every call; `action:
 ## Adding one
 
 1. Write `antipatterns/<category>/<id>.yaml` (shipped) or `$PAI_HOME/antipatterns/<category>/<id>.yaml` (yours) with at least one `match` and one `no_match` sample.
-2. Shipped: `node scripts/gen-builtin-rules.mjs`, then `npx vitest run src/hooks/ts/lib/antipatterns.test.ts`; the test runs every file's own samples through its detector.
+2. Shipped: `node scripts/gen-builtin-rules.mjs`, then `the sample check in the antipatterns generator`; the test runs every file's own samples through its detector.
 3. A new detector kind needs code: register its parameter check in `src/hooks/ts/lib/antipatterns.ts` and a sample adapter in `antipatterns.test.ts`.
