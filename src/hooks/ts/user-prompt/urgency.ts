@@ -37,11 +37,10 @@ function windowMinutes(): number {
 }
 
 /** This session's running/queued workers, made urgent like `pai worker priority <id> now`. */
-function makeRunningUrgent(local: boolean): number {
+function makeRunningUrgent(local: boolean, sessionKeys: string[]): number {
   try {
     const { workers } = readWorkersSection();
     const logDir = workersLogDir(workers);
-    const sessionKeys = urgencyKeys(process.env);
     let count = 0;
     for (const s of loadStatuses(logDir)) {
       if (!isLive(s) || s.now) continue;
@@ -66,6 +65,8 @@ async function main(): Promise<void> {
   if (isWorkerSession()) return;
   const input = await readHookInput<HookInput>();
   const prompt = typeof input?.prompt === "string" ? input.prompt : "";
+  // supervision/escalation notices are the system talking, not the operator
+  if (/^\s*\[pai (escalation|supervision)/i.test(prompt)) return;
   const u = urgencyOf(prompt);
   if (!u.urgent) return;
   const keys = urgencyKeys(process.env, input?.session_id);
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
   } catch {
     return;
   }
-  const made = makeRunningUrgent(u.local);
+  const made = makeRunningUrgent(u.local, keys);
   process.stdout.write(
     `Urgent (operator /now): workers you start in the next ${min} min run with now${u.local ? ", local" : ""}${made ? ` · ${made} running worker${made > 1 ? "s" : ""} made urgent` : ""}\n`
   );

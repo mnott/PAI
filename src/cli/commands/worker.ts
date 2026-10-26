@@ -11,7 +11,7 @@ import { currentWorkerId } from "../../workers/worker-id.js";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { applyUrgency } from "../../workers/urgency.js";
+import { applyUrgency, listUrgency, readUrgency } from "../../workers/urgency.js";
 import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
@@ -422,6 +422,11 @@ const psCommand: CommandDef = {
       const left = leftoverWorktrees(dir);
       if (left) out(`worktrees: ${left} finished, not merged; pai worker gc --dry-run`);
       await lowPowerActive(); // warm the cached reading behind the "low power xN" mark
+      const windows = flag(ctx, "all") ? listUrgency() : [readUrgency()].filter((u) => !!u).map((u) => ({ key: "this session", ...u! }));
+      for (const w of windows) {
+        const d = new Date(w.until);
+        out(`urgent: ${w.key} now${w.where === "local" ? ", local" : ""} until ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
+      }
       out(psOutput(dir, flag(ctx, "all"), process.env));
     }),
 };

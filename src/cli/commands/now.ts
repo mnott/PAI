@@ -1,7 +1,7 @@
 /** `pai now`: open, show or clear the operator's urgency window (workers/urgency.ts). */
 
 import { CliError, type CommandDef, type RunContext } from "../define.js";
-import { clearUrgency, DEFAULT_URGENCY_WINDOW_MIN, listUrgency, readUrgencyFor, recordUrgency } from "../../workers/urgency.js";
+import { clearUrgency, DEFAULT_URGENCY_WINDOW_MIN, listUrgency, readUrgency, readUrgencyFor, recordUrgency } from "../../workers/urgency.js";
 import { detectSessionName } from "../../workers/session-name.js";
 import { readWorkersSection } from "../../workers/config.js";
 
@@ -29,11 +29,12 @@ async function resolveSessionKey(session?: string): Promise<string> {
 }
 
 async function setCmd(ctx: RunContext): Promise<number> {
+  if (ctx.opts.clear === true) return clearCmd(ctx);
   if (process.env.PAI_WORKER === "1") {
     console.log("worker session: no window (only the operator's session opens one)");
     return 0;
   }
-  const key = await resolveSessionKey(ctx.args.SESSION as string | undefined);
+  const key = await resolveSessionKey((ctx.opts.session as string | undefined) ?? (ctx.args.SESSION as string | undefined));
   const local = ctx.opts.local === true;
   const raw = ctx.opts.minutes;
   const minutes = raw === undefined ? windowMinutes() : Number(raw);
@@ -62,7 +63,7 @@ function statusCmd(ctx: RunContext): number {
 }
 
 async function clearCmd(ctx: RunContext): Promise<number> {
-  const session = ctx.args.SESSION as string | undefined;
+  const session = (ctx.opts.session as string | undefined) ?? (ctx.args.SESSION as string | undefined);
   if (session?.trim()) {
     const removed = clearUrgency(process.env, session.trim());
     console.log(removed ? `urgency window for ${session.trim()} cleared` : `no urgency window for ${session.trim()}`);
@@ -79,6 +80,12 @@ export const nowCommand: CommandDef = {
   description:
     "The operator's explicit instrumentation for urgency (the `/now` token in a prompt is the same switch). While a window is open, every worker this session starts runs with --now — ahead at the local engine, preempting the other local workers — and with where=local when it was opened with local. Workers already running when it opens are made urgent. `pai worker run --now` and `pai worker priority <id> now` are the per-worker forms. Workers never open a window themselves.",
   examples: ["pai now", "pai now --local --minutes 15", "pai worker run --local -p 'fix the flake'", "pai now --clear"],
+  options: [
+    { name: "session", type: "string", value: "NAME|ID", summary: "Session name or id (default: this session)" },
+    { name: "local", type: "boolean", summary: "Those workers also run where=local" },
+    { name: "minutes", type: "number", value: "N", summary: "Window length in minutes (default 30)" },
+    { name: "clear", type: "boolean", summary: "Close the window instead of opening it" },
+  ],
   run: setCmd,
   seeAlso: ["pai worker ps", "pai worker priority"],
   subcommands: [
