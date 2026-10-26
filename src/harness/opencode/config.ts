@@ -108,6 +108,8 @@ export interface RenderInput {
   commands: CommandSource[];
   bridgePluginUrl: string;
   bridgeHooks: BridgeHook[];
+  /** PostToolUse inbox hook (argv); appended to the tool result as additionalContext. */
+  inboxHook?: string[];
 }
 
 export interface RenderedFragment {
@@ -126,7 +128,7 @@ export function renderOpenCodeConfig(i: RenderInput): RenderedFragment {
       instructions: [i.instructionsPath],
       mcp,
       command,
-      plugin: [[i.bridgePluginUrl, { hooks: i.bridgeHooks }]],
+      plugin: [[i.bridgePluginUrl, { hooks: i.bridgeHooks, ...(i.inboxHook && { inbox: i.inboxHook }) }]],
     },
     envRefs,
     skipped,

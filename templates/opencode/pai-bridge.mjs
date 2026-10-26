@@ -1,12 +1,20 @@
 // pai-bridge.mjs — OpenCode plugin: PAI's Claude Code PreToolUse guards for OpenCode tool calls.
 //
 // Written by `pai harness setup opencode`; options come from the plugin tuple in opencode.json:
-//   { hooks: [{ tools: ["bash"], command: ["node", "/path/to/guard.mjs"] }, ...] }
+//   { hooks: [{ tools: ["bash"], command: ["node", "/path/to/guard.mjs"] }, ...],
+//     inbox: ["node", "/path/to/inbox-inject.mjs"] }
 // Each hook is a PAI Claude Code hook run unchanged: it gets Claude-shaped JSON on stdin
 // (tool_name, tool_input, cwd, session_id) and denies by exit 2 or by
 // hookSpecificOutput.permissionDecision "deny". A deny throws, which OpenCode reports to the
 // model as the tool's error. A hook that cannot run (missing, crashes, times out) allows:
 // the guards must never take the frontend down.
+//
+// `inbox` is the PostToolUse inbox hook (operator messages from Notes/ANSWERS.md
+// and ~/.pai/inbox.md): it runs after every tool call and its
+// hookSpecificOutput.additionalContext is appended to the tool result, so a busy
+// session receives operator text mid-turn — the same injection Claude Code does.
+// The session's own Write/Edit of an inbox file is recorded as seen by the hook
+// itself, so its own writes are never echoed back.
 //
 // The default export is the only export on purpose: OpenCode treats every export of a plugin
 // module as a plugin.
@@ -39,8 +47,18 @@ function verdict(res) {
   return null;
 }
 
+/** The hook's additionalContext, or "" when it injected nothing. Never throws. */
+function injected(res) {
+  try {
+    return JSON.parse(res.stdout || "{}").hookSpecificOutput?.additionalContext || "";
+  } catch {
+    return "";
+  }
+}
+
 async function server(input, options) {
   const hooks = Array.isArray(options?.hooks) ? options.hooks : [];
+  const inbox = Array.isArray(options?.inbox) && options.inbox.length ? options.inbox : null;
   return {
     "tool.execute.before": async (call, output) => {
       for (const h of hooks) {
@@ -56,6 +74,24 @@ async function server(input, options) {
         if (res.error) continue;
         const deny = verdict(res);
         if (deny) throw new Error(deny);
+      }
+    },
+    "tool.execute.after": async (call, output) => {
+      if (!inbox) return;
+      try {
+        const payload = JSON.stringify({
+          session_id: call.sessionID,
+          hook_event_name: "PostToolUse",
+          tool_name: CLAUDE_TOOL[call.tool] ?? call.tool,
+          tool_input: toClaudeInput(call.args ?? output?.args),
+          cwd: input?.directory ?? process.cwd(),
+        });
+        const res = spawnSync(inbox[0], inbox.slice(1), { input: payload, encoding: "utf8", timeout: 10_000 });
+        if (res.error) return;
+        const context = injected(res);
+        if (context && typeof output?.output === "string") output.output += "\n\n" + context;
+      } catch {
+        /* an inbox that cannot run injects nothing — never break the tool call */
       }
     },
   };

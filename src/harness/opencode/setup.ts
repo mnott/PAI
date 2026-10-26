@@ -102,6 +102,12 @@ export function planOpenCodeSetup(i: SetupInput): SetupPlan {
     bridged.push(b);
   }
 
+  // PostToolUse inbox hook (operator messages): runs after every tool call and
+  // appends its additionalContext to the tool result. Absent means no inbox.
+  const inboxFile = join(i.packageRoot, "dist", "hooks", "inbox-inject.mjs");
+  const inboxHook = existsSync(inboxFile) ? [process.execPath, inboxFile] : undefined;
+  if (inboxHook) bridged.push({ hook: "inbox-inject", tools: ["*"] });
+
   const paiDir = join(i.configDir, "pai");
   const instructionsPath = join(paiDir, "AGENTS.md");
   const bridgePath = join(paiDir, "pai-bridge.mjs");
@@ -116,6 +122,7 @@ export function planOpenCodeSetup(i: SetupInput): SetupPlan {
     commands,
     bridgePluginUrl: pathToFileURL(bridgePath).href,
     bridgeHooks: hooks,
+    inboxHook,
   });
   for (const s of rendered.skipped) warnings.push(`MCP server ${s.name} skipped: ${s.why}`);
 

@@ -30,6 +30,20 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/inbox-inject.mjs" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/inbox-inject.mjs" }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
