@@ -249,7 +249,6 @@ export interface RegistryBackend {
   listNamedProjects(opts?: ListNamedProjectsOptions): Promise<
     Array<ProjectWithSessionStats & { name: string | null }>
   >;
-  searchProjects(query: string, limit?: number): Promise<Project[]>;
   countProjects(opts?: { status?: ProjectStatus }): Promise<number>;
   getMostRecentProjectUpdatedAt(): Promise<number | null>;
   countChildProjects(parentId: number): Promise<number>;
