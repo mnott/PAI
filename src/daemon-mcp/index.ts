@@ -1753,6 +1753,8 @@ async function startShim(): Promise<void> {
     [
       "Send one message to a RUNNING worker: it lands on the worker's open stdin",
       "as a user message, mid-run, without breaking its stream.",
+      "A QUEUED worker (waiting for a slot) gets it appended to its stored spec",
+      "and starts with it, keeping its queue position.",
       "",
       "Fails with an explanation when the worker already finished — then use",
       "worker_resume (or `pai worker resume <id> \"text\"`) instead.",
@@ -1767,8 +1769,7 @@ async function startShim(): Promise<void> {
         const { workers } = readWorkersSection();
         const logDir = workersLogDir(workers);
         if (args.goal !== undefined) setWorkerLabel(logDir, args.id, args.goal);
-        await sayToWorker(logDir, args.id, args.text);
-        return workerText(`sent to ${args.id}`);
+        return workerText(`${await sayToWorker(logDir, args.id, args.text)} (${args.id})`);
       } catch (e) {
         return workerError(e);
       }

@@ -353,13 +353,13 @@ See also: `pai worker ps`
 
 ### pai worker say
 
-Send a message to a running worker
+Send a message to a running or queued worker
 
 ```
 pai worker say ID TEXT [options]
 ```
 
-The message goes to the worker's open input, as if you had typed it in its pane. Prints ok.
+A running worker gets the message on its open input, as if you had typed it in its pane; prints ok. A queued worker (waiting for a slot) gets it appended to its stored spec and starts with it, keeping its queue position; prints "queued: appended to spec (starts with it)".
 
 | Argument | Required | Description |
 |---|---|---|
@@ -1891,7 +1891,7 @@ See also: `pai worker providers`
 | `pai worker errors` | Tool errors workers hit, grouped by kind |
 | `pai worker flaky` | Test files that failed in the merge gate's batch and passed alone |
 | `pai worker status-line` | One-line worker summary for a status bar |
-| `pai worker say` | Send a message to a running worker |
+| `pai worker say` | Send a message to a running or queued worker |
 | `pai worker goal` | Leave a goal note on a running worker |
 | `pai worker reroute` | Move a queued or running worker to another provider |
 | `pai worker pause` | Park a worker's next engine request until resume |

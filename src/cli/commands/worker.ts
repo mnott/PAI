@@ -686,8 +686,9 @@ const statusLineCommand: CommandDef = {
 
 const sayCommand: CommandDef = {
   name: "say",
-  summary: "Send a message to a running worker",
-  description: "The message goes to the worker's open input, as if you had typed it in its pane. Prints ok.",
+  summary: "Send a message to a running or queued worker",
+  description:
+    "A running worker gets the message on its open input, as if you had typed it in its pane; prints ok. A queued worker (waiting for a slot) gets it appended to its stored spec and starts with it, keeping its queue position; prints \"queued: appended to spec (starts with it)\".",
   args: [
     { name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" },
     { name: "TEXT", required: true, summary: "The message" },
@@ -700,8 +701,7 @@ const sayCommand: CommandDef = {
       const dir = logDir();
       const goal = str(ctx.opts.goal);
       if (goal !== undefined) setWorkerNote(dir, ctx.args.ID as string, goal);
-      await sayToWorker(dir, ctx.args.ID as string, ctx.args.TEXT as string);
-      out("ok");
+      out(await sayToWorker(dir, ctx.args.ID as string, ctx.args.TEXT as string));
     }),
 };
 

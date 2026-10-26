@@ -11,7 +11,7 @@
  */
 
 import { createServer, connect, type Socket } from "node:net";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, readFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { loadStatus, isLive, setWorkerNote } from "./status.js";
@@ -73,13 +73,37 @@ export function createOperatorServer(
 }
 
 /**
+ * A run parked at the capacity gate has no live session yet: the message goes
+ * into the task copy the start reads (`<id>.prompt`, or the run's own --spec
+ * file), so the worker begins with it. The queue ticket is untouched — the run
+ * keeps its position. Throws when the run kept no copy of its task.
+ */
+export function appendToQueuedSpec(logDir: string, id: string, text: string): string {
+  const status = loadStatus(logDir, id);
+  if (!status) throw new Error(`no worker named "${id}"`);
+  const file = [status.promptFile, status.spec].find((f): f is string => !!f && f !== "-" && existsSync(f));
+  if (!file) throw new Error(`worker ${id} kept no copy of its task (started from stdin, or before prompt copies) — nothing to append to`);
+  const hhmm = new Date().toTimeString().slice(0, 5);
+  appendFileSync(file, `\n\n--- added before start (${hhmm}) ---\n${text}\n`, "utf8");
+  return `queued: appended to spec (starts with it)`;
+}
+
+/**
  * `pai worker say <id> "<text>"`: forward one line to a running worker.
  * Resolves "ok" only once the worker acknowledged delivery; rejects with the reason otherwise.
+ * A queued worker (waiting for a slot) gets the text appended to its stored spec instead.
  */
 export function sayToWorker(logDir: string, id: string, text: string, timeoutMs = 4000): Promise<string> {
   const status = loadStatus(logDir, id);
   if (!status) {
     return Promise.reject(new Error(`no worker named "${id}"`));
+  }
+  if (status.state === "queued") {
+    try {
+      return Promise.resolve(appendToQueuedSpec(logDir, id, text));
+    } catch (e) {
+      return Promise.reject(e as Error);
+    }
   }
   if (!isLive(status)) {
     return Promise.reject(
