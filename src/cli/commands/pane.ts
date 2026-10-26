@@ -7,7 +7,7 @@ import { readWorkersSection } from "../../workers/config.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
 import { paneWaiver } from "../../workers/run/pane-handles.js";
-import { closePaneForWorker, closeSelfPane, inVisiblePane, resolveHostSession } from "../../workers/pane.js";
+import { PaneUnverifiedError, closePaneForWorker, closeSelfPane, inVisiblePane, resolveHostSession } from "../../workers/pane.js";
 import { launchPane, noTerminalReasons } from "../../workers/pane-launch.js";
 import { runPaneExec } from "../../workers/pane-exec.js";
 import { writePaneTitle } from "../../workers/pane-title.js";
@@ -37,7 +37,17 @@ export function paneLauncher(logDir: string, workers: Parameters<typeof paneWaiv
       return null;
     }
     const term = (await resolveHostSession()).term;
-    const pane = await launchPane({ logDir, config: workers, id, kind: "pane", term });
+    let pane;
+    try {
+      pane = await launchPane({ logDir, config: workers, id, kind: "pane", term });
+    } catch (e) {
+      // a pane that opened but cannot be verified ran headless instead of not running
+      if (e instanceof PaneUnverifiedError) {
+        appendLedger(ledger, "PANE-WAIVED", { id, kind: "pane", why: e.message.slice(0, 200) });
+        return null;
+      }
+      throw e;
+    }
     if (!pane) {
       const reason = noTerminalReasons.get(id) ?? "no terminal to open one in";
       appendLedger(ledger, "PANE-REFUSED", { id, kind: "pane", reason });

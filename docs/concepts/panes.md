@@ -21,8 +21,12 @@ other way round.
    The pane is a split of the starting session's tab, never a new window or tab.
 
 With no terminal at all (no tmux, no iTerm2) the command runs directly and the
-ledger records `PANE-NOTERMINAL`. A pane that cannot be opened for another
-reason fails the start (`WORKER-NO-PANE`). `--no-pane` runs one worker directly.
+ledger records `PANE-NOTERMINAL`. A pane that opened but cannot be verified
+(iTerm answered too early, or not at all) is closed again and the run goes
+headless with a one-line note (`PANE-UNVERIFIED`: "pane unavailable, running
+headless") — a transient verification failure never stops a start. A pane that
+cannot be opened for another reason fails the start (`WORKER-NO-PANE`).
+`--no-pane` runs one worker directly.
 
 The pane is found by the tty of the launching process, so it opens next to the
 terminal that really hosts you. `ITERM_SESSION_ID` is only a fallback.

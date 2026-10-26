@@ -5,13 +5,15 @@
  *
  * No terminal at all (no iTerm2 session, no tmux): `launchPane` resolves to null and the caller runs
  * the command directly; the ledger records it as "no terminal" (PANE-NOTERMINAL), not a violation.
- * Any other failure to open the pane rejects: the pane rule wins, the command does not run unseen.
+ * A pane that opened but cannot be verified also resolves to null (the half-created pane is closed;
+ * PANE-UNVERIFIED) — a transient verification failure must not stop a start. Any other failure to
+ * open the pane rejects: the pane rule wins, the command does not run unseen.
  */
 
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import type { WorkersConfig } from "./config.js";
-import { NoTerminalError, closePaneForWorker, headlessAllowed, openVerifiedPane, realPaneOps, type PaneOps, type PaneSeam } from "./pane.js";
+import { NoTerminalError, PaneUnverifiedError, closePaneForWorker, headlessAllowed, openVerifiedPane, realPaneOps, type PaneOps, type PaneSeam } from "./pane.js";
 import { openOwnedPane, type OpenOwnedOptions, type OwnedPane } from "./pane-exec.js";
 
 export interface LaunchOptions {
@@ -57,8 +59,13 @@ export async function launchPane(o: LaunchOptions): Promise<OwnedPane | null> {
     });
   } catch (e) {
     if (e instanceof NoTerminalError) {
-      noTerminalReasons.set(o.id, "no terminal");
-      appendLedger(ledgerPath(o.logDir), "PANE-NOTERMINAL", { id: o.id, kind: o.kind, reason: e.message.slice(0, 200) });
+      const unverified = e instanceof PaneUnverifiedError;
+      noTerminalReasons.set(o.id, unverified ? e.message : "no terminal");
+      appendLedger(
+        ledgerPath(o.logDir),
+        unverified ? "PANE-UNVERIFIED" : "PANE-NOTERMINAL",
+        { id: o.id, kind: o.kind, reason: e.message.slice(0, 200) }
+      );
       return null;
     }
     throw e;
