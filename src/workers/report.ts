@@ -41,6 +41,7 @@ function ag2ReportBlock(): string[] {
     "z= the answer/note, one line, always present. x= what is left (omit if nothing).",
     "y= one line why when r is not +.",
     "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",
+    "p= is the command exactly as you ran it; a result may follow after →, e.g. p=npx vitest run src/foo → 12 passed",
     "Example:",
     "R",
     "i=count-audit-ts",
@@ -448,7 +449,8 @@ export function checkProof(
   let rewritten = false;
   let proof: string | undefined;
   if (parsed?.kind === "R" && parsed.fields.r === "+" && parsed.fields.p) {
-    const claimed = parsed.fields.p;
+    // a result may trail the command (`cmd → 12 passed`); only the command part is matched
+    const claimed = parsed.fields.p.split(/ (?:→|->|=>|⇒|#) /)[0].trim();
     // a compound claim (`a; b`, `a && b`) stands when every part ran, in order or not, in some passing call
     const parts = claimed.split(/;|&&/).map(normaliseCommand).filter(Boolean);
     const match = (rs: BashRun[], unmasked: boolean): boolean => {
