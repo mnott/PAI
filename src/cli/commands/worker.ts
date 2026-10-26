@@ -326,7 +326,7 @@ const resumeCommand: CommandDef = {
     { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
   ],
-  examples: ["pai worker resume w-20260101-abc","pai worker resume w-20260101-abc 'Also add a test'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
+  examples: ["pai worker resume w-20260101-abc","pai worker resume w-20260101-abc 'Also cover the edge case'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
   seeAlso: ["pai worker ps", "pai worker run"],
   run: (ctx) =>
     guard("pai worker ps   (lists worker ids)", async () => {

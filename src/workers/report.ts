@@ -38,6 +38,8 @@ function ag2ReportBlock(proofNote = false): string[] {
     "Final message: one AG2 `R` message only — no prose, no code fence, no markdown.",
     "R requires i (id), r (+ - ~ ? !), t (checks, Name+ Name-; may name a typecheck or probe), c (files you modified or created, never files you",
     "only read; `path summary`; c=none when none). r=+ needs G=+ and p, every t entry +.",
+    "t= is proof you ran (typecheck, probe, live run, before/after), not new committed test files: a new test is",
+    "one-time (.pai-scratch/ only) unless promoted in the project's tests/KEPT.md.",
     "z= the answer/note, one line, always present. x= what is left (omit if nothing).",
     "y= one line why when r is not +.",
     "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",

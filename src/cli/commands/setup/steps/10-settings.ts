@@ -28,6 +28,9 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     // already exist. Rate-limited internally; safe on high-frequency events.
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
     { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/security-validator.mjs" },
+    // Test governance for every session: a new test file is one-time (.pai-scratch/
+    // only) unless promoted in tests/KEPT.md. Bash coverage rides security-validator.
+    { hookType: "PreToolUse", matcher: "Write|Edit|MultiEdit", command: "${ADAPTER_DIR}/Hooks/test-file-governance.mjs" },
     // Every tool: the loop guard inside counts Read/Grep/Glob repeats too.
     { hookType: "PreToolUse", matcher: "*", oldMatchers: WORKER_GUARD_OLD_MATCHERS, command: "${ADAPTER_DIR}/Hooks/worker-guard.mjs" },
     { hookType: "PreToolUse", matcher: "Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep", command: "${ADAPTER_DIR}/Hooks/worker-path-repair.mjs" },
