@@ -788,7 +788,7 @@ export function routerHandler(
             ures.on("end", () => {
               if (kept > GUARD_MAX_BYTES) return;
               const ct = String(ures.headers["content-type"] ?? "");
-              setImmediate(() => monitorReply(Buffer.concat(copy).toString("utf8"), ct, target.model, { log, ...options?.guard?.deps }, prov));
+              setImmediate(() => monitorReply(Buffer.concat(copy).toString("utf8"), ct, target.model, { log, ...options?.guard?.deps }, prov, safeBody(up.body)));
             });
           }
           ures.on("end", () => {
