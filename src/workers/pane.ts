@@ -1677,12 +1677,24 @@ function followRunsOn(tty: string, wid: string): boolean {
     .some((ln) => ln.trim().startsWith(`${short} `) && new RegExp(`(?:worker follow|pane exec) ${wid}\\b`).test(ln));
 }
 
+/** True when an osascript error means the object was simply not resolvable yet:
+ * -1728 ("Can't get object") right after a split is transient — the new session
+ * exists but is not yet enumerable, and the same call succeeds seconds later
+ * (observed 2026-10-26: two `worker run` starts died on it, the identical
+ * command 10 s later opened its pane fine). */
+function transientOsaError(stderr: string): boolean {
+  return stderr.includes("(-1728)");
+}
+
 /**
  * Check the iTerm pane of a worker. Resolves with a line naming window, tab and size,
  * followed by a mark for each visibility shortfall (NOT SELECTED, MINIMISED, HIDDEN,
  * OFF SCREEN); rejects only when the pane does not exist or does not run the
  * worker: gone, other window or tab, or its follow command not running
- * (polled for up to ~7 s while the new session starts it).
+ * (polled for up to ~7 s while the new session starts it). An osascript that
+ * errors instead of answering JSON is retried with a short backoff while it
+ * looks transient (-1728, the new session not yet resolvable); a hard error is
+ * immediate.
  */
 export async function verifyPane(
   hostUid: string,
@@ -1701,7 +1713,14 @@ export async function verifyPane(
     try {
       r = JSON.parse(p.stdout.trim()) as Record<string, unknown>;
     } catch {
-      throw new Error(`pane verification failed: osascript said ${(p.stderr || p.stdout || "nothing").trim().slice(0, 200)}`);
+      const said = (p.stderr || p.stdout || "nothing").trim().slice(0, 200);
+      // a new session is not resolvable for a moment after the split: retry a
+      // transient osascript error (-1728) with a short backoff before giving up
+      if (transientOsaError(p.stderr) && i < tries - 1) {
+        await new Promise((res) => setTimeout(res, pollMs));
+        continue;
+      }
+      throw new Error(`pane verification failed: osascript said ${said}`);
     }
     if (typeof r.fail === "string") throw new Error(`pane verification failed: ${r.fail}`);
     const rows = Number(r.rows);
@@ -1723,6 +1742,19 @@ export async function verifyPane(
 /** No iTerm2 or tmux reachable: the caller runs its command directly ("no terminal", not a violation). */
 export class NoTerminalError extends Error {}
 
+/**
+ * The pane opened but cannot be verified: its half-created session is closed
+ * and the run goes headless instead of not starting at all (observed
+ * 2026-10-26: a transient osascript -1728 during verification killed a start
+ * that the identical command succeeded with 10 s later). Not a violation: the
+ * ledger records PANE-UNVERIFIED with this reason.
+ */
+export class PaneUnverifiedError extends NoTerminalError {
+  constructor(message: string) {
+    super(`pane unavailable, running headless: ${message}`);
+  }
+}
+
 /** Test seams of openVerifiedPane: the real iTerm-touching steps. */
 export interface PaneSeam {
   /** The pane's command (default: `worker follow <wid>`); the launcher passes `pane exec <wid>`. */
@@ -1734,10 +1766,12 @@ export interface PaneSeam {
 }
 
 /**
- * Open the worker's pane and prove the operator can see it, or throw the
- * reason (the pane just opened is closed again). Needs a live iTerm2 host
- * session that ITERM_SESSION_ID itself names, or tmux; a stale or invented
- * id is refused, whatever the process-tree lookup would find.
+ * Open the worker's pane and prove the operator can see it. A pane that cannot
+ * be verified is closed again and throws PaneUnverifiedError (a headless run,
+ * not a refused start); anything else — a vanished host, iTerm not running —
+ * throws as before and refuses the start. Needs a live iTerm2 host session
+ * that ITERM_SESSION_ID itself names, or tmux; a stale or invented id is
+ * refused, whatever the process-tree lookup would find.
  */
 export async function openVerifiedPane(
   logDir: string,
@@ -1788,7 +1822,11 @@ export async function openVerifiedPane(
     }
     return `${where} (iTerm session ${r.session})`;
   } catch (e) {
+    // the half-created pane goes, whatever verification said: the registry entry
+    // openPaneForWorker just saved is what names it, and ops.closeIterm guards it
     await closePaneForWorker(logDir, wid, ops).catch(() => false);
+    // a verification failure is no longer a dead start: the caller runs headless
+    if (e instanceof Error && e.message.startsWith("pane verification failed:")) throw new PaneUnverifiedError(e.message);
     throw e;
   }
 }
