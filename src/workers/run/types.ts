@@ -58,6 +58,10 @@ export interface RunOptions {
   worktreeFlag?: boolean;
   /** Resume: the id whose worktree this run takes over (see adoptTree). */
   resumeOf?: string;
+  /** --harness value as typed (uhp:<id>); runWorker resolves it into providerFlag + harnessId. */
+  harnessFlag?: string;
+  /** The UHP harness id (resolved from --harness or carried over on resume). */
+  harnessId?: string;
   /** --max-minutes: stop the run after N minutes (0 = no limit; default workers.defaultMaxMinutes). */
   maxMinutes?: number;
   /** --deadline HH:MM (local): stop the run then; exclusive with maxMinutes. */
