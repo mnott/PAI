@@ -190,9 +190,42 @@ const API_AUTH_EVIDENCE = new RegExp(
 /** A 5xx status in a request context (returned/status/HTTP/error or its reason phrase). */
 const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\d.]+)?|error|code)[ :=]+5\d\d\b|\b5\d\d\s+(?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)/i;
 
+/**
+ * A Bash failure whose last statement runs a file of the worker's own scratch
+ * dir ($TMPDIR/pai-scratch/<worker id>/ or <worktree>/.pai-scratch/) through an
+ * interpreter: the worker iterating on its own probe, not a fault.
+ */
+const SCRATCH_RUN = /^(?:node|tsx|bun|sh|bash|npx\s+tsx)\s+(?:-\S+\s+)*["']?(\S*pai-scratch\/\S*)/;
+export function isScratchProbe(r: ToolErrorRecord): boolean {
+  if (r.tool !== "Bash" || !r.input) return false;
+  const stmt = dropHeredocBodies(r.input).split(/&&|;|\n/).map((x) => x.trim()).filter(Boolean).pop();
+  const path = stmt?.split(/(?<!\|)\|(?!\|)/)[0].trim().match(SCRATCH_RUN)?.[1];
+  if (!path) return false;
+  if (/(^|\/)\.pai-scratch\//.test(path)) return true;
+  return path.includes(`pai-scratch/${r.worker}/`);
+}
+
+/** Identity of a repeated probe failure: same command, same first error line. */
+const probeKey = (r: ToolErrorRecord): string => `${r.input}\n${r.raw.split("\n").find((l) => l.trim() && !/^Exit code/i.test(l.trim())) ?? r.raw.split("\n")[0]}`;
+export const PROBE_LOOP_AT = 5;
+/** Records that complete PROBE_LOOP_AT identical scratch failures in a row of their worker: the loop. */
+const probeLoops = new WeakSet<ToolErrorRecord>();
+function markProbeLoops(records: readonly ToolErrorRecord[]): void {
+  const run = new Map<string, { key: string; n: number }>();
+  for (const r of records) {
+    if (!isScratchProbe(r)) { run.delete(r.worker); continue; }
+    const key = probeKey(r), cur = run.get(r.worker);
+    const next = cur && cur.key === key ? { key, n: cur.n + 1 } : { key, n: 1 };
+    run.set(r.worker, next);
+    if (next.n === PROBE_LOOP_AT) probeLoops.add(r);
+  }
+}
+
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | ((r: ToolErrorRecord, isLocal: (provider: string) => boolean) => Classification) }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: (r) => /Permission to use \S+ with command .* has been denied/s.test(r.raw), c: { cls: "model", hint: "command refused by the permission layer", loopAt: 3 } },
+  { test: (r) => probeLoops.has(r), c: { cls: "model", hint: "probe loop: the same scratch probe failed 5 times unchanged", loopAt: Infinity } },
+  { test: isScratchProbe, c: { cls: "benign", hint: "worker's own scratch probe failing while iterating", loopAt: Infinity } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
   { test: (r) => r.tool === "Bash" && /\b(?:ls|cat|tail|head|cd|stat|wc): .*No such file or directory/i.test(r.raw), c: { cls: "model", hint: "Bash on a path that does not exist (model error)", loopAt: 5 } },
   // The sleep-poll gate is a model error and must win over the generic guard rule below.
@@ -482,6 +515,7 @@ export function detectRunningWorkerErrors(
   const sessions = new Map(running.map((r) => [r.id, r.session] as const));
   const byWorker = new Map<string, Map<string, ToolErrorRecord[]>>();
   const benign = new Map<string, number>();
+  markProbeLoops(records);
   for (const r of records) {
     if (!sessions.has(r.worker)) continue;
     if (harnessOnly && !pushable(classifyToolError(r).cls)) {
