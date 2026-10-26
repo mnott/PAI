@@ -13,6 +13,7 @@ import { planCommand } from "./plan.js";
 import { queueCommand } from "./queue.js";
 import { mcpCommand } from "./mcp.js";
 import { notifyCommand } from "./notify.js";
+import { nowCommand } from "./now.js";
 import { projectAliasCommand, projectCommand } from "./project.js";
 import { registryCommand } from "./projects-registry.js";
 import { taskAliasCommand, taskCommand } from "./task.js";
@@ -20,7 +21,7 @@ import { topicCommand } from "./topic.js";
 import { uhpCommand } from "./uhp.js";
 
 export const BATCH_C: Partial<Record<GroupId, CommandDef[]>> = {
-  workers: [planCommand, queueCommand, uhpCommand, buildCommand, paneCommand],
+  workers: [planCommand, queueCommand, nowCommand, uhpCommand, buildCommand, paneCommand],
   memory: [projectCommand, projectAliasCommand, registryCommand, taskCommand, taskAliasCommand, issueCommand, identityCommand, topicCommand],
   daemon: [daemonCommand, configCommand, homeCommand, mcpCommand, notifyCommand, dbCommand],
 };
