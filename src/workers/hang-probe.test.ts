@@ -139,11 +139,12 @@ describe("worker-guard hook", () => {
       env: { ...process.env, PAI_WORKER_LOOP_DIR: tmp, PAI_WORKER_ID: "w-probe", ...env },
       encoding: "utf8",
     }).stdout;
-  it("routes a worker's test command through the probe; leaves other commands and interactive sessions alone", () => {
+  it("routes a worker's test command through the probe; leaves other commands alone", () => {
     const out = JSON.parse(call("timeout 120 npx vitest run a.test.ts", { PAI_WORKER: "1" }));
     expect(out.hookSpecificOutput.updatedInput.command).toBe(wrapTestCommand("timeout 120 npx vitest run a.test.ts"));
     expect(call("ls src", { PAI_WORKER: "1" })).toBe("");
-    expect(call("npx vitest run a.test.ts", { PAI_WORKER: "" })).toBe("");
+    // the main session's test runs take the machine-wide test slot too
+    expect(JSON.parse(call("npx vitest run a.test.ts", { PAI_WORKER: "" })).hookSpecificOutput.updatedInput.command).toBe(wrapTestCommand("npx vitest run a.test.ts"));
   }, 30_000);
 });
 

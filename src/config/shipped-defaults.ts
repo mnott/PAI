@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Document, parseDocument, isMap, isScalar, type Node } from "yaml";
 import { readDualFormatConfigRaw } from "./main-config.js";
+import { cachedParse } from "./parse-cache.js";
 
 export class ShippedDefaultsError extends Error {}
 
@@ -110,6 +111,10 @@ export function shippedWorkersDefaultsPath(): string {
 /** Parse a YAML mapping file; missing or empty is `{}`. */
 function readYamlMapping(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
+  return cachedParse(path, () => parseYamlMapping(path), "mapping");
+}
+
+function parseYamlMapping(path: string): Record<string, unknown> {
   let text: string;
   try {
     text = readFileSync(path, "utf8");

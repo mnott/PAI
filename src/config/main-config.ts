@@ -16,6 +16,7 @@ import { existsSync, readFileSync, renameSync, chmodSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { Document, parseDocument } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "./json-store.js";
+import { cachedParse } from "./parse-cache.js";
 import { commitHomeChange } from "./home-git.js";
 import { writeYamlFileAtomic, syncPlainObjectIntoYamlDoc, deepEqualJson, setYamlKeyComment } from "./yaml-store.js";
 
@@ -54,8 +55,7 @@ function parseYamlConfig(yamlPath: string): Document {
  */
 export function readDualFormatConfigRaw(jsonPath: string, yamlPath: string = yamlSiblingPath(jsonPath)): Record<string, unknown> {
   if (existsSync(yamlPath)) {
-    const doc = parseYamlConfig(yamlPath);
-    const parsed = doc.toJS();
+    const parsed = cachedParse(yamlPath, () => parseYamlConfig(yamlPath).toJS(), "main");
     if (parsed === null || parsed === undefined) return {};
     if (typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new MainConfigError(`${yamlPath}: top level must be a mapping`);
