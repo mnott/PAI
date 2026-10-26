@@ -61,3 +61,37 @@ describe("isSharedCheckout", () => {
     expect(isSharedCheckout({ cwd: repo(), logDir: null })).toBe(true);
   });
 });
+
+describe("isSharedCheckout: bench trees dir", () => {
+  const cloneUnder = (bench: string, name: string): string => {
+    const origin = repo();
+    const dir = join(bench, name);
+    execFileSync("git", ["clone", "-q", origin, dir], { stdio: "ignore" });
+    return realpathSync(dir);
+  };
+
+  it("a standalone clone with a remote under the bench dir is private; the same clone elsewhere is shared", () => {
+    const bench = tmp();
+    const logs = tmp();
+    const clone = cloneUnder(bench, "key-task1");
+    status(logs, "me", clone);
+    expect(isSharedCheckout({ cwd: clone, selfId: "me", logDir: logs, benchTreesDir: bench })).toBe(false);
+    expect(isSharedCheckout({ cwd: clone, selfId: "me", logDir: logs, benchTreesDir: tmp() })).toBe(true);
+    expect(isSharedCheckout({ cwd: clone, selfId: "me", logDir: logs })).toBe(true);
+  });
+
+  it("the main checkout is still shared when a bench dir is configured", () => {
+    const bench = tmp();
+    const logs = tmp();
+    const main = cloneUnder(tmp(), "proj");
+    expect(isSharedCheckout({ cwd: main, selfId: "me", logDir: logs, benchTreesDir: bench })).toBe(true);
+  });
+
+  it("a bench clone another worker registered as its tree is shared", () => {
+    const bench = tmp();
+    const logs = tmp();
+    const clone = cloneUnder(bench, "key-task2");
+    status(logs, "other", clone, "done");
+    expect(isSharedCheckout({ cwd: clone, selfId: "me", logDir: logs, benchTreesDir: bench })).toBe(true);
+  });
+});

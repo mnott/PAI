@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { renderDecision } from "../lib/render-decision.js";
 import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
+import { expandHome } from "../../../daemon/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { evaluate } from "../../../guard/evaluate.js";
@@ -54,12 +55,15 @@ function buildContext(cwd: string): WorkerGuardContext {
     mainCheckout: inWorktree && common ? dirname(common) : null,
     sharedCheckout: () => {
       let logDir: string | null = null;
+      let benchTreesDir: string | null = null;
       try {
-        logDir = workersLogDir(readWorkersSection().workers);
+        const w = readWorkersSection().workers;
+        logDir = workersLogDir(w);
+        benchTreesDir = expandHome(w.benchTreesDir);
       } catch {
         // unresolvable: isSharedCheckout fails closed
       }
-      return isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir });
+      return isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir, benchTreesDir });
     },
     testScript: () => {
       try {

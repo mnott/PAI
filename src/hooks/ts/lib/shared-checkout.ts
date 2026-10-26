@@ -5,7 +5,9 @@
  *
  * Shared when any of: it has linked worktrees (`git worktree list` > 1), it
  * has a remote (the operator's checkout of a project; scratch clones have
- * none), or another live worker's status has the same realpath cwd.
+ * none), or another live worker's status has the same realpath cwd. A
+ * standalone clone under the bench trees dir (workers.benchTreesDir) has a
+ * remote but counts as private unless a worker's status names that tree.
  * Fails closed: anything unreadable counts as shared.
  */
 
@@ -35,21 +37,27 @@ export interface SharedCheckoutProbe {
   selfId?: string | null;
   /** Workers status directory; null when unresolvable. */
   logDir: string | null;
+  /** workers.benchTreesDir (expanded): a standalone clone under it that no worker registered is throwaway, not shared. */
+  benchTreesDir?: string | null;
 }
+
+const under = (p: string, dir: string): boolean => p.startsWith(real(dir).replace(/\/+$/, "") + "/");
 
 export function isSharedCheckout(p: SharedCheckoutProbe): boolean {
   const worktrees = git(p.cwd, ["worktree", "list", "--porcelain"]);
   if (worktrees === null) return true;
   if (worktrees.split("\n").filter((l) => l.startsWith("worktree ")).length > 1) return true;
-  const remotes = git(p.cwd, ["remote"]);
-  if (remotes === null || remotes !== "") return true;
-  if (!p.logDir) return true;
   const top = real(git(p.cwd, ["rev-parse", "--show-toplevel"]) ?? p.cwd);
+  const bench = !!p.benchTreesDir && under(top, p.benchTreesDir);
+  const remotes = git(p.cwd, ["remote"]);
+  if (remotes === null || (remotes !== "" && !bench)) return true;
+  if (!p.logDir) return true;
   let statuses: WorkerStatus[];
   try {
     statuses = loadStatuses(p.logDir);
   } catch {
     return true;
   }
-  return statuses.some((s) => s.id !== p.selfId && isLive(s) && real(s.cwd) === top);
+  // a bench clone is private unless some worker registered that tree; any other checkout only while a live worker works there
+  return statuses.some((s) => s.id !== p.selfId && (bench || isLive(s)) && real(s.cwd) === top);
 }

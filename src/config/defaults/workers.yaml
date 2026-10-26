@@ -184,6 +184,10 @@ workers:
     # A denied re-run of a test/build command gets the last N lines of its
     # previous output (within echoChars), where failures and summaries are.
     echoRunnerLines: 40
+  # Throwaway clones made by bench/realset.sh live here; a standalone clone
+  # under this dir (not registered as a worker's tree) is not a shared
+  # checkout, so the worker git guard lets it stash/reset.
+  benchTreesDir: ~/.cache/pai/realtask-trees
   # Runs strip browser tools unless --browser is passed.
   noBrowserByDefault: false
   # Hourly gc archives finished workers' worktrees older than this many hours.

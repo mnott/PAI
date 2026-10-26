@@ -608,6 +608,8 @@ export interface WorkersConfig {
   escalate: EscalateConfig;
   /** Loop guard echo size (workers.loopGuard); see hooks/ts/lib/loop-guard.ts. */
   loopGuard: LoopGuardConfig;
+  /** Throwaway bench clones live under this dir (workers.benchTreesDir, ~ expanded); a standalone clone there is not a shared checkout. */
+  benchTreesDir: string;
   /** Continuations of a run whose final text is an unparsed tool call (workers.unparsedCallContinuations; 0 disables). */
   unparsedCallContinuations: number;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
@@ -735,6 +737,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       backoffMinutes: num(localIdle.backoffMinutes, 10),
     },
     escalate,
+    benchTreesDir: typeof w.benchTreesDir === "string" ? w.benchTreesDir : "~/.cache/pai/realtask-trees",
     loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000), echoRunnerLines: num(loopGuard.echoRunnerLines, 40) },
     unparsedCallContinuations: num(w.unparsedCallContinuations, 1),
     noBrowserByDefault: bool(w.noBrowserByDefault, false),
@@ -1488,6 +1491,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       loopGuard[k] = t[k] as number;
     }
   }
+  if (w.benchTreesDir !== undefined && (typeof w.benchTreesDir !== "string" || !w.benchTreesDir)) bad(".benchTreesDir", "must be a non-empty path");
   if (w.unparsedCallContinuations !== undefined && (typeof w.unparsedCallContinuations !== "number" || !Number.isInteger(w.unparsedCallContinuations) || w.unparsedCallContinuations < 0)) {
     bad(".unparsedCallContinuations", "must be a non-negative integer");
   }
@@ -1579,6 +1583,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
     loopGuard,
+    benchTreesDir: (w.benchTreesDir as string | undefined) ?? d.benchTreesDir,
     unparsedCallContinuations: (w.unparsedCallContinuations as number | undefined) ?? d.unparsedCallContinuations,
     noBrowserByDefault,
     gcOlderThanHours,
@@ -1747,6 +1752,7 @@ export function writeWorkersSection(
         localIdle: workers.localIdle,
         escalate: workers.escalate,
         loopGuard: workers.loopGuard,
+        benchTreesDir: workers.benchTreesDir,
         unparsedCallContinuations: workers.unparsedCallContinuations,
         tiers: workers.tiers,
         noBrowserByDefault: workers.noBrowserByDefault,

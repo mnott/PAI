@@ -26,6 +26,7 @@ import { maskSecrets } from '../lib/loop-guard.js';
 import { loadRules, projectRuleDirs, allRuleDirs } from '../lib/rules/load.js';
 import { evaluate } from '../../../guard/evaluate.js';
 import { readWorkersSection } from '../../../workers/config.js';
+import { expandHome } from '../../../daemon/config.js';
 import { workersLogDir } from '../../../workers/paths.js';
 import { worktreesDir } from '../../../workers/worktree.js';
 
@@ -58,12 +59,15 @@ interface HookInput {
  */
 function privateClone(cwd: string): boolean {
   let logDir: string | null = null;
+  let benchTreesDir: string | null = null;
   try {
-    logDir = workersLogDir(readWorkersSection().workers);
+    const w = readWorkersSection().workers;
+    logDir = workersLogDir(w);
+    benchTreesDir = expandHome(w.benchTreesDir);
   } catch {
     // unresolvable: isSharedCheckout fails closed
   }
-  return !isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir });
+  return !isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir, benchTreesDir });
 }
 
 function resolveWorktreesRoot(): string | null {
