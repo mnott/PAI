@@ -96,13 +96,14 @@ import {
   updateProvider,
   useProvider,
 } from "../workers/providers.js";
-import { testProvider, runWorker } from "../workers/run.js";
+import { testProvider } from "../workers/run.js";
+import { startDetachedWorker } from "../workers/reroute.js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { probeLoopback } from "../workers/local-provider.js";
-import { applyUrgency, readUrgency } from "../workers/urgency.js";
 import { resolveTarget, withTarget } from "../workers/target.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../workers/fallback.js";
-import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
@@ -1433,69 +1434,31 @@ async function startShim(): Promise<void> {
         } catch (e) {
           return workerError(e);
         }
-        const claudeArgs = [
-          "-p", promptText,
-          ...(args.allowed_tools ? ["--allowedTools", args.allowed_tools] : []),
-        ];
-        // the id resolves the moment the worker (or chain) exists; config
-        // errors surface through the same channel as an empty id
-        let startedIdResolve!: (id: string) => void;
-        let startupFailure: unknown = null;
-        const idArrived = new Promise<string>((resolve) => {
-          startedIdResolve = resolve;
-        });
-        // no where/now arguments here: the operator's urgency window (urgency.ts) is the only way to ask for them
-        const urgent = readUrgency() ? await resolveTarget(applyUrgency({}, false)) : undefined;
-        const urgentRun = {
-          ...(urgent?.provider ? { providerFlag: urgent.provider } : {}),
-          ...(urgent?.model ? { modelFlag: urgent.model } : {}),
-          ...(urgent?.priority ? { priority: urgent.priority } : {}),
-        };
-        const background = async (): Promise<number> => {
-          if (args.chain) {
-            return runChain({
-              stages: args.chain.split(","),
-              className: args.class,
-              label: args.label,
-              ...(args.no_pool ? { noPool: true } : {}),
-              ...(args.priority ? { queuePriority: args.priority } : {}),
-              mcpFlag: args.mcp,
-              specPath,
-              brief: promptText,
-              claudeArgs,
-              ...(args.cwd ? { cwd: args.cwd } : {}),
-              onChainStart: (id) => startedIdResolve(id),
-              quiet: true,
-            });
-          }
-          return runWorker({
-            ...urgentRun,
-            className: args.class,
-            capabilityFlag: args.capability,
-            label: args.label,
-            ...(args.no_pool ? { noPool: true } : {}),
-            ...(args.priority ? { queuePriority: args.priority } : {}),
-            mcpFlag: args.mcp,
-            specPath,
-            claudeArgs,
-            ...(args.cwd ? { cwd: args.cwd } : {}),
-            onWorkerStart: (wid) => startedIdResolve(wid),
-            quiet: true,
-          });
-        };
-        background().catch((e) => {
-          startupFailure = e;
-          startedIdResolve("");
-        });
-        const id = await Promise.race([
-          idArrived,
-          new Promise<string>((_, reject) =>
-            setTimeout(() => reject(new Error("worker did not start within 15s")), 15_000)
-          ),
-        ]);
-        if (!id) {
-          return workerError(startupFailure ?? new Error("worker failed to start"));
+        // the operator's urgency window (urgency.ts) is applied by `pai worker run` itself, from the inherited session env
+        const logDir = workersLogDir(readWorkersSection().workers);
+        let spec = specPath;
+        if (!spec) {
+          spec = join(logDir, "runs", `prompt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+          mkdirSync(join(logDir, "runs"), { recursive: true });
+          writeFileSync(spec, promptText, { mode: 0o600 });
         }
+        const id = await startDetachedWorker(
+          logDir,
+          [
+            "run",
+            "--spec", spec,
+            "--label", args.label,
+            ...(args.chain ? ["--chain", args.chain] : []),
+            ...(args.class ? ["--class", args.class] : []),
+            ...(args.capability ? ["--capability", args.capability] : []),
+            ...(args.no_pool ? ["--no-pool"] : []),
+            ...(args.priority ? ["--priority", args.priority] : []),
+            ...(args.mcp ? ["--mcp", args.mcp] : []),
+            ...(args.cwd ? ["--cwd", args.cwd] : []),
+            ...(args.allowed_tools ? ["--allowedTools", args.allowed_tools] : []),
+          ],
+          { cwd }
+        );
         return workerText(
           `${id} started${args.chain ? ` (chain: ${args.chain})` : ""} — check on it with worker_ps, worker_replay, worker_say`
         );
@@ -1905,19 +1868,9 @@ async function startShim(): Promise<void> {
             )
           );
         }
-        let newId = "";
-        const rc = await runWorker({
-          providerFlag: old.provider,
-          modelFlag: old.model,
-          label: `↩ ${old.label}`,
-          claudeArgs: ["--resume", old.claudeSession, "-p", text],
-          resumeOf: args.id,
-          onWorkerStart: (wid) => {
-            newId = wid;
-          },
-        });
+        const newId = await startDetachedWorker(logDir, ["resume", args.id, text, "--label", `↩ ${old.label}`]);
         return workerText(
-          `resumed ${args.id} as ${newId || "(unknown id)"} — rc=${rc}\ncheck on it with worker_ps / worker_replay`
+          `resumed ${args.id} as ${newId} — running\ncheck on it with worker_ps / worker_replay`
         );
       } catch (e) {
         return workerError(e);
