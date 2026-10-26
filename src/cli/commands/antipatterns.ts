@@ -53,14 +53,14 @@ export const antipatternsCommand: CommandDef = {
         "Per pattern: firings, last fired, firings per model, actions, outcome mix, false-positive rate (fp/(tp+fp) over labelled firings), override rate. " +
         "Flags: false-positive suspect (a deny or stop followed by a successful run, except in the paths category where that is the rule working, or a monitor hit with no bad outcome), model-quirk (over 90% of at least 5 firings on one model), " +
         "retire candidate (no firing in 30 days, or false-positive rate over 50% across at least 10 labelled firings).",
-      options: [{ name: "since", type: "string", value: "AGE", summary: "Only firings newer than this, e.g. 12h, 7d, 2w" }, { name: "model", type: "string", value: "ID", summary: "Only firings on this model" }, JSON_OPT],
-      examples: ["pai antipatterns stats --since 7d", "pai antipatterns stats --model glm-5"],
+      options: [{ name: "since", type: "string", value: "AGE", summary: "Only firings newer than this, e.g. 12h, 7d, 2w" }, { name: "model", type: "string", value: "ID", summary: "Only firings on this model" }, { name: "source", type: "string", value: "hook|proxy", summary: "Only firings decided by the hooks or by the model-API proxy" }, JSON_OPT],
+      examples: ["pai antipatterns stats --since 7d", "pai antipatterns stats --model glm-5", "pai antipatterns stats --source proxy"],
       run: (ctx) => {
-        const rows = wrap(() => stats({ sinceMs: ctx.opts.since ? parseSince(String(ctx.opts.since)) : undefined, model: ctx.opts.model as string | undefined }));
+        const rows = wrap(() => stats({ sinceMs: ctx.opts.since ? parseSince(String(ctx.opts.since)) : undefined, model: ctx.opts.model as string | undefined, source: ctx.opts.source as "hook" | "proxy" | undefined }));
         return show(ctx, rows, () =>
           renderTable(
-            ["id", "n", "last fired", "models", "actions", "outcomes", "fp", "override", "flags"],
-            rows.map((r) => [r.id, String(r.count), r.lastFired?.slice(0, 16) ?? "never", mix(r.byModel), mix(r.actions), mix(r.outcomes), pct(r.fpRate), pct(r.overrideRate), [...(r.falsePositiveSuspect ? ["false-positive suspect"] : []), ...r.flags].join(", ")]),
+            ["id", "n", "last fired", "src", "models", "actions", "outcomes", "fp", "override", "flags"],
+            rows.map((r) => [r.id, String(r.count), r.lastFired?.slice(0, 16) ?? "never", mix(r.bySource), mix(r.byModel), mix(r.actions), mix(r.outcomes), pct(r.fpRate), pct(r.overrideRate), [...(r.falsePositiveSuspect ? ["false-positive suspect"] : []), ...r.flags].join(", ")]),
           ),
         );
       },

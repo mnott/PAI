@@ -42,6 +42,8 @@ export interface Firing {
   inputHash: string;
   excerpt: string;
   disposition: Disposition;
+  /** Where the decision ran: a Claude Code hook / worker runner (default, absent in old lines) or the model-API proxy. */
+  source?: "hook" | "proxy";
 }
 
 export interface OutcomeLine {
@@ -129,6 +131,7 @@ export interface FiringInput {
   sessionId?: string;
   env?: NodeJS.ProcessEnv;
   disposition?: Disposition;
+  source?: "hook" | "proxy";
 }
 
 /** Record one firing. Returns its ts (the key outcomes and labels refer to), or null when writing failed. Never throws. */
@@ -148,6 +151,7 @@ export function recordFiring(f: FiringInput): string | null {
       ...(env.PAI_WORKER_ID ? { workerId: env.PAI_WORKER_ID } : {}),
       ...(f.sessionId ? { sessionId: f.sessionId } : {}),
       project: basename(f.cwd ?? process.cwd()),
+      source: f.source ?? "hook",
       inputHash: hashOf(f.input),
       excerpt: excerptOf(f.input),
       // an operator who allowed what the guard would deny (PAI_ALLOW_* in the environment) marks the firing a false positive
