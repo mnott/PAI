@@ -29,7 +29,7 @@ else
 fi
 cat > "$d/spec.txt" <<SPEC
 Solve every task in tasks.jsonl (one JSON object per line: $fields). For task i, $what.
-$rules Write all files in out/ relative to the current directory, one file per task id (out/ holds only answer files), and do every task. Finish with a one-line report.
+$rules Write all files in out/ relative to the current directory, one file per task id (out/ holds only answer files; a __pycache__ that Python creates there on import is fine, leave it), and do every task. Finish with a one-line report.
 SPEC
 margs=(); [ "$model" != - ] && margs=(--model "$model")
 t0=$(date +%s)
