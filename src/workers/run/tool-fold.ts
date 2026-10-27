@@ -51,6 +51,7 @@ export function createToolFold(o: ToolFoldOpts): ToolFold {
           text,
           input: use?.input,
           granted: o.granted,
+          cwd: o.cwd,
         });
         if (use?.name === "Edit") {
           const hint = editHintFor(use.input, text, o.cwd);

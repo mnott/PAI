@@ -77,16 +77,12 @@ import {
 import { parseWaitOn, waitingLine } from "./waiting.js";
 import { denialLines } from "./denials.js";
 import { scanLine } from "./scan.js";
-import { lastCommand } from "./tool-errors.js";
-import { isWaitPollCommand } from "./wait.js";
+import { isPollCommand } from "../hooks/ts/lib/wait-poll.js";
 import { psTable } from "./ps-table.js";
 import { endLabel } from "./endreason.js";
 
 /** Whether a Bash command ends in a `pai worker wait*` poll. */
-const isWaitPoll = (cmd: string): boolean => {
-  const last = lastCommand(cmd);
-  return last !== null && isWaitPollCommand(last.segment);
-};
+const isWaitPoll = (cmd: string): boolean => isPollCommand(cmd);
 
 /** How many existing events a fresh follow pane replays before going live. */
 export const BACKFILL_EVENTS = 200;

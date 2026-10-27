@@ -20,14 +20,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { dropHeredocBodies } from "./heredoc.js";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
 import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
 import { dispositionOf, modelOf, paramsForModel } from "./antipattern-lifecycle.js";
 import { ledgerResult, ledgerStep, type FailLedgerState } from "./fail-ledger.js";
-import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
+import { isPollCommand } from "./wait-poll.js";
 
 // Thresholds and message texts live in antipatterns/tool-loop/*.yaml (user overrides in PAI_HOME/antipatterns).
 // The exported constants are the shipped values; the step functions read the active pattern on every call.
@@ -138,34 +138,6 @@ function exitCodeOf(response: unknown): number | null {
 export function isWaitResult(response: unknown): boolean {
   const code = exitCodeOf(response);
   return (code === 3 || code === null) && WAIT_TEXT.test(resultSig(response));
-}
-
-const doorCache = new Map<string, BuildsConfig | null>();
-function doorsAt(dir: string): BuildsConfig | null {
-  const d = resolve(dir);
-  if (!doorCache.has(d)) doorCache.set(d, loadBuildsConfig(d));
-  return doorCache.get(d) ?? null;
-}
-
-const POLL_VERB = /^(?:pai\s+build\s+(?:run|lock)|pai\s+worker\s+wait[\w-]*)\b/;
-
-/**
- * A poll waits for something else: anywhere in the command line (cd prefixes, pipes, && chains) it invokes a build
- * door registered in the repo's `.pai/builds.yaml` with `--wait`, or `pai build run|lock`, or `pai worker wait*`.
- */
-export function isPollCommand(command: string, cwd: string = process.cwd()): boolean {
-  let dir = cwd;
-  for (const seg of splitSegments(command)) {
-    const ws = seg.split(/\s+/).map((w) => w.replace(/^["']|["']$/g, "")).filter(Boolean);
-    if (ws[0] === "cd" && ws[1]) {
-      dir = isAbsolute(ws[1]) ? ws[1] : resolve(dir, ws[1]);
-      continue;
-    }
-    if (POLL_VERB.test(ws.join(" ").replace(/^(?:[A-Za-z_]\w*=\S*\s+|nohup\s+)+/, ""))) return true;
-    if (!ws.includes("--wait")) continue;
-    if (runsDoor(ws, dir, doorsAt(dir))) return true;
-  }
-  return false;
 }
 
 /** Runs of one action key without an edit at which the call is denied / the session stopped. */

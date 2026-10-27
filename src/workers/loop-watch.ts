@@ -10,7 +10,7 @@
 import { eventsPath, ledgerPath } from "./paths.js";
 import { requestKill } from "./endreason.js";
 import { WorkerStatus } from "./status.js";
-import { detectEchoLoop, detectRepeatLoop, echoLoopAction, loopAction, type RepeatLoop } from "./repeat-loop.js";
+import { detectEchoLoop, detectRepeatLoop, echoLoopAction, loopAction, LOOP_WARN_AT, type RepeatLoop } from "./repeat-loop.js";
 import { ANTHROPIC_NATIVE } from "./config.js";
 
 export const LOOP_NOTE = "you have repeated the same failing call 3 times; the file already contains this text or your old_string is wrong: re-read the file region or move on";
@@ -97,7 +97,7 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
 
     try {
       const events = await readEvents(logDir, status.id);
-      const loop = detectRepeatLoop(events) ?? detectEchoLoop(events);
+      const loop = detectRepeatLoop(events, LOOP_WARN_AT, status.worktreeDir ?? status.cwd) ?? detectEchoLoop(events);
       if (!loop) continue;
 
       const action = loop.kind === "echo" ? echoLoopAction(loop) : loopAction(loop.count);
