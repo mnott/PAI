@@ -487,14 +487,17 @@ function trimTail(text: string, lines: number, chars: number): string {
 
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
 const FAIL_LINE = /Error|Exception|Traceback|Assertion|exit code/;
+const EXCEPTION_LINE = /^\s*[\w.]*(Error|Exception|Exit|Interrupt)\b.*$/;
+const TRACEBACK_HEADER = /^Traceback \(most recent call last\):/;
 
-/** Exit code and first error line (numbers and paths normalised; else the last output line) of a failed Bash result; null when it did not fail. */
+/** Exit code and the line naming the failure (last exception line, else last error-looking line, else the last line; numbers and paths normalised) of a failed Bash result; null when it did not fail. */
 export function failureFingerprint(response: unknown): string | null {
   const text = rawText(response);
   const code = exitCodeOf(response) ?? (/Exit code (\d+)/.exec(text) ? Number(/Exit code (\d+)/.exec(text)![1]) : null);
   if (!code) return null;
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^(?:error: )?Exit code \d+$/.test(l));
-  const line = lines.find((l) => FAIL_LINE.test(l)) ?? lines[lines.length - 1] ?? "";
+  const last = (re: (l: string) => boolean) => [...lines].reverse().find((l) => re(l) && !TRACEBACK_HEADER.test(l));
+  const line = last((l) => EXCEPTION_LINE.test(l) || l.startsWith("AssertionError")) ?? last((l) => FAIL_LINE.test(l)) ?? lines[lines.length - 1] ?? "";
   return `exit ${code}: ${line.replace(/(?:~|\.{0,2})?\/[^\s'"():,]+/g, "<path>").replace(/\d+/g, "#").slice(0, 160)}`;
 }
 
