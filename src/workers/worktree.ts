@@ -2061,8 +2061,13 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   // on a detached HEAD kept only by the archive ref.
   let otherBranch: string | null = null;
   let otherRefBefore: string | null = null;
+  let headRef: string | null = null;
   try {
-    const headRef = git(dir, ["symbolic-ref", "-q", "HEAD"]);
+    headRef = git(dir, ["symbolic-ref", "-q", "HEAD"]);
+  } catch {
+    // already detached: no branch is checked out here, nothing to guard, no detach needed
+  }
+  if (headRef) {
     if (headRef !== `refs/heads/${branch}`) {
       otherBranch = headRef.replace(/^refs\/heads\//, "");
       try {
@@ -2072,9 +2077,9 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
         otherBranch = null;
       }
     }
+    // A branch IS checked out here: the detach must succeed before anything commits.
+    // Outside any catch — a failed switch throws now, the worktree stays untouched.
     git(dir, ["checkout", "-q", "--detach"]);
-  } catch {
-    // already detached, or the tree cannot switch: nothing here commits in it
   }
   if (uncommittedPaths(dir).length) {
     // salvageUncommitted labels "salvaged: <label>"; keep the requested subject
