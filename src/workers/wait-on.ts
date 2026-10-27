@@ -294,6 +294,10 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
     let born = born0;
     let queued = false;
     let buildQueued = false;
+    // When the tree was last seen build-queued: stall and ceiling count from leaving the build queue,
+    // like they do from leaving the provider queue (a ticket that turned "running" after a long wait
+    // would otherwise be stall-killed before the build prints anything).
+    let leftBuildQueueAt = 0;
     // A worker has its own deadline and supervision; stall/ceiling rules are for builds and tests.
     let isWorker = false;
     const killed = async (why: string): Promise<number> => {
@@ -317,6 +321,8 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
         d.out(`pid ${o.pid} is worker ${id}: waiting without stall/ceiling kill; prefer \`pai worker wait ${id}\``);
       }
       born = queued ? d.now() : Math.max(born0, q?.started ?? 0);
+      if (buildQueued) leftBuildQueueAt = d.now();
+      born = Math.max(born, leftBuildQueueAt);
       if (queued || isWorker) {
         if (d.now() >= nextBeat) {
           d.out(`running ${Math.round((d.now() - t0) / 1000)}s, ${queued ? "worker queued behind the provider cap" : "worker running"}`);
