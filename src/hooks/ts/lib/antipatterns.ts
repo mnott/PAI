@@ -60,6 +60,7 @@ const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null
   },
   "growing-command": (p) => (num(p.max_repeats) && num(p.stop_denials) && typeof p.note_message === "string" && typeof p.tool_message === "string" ? null : "needs max_repeats, stop_denials (numbers), note_message and tool_message"),
   "repeated-failure": (p) => (num(p.deny_at) && num(p.stop_at) ? null : "needs deny_at and stop_at (numbers)"),
+  "failure-fingerprint": (p) => (num(p.deny_at) && num(p.stop_after) ? null : "needs deny_at and stop_after (numbers)"),
   "unparsed-tool-call": (p) => {
     if (!num(p.tail_chars) || !num(p.json_window_lines) || !Array.isArray(p.regexes) || !p.regexes.length) return "needs tail_chars, json_window_lines and regexes";
     for (const r of p.regexes) {

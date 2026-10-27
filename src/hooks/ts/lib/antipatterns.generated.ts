@@ -299,6 +299,41 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "tool-loop/missing-path-streak.yaml"
   },
   {
+    "id": "repeated-error",
+    "layer": "behaviour",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-27",
+    "category": "tool-loop",
+    "title": "Same failure fingerprint again and again across differing commands",
+    "detector": {
+      "kind": "failure-fingerprint",
+      "params": {
+        "deny_at": 3,
+        "stop_after": 2
+      }
+    },
+    "action": "deny",
+    "message": "Stop checking. loop guard: {n} Bash commands failed with the same error ({key}). More checks will not change it. Keep your current solution as it is on disk and finish now: write your R report (r=~, list the failing check in x=).",
+    "tests": {
+      "match": [
+        "F1 F1 F1"
+      ],
+      "no_match": [
+        "F1 F1",
+        "F1 F2 F3"
+      ]
+    },
+    "provenance": {
+      "date": "2026-10-27",
+      "model": "Gyro-M",
+      "observed": "hard 6 ran 618 s with a check hitting timeout 20 (exit 124) again and again, the model rewriting the check script between runs; hard 7 repeated one AssertionError line for 227 s"
+    },
+    "proxy": "monitor",
+    "source": "tool-loop/repeated-error.yaml"
+  },
+  {
     "id": "repeated-failure",
     "layer": "behaviour",
     "status": "stable",

@@ -108,6 +108,8 @@ export interface LoopState {
   pollDone?: Record<string, number>;
   /** Streak of read-only Bash calls sharing one template and file set while the worktree stayed unchanged. */
   reads?: { key: string; files: string; print: string | null; n: number; denials: number };
+  /** Failure fingerprint -> times seen (they survive edits), and Bash calls denied for it (see repeated-error). */
+  fails?: { counts: Record<string, number>; denials: number };
   /** Per-run FAIL ledger (workers.failLedger); absent while the experiment is off. */
   fail?: FailLedgerState;
 }
@@ -484,8 +486,30 @@ function trimTail(text: string, lines: number, chars: number): string {
 }
 
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
+const FAIL_LINE = /Error|Exception|Traceback|Assertion|exit code/;
+
+/** Exit code and first error line (numbers and paths normalised; else the last output line) of a failed Bash result; null when it did not fail. */
+export function failureFingerprint(response: unknown): string | null {
+  const text = rawText(response);
+  const code = exitCodeOf(response) ?? (/Exit code (\d+)/.exec(text) ? Number(/Exit code (\d+)/.exec(text)![1]) : null);
+  if (!code) return null;
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^(?:error: )?Exit code \d+$/.test(l));
+  const line = lines.find((l) => FAIL_LINE.test(l)) ?? lines[lines.length - 1] ?? "";
+  return `exit ${code}: ${line.replace(/(?:~|\.{0,2})?\/[^\s'"():,]+/g, "<path>").replace(/\d+/g, "#").slice(0, 160)}`;
+}
+
+function countFailure(state: LoopState, tool: string, response: unknown): LoopState {
+  const fp = tool === "Bash" ? failureFingerprint(response) : null;
+  if (fp === null) return state;
+  const counts = { ...(state.fails?.counts ?? {}) };
+  counts[fp] = (counts[fp] ?? 0) + 1;
+  return { ...state, fails: { counts, denials: state.fails?.denials ?? 0 } };
+}
+
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false): LoopState {
-  const core = recordLoopResultCore(state, tool, input, response, now);
+  const counted = typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response);
+  // an edit resets the window and drops everything not carried over by hand: the failure counts survive
+  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.fails ? { fails: counted.fails } : {}) };
   if (!ledger) return core;
   // an edit resets the window and drops everything not carried over by hand: the ledger survives
   const next = core.fail === state.fail ? core : { ...core, fail: state.fail };
@@ -784,13 +808,32 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
 }
 
 function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, source: "hook" | "proxy" = "hook"): LoopStep {
-  let r = stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
+  let r = failureDeny(state, tool) ?? stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
+  if (state.fails && !r.state.fails) r = { ...r, state: { ...r.state, fails: state.fails } };
   const command = tool === "Bash" ? bashCommand(input) : undefined;
   const bashWrites = command !== undefined ? bashWriteTargets(command) : null;
   // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file; a bare Bash write does not, it is a write
   if (READ_TOOLS.has(tool) && !bashWrites && r.state.rewrites) r = { ...r, state: { ...r.state, rewrites: undefined } };
   if (bashWrites && command !== undefined) r = countBashRewrites(r, bashWrites, command);
   return applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd, source), source);
+}
+
+/** repeated-error: once one failure fingerprint was seen deny_at times, every Bash call is denied; the stop_after-th denial after the first stops the run. */
+function failureDeny(state: LoopState, tool: string): LoopStep | null {
+  if (tool !== "Bash" || !state.fails) return null;
+  const re = live("repeated-error");
+  const [key, n] = Object.entries(state.fails.counts).reduce((a, b) => (b[1] > a[1] ? b : a), ["", 0]);
+  if (n < (re.params.deny_at as number)) return null;
+  const denials = state.fails.denials + 1;
+  return {
+    state: { ...state, fails: { ...state.fails, denials } },
+    deny: true,
+    stop: denials > (re.params.stop_after as number),
+    id: "repeated-error",
+    key,
+    count: n,
+    reason: fillMessage(re.message, { n, key }),
+  };
 }
 
 /** distinct-rewrites for files written through Bash (heredoc, redirect, tee): the command text is the version. */
@@ -885,5 +928,5 @@ export function recordLoopFailure(state: LoopState, tool: string, input: string 
     step = stepLoopGuard(state, tool, input, null, now, cwd, undefined, ledger, source);
     if (step.deny) return { ...step, reason: step.reason ?? loopDenyReason(tool, step.count) };
   }
-  return { ...step, state: recordLoopResult(step.state, tool, input, `error: ${resultSig(error)}`, now, ledger) };
+  return { ...step, state: recordLoopResult(countFailure(step.state, tool, error), tool, input, `error: ${resultSig(error)}`, now, ledger) };
 }
