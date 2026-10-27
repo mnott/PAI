@@ -73,35 +73,16 @@ const inBuildQueue = (pid: number, d: WaitOnDeps): BuildTicket | null => {
   return tickets.find((t) => t.state === "waiting" && tree.includes(t.pid)) ?? null;
 };
 
-/** The build-lock queue view of `pid`: a "waiting" ticket owned by the pid or a descendant means the
- *  tree is waiting for a slot, not hung. Waiting tickets record no start time, so `started` stays null
- *  (the ceiling keeps counting from the process start); `id` carries the queue position and key. */
-export function buildQueue(pid: number, dir: string = buildsDir()): { queued: boolean; started: number | null; id?: string } | null {
-  let tickets: BuildTicket[];
-  try {
-    tickets = listBuildsSync(dir);
-  } catch {
-    return null;
-  }
-  const mine = tickets.find((t) => t.state === "waiting" && processTree(pid).includes(t.pid));
-  if (!mine) return null;
-  const pos = ordered(tickets).filter((t) => t.state === "waiting" && ticketKind(t) === ticketKind(mine)).findIndex((t) => t.id === mine.id) + 1;
-  return { queued: true, started: null, id: `position ${pos}${mine.key ? `, key ${mine.key}` : ""}` };
-}
-
-/** A `queue` dep reading the worker status whose pid is the awaited one; when it is not a worker,
- *  the build-lock queue view (`buildQueue`) of the same pid. */
-export function statusQueue(logDir: string, dir: string = buildsDir()): NonNullable<WaitOnDeps["queue"]> {
+/** A `queue` dep reading the worker status whose pid is the awaited one. */
+export function statusQueue(logDir: string): NonNullable<WaitOnDeps["queue"]> {
   return (pid) => {
     const s = loadStatuses(logDir).find(
       (w) => (w.pid === pid || w.runPid === pid) && (w.state === "running" || w.state === "queued")
     );
-    if (s) {
-      const t = Date.parse(s.started);
-      // the state says it outright now; `capacity` stays for older status files
-      return { queued: s.state === "queued" || !!s.capacity, started: Number.isFinite(t) ? t : null, id: s.id };
-    }
-    return buildQueue(pid, dir);
+    if (!s) return null;
+    const t = Date.parse(s.started);
+    // the state says it outright now; `capacity` stays for older status files
+    return { queued: s.state === "queued" || !!s.capacity, started: Number.isFinite(t) ? t : null, id: s.id };
   };
 }
 
