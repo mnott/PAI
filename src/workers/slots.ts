@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
-import { git, uncommittedPaths, worktreeBranch, worktreesDir, ensureScratchExcluded, provisionDeps, type WorktreeInfo } from "./worktree.js";
+import { git, uncommittedPaths, worktreeBranch, worktreesDir, ensureScratchDir, ensureScratchExcluded, provisionDeps, type WorktreeInfo } from "./worktree.js";
 
 export function slotsDir(logDir: string): string {
   return join(logDir, "slots");
@@ -40,6 +40,7 @@ export function ensureSlotWorktree(logDir: string, provider: string, n: number, 
   if (!existsSync(dir)) {
     mkdirSync(slotsDir(logDir), { recursive: true });
     git(repo, ["worktree", "add", "--detach", dir, "HEAD"]);
+    ensureScratchDir(dir);
     provisionDeps(logDir, `slot-${provider}-${n}`, repo, dir);
   } else if (!slotServesRepo(logDir, provider, n, repo)) {
     throw new Error(`slot ${dir} belongs to another repository`);
@@ -117,6 +118,7 @@ export function addSpareWorktree(logDir: string, repo: string, sid: string): { d
   const base = git(repo, ["rev-parse", "HEAD"]);
   ensureScratchExcluded(repo);
   git(repo, ["worktree", "add", dir, "-b", branch, base]);
+  ensureScratchDir(dir);
   provisionDeps(logDir, sid, repo, dir);
   return { dir, branch, base };
 }

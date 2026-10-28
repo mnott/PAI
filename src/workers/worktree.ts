@@ -243,6 +243,21 @@ export function ensureScratchExcluded(cwd: string): void {
 }
 
 /**
+ * Create `<dir>/.pai-scratch/` in a freshly added worktree: the guard tells
+ * workers one-time checks go there, and a fresh tree has none, so their first
+ * `> .pai-scratch/x` failed with "No such file or directory". Already
+ * info/excluded (see `ensureScratchExcluded`), so status and salvage never
+ * see it. Best effort.
+ */
+export function ensureScratchDir(dir: string): void {
+  try {
+    mkdirSync(join(dir, ".pai-scratch"), { recursive: true });
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
  * Commit `cwd`'s current index + working tree (including untracked files) as
  * a floating commit on top of HEAD, without touching the real index, working
  * tree or HEAD: a temporary `GIT_INDEX_FILE` collects the snapshot, `git
@@ -297,6 +312,7 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   const base = dirty ? snapshotUncommitted(cwd, id, head, bookkeeping) : head;
   // -B: a reusable leftover branch is reset to base; a fresh name is simply created
   git(cwd, ["worktree", "add", "-B", branch, dir, base]);
+  ensureScratchDir(dir);
   provisionDeps(logDir, id, cwd, dir);
   return { dir, branch, base, snapshot: dirty, ...(snapshotSkipped ? { snapshotSkipped } : {}) };
 }
