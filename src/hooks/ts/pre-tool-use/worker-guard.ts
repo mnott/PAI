@@ -76,7 +76,7 @@ function buildContext(cwd: string): WorkerGuardContext {
         return null;
       }
     },
-    isIgnored: (p: string) => git(cwd, ["check-ignore", "-q", "--", p]) !== null,
+    isIgnored: (p: string, dir: string) => git(dir, ["check-ignore", "-q", "--", p]) !== null,
   };
 }
 

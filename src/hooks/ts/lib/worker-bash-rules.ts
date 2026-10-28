@@ -6,6 +6,7 @@
  */
 import { parseCommand } from "./worker-guard.js";
 import { dropHeredocBodies } from "./heredoc.js";
+import { resolve } from "node:path";
 
 /** Guard reason texts; tool-errors.ts builds its guard-redirect rule from these. */
 const NODE_ON_TS_PREFIX = "node cannot load TypeScript source";
@@ -23,18 +24,54 @@ function commandStart(words: string[], wrappers: string[]): number {
   return i;
 }
 
-/** The arguments after `git add` of every such segment of the command. */
-function gitAddArgs(command: string): string[][] {
-  const out: string[][] = [];
+/**
+ * The arguments after `git add`, plus the directory that `git add` itself runs
+ * in: the hook cwd advanced past the preceding `cd` segments of the same
+ * command, overridden by a `git -C <dir>` on the add itself. Checking ignore
+ * status from the hook cwd alone misjudged relative paths when the shell had
+ * `cd`-ed into an ignored dir (observed 2026-10-28: every path of
+ * `cd .. && git add …` counted as ignored).
+ * `dir` stays the hook cwd when it cannot be resolved (a `cd` to a path with
+ * unresolvable variables falls back, as before). cd tracking follows the
+ * parseCommand segments directly; `cwdAfterCds` splits on a different grammar
+ * and misses `cd` inside `&&` chains.
+ */
+function gitAddSegments(command: string, cwd: string): { args: string[]; dir: string }[] {
+  const out: { args: string[]; dir: string }[] = [];
+  let here = cwd;
   for (const { words } of parseCommand(command)) {
     const i = commandStart(words, WRAPPERS);
-    if (i < words.length && words[i] === "git" && words[i + 1] === "add") out.push(words.slice(i + 2));
+    if (i < words.length && words[i] === "cd") {
+      const arg = words.slice(i + 1).find((w) => !w.startsWith("-"));
+      if (arg !== undefined && !/[$`]/.test(arg)) here = resolve(here, arg);
+      continue;
+    }
+    if (i >= words.length || words[i] !== "git") continue;
+    // `git -C <dir>` / `git -C=<dir>` retargets the add (and any -C before it).
+    let dir = here;
+    let j = i + 1;
+    while (j < words.length && words[j].startsWith("-")) {
+      if (words[j] === "-C") dir = resolve(dir, words[j + 1] ?? ""), j += 2;
+      else if (words[j].startsWith("-C=")) dir = resolve(dir, words[j].slice(3)), j += 1;
+      else j += 1;
+    }
+    if (words[j] !== "add") continue;
+    out.push({ args: words.slice(j + 1), dir });
   }
   return out;
 }
 
 /** A `git add` argument that names a path: not a flag, not `.`. */
 const isGitAddPath = (arg: string): boolean => !arg.startsWith("-") && arg !== ".";
+
+/**
+ * The arg as git resolves it: relative to the directory the add runs in. The
+ * result is absolute — a relative one would be re-resolved against the check
+ * dir by git and land somewhere else. An absolute arg is unchanged.
+ */
+function rebase(p: string, dir: string): string {
+  return p.startsWith("/") ? p : resolve(dir, p);
+}
 
 
 /** Returns exactly "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`." when any segment (after prefix strip) is:
@@ -163,11 +200,11 @@ export function tscFileArgReason(command: string): string | null {
 }
 
 /**
- * For a segment `git add ...` (also `git -C dir add`): if args include `-f` or `--force` (or a combined short flag containing f like `-fA`; NOT `-A`, `-u`, `-p`) return the reason; else if any positional path (not `.`, not `-A`) makes isIgnored(path) true return the reason.
+ * For a segment `git add ...` (also `git -C dir add`): if args include `-f` or `--force` (or a combined short flag containing f like `-fA`; NOT `-A`, `-u`, `-p`) return the reason; else if any positional path (not `.`, not `-A`) makes isIgnored(path, dir) true return the reason. `dir` is where that `git add` actually runs (cd-tracked, `git -C` honoured); `path` is rebased to that dir, so the hook's `git check-ignore` sees the same path git would.
  * Reason text exactly: "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)".
  */
-export function forceAddReason(command: string, isIgnored: (path: string) => boolean): string | null {
-  for (const args of gitAddArgs(command)) {
+export function forceAddReason(command: string, isIgnored: (path: string, dir: string) => boolean, cwd: string): string | null {
+  for (const { args, dir } of gitAddSegments(command, cwd)) {
     for (const arg of args) {
       // Check for -f, --force flags
       if (arg === "-f" || arg === "--force") {
@@ -181,7 +218,7 @@ export function forceAddReason(command: string, isIgnored: (path: string) => boo
 
     // Paths containing .pai-scratch count as ignored too
     for (const arg of args.filter(isGitAddPath)) {
-      if (arg.split("/").includes(".pai-scratch") || isIgnored(arg)) {
+      if (arg.split("/").includes(".pai-scratch") || isIgnored(rebase(arg, dir), dir)) {
         return IGNORED_PATH_REASON;
       }
     }
@@ -190,11 +227,12 @@ export function forceAddReason(command: string, isIgnored: (path: string) => boo
 }
 
 /**
- * Returns the positional paths of all `git add` segments in the command.
- * Used by the caller to pre-compute ignore status.
+ * Returns the positional paths of all `git add` segments in the command, each
+ * rebased to the directory its add runs in (cd-tracked from `cwd`, `git -C`
+ * honoured). Used by the caller to check ignore status from that directory.
  */
-export function gitAddPaths(command: string): string[] {
-  return gitAddArgs(command).flatMap((args) => args.filter(isGitAddPath));
+export function gitAddPaths(command: string, cwd: string): { path: string; dir: string }[] {
+  return gitAddSegments(command, cwd).flatMap(({ args, dir }) => args.filter(isGitAddPath).map((arg) => ({ path: rebase(arg, dir), dir })));
 }
 
 export const MASKED_PROOF_REASON = "proof command with a masked result (`> /dev/null`, `||`, `; true`): run it bare and read the output";
