@@ -166,24 +166,36 @@ function treeWorkerRun(tree: number[]): boolean {
   }
 }
 
-/** Silent is not hung: a worker run client in the tree, CPU time advanced since the last sample of this
- *  pid, or an open loopback connection. The CPU comparison spans calls (one sample per call): wait-on
- *  polls every 2 s, the build-stall daemon ticks every 30 s — a process SIGSTOPped between samples
- *  (App Tamer throttling) still accumulates CPU time across the window, and newly started descendants
- *  count as progress. State is kept per pid here, the one place both callers sample. */
+/** Silent is not hung: a worker run client in the tree, CPU time advanced — over a one-second live
+ *  sample or against the baseline stored by an earlier call, any age — or an open loopback connection.
+ *  The live sample answers a first call (no baseline yet); the cross-call comparison catches a process
+ *  SIGSTOPped between samples (App Tamer throttling), which accumulates CPU time between wait-on's 2 s
+ *  polls and the stall daemon's 30 s ticks. The baseline is replaced only when a comparison was made —
+ *  on a busy answer, or when the live sample saw no gain — so a recent poll never overwrites it with
+ *  "no cpu gain yet" and a working silent tree is never answered not-busy for being polled too soon.
+ *  State is kept per pid here, the one place both callers sample. */
 const cpuSeen = new Map<number, { cpu: number; at: number }>();
-const CPU_WINDOW_MS = 10_000;
+/** How long a stored baseline may go unused before it is replaced (a pid that outlives it is genuinely idle). */
+const CPU_BASELINE_MAX_MS = 10 * 60_000;
 
 export async function treeBusy(pid: number): Promise<{ busy: boolean; why: string }> {
   const tree = processTree(pid);
   if (treeWorkerRun(tree)) return { busy: true, why: "worker run in tree" };
-  const cpu = treeCpuSecs(processTree(pid));
+  const before = treeCpuSecs(tree);
+  await new Promise((r) => setTimeout(r, 1000));
+  const after = treeCpuSecs(processTree(pid));
   const prev = cpuSeen.get(pid);
-  cpuSeen.set(pid, { cpu, at: Date.now() });
-  // Re-observed too soon after the previous sample: CPU can have advanced by less than ps's 0.01 s
-  // resolution, so keep the previous baseline and answer from the next call.
-  if (prev && Date.now() - prev.at < CPU_WINDOW_MS) return { busy: false, why: "no cpu gain yet" };
-  if (prev && cpu > prev.cpu) return { busy: true, why: `cpu +${Math.round((cpu - prev.cpu) * 100) / 100}s` };
+  if (prev && after > prev.cpu) {
+    cpuSeen.set(pid, { cpu: after, at: Date.now() });
+    return { busy: true, why: `cpu +${Math.round((after - prev.cpu) * 100) / 100}s` };
+  }
+  if (after > before) {
+    cpuSeen.set(pid, { cpu: after, at: Date.now() });
+    return { busy: true, why: `cpu +${Math.round((after - before) * 100) / 100}s` };
+  }
+  // The live sample saw no gain: (re)set the baseline for the next call — keep an older one only while
+  // it is still fresh, so a tree idle for longer than the baseline window cannot stay busy forever.
+  if (!prev || Date.now() - prev.at > CPU_BASELINE_MAX_MS) cpuSeen.set(pid, { cpu: after, at: Date.now() });
   if (treeLoopbackConn(tree)) return { busy: true, why: "open loopback connection" };
   return { busy: false, why: "no cpu, no i/o" };
 }
