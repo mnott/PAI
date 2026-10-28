@@ -89,7 +89,7 @@ export async function stallTick(dir: string, tickets: BuildTicket[], minutes: nu
     }
     // Silent logs over a busy tree are a slow build, not a hang (see the header): reset the quiet
     // window like a log change would, and clear a flag raised before the tree went busy again.
-    if (await deps.busy(treeRoot(t))) {
+    if ((await deps.busy(treeRoot(t))).busy) {
       state.set(t.id, { sig, since: now, busy: true });
       if (t.stalledAt) await patchTicket(dir, t.id, { stalledAt: undefined });
       continue;
