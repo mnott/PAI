@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { renderBuildQueue, buildNext, buildsDir, listBuilds } from "../../builds/queue.js";
+import { renderBuildQueue, buildNext, buildsDir, listBuilds, releaseBuild } from "../../builds/queue.js";
 import { slotsFor, poolSlots } from "../../builds/config.js";
 import { beginBuildWait, endBuildWait } from "../../workers/active-time.js";
 import { workersLogDir } from "../../workers/paths.js";
@@ -125,6 +125,25 @@ const nextCmd: CommandDef = {
   },
 };
 
+const releaseCmd: CommandDef = {
+  name: "release",
+  summary: "Take a build out of the queue; a running one is killed",
+  description:
+    "Removes one ticket. A waiting ticket leaves the queue and its gate exits 4 with a `released by operator` line without running the command. " +
+    "A running ticket's build tree gets SIGTERM, SIGKILL after 5 s, and its gate exits 5. Use it for a stalled build (`pai build queue` marks it STALLED) or a job nobody wants any more.",
+  args: [{ name: "ID", summary: "Build id", required: true }],
+  examples: ["pai build release b-20261019183000-4242"],
+  seeAlso: ["pai build queue"],
+  run: async (ctx) => {
+    try {
+      const r = await releaseBuild(buildsDir(), String(ctx.args.ID));
+      out(r.state === "running" ? `released ${r.id}: running build tree killed (SIGTERM, SIGKILL after 5 s)` : `released ${r.id}: its gate exits without running the command`);
+    } catch (e) {
+      throw new CliError(`${(e as Error).message} — see \`pai build queue\``, "pai build queue");
+    }
+  },
+};
+
 const doctorCmd: CommandDef = {
   name: "doctor",
   summary: "Check the project's registered build doors and hook events",
@@ -229,10 +248,10 @@ const watchCmd: CommandDef = {
 
 export const buildCommand: CommandDef = {
   name: "build",
-  summary: "One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync",
+  summary: "One machine-wide build queue: run, lock, queue, next, release, doctor, npm-auth, mirror-sync",
   description:
     "Heavy builds (xcodebuild, swift/gradle/cargo build or test) run machine-wide through builds.slots slots, simulator/device test runs through their own builds.testSlots slots, FIFO, at low priority, deltas by default. " +
     "Raw builders are denied in Bash by the PreToolUse guard unless they go through `pai build run` or a door registered in the project's .pai/builds.yaml (`doors: [tools/build.sh]`, `patterns: [...]`). See docs/builds.md.",
   examples: ["pai build run -- xcodebuild -scheme App build", "pai build queue"],
-  subcommands: [runCmd, lockCmd, queueCmd, nextCmd, doctorCmd, npmAuthCmd, mirrorSyncCmd, watchCmd],
+  subcommands: [runCmd, lockCmd, queueCmd, nextCmd, releaseCmd, doctorCmd, npmAuthCmd, mirrorSyncCmd, watchCmd],
 };

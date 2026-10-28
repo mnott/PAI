@@ -39,7 +39,11 @@ export interface BuildTicket {
   cmd: string;
   mode: "delta" | "full";
   seq: number;
-  state: "waiting" | "running";
+  state: "waiting" | "running" | "superseded";
+  /** Why a ticket left the queue before it ran: superseded by a newer same-key same-owner ticket, or released by the operator. */
+  goneReason?: "superseded" | "released";
+  /** The new ticket id (superseded) or the actor (released). */
+  goneBy?: string;
   enqueuedAt: number;
   startedAt?: number;
   /** Paths (cwd, derived data, ...) that name this job's compilers in `ps`. */
@@ -87,6 +91,39 @@ export function buildsDir(env: NodeJS.ProcessEnv = process.env): string {
 const ticketsDir = (dir: string): string => join(dir, "tickets");
 const ticketFile = (dir: string, id: string): string => join(ticketsDir(dir), `${id}.json`);
 export const buildLogPath = (dir: string, id: string): string => join(dir, `${id}.log`);
+
+/** Identity a waiting ticket is superseded under: the worker id when the ticket has one, else the session,
+ *  so two workers of one session are never merged. */
+const ownerKey = (t: BuildTicket): string => t.worker ?? t.session;
+
+/** A ticket whose gate process is gone is pruned by whoever looks next; these are the codes a gate exits
+ *  with when the queue took its place instead of running the command (documented next to the gate's
+ *  signal codes 129/130/143):
+ *  - 4: superseded — a newer waiting ticket with the same key and owner won;
+ *  - 5: released by the operator (`pai build release`).
+ *  Neither is 3: 3 is a door's `--wait` "still running, call again", and a door must not poll a dead job. */
+export const SUPERSEDED_EXIT = 4;
+export const RELEASED_EXIT = 5;
+
+/** Mark a ticket gone (superseded or operator-released) so its gate notices on its next poll.
+ *  The file stays (state "superseded") until the gate has read the reason — a gate that is SIGKILLed
+ *  never reads it, and prune() drops those files. */
+function markGone(dir: string, t: BuildTicket, reason: "superseded" | "released", by: string): void {
+  writeTicket(dir, { ...t, state: "superseded", goneReason: reason, goneBy: by });
+}
+
+/** When `t` is a waiting ticket with a key, drop every older waiting ticket with the same key and the
+ *  same owner: a re-run of the same door from the same worker supersedes its own earlier job (the newer
+ *  tree wins) instead of making everyone wait behind a duplicate. A RUNNING ticket is never touched;
+ *  tickets without a key are never superseded. Returns the ids dropped. */
+function supersedeOlderWaiting(dir: string, t: BuildTicket): string[] {
+  if (t.state !== "waiting" || !t.key) return [];
+  const victims = readTickets(dir).filter(
+    (x) => x.id !== t.id && x.state === "waiting" && x.key === t.key && ownerKey(x) === ownerKey(t) && x.seq < t.seq
+  );
+  for (const v of victims) markGone(dir, v, "superseded", t.id);
+  return victims.map((v) => v.id);
+}
 
 /** Remove `m` when its holder died inside the critical section (older than `staleMs`).
  *  Breakers serialize on `m.break` and re-check the age under it, so a waiter that saw the old mutex
@@ -167,7 +204,8 @@ function writeTicket(dir: string, t: BuildTicket): void {
 export function ordered(tickets: BuildTicket[]): BuildTicket[] {
   const run = tickets.filter((t) => t.state === "running").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
   const wait = tickets.filter((t) => t.state === "waiting").sort((a, b) => a.seq - b.seq);
-  return [...run, ...wait];
+  const gone = tickets.filter((t) => t.state === "superseded").sort((a, b) => a.seq - b.seq);
+  return [...run, ...wait, ...gone];
 }
 
 /** Kill the build tree of a ticket (group first, the gate itself after). */
@@ -184,6 +222,10 @@ function prune(dir: string, deps: QueueDeps): void {
     if (deps.isAlive(t.pid)) continue;
     killTicket(t, deps, false);
     rmSync(ticketFile(dir, t.id), { force: true });
+  }
+  // a superseded/released ticket whose gate is gone without ever reading the reason
+  for (const t of readTickets(dir)) {
+    if (t.state === "superseded" && !deps.isAlive(t.pid)) rmSync(ticketFile(dir, t.id), { force: true });
   }
 }
 
@@ -210,6 +252,7 @@ export async function enqueue(
     const id = `b-${new Date(now).toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${info.pid}${Math.floor(Math.random() * 36 ** 3).toString(36)}`;
     const t: BuildTicket = { ...info, id, seq, state: "waiting", enqueuedAt: now, log: buildLogPath(dir, id) };
     writeTicket(dir, t);
+    supersedeOlderWaiting(dir, t);
     return t;
   });
 }
@@ -222,13 +265,16 @@ export async function tryStart(dir: string, id: string, slots: number, d: Partia
     const all = readTickets(dir);
     const me = all.find((t) => t.id === id);
     if (!me) throw new Error(`build ${id} is not queued any more`);
+    if (me.state === "superseded") return false; // gate notices on its next poll and exits (SUPERSEDED/RELEASED_EXIT)
     if (me.state === "running") return true;
+    // a ticket left by supersede/release is not a waiter any more (no slot claim, no key block)
+    const live = all.filter((t) => t.state !== "superseded");
     const kind = ticketKind(me);
-    const pool = all.filter((t) => ticketKind(t) === kind);
+    const pool = live.filter((t) => ticketKind(t) === kind);
     const free = slots - pool.filter((t) => t.state === "running").length;
     if (free <= 0) return false;
     // a waiter whose key is running (any pool) or already claimed by an earlier waiter does not take a slot
-    const taken = new Set(all.filter((t) => t.state === "running" && t.key).map((t) => t.key as string));
+    const taken = new Set(live.filter((t) => t.state === "running" && t.key).map((t) => t.key as string));
     const first: BuildTicket[] = [];
     for (const t of pool.filter((x) => x.state === "waiting").sort((a, b) => a.seq - b.seq)) {
       if (first.length >= free) break;
@@ -258,6 +304,22 @@ export async function removeTicket(dir: string, id: string): Promise<void> {
 
 export async function getTicket(dir: string, id: string): Promise<BuildTicket | null> {
   return withMutex(dir, () => readTickets(dir).find((t) => t.id === id) ?? null);
+}
+
+/** Operator release: take a ticket out of the queue and mark it gone so its gate exits with
+ *  SUPERSEDED_EXIT (waiting) or RELEASED_EXIT (running, after its build tree is killed).
+ *  A running ticket's process group gets SIGTERM, SIGKILL after 5 s. Returns what happened. */
+export async function releaseBuild(dir: string, id: string, d: Partial<QueueDeps> = {}): Promise<{ id: string; state: "waiting" | "running" }> {
+  const deps = { ...defaultDeps(), ...d };
+  return withMutex(dir, () => {
+    prune(dir, deps);
+    const t = readTickets(dir).find((x) => x.id === id);
+    if (!t) throw new Error(`no queued build "${id}"`);
+    const state: "waiting" | "running" = t.state === "running" ? "running" : "waiting";
+    markGone(dir, t, "released", `operator pid ${process.pid}`);
+    if (state === "running") killTicket(t, deps, false); // gate exits RELEASED_EXIT on its next poll
+    return { id: t.id, state };
+  });
 }
 
 /** Give a waiting build the next start. Returns the new waiting order. */
