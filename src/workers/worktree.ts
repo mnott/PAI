@@ -2052,6 +2052,35 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   const checkout = basename(repo) === ".git" ? dirname(repo) : repo;
   const knowledge = worktreeKnowledge(logDir, id, dir);
   const label = `archive: leftover state of worker ${id}`;
+  // Detach HEAD before anything here writes a commit: a worktree may hold a
+  // shared branch (a worker ran `git checkout -B feature/...` in it), and a
+  // salvage commit made while that branch is checked out would move it — the
+  // worktree's stale index would then revert real work on the shared branch
+  // (live on 2026-10-27, archive c3aef37fb on feature/824-obsidian-integration).
+  // `--detach` keeps index and working tree, so every salvage/amend commit lands
+  // on a detached HEAD kept only by the archive ref.
+  let otherBranch: string | null = null;
+  let otherRefBefore: string | null = null;
+  let headRef: string | null = null;
+  try {
+    headRef = git(dir, ["symbolic-ref", "-q", "HEAD"]);
+  } catch {
+    // already detached: no branch is checked out here, nothing to guard, no detach needed
+  }
+  if (headRef) {
+    if (headRef !== `refs/heads/${branch}`) {
+      otherBranch = headRef.replace(/^refs\/heads\//, "");
+      try {
+        otherRefBefore = git(repo, ["rev-parse", "--verify", "-q", headRef]);
+      } catch {
+        // not a branch ref (e.g. refs/foo/HEAD): nothing to guard
+        otherBranch = null;
+      }
+    }
+    // A branch IS checked out here: the detach must succeed before anything commits.
+    // Outside any catch — a failed switch throws now, the worktree stays untouched.
+    git(dir, ["checkout", "-q", "--detach"]);
+  }
   if (uncommittedPaths(dir).length) {
     // salvageUncommitted labels "salvaged: <label>"; keep the requested subject
     const res = salvageUncommitted(dir, label);
@@ -2083,6 +2112,19 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   for (const l of notes) console.log(l);
   if (hasBranch && !branchArchived(repo, `refs/heads/${branch}`, [target, `${target}-branch`])) {
     throw new Error(`archive ${target} does not keep ${branch}`);
+  }
+  // a branch other than the worker's own that was checked out here must end
+  // exactly where it was — the detach above kept it, and nothing may have
+  // moved it (live 2026-10-27: a salvage commit reverted 186 lines on a
+  // shared feature branch checked out in this worktree)
+  if (otherBranch && otherRefBefore) {
+    const after = git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${otherBranch}`]);
+    if (after !== otherRefBefore) {
+      throw new Error(
+        `archive of ${dir} moved branch ${otherBranch} (${otherRefBefore.slice(0, 7)} -> ${after.slice(0, 7)}); ` +
+          `nothing was committed to it by this archive; the worktree was kept`
+      );
+    }
   }
   git(repo, ["worktree", "remove", "--force", dir]);
   if (hasBranch) git(repo, ["branch", "-D", branch]);
