@@ -8,10 +8,13 @@
  * 4 killed by the ceiling (--max-minutes) or the stall rule (--stall-minutes); a silent tree that is busy
  * (CPU time advancing, or an open loopback connection) is not stalled.
  * A `pai worker run` process (queued or running) is exempt from both: it has its own deadline; use `pai worker wait <id>`.
+ * A tree waiting in the build-lock queue (a "waiting" build ticket owned by the pid or a descendant) is exempt
+ * from the stall kill: the gate's queue heartbeats go to its own stderr, so the watched log stays silent by design.
  */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { buildsDir, listBuildsSync, ordered, ticketKind, type BuildTicket } from "../builds/queue.js";
 import { loadStatus, loadStatuses, pidAlive, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
@@ -57,7 +60,18 @@ export interface WaitOnDeps {
   busy?: (pid: number) => Promise<{ busy: boolean; why: string }>;
   /** Worker status of the awaited pid: queued behind the provider cap (capacity gate) or not, and when it left the queue (ms epoch); null = not a worker. */
   queue?: (pid: number) => { queued: boolean; started: number | null; id?: string } | null;
+  /** Live build tickets, for the build-lock queue check (default: `listBuildsSync(buildsDir())`). */
+  tickets?: () => BuildTicket[];
+  /** Live pids of `pid`'s process tree (default: `processTree`). */
+  tree?: (pid: number) => number[];
 }
+
+/** A tree holding a "waiting" build ticket (`pai build lock|run` behind another job) is queued, not hung. */
+const inBuildQueue = (pid: number, d: WaitOnDeps): BuildTicket | null => {
+  const tree = (d.tree ?? processTree)(pid);
+  const tickets = (d.tickets ?? (() => listBuildsSync(buildsDir())))();
+  return tickets.find((t) => t.state === "waiting" && tree.includes(t.pid)) ?? null;
+};
 
 /** A `queue` dep reading the worker status whose pid is the awaited one. */
 export function statusQueue(logDir: string): NonNullable<WaitOnDeps["queue"]> {
@@ -210,6 +224,7 @@ export const realDeps: WaitOnDeps = {
   },
   killTree: killProcessTree,
   busy: treeBusy,
+  tickets: () => listBuildsSync(buildsDir()),
 };
 
 const readLines = (file: string | undefined): string[] => {
@@ -273,9 +288,16 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
     // The ceiling counts from the process start, so it holds across repeated wait-on calls.
     const born0 = ranSince ?? t0;
     // A `pai worker run` queued behind the provider cap is waiting, not hung: no stall kill, and the
-    // ceiling counts from when it left the queue (the status `started` is rewritten then).
+    // ceiling counts from when it left the queue (the status `started` is rewritten then). A tree
+    // waiting in the build-lock queue gets the same stall exemption; its ceiling still counts from
+    // the process start (a waiting ticket has no start time).
     let born = born0;
     let queued = false;
+    let buildQueued = false;
+    // When the tree was last seen build-queued: stall and ceiling count from leaving the build queue,
+    // like they do from leaving the provider queue (a ticket that turned "running" after a long wait
+    // would otherwise be stall-killed before the build prints anything).
+    let leftBuildQueueAt = 0;
     // A worker has its own deadline and supervision; stall/ceiling rules are for builds and tests.
     let isWorker = false;
     const killed = async (why: string): Promise<number> => {
@@ -290,15 +312,31 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
       if (d.probe(o.pid) !== "alive" || (st !== null && st > t0 + REUSE_SLACK_MS)) return finish();
       const q = d.queue?.(o.pid) ?? null;
       queued = q?.queued ?? false;
+      // A tree waiting in the build-lock queue is not a worker: only the stall rule is waived; the
+      // ceiling still applies from the process start (waiting tickets record no start time).
+      buildQueued = !queued && !isWorker && inBuildQueue(o.pid, d) !== null;
       if (!isWorker && (q || isWorkerRunCmd(p?.cmd ?? ""))) {
         isWorker = true;
         const id = q?.id ?? "<id>";
         d.out(`pid ${o.pid} is worker ${id}: waiting without stall/ceiling kill; prefer \`pai worker wait ${id}\``);
       }
       born = queued ? d.now() : Math.max(born0, q?.started ?? 0);
+      if (buildQueued) leftBuildQueueAt = d.now();
+      born = Math.max(born, leftBuildQueueAt);
       if (queued || isWorker) {
         if (d.now() >= nextBeat) {
           d.out(`running ${Math.round((d.now() - t0) / 1000)}s, ${queued ? "worker queued behind the provider cap" : "worker running"}`);
+          nextBeat += HEARTBEAT_MS;
+        }
+        continue;
+      }
+      if (buildQueued) {
+        if (d.now() - born >= ceilMs) return await killed(`still running after ${fmtMinutes(ceilMs)}`);
+        if (d.now() >= nextBeat) {
+          const mine = inBuildQueue(o.pid, d);
+          const all = (d.tickets ?? (() => listBuildsSync(buildsDir())))();
+          const pos = mine ? ordered(all).filter((t) => t.state === "waiting" && ticketKind(t) === ticketKind(mine)).findIndex((t) => t.id === mine.id) + 1 : 0;
+          d.out(`running ${Math.round((d.now() - t0) / 1000)}s, waiting in the build queue${mine ? ` (position ${pos}, key ${mine.key ?? mine.label})` : ""}`);
           nextBeat += HEARTBEAT_MS;
         }
         continue;
