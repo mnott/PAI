@@ -95,7 +95,7 @@ A run that writes files (`implement`, `complex`, `plan`) in a git repo gets `<lo
 - `pai worker merge ID` merges with `--no-ff`. `--verify CMD` (or `merge.verify` in `workers.yaml`) runs on the merged tree; a non-zero exit reverts with `git revert` and keeps the branch. `--no-verify` skips the configured default with a warning. A stub scan of added `src/` lines (`TODO: implement`, empty stubs, `not implemented` throws) always runs and reverts the same way.
 - `pai worker discard ID` removes worktree and branch.
 - `pai worker discard --worktree PATH [--force]` does the same for any linked worktree of any repo: ignored notes salvaged, commits (and with `--force` the dirty state) archived under `refs/pai-archive/<branch>`, branch deleted once archived. The main working tree is refused.
-- `pai worker gc` moves old finished worktrees to `refs/pai-archive/ID` (flag default 24 h; the hourly automatic gc uses `gcOlderThanHours`). Gitignored knowledge files such as `Notes/` are copied into the main checkout first; a worktree that cannot be salvaged is kept.
+- `pai worker gc` moves old finished worktrees to `refs/pai-archive/ID` (flag default 24 h; the hourly automatic gc uses `gcOlderThanHours`). Gitignored knowledge files such as `Notes/` (text notes by extension: .md, .markdown, .txt, .org, .rst — a gitignored build product like `main.js` is never copied) are copied into the main checkout first; a worktree that cannot be salvaged is kept.
 - `pai worker usage [--since WHEN]` sums exact tokens and cost per provider and model.
 
 ## Waiting

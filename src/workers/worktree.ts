@@ -446,19 +446,23 @@ export function salvageOnExit(
   }
 }
 
-/** Build and dependency output that is never knowledge; extend this list as needed. */
+/** Directories that never hold knowledge, even in an allowed text extension (a .md inside node_modules is not a note). */
 export const KNOWLEDGE_IGNORE_NAMES = ["node_modules", "dist", ".pai-scratch", "coverage", ".DS_Store", ".turbo", ".cache"];
-const KNOWLEDGE_IGNORE_SUFFIXES = [".log"];
 
-function isBuildOutput(rel: string): boolean {
+/** Text knowledge by extension: salvage is for knowledge, so only these ride back to the checkout. A gitignored build product (Obsidian/main.js, 2026-10-27) must not. */
+const KNOWLEDGE_SUFFIXES = [".md", ".markdown", ".txt", ".org", ".rst"];
+
+function isKnowledgeFile(rel: string): boolean {
   const parts = rel.split("/").filter(Boolean);
-  if (parts.some((p) => KNOWLEDGE_IGNORE_NAMES.includes(p))) return true;
-  return KNOWLEDGE_IGNORE_SUFFIXES.some((x) => parts[parts.length - 1]?.endsWith(x));
+  if (parts.some((p) => KNOWLEDGE_IGNORE_NAMES.includes(p))) return false;
+  return KNOWLEDGE_SUFFIXES.some((x) => parts[parts.length - 1]?.endsWith(x));
 }
 
 /**
  * Gitignored files in the worktree that may carry knowledge (Notes/ and kin):
- * everything `git status --ignored` lists as `!!`, minus build output.
+ * `git status --ignored` entries with a knowledge extension, minus the
+ * never-knowledge directories. An allowlist by extension — a blacklist can
+ * never know every project's build products.
  */
 export function ignoredKnowledge(wtDir: string): string[] {
   try {
@@ -466,7 +470,7 @@ export function ignoredKnowledge(wtDir: string): string[] {
       .split("\0")
       .filter((l) => l.startsWith("!! "))
       .map((l) => l.slice(3))
-      .filter((p) => !p.endsWith("/") && !isBuildOutput(p));
+      .filter((p) => !p.endsWith("/") && isKnowledgeFile(p));
   } catch {
     return [];
   }
