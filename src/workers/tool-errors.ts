@@ -197,16 +197,21 @@ const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\
 
 /**
  * A Bash failure whose last statement runs a file of the worker's own scratch
- * dir ($TMPDIR/pai-scratch/<worker id>/ or <worktree>/.pai-scratch/) through an
- * interpreter: the worker iterating on its own probe, not a fault.
+ * dir through an interpreter: the worker iterating on its own probe, not a fault.
+ * The record's input holds the UNEXPANDED command, so the captured path is
+ * either the literal <tmp>/pai-scratch/<id>/… or the unexpanded "$TMPDIR/…" —
+ * applyScratchEnv sets TMPDIR to exactly <tmp>/pai-scratch/<id>, so a "$TMPDIR/"
+ * path is the worker's scratch when the raw error text confirms
+ * pai-scratch/<worker>/ (an expanded path from the failure itself).
  */
-const SCRATCH_RUN = /^(?:node|tsx|bun|sh|bash|npx\s+tsx)\s+(?:-\S+\s+)*["']?(\S*pai-scratch\/\S*)/;
+const SCRATCH_RUN = /^(?:node|tsx|bun|sh|bash|npx\s+tsx)\s+(?:-\S+\s+)*["']?(\S*(?:\$\{TMPDIR\}|\$TMPDIR|pai-scratch)\/\S*)/;
 export function isScratchProbe(r: ToolErrorRecord): boolean {
   if (r.tool !== "Bash" || !r.input) return false;
   const stmt = dropHeredocBodies(r.input).split(/&&|;|\n/).map((x) => x.trim()).filter(Boolean).pop();
   const path = stmt?.split(/(?<!\|)\|(?!\|)/)[0].trim().match(SCRATCH_RUN)?.[1];
   if (!path) return false;
   if (/(^|\/)\.pai-scratch\//.test(path)) return true;
+  if (path.startsWith("$TMPDIR/") || path.startsWith("${TMPDIR}/")) return r.raw.includes(`pai-scratch/${r.worker}/`);
   return path.includes(`pai-scratch/${r.worker}/`);
 }
 
