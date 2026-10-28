@@ -166,14 +166,24 @@ function treeWorkerRun(tree: number[]): boolean {
   }
 }
 
-/** Silent is not hung: a worker run client in the tree, CPU time advanced over a one-second sample, or an open loopback connection. */
+/** Silent is not hung: a worker run client in the tree, CPU time advanced since the last sample of this
+ *  pid, or an open loopback connection. The CPU comparison spans calls (one sample per call): wait-on
+ *  polls every 2 s, the build-stall daemon ticks every 30 s — a process SIGSTOPped between samples
+ *  (App Tamer throttling) still accumulates CPU time across the window, and newly started descendants
+ *  count as progress. State is kept per pid here, the one place both callers sample. */
+const cpuSeen = new Map<number, { cpu: number; at: number }>();
+const CPU_WINDOW_MS = 10_000;
+
 export async function treeBusy(pid: number): Promise<{ busy: boolean; why: string }> {
   const tree = processTree(pid);
   if (treeWorkerRun(tree)) return { busy: true, why: "worker run in tree" };
-  const before = treeCpuSecs(tree);
-  await new Promise((r) => setTimeout(r, 1000));
-  const after = treeCpuSecs(processTree(pid));
-  if (after > before) return { busy: true, why: `cpu +${Math.round((after - before) * 100) / 100}s` };
+  const cpu = treeCpuSecs(processTree(pid));
+  const prev = cpuSeen.get(pid);
+  cpuSeen.set(pid, { cpu, at: Date.now() });
+  // Re-observed too soon after the previous sample: CPU can have advanced by less than ps's 0.01 s
+  // resolution, so keep the previous baseline and answer from the next call.
+  if (prev && Date.now() - prev.at < CPU_WINDOW_MS) return { busy: false, why: "no cpu gain yet" };
+  if (prev && cpu > prev.cpu) return { busy: true, why: `cpu +${Math.round((cpu - prev.cpu) * 100) / 100}s` };
   if (treeLoopbackConn(tree)) return { busy: true, why: "open loopback connection" };
   return { busy: false, why: "no cpu, no i/o" };
 }
