@@ -18,7 +18,8 @@ import { BENCH_MARKER } from "../registry/registrable.js";
 import { isLocalProvider, readWorkersSection } from "./config.js";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
-import { bashExitCode, isExpectedWaitExit } from "./wait.js";
+import { bashExitCode } from "./wait.js";
+import { isExpectedWaitExit } from "../hooks/ts/lib/wait-poll.js";
 
 export interface ToolErrorRecord {
   /** Epoch ms. */
@@ -31,6 +32,8 @@ export interface ToolErrorRecord {
   raw: string;
   /** What the tool was asked to do: path, pattern or command head. */
   input?: string;
+  /** Worker cwd when the call ran; lets a build-door poll find its `.pai/builds.yaml`. */
+  cwd?: string;
   /** Built-in tool names the run was started with (--tools / --allowedTools); absent when unknown. */
   granted?: string[];
 }
@@ -156,8 +159,9 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   if (/^(?:\(eval\)|zsh):\d+: =+ not found$/m.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
   if (code === null) return false;
   if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(cmd)) return true;
+  // a door/queue/wait poll exiting 3 is its documented "still running" answer (one predicate, wait-poll.ts)
+  if (isExpectedWaitExit(cmd, code, r.cwd)) return true;
   const last = lastCommand(cmd);
-  if (last && isExpectedWaitExit(last.segment, code)) return true;
   if (code !== 1) return false;
   if (!last) return false;
   // In a compound/pipeline the exit status is the last stage's and the output belongs to the earlier ones.
@@ -316,7 +320,7 @@ export function clipRaw(text: string): string {
 
 export function recordToolError(
   logDir: string,
-  rec: { worker: string; provider: string; label: string; tool: string; text: string; input?: unknown; granted?: string[] },
+  rec: { worker: string; provider: string; label: string; tool: string; text: string; input?: unknown; granted?: string[]; cwd?: string },
   now = Date.now()
 ): void {
   try {
@@ -332,6 +336,7 @@ export function recordToolError(
     };
     const input = summarizeToolInput(rec.input);
     if (input) line.input = input;
+    if (rec.cwd) line.cwd = rec.cwd;
     if (rec.granted?.length) line.granted = rec.granted;
     appendFileSync(toolErrorsPath(logDir), JSON.stringify(line) + "\n", "utf8");
   } catch {

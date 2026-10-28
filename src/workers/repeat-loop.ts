@@ -52,8 +52,8 @@ function resultText(content: unknown): string {
   return "";
 }
 
-/** The trailing run (>= minRepeat) of identical, failed tool calls, or null. */
-export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT): RepeatLoop | null {
+/** The trailing run (>= minRepeat) of identical, failed tool calls, or null. `cwd` is the worker's working directory, so a build-door poll finds its `.pai/builds.yaml`. */
+export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT, cwd?: string): RepeatLoop | null {
   const uses = new Map<string, { name: string; key: string; input: unknown }>();
   const calls: Call[] = [];
   for (const e of events) {
@@ -70,7 +70,7 @@ export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT): R
         const text = resultText(b.content);
         const failed = b.is_error === true || (use.name === "Bash" && /^Exit code (?!0\b)\d+/.test(text.trim()));
         // designed non-zero answers (wait verbs exit 3, grep no-match, diff...) are not failures
-        const benign = failed && classifyToolError({ ts: 0, worker: "", provider: "", label: "", tool: use.name, signature: "", raw: text.trim(), input: summarizeToolInput(use.input) }).cls === "benign";
+        const benign = failed && classifyToolError({ ts: 0, worker: "", provider: "", label: "", tool: use.name, signature: "", raw: text.trim(), input: summarizeToolInput(use.input), ...(cwd ? { cwd } : {}) }).cls === "benign";
         calls.push({ name: use.name, key: use.key, failed: failed && !benign, text });
       }
     }
