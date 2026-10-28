@@ -137,29 +137,47 @@ function halves(p: TabPane, dir: "h" | "v"): { cols: number; rows: number } {
 const fits = (h: { cols: number; rows: number }) => h.cols >= panePolicy().minCols && h.rows >= panePolicy().minRows;
 
 /**
- * Pick the pane to split and the direction from the tab's real sizes: the pane
- * with the most cells whose result keeps >= 40x6, never the host's own pane
- * while another fits. Side by side only if both halves keep >= 80 columns or
- * the pane is wider than 3.5x its height in cells (a cell is ~2x taller than wide), else stacked; the other direction is
- * the fallback when the preferred one leaves too small a pane. null = nothing fits.
+ * Pick the pane to split and the direction from the tab's real sizes. The host
+ * pane (the discussion pane the worker was started from) is never split
+ * stacked: it splits "v" (new pane to its right, side by side) only as the
+ * first worker pane, when the tab holds no other pane. Once worker panes
+ * exist they are the only candidates — the largest pane wins, either direction
+ * by the wide/fits logic — and the small fallback considers them alone: a
+ * small worker pane is preferred over shrinking the host, whatever the sizes.
+ * Side by side only if both halves keep >= 80 columns or the pane is wider
+ * than 3.5x its height in cells (a cell is ~2x taller than wide), else stacked;
+ * the other direction is the fallback when the preferred one leaves too small
+ * a pane. null = nothing splits at all.
  */
 export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { small: boolean }) | null {
-  const options: Array<SplitChoice & { host: boolean; cells: number; small: boolean }> = [];
-  for (const p of panes) {
+  const others = panes.filter((p) => p.id !== hostId);
+  // no worker pane yet: the host is the only candidate, and only ever "v" —
+  // the first pane opens to its right, never below it
+  if (!others.length) {
+    const host = panes.find((p) => p.id === hostId);
+    if (!host) return null;
+    const v = halves(host, "v");
+    if (fits(v)) return { id: host.id, dir: "v", ...v, small: false };
+    const h = halves(host, "h");
+    // still never stacked: an "h" half would sit below the host
+    return h.cols > 0 && h.rows > 0 ? { id: host.id, dir: "v", ...v, small: true } : null;
+  }
+  const options: Array<SplitChoice & { cells: number; small: boolean }> = [];
+  for (const p of others) {
     const wide = Math.floor((p.cols - 1) / 2) >= 80 || p.cols > 3.5 * p.rows;
     const order: Array<"h" | "v"> = wide ? ["v", "h"] : ["h", "v"];
     const dir = order.find((d) => fits(halves(p, d)));
-    if (dir) options.push({ id: p.id, dir, ...halves(p, dir), host: p.id === hostId, cells: p.cols * p.rows, small: false });
+    if (dir) options.push({ id: p.id, dir, ...halves(p, dir), cells: p.cols * p.rows, small: false });
   }
-  const pool = options.some((o) => !o.host) ? options.filter((o) => !o.host) : options;
-  pool.sort((a, b) => b.cells - a.cells);
-  if (pool[0]) return pool[0];
-  // nothing reaches the minimum: a small pane never stops a start, so take the split whose smaller half is largest
+  options.sort((a, b) => b.cells - a.cells);
+  if (options[0]) return options[0];
+  // nothing reaches the minimum: a small pane never stops a start, so take the
+  // worker split whose smaller half is largest — the host is never a fallback
   let best: (SplitChoice & { small: boolean; score: number }) | null = null;
-  for (const p of panes) {
+  for (const p of others) {
     for (const d of ["h", "v"] as const) {
       const h = halves(p, d);
-      const score = Math.min(h.cols / panePolicy().minCols, h.rows / panePolicy().minRows) - (p.id === hostId ? 0.001 : 0);
+      const score = Math.min(h.cols / panePolicy().minCols, h.rows / panePolicy().minRows);
       if (h.cols > 0 && h.rows > 0 && (!best || score > best.score)) best = { id: p.id, dir: d, ...h, small: true, score };
     }
   }
