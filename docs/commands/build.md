@@ -2,7 +2,7 @@
 
 # pai build
 
-One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync
+One machine-wide build queue: run, lock, queue, next, release, doctor, npm-auth, mirror-sync
 
 ```
 pai build <command>
@@ -99,6 +99,26 @@ pai build next b-20261019183000-4242
 
 See also: `pai build queue`
 
+### pai build release
+
+Take a build out of the queue; a running one is killed
+
+```
+pai build release ID
+```
+
+Removes one ticket. A waiting ticket leaves the queue and its gate exits 4 with a `released by operator` line without running the command. A running ticket's build tree gets SIGTERM, SIGKILL after 5 s, and its gate exits 5. Use it for a stalled build (`pai build queue` marks it STALLED) or a job nobody wants any more.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | yes | Build id |
+
+```sh
+pai build release b-20261019183000-4242
+```
+
+See also: `pai build queue`
+
 ### pai build doctor
 
 Check the project's registered build doors and hook events
@@ -178,6 +198,7 @@ pai build watch DIR ID
 | `pai build lock` | Same lock as `run`, for a project's door script to call |
 | `pai build queue` | Show the running and waiting builds and tests |
 | `pai build next` | Give a waiting build the next free slot |
+| `pai build release` | Take a build out of the queue; a running one is killed |
 | `pai build doctor` | Check the project's registered build doors and hook events |
 | `pai build npm-auth` | Check the npm publish credential before `npm publish` |
 | `pai build mirror-sync` | Trigger the forge's push mirror to GitHub and report each mirror |

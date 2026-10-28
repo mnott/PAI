@@ -24,6 +24,8 @@ import {
   patchTicket,
   removeTicket,
   tryStart,
+  RELEASED_EXIT,
+  SUPERSEDED_EXIT,
   type BuildKind,
   type BuildTicket,
   type QueueDeps,
@@ -132,6 +134,17 @@ export function declaredLogs(text: string): string[] {
 
 const fmtWait = (ms: number): string => (ms < 90_000 ? `${Math.floor(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m`);
 
+/**
+ * Exit codes `runBuild` resolves to: the command's own code passes through; 127 means it could not be
+ * spawned; signals are 129 (SIGHUP), 130 (SIGINT), 143 (SIGTERM). The queue's own answers, documented
+ * next to those:
+ * - 4 (SUPERSEDED_EXIT): a newer waiting ticket with the same key and the same owner took this job's
+ *   place; the gate exits without running the command.
+ * - 5 (RELEASED_EXIT): `pai build release` took the ticket out (a running tree was killed).
+ * Never 3: 3 is a door's `--wait` "still running, call again" (wait-poll.ts), and a door must not poll
+ * a job that is gone.
+ */
+
 /** Run `command` through the queue; resolves to the exit code. */
 export async function runBuild(o: RunBuildOptions): Promise<number> {
   const env = o.env ?? process.env;
@@ -186,6 +199,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   const watch = setInterval(() => {
     if (!aborted && gone()) onSig("SIGHUP");
   }, 1000);
+  const timers: ReturnType<typeof setInterval>[] = [watch];
 
   try {
     const started = Date.now();
@@ -195,6 +209,14 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
     o.onWait?.(true);
     for (;;) {
       if (aborted) return 128 + (aborted === "SIGINT" ? 2 : aborted === "SIGHUP" ? 1 : 15);
+      // gone from the queue before it ran (superseded by a newer same-key same-owner ticket, or released
+      // by the operator): notice on this poll and exit without running the command
+      const cur = await getTicket(o.dir, ticket.id);
+      if (cur?.state === "superseded") {
+        out(cur.goneReason === "released" ? `pai build: released by operator (${ticket.id})` : `pai build: superseded by ${cur.goneBy ?? "?"} (same key, same owner; the newer tree wins)`);
+        await removeTicket(o.dir, ticket.id); // gone from the queue once the gate has read the reason
+        return cur.goneReason === "released" ? RELEASED_EXIT : SUPERSEDED_EXIT;
+      }
       if (await tryStart(o.dir, ticket.id, o.slots, o.deps)) break;
       if (Date.now() - lastBeat >= beat) {
         lastBeat = Date.now();
@@ -206,14 +228,26 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
     startedAt = Date.now();
     await patchTicket(o.dir, ticket.id, { paths, ...(kind === "test" ? { bootedBefore: bootedSimulators(o.simctl) } : {}) });
     out(`build started: ${label} (${mode}) — log ${buildLogPath(o.dir, ticket.id)}`);
+    // a release while the command runs kills the tree and ends the gate with RELEASED_EXIT
+    const released = setInterval(() => {
+      void getTicket(o.dir, ticket.id).then((cur) => {
+        if (cur && cur.state !== "running") {
+          clearInterval(released);
+          onSig("SIGTERM");
+        }
+      });
+    }, 1000);
+    timers.push(released);
     const code = await exec(wrap(o.command), { ...childEnv, PAI_BUILD_TICKET: ticket.id }, cwd, ticket, o, (c) => {
       child = c;
       if (aborted) killChild();
     });
+    const t = await getTicket(o.dir, ticket.id);
+    if (t?.state === "superseded" && t.goneReason === "released") return RELEASED_EXIT;
     return aborted ? 128 + (aborted === "SIGINT" ? 2 : aborted === "SIGHUP" ? 1 : 15) : code;
   } finally {
     o.onWait?.(false);
-    clearInterval(watch);
+    for (const timer of timers) clearInterval(timer);
     if (kind === "test") {
       const t = await getTicket(o.dir, ticket.id);
       if (t?.bootedBefore) shutdownAdded(t.bootedBefore, o.simctl);

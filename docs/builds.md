@@ -43,6 +43,16 @@ Jobs with the same key run one at a time, FIFO within the key, still inside the 
 
 Without a key the gate derives one: for a script (`tools/build.sh test mac`) `<repository>:<script>:<last non-flag argument>`, so `tools/build.sh test mac` and `tools/build.sh install mac` share `<repository>:tools/build.sh:mac`; for an Xcode build with `-scheme X`, `<repository>:xcodebuild:X`. `<repository>` is the main worktree root shared by all git worktrees of the repo (the cwd outside git), so a worker's worktree and the main checkout serialise; any other command has no key. `--key` wins over `PAI_BUILD_KEY`, which wins over the derived key.
 
+A re-run of the same door from the same owner supersedes its own earlier job: when a waiting ticket is created with a key and an older waiting ticket with the same key and the same owner exists (owner = the worker id when the ticket has one, else the session, so two workers of one session are never merged), the older one leaves the queue and its gate notices on its next poll and exits 4 without running the command (`pai build: superseded by <id> (same key, same owner; the newer tree wins)`). Incident 2026-10-28: a worker that re-ran its door while its earlier job still waited stacked duplicate same-key tickets, and every duplicate added a full build (~5 min) for everyone. A RUNNING ticket is never superseded; a ticket without a key never is.
+
+## Gate exit codes
+
+The command's own code passes through; 127 means it could not be spawned; signals are 129 (SIGHUP), 130 (SIGINT), 143 (SIGTERM). The queue's own answers: **4** = superseded by a newer same-key same-owner waiting ticket; **5** = released by the operator (`pai build release`). Neither is 3: 3 is a door's `--wait` "still running, call again" — a door must not poll a job that is gone.
+
+## `pai build release <id>`
+
+Takes one ticket out of the queue. A waiting ticket leaves and its gate exits 4 with a `released by operator` line without running the command. A running ticket's build tree gets SIGTERM, SIGKILL after 5 s and its gate exits 5. Intended for a STALLED job (`pai build queue` marks it) or one nobody wants any more.
+
 ## Compiler parallelism: PAI_BUILD_JOBS
 
 The gate exports `PAI_BUILD_JOBS = max(2, floor(cores / builds.slots))` to the child (cores = `hw.perflevel0.physicalcpu + hw.perflevel1.physicalcpu` on macOS, else `os.cpus().length`; an already set `PAI_BUILD_JOBS` is kept), so all running builds together do not oversubscribe the machine (18 cores, 3 slots: 6 each). Doors pass it on:
