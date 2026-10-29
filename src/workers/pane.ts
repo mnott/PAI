@@ -113,7 +113,11 @@ const RESTORE_ACTIVE = `try {
 // session's tab. The fourth field is the flag of a pane PAI created: the iTerm
 // user variable `user.paiWorkerPane`, which every pane PAI opens sets at split
 // time (WORKER_SPLIT_SCRIPT) — a pane that only set it later (the follow view)
-// is still marked by the time the next placement is computed.
+// is still marked by the time the next placement is computed. Any non-empty
+// value marks a PAI pane, not just "1": the follow view and `pane exec` set the
+// variable to the worker/run id, which would otherwise read as a discussion
+// pane again. This script is the one place that decides the mark; the TS side
+// (chooseSplit) reads only the fourth field.
 export const TAB_SIZES_SCRIPT = `${FIND_SESSION}
 function run(argv) {
     var app = Application("iTerm2");
@@ -122,7 +126,10 @@ function run(argv) {
     if (!f) return "notfound";
     return f.all.map(function (o) {
         var pai = "";
-        try { pai = String(o.variable({ named: "user.paiWorkerPane" })) === "1" ? "1" : ""; } catch (e) {}
+        try {
+            var v = String(o.variable({ named: "user.paiWorkerPane" }));
+            if (v !== "" && v !== "missing value" && v !== "null") pai = "1";
+        } catch (e) {}
         return o.id() + "\\t" + o.columns() + "\\t" + o.rows() + "\\t" + pai;
     }).join("\\n");
 }`;
@@ -212,8 +219,10 @@ export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { sm
 // reported back as live. Used by every pane PAI opens: a worker's follow pane,
 // a `pai pane run` / `pai build run` pane, a reopened pane. The new session is
 // marked as a PAI pane at birth (`user.paiWorkerPane` = "1", before the command
-// starts): pickSplit only ever splits marked panes, so an unmarked pane — the
-// operator's discussion pane — can never be split again. Returns
+// starts; the follow view later rewrites it to the worker id, which still
+// counts — TAB_SIZES_SCRIPT marks any non-empty value): pickSplit only ever
+// splits marked panes, so an unmarked pane — the operator's discussion pane —
+// can never be split again. Returns
 // "<live ids>,|<new session id>".
 // Exported for the script-content tests (window size, argv-only arguments).
 export const WORKER_SPLIT_SCRIPT = `${FIND_SESSION}
