@@ -4,10 +4,15 @@
  * behind its key. The daemon ticks this every 30 s: a running ticket whose gate log plus declared door
  * logs (ticket.logs) have not grown for `minutes` is marked stalledAt (shown as STALLED by `pai build queue`,
  * ps and the cockpit), logged BUILD-STALL with the last output line, and its owner is told once. Never kills.
+ * Silent is not hung (incident 2026-10-28: a door piping xcodebuild through sed flushes in bursts while
+ * App Tamer SIGSTOPs the compilers — the logs stay 0 bytes over a working build): the `busy` dep — wait-on's
+ * treeBusy by default — samples the build's process tree, and a busy tree resets the quiet window instead
+ * of flagging.
  */
 
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { patchTicket, type BuildTicket } from "./queue.js";
+import { treeBusy } from "../workers/wait-on.js";
 
 export interface StallDeps {
   /** Size of a file, null when unreadable. */
@@ -18,10 +23,15 @@ export interface StallDeps {
   log: (line: string) => void;
   /** Tell the owning session. */
   notify: (t: BuildTicket, text: string) => Promise<unknown> | void;
+  /** Is the build's process tree doing work although its logs stand still (default: wait-on's treeBusy). */
+  busy: (pid: number) => Promise<{ busy: boolean; why: string }>;
 }
 
 /** Per-ticket watch state, kept by the caller between ticks. */
-export type StallState = Map<string, { sig: string; since: number }>;
+export type StallState = Map<string, { sig: string; since: number; busy?: boolean }>;
+
+/** The build's process tree: the detached command's group root when recorded, else the gate process. */
+const treeRoot = (t: BuildTicket): number => (t.pgid && t.pgid > 1 ? t.pgid : t.pid);
 
 export const XCODE_TIMEOUT_HINT = "-test-timeouts-enabled YES -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120";
 
@@ -77,6 +87,13 @@ export async function stallTick(dir: string, tickets: BuildTicket[], minutes: nu
       if (t.stalledAt) await patchTicket(dir, t.id, { stalledAt: undefined });
       continue;
     }
+    // Silent logs over a busy tree are a slow build, not a hang (see the header): reset the quiet
+    // window like a log change would, and clear a flag raised before the tree went busy again.
+    if ((await deps.busy(treeRoot(t))).busy) {
+      state.set(t.id, { sig, since: now, busy: true });
+      if (t.stalledAt) await patchTicket(dir, t.id, { stalledAt: undefined });
+      continue;
+    }
     const quiet = now - prev.since;
     if (t.stalledAt || quiet < minutes * 60_000) continue;
     const last = files.map((f) => deps.lastLine(f)).filter(Boolean).pop() ?? "";
@@ -100,6 +117,7 @@ export async function buildStallTick(dir: string, minutes: number, tell: (t: Bui
     now: Date.now,
     log: (l) => process.stderr.write(l + "\n"),
     notify: tell,
+    busy: treeBusy,
     ...deps,
   });
 }
