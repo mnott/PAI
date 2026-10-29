@@ -2,9 +2,11 @@
  * pane.ts — the per-worker follow pane in iTerm2.
  *
  * One small-font pane per worker, stacked in a right-hand column: the first
- * worker of a scope splits the launching session vertically, every further
- * one splits the lowest live worker pane horizontally, so panes stack top to
- * bottom. The split never sizes the new session or the window (setting rows
+ * pane of a scope splits the caller's session vertically, every further one
+ * splits a pane PAI created (never the discussion pane — every PAI pane is
+ * marked with the iTerm variable `user.paiWorkerPane` at split time and
+ * pickSplit only splits marked panes), so panes stack top to bottom. The split
+ * never sizes the new session or the window (setting rows
  * or bounds makes iTerm resize the window in visible steps), so the panes share
  * the space the window already had. The follow
  * command is part of the split itself — iTerm creates the new session already
@@ -107,20 +109,37 @@ const RESTORE_ACTIVE = `try {
     } catch (e) {}`;
 
 
-// "id<TAB>columns<TAB>rows" of every session in the launching session's tab.
+// "id<TAB>columns<TAB>rows<TAB>paIPane" of every session in the launching
+// session's tab. The fourth field is the flag of a pane PAI created: the iTerm
+// user variable `user.paiWorkerPane`, which every pane PAI opens sets at split
+// time (WORKER_SPLIT_SCRIPT) — a pane that only set it later (the follow view)
+// is still marked by the time the next placement is computed. Any non-empty
+// value marks a PAI pane, not just "1": the follow view and `pane exec` set the
+// variable to the worker/run id, which would otherwise read as a discussion
+// pane again. This script is the one place that decides the mark; the TS side
+// (chooseSplit) reads only the fourth field.
 export const TAB_SIZES_SCRIPT = `${FIND_SESSION}
 function run(argv) {
     var app = Application("iTerm2");
     if (!app.running()) return "notrunning";
     var f = findSession(app, argv[0]);
     if (!f) return "notfound";
-    return f.all.map(function (o) { return o.id() + "\\t" + o.columns() + "\\t" + o.rows(); }).join("\\n");
+    return f.all.map(function (o) {
+        var pai = "";
+        try {
+            var v = String(o.variable({ named: "user.paiWorkerPane" }));
+            if (v !== "" && v !== "missing value" && v !== "null") pai = "1";
+        } catch (e) {}
+        return o.id() + "\\t" + o.columns() + "\\t" + o.rows() + "\\t" + pai;
+    }).join("\\n");
 }`;
 
 export interface TabPane {
   id: string;
   cols: number;
   rows: number;
+  /** True when the pane carries the `user.paiWorkerPane` flag: PAI created it. */
+  pai?: boolean;
 }
 export interface SplitChoice {
   id: string;
@@ -137,33 +156,39 @@ function halves(p: TabPane, dir: "h" | "v"): { cols: number; rows: number } {
 const fits = (h: { cols: number; rows: number }) => h.cols >= panePolicy().minCols && h.rows >= panePolicy().minRows;
 
 /**
- * Pick the pane to split and the direction from the tab's real sizes. The host
- * pane (the discussion pane the worker was started from) is never split
- * stacked: it splits "v" (new pane to its right, side by side) only as the
- * first worker pane, when the tab holds no other pane. Once worker panes
- * exist they are the only candidates — the largest pane wins, either direction
- * by the wide/fits logic — and the small fallback considers them alone: a
- * small worker pane is preferred over shrinking the host, whatever the sizes.
- * Side by side only if both halves keep >= 80 columns or the pane is wider
- * than 3.5x its height in cells (a cell is ~2x taller than wide), else stacked;
- * the other direction is the fallback when the preferred one leaves too small
- * a pane. null = nothing splits at all.
+ * The one placement policy for every pane PAI opens (a worker's follow pane, a
+ * `pai pane run` / `pai build run` pane, a reopened pane): pick the pane to
+ * split and the direction from the tab's real sizes. A pane PAI did not create
+ * (`pai` false — the discussion pane) is NEVER split stacked. It splits "v"
+ * (new pane to its right, side by side) only as the first pane, when the tab
+ * holds no PAI pane yet; which non-PAI pane takes that first split is the
+ * caller's own pane (`hostId`) or, for a caller outside the tab, the largest
+ * non-PAI pane. Once PAI panes exist they are the only candidates — the largest
+ * wins, either direction by the wide/fits logic — and the small fallback
+ * considers them alone: a small PAI pane is preferred over shrinking a
+ * discussion pane, whatever the sizes. Side by side only if both halves keep
+ * >= 80 columns or the pane is wider than 3.5x its height in cells (a cell is
+ * ~2x taller than wide), else stacked; the other direction is the fallback when
+ * the preferred one leaves too small a pane. null = nothing splits at all.
  */
 export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { small: boolean }) | null {
-  const others = panes.filter((p) => p.id !== hostId);
-  // no worker pane yet: the host is the only candidate, and only ever "v" —
-  // the first pane opens to its right, never below it
-  if (!others.length) {
-    const host = panes.find((p) => p.id === hostId);
+  const pai = panes.filter((p) => p.pai === true);
+  // no PAI pane yet: a non-PAI pane splits, and only "v" — the first pane
+  // opens to its right, never below it. The caller's own pane takes the split;
+  // a caller outside the tab (a worker whose pane is gone) splits its owner's
+  // pane: the largest non-PAI pane in the tab.
+  if (!pai.length) {
+    const nonPai = panes.filter((p) => !p.pai);
+    const host = panes.find((p) => p.id === hostId && !p.pai) ?? [...nonPai].sort((a, b) => b.cols * b.rows - a.cols * a.rows)[0];
     if (!host) return null;
     const v = halves(host, "v");
     if (fits(v)) return { id: host.id, dir: "v", ...v, small: false };
     const h = halves(host, "h");
-    // still never stacked: an "h" half would sit below the host
+    // still never stacked: an "h" half would sit below a pane PAI did not create
     return h.cols > 0 && h.rows > 0 ? { id: host.id, dir: "v", ...v, small: true } : null;
   }
   const options: Array<SplitChoice & { cells: number; small: boolean }> = [];
-  for (const p of others) {
+  for (const p of pai) {
     const wide = Math.floor((p.cols - 1) / 2) >= 80 || p.cols > 3.5 * p.rows;
     const order: Array<"h" | "v"> = wide ? ["v", "h"] : ["h", "v"];
     const dir = order.find((d) => fits(halves(p, d)));
@@ -172,9 +197,10 @@ export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { sm
   options.sort((a, b) => b.cells - a.cells);
   if (options[0]) return options[0];
   // nothing reaches the minimum: a small pane never stops a start, so take the
-  // worker split whose smaller half is largest — the host is never a fallback
+  // PAI-pane split whose smaller half is largest — a discussion pane is never
+  // a fallback
   let best: (SplitChoice & { small: boolean; score: number }) | null = null;
-  for (const p of others) {
+  for (const p of pai) {
     for (const d of ["h", "v"] as const) {
       const h = halves(p, d);
       const score = Math.min(h.cols / panePolicy().minCols, h.rows / panePolicy().minRows);
@@ -184,10 +210,19 @@ export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { sm
   return best ? { id: best.id, dir: best.dir, cols: best.cols, rows: best.rows, small: true } : null;
 }
 
-// One pane per worker: split the pane pickSplit chose (argv[4]) side by side
-// ("v") or stacked ("h", argv[5]), and name the new session with the worker's
-// purpose (argv[6]) — iTerm renames a session after its command ("node"), so
-// without this every worker pane shows the same title. Returns
+// The one iTerm split script: split the pane pickSplit chose (argv[4]) side by
+// side ("v") or stacked ("h", argv[5]) and run followCmd (argv[2]: the worker's
+// follow or the `pai pane exec` wrapper), naming the new session with the
+// pane's purpose (argv[6]) — iTerm renames a session after its command
+// ("node"), so without this every pane shows the same title. argv[3] is the
+// profile ("" = default profile); argv[1] previously registered pane ids,
+// reported back as live. Used by every pane PAI opens: a worker's follow pane,
+// a `pai pane run` / `pai build run` pane, a reopened pane. The new session is
+// marked as a PAI pane at birth (`user.paiWorkerPane` = "1", before the command
+// starts; the follow view later rewrites it to the worker id, which still
+// counts — TAB_SIZES_SCRIPT marks any non-empty value): pickSplit only ever
+// splits marked panes, so an unmarked pane — the operator's discussion pane —
+// can never be split again. Returns
 // "<live ids>,|<new session id>".
 // Exported for the script-content tests (window size, argv-only arguments).
 export const WORKER_SPLIT_SCRIPT = `${FIND_SESSION}
@@ -226,6 +261,9 @@ function run(argv) {
             : splitS.splitHorizontally({ withProfile: profileName, command: followCmd });
     }
     live.push(newS);
+    // mark the new pane as PAI's before anything runs in it: pickSplit reads
+    // the mark (TAB_SIZES_SCRIPT) and only ever splits marked panes
+    try { newS.setVariable({ named: "user.paiWorkerPane", value: "1" }); } catch (e) {}
     // the pane's purpose in the title bar; a session that vanished right after
     // the split must not fail the script
     if (paneTitle) { try { newS.name = paneTitle; } catch (e) {} }
@@ -255,26 +293,6 @@ function run(argv) {
     if (!f) return "notfound";
     var b = f.w.bounds();
     return [b.x, b.y, b.x + b.width, b.y + b.height].join(", ");
-}`;
-
-// Split the launching session vertically and run followCmd in the new pane,
-// naming it with the pane's purpose (argv[2]). Exported for the script-content
-// tests (focus stays on the launching session).
-export const SPLIT_SCRIPT = `${FIND_SESSION}
-function run(argv) {
-    var followCmd = argv[1];
-    var paneTitle = argv[2] || "";
-    var app = Application("iTerm2");
-    if (!app.running()) return "notrunning";
-    var f = findSession(app, argv[0]);
-    if (!f) return "notfound";
-    ${CAPTURE_ACTIVE}
-    // the follow command is part of the split itself (see WORKER_SPLIT_SCRIPT):
-    // nothing is ever typed into a session afterwards
-    var newS = f.s.splitVerticallyWithDefaultProfile({ command: followCmd });
-    if (paneTitle) { try { newS.name = paneTitle; } catch (e) {} }
-    ${RESTORE_ACTIVE}
-    return "opened";
 }`;
 
 // ---------------------------------------------------------------------------
@@ -1333,6 +1351,30 @@ function tmuxSplit(cmd: string, env: NodeJS.ProcessEnv): void {
 let tmuxPaneTitle = "";
 
 /**
+ * The one placement policy for iTerm: read the tab's real sizes, run pickSplit
+ * on them, and return the pane id and direction the split script must use.
+ * Every pane PAI opens in iTerm goes through this — a worker's follow pane, a
+ * `pai pane run` / `pai build run` pane, a reopened pane — so there is one
+ * placement, no per-path variant. A pane PAI did not create (the discussion
+ * pane) is never split stacked: with PAI panes present the split lands in a PAI
+ * pane, never the discussion pane.
+ */
+async function chooseSplit(hostUid: string): Promise<SplitChoice | null> {
+  const sizes = (await osascript(TAB_SIZES_SCRIPT, [hostUid])).stdout.trim();
+  const panes: TabPane[] = sizes.includes("\t")
+    ? sizes.split("\n").map((l) => {
+        const [id, c, r, pai] = l.split("\t");
+        return { id, cols: Number(c), rows: Number(r), pai: pai === "1" };
+      })
+    : [];
+  const choice = panes.length ? pickSplit(panes, hostUid) : null;
+  if (choice?.small) {
+    process.stderr.write(`[pai worker] pane: no pane of the tab splits to ${panePolicy().minCols}x${panePolicy().minRows}; opening a small ${choice.cols}x${choice.rows} pane\n`);
+  }
+  return choice;
+}
+
+/**
  * Worker state straight from its status file (pane.ts cannot import status.ts: it imports us).
  * Ended = any state but "running"/"queued", or a live state whose runner pid is gone (a ghost
  * that died before it could write its end state). A missing/unreadable file or a status without
@@ -1438,17 +1480,7 @@ export async function openPaneForWorker(
   const cmd = command ?? followCommand(wid);
   // registry newest first: the split lands below the lowest live worker pane
   const cands = [...reg].reverse().map((e) => e.session).join(",");
-  const sizes = (await osascript(TAB_SIZES_SCRIPT, [uid])).stdout.trim();
-  const panes: TabPane[] = sizes.includes("\t")
-    ? sizes.split("\n").map((l) => {
-        const [id, c, r] = l.split("\t");
-        return { id, cols: Number(c), rows: Number(r) };
-      })
-    : [];
-  const choice = panes.length ? pickSplit(panes, uid) : null;
-  if (choice?.small) {
-    process.stderr.write(`[pai worker] pane: no pane of the tab splits to ${panePolicy().minCols}x${panePolicy().minRows}; opening a small ${choice.cols}x${choice.rows} pane\n`);
-  }
+  const choice = await chooseSplit(uid);
   const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile, choice?.id ?? "", choice?.dir ?? "v", workerPaneTitle(logDir, wid)]);
   const out = p.stdout.trim();
   if (out === "notfound" || out === "notrunning") {
@@ -1566,12 +1598,17 @@ export async function openFollowPane(
   const overlap = [...tabTtys].filter((t) => followTtys().has(t));
   if (overlap.length > 0) return "follow pane already open";
   if (checkOnly) return "no follow pane";
-  // one exec-able line, no shell syntax — see followCommand()
+  // one exec-able line, no shell syntax — see followCommand(); the same
+  // placement policy as every other pane (chooseSplit -> WORKER_SPLIT_SCRIPT)
   const cmd = followCommand();
-  const s = await osascript(SPLIT_SCRIPT, [uid, cmd, "worker follow"]);
+  const choice = await chooseSplit(uid);
+  const s = await osascript(WORKER_SPLIT_SCRIPT, [uid, "", cmd, "", choice?.id ?? "", choice?.dir ?? "v", "worker follow"]);
   const sout = s.stdout.trim();
-  if (sout === "opened") return "follow pane opened";
   if (sout === "notfound") throw new Error("pai worker pane: resolved iTerm2 session vanished");
+  if (sout === "notrunning") throw new Error("pai worker pane: iTerm2 is not running");
+  // WORKER_SPLIT_SCRIPT answers "<live ids>,|<new session id>"; the follow
+  // pane is not registered, so only the new id is of interest here
+  if (sout.includes("|")) return "follow pane opened";
   throw new Error(`pai worker pane: osascript failed: ${(s.stderr || sout).slice(0, 200)}`);
 }
 
