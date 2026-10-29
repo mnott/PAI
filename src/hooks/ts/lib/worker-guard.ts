@@ -25,6 +25,7 @@ import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
+import { operatorTestsReason, projectTestsByOperator } from "./worker-test-rules.js";
 import { dropHeredocBodies } from "./heredoc.js";
 import { isScratchRootFile } from "./worker-scratch-name.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
@@ -59,6 +60,8 @@ export interface WorkerGuardContext {
   isIgnored?: (path: string, dir: string) => boolean;
   /** The operator's go for benchmarks and model servers (env PAI_BENCH_GO=1). */
   benchGo?: boolean;
+  /** Whether a command runs a test runner or a door in test mode (worker-test-rules.ts); the caller reads the project's doors. */
+  testCommand?: (command: string) => string | null;
 }
 
 interface Segment {
@@ -597,6 +600,15 @@ export function decideWorkerGuard(
     const d = typeof ti.command === "string" ? decideCommand(ti.command, { ...ctx(), benchGo: env.PAI_BENCH_GO === "1" }) : ALLOW;
     if (d.decision === "allow" && typeof ti.command === "string") {
       const cmd = ti.command as string;
+      // tests: operator (.pai/checks.yaml) — the operator runs the tests; --allow-tests (PAI_WORKER_ALLOW_TESTS=1) allows them
+      if (env.PAI_WORKER_ALLOW_TESTS !== "1") {
+        const c = ctx();
+        const testsByOperator = c.testCommand ? projectTestsByOperator(c.cwd) : false;
+        if (testsByOperator) {
+          const why = c.testCommand!(cmd);
+          if (why) return deny(why);
+        }
+      }
       const cfg = parseCommand(cmd).map((sg) => configMutationReason(sg.words, env, ctx().home)).find((r) => r);
       if (cfg) return deny(cfg);
       const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);

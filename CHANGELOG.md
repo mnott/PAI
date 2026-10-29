@@ -8,6 +8,8 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Added
 
+- **Operator-tested projects:** `.pai/checks.yaml` `tests: operator` — the local worker contract names no test commands and the worker Bash guard denies every test command (runners, `xcodebuild … test`, `tools/check.sh`, a build door in test mode); `pai worker run --allow-tests` opts one run back in for a run the operator asked to test.
+
 - **`pai worker discard --worktree PATH [--force]`:** removes any linked worktree (any repo) through the salvage-and-archive path; refuses the main tree and a dirty tree without `--force`. The git guard names it.
 
 - **Docs and MCP parity:** concept pages for the battery guard, the router lockout guard, provider hold, merge gates and the pane audit rows; MCP `worker_merge` (same function and gates as `pai worker merge`) and `battery_status`.

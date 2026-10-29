@@ -412,6 +412,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         orchestrate: opts.orchestrate,
         limit,
         noBrowser,
+        allowTests: opts.allowTests,
         opts,
         runT0,
       };

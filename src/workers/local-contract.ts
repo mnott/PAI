@@ -6,6 +6,9 @@
  *
  *   fast: <cmd>             type-check / lint, seconds
  *   test_one: <cmd with {class}>   run one test class
+ *   tests: operator         the operator runs the tests: the contract names
+ *                           none and the worker Bash guard denies test runners
+ *                           (see worker-test-rules.ts)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +23,8 @@ export const CHECKS_REL = ".pai/checks.yaml";
 export interface Checks {
   fast?: string;
   testOne?: string;
+  /** `tests: operator` — the project is tested by the operator, not by workers. */
+  testsByOperator?: boolean;
 }
 
 /** Missing or malformed file: no checks (the contract then names none). */
@@ -29,13 +34,24 @@ export function loadChecks(cwd: string): Checks {
   try {
     const raw = yamlParse(readFileSync(path, "utf8")) as Record<string, unknown> | null;
     const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-    return { fast: s(raw?.fast), testOne: s(raw?.test_one) };
+    return { fast: s(raw?.fast), testOne: s(raw?.test_one), testsByOperator: s(raw?.tests) === "operator" };
   } catch {
     return {};
   }
 }
 
 export function localContract(checks: Checks): string {
+  if (checks.testsByOperator) {
+    return [
+      "Local worker rules:",
+      "1. Type-check first with the project's fast type-check before any full build.",
+      "2. This project is tested by the operator: run no tests (the worker guard denies every test command); build the touched target, report, stop.",
+      "3. Read each file whole with the Read tool, not in pieces.",
+      "4. Never repeat a failing command unchanged; change something or report.",
+      "5. A command that succeeded is done: never run it again unchanged. After the commit, write the report.",
+      "6. No new committed test files: prove the change with the command you ran and its output; throwaway checks go under .pai-scratch/.",
+    ].join("\n");
+  }
   const fast = checks.fast ? `\`${checks.fast}\`` : "the project's fast type-check";
   const one = checks.testOne ? ` (\`${checks.testOne}\`)` : "";
   return [

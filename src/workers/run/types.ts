@@ -70,6 +70,8 @@ export interface RunOptions {
   noPool?: boolean;
   /** --browser / --no-browser: undefined follows workers.noBrowserByDefault. */
   browser?: boolean;
+  /** --allow-tests: this worker may run tests despite `.pai/checks.yaml` `tests: operator` (PAI_WORKER_ALLOW_TESTS=1); only when the operator asked for tests. */
+  allowTests?: boolean;
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
@@ -259,6 +261,8 @@ export interface ExecuteArgs {
   limit: RunLimit | null;
   /** Browser tools are stripped from this run (and denied by the worker guard). */
   noBrowser: boolean;
+  /** --allow-tests: PAI_WORKER_ALLOW_TESTS=1 in the env; the guard then allows tests despite `tests: operator`. */
+  allowTests?: boolean;
   /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */
   opts: RunOptions;
   /** Set once the follow pane was handled (tryPoolRun); executeRun then neither opens nor verifies a second one. */
