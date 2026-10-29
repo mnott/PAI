@@ -600,9 +600,12 @@ export async function followWorkers(
   const targetStatus = target ? loadStatus(logDir, target) : null;
   writePaneTitle(paneTitle(targetStatus?.label ?? target ?? "workers", targetStatus?.provider || targetStatus?.model || ""), env, undefined, out_.isTTY === true);
   // iTerm user variable: lets AIBroker leave worker panes out of its Claude
-  // session list. Real TTY only (not FORCE_TTY); no tmux passthrough helper exists.
-  if (out_.isTTY === true && target) {
-    safeWrite(`\x1b]1337;SetUserVar=paiWorkerPane=${Buffer.from(target).toString("base64")}\x07`);
+  // session list, and marks the pane as one PAI created (pane.ts's pickSplit
+  // only ever splits marked panes — the split script already sets "1" at birth,
+  // this keeps the mark for a pane opened before the mark existed). Real TTY
+  // only (not FORCE_TTY); no tmux passthrough helper exists.
+  if (out_.isTTY === true) {
+    safeWrite(`\x1b]1337;SetUserVar=paiWorkerPane=${Buffer.from(target ?? "1").toString("base64")}\x07`);
   }
   const scopeTab = target || showAll ? "" : currentTabKey(env);
   const handles = new Map<string, FollowHandle>();

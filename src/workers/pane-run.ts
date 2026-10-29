@@ -117,6 +117,17 @@ export async function followPaneRun(
   // the pane's purpose in the title bar before anything scrolls: a `pai pane
   // run` pane shows its label alone (no provider)
   writePaneTitle(paneTitle(loadPaneRunStatus(logDir, id)?.label ?? id), process.env);
+  // mark this pane as one PAI created (pane.ts's pickSplit only ever splits
+  // marked panes): the split script already sets the variable at birth, this
+  // keeps the mark for a pane opened before the mark existed. Real terminal
+  // only; the value is the run id.
+  if (process.stdout.isTTY === true && !process.env.TMUX) {
+    try {
+      process.stdout.write(`\x1b]1337;SetUserVar=paiWorkerPane=${Buffer.from(id).toString("base64")}\x07`);
+    } catch {
+      /* unwritable pane: the mark stays as the split script set it */
+    }
+  }
   let at = 0;
   let endedAt = 0;
   for (;;) {
