@@ -102,76 +102,110 @@ describe("tscFileArgReason", () => {
 });
 
 describe("forceAddReason", () => {
-  const isIgnored = (path: string) => path.startsWith("Notes/");
+  // forceAddReason hands isIgnored the path resolved against the add's dir, so
+  // the fake matches a resolved Notes/ path as well as a relative one.
+  const isIgnored = (path: string) => path.startsWith("Notes/") || path.startsWith("/w/Notes/");
+  const reason = "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
 
   it("should deny git add -f", () => {
-    expect(forceAddReason("git add -f Notes/x.md", isIgnored)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+    expect(forceAddReason("git add -f Notes/x.md", isIgnored, "/w")).toBe(reason);
   });
 
   it("should deny git add --force", () => {
-    expect(forceAddReason("git add --force Notes/x.md", isIgnored)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+    expect(forceAddReason("git add --force Notes/x.md", isIgnored, "/w")).toBe(reason);
   });
 
   it("should deny git add -fA", () => {
-    expect(forceAddReason("git add -fA Notes/x.md", isIgnored)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+    expect(forceAddReason("git add -fA Notes/x.md", isIgnored, "/w")).toBe(reason);
   });
 
   it("should deny git add with ignored path", () => {
-    expect(forceAddReason("git add Notes/x.md", isIgnored)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+    expect(forceAddReason("git add Notes/x.md", isIgnored, "/w")).toBe(reason);
   });
 
   it("should allow git add with non-ignored path", () => {
-    expect(forceAddReason("git add src/a.ts", isIgnored)).toBeNull();
+    expect(forceAddReason("git add src/a.ts", isIgnored, "/w")).toBeNull();
   });
 
   it("should allow git add -A", () => {
-    expect(forceAddReason("git add -A", isIgnored)).toBeNull();
+    expect(forceAddReason("git add -A", isIgnored, "/w")).toBeNull();
   });
 
   it("should allow git add with no ignored paths", () => {
-    expect(forceAddReason("git add src/a.ts src/b.ts", isIgnored)).toBeNull();
+    expect(forceAddReason("git add src/a.ts src/b.ts", isIgnored, "/w")).toBeNull();
   });
 
   // Test for .pai-scratch paths
   it("should deny git add .pai-scratch/x.ts with isIgnored always false", () => {
-    const alwaysFalse = (path: string) => false;
-    expect(forceAddReason("git add .pai-scratch/x.ts", alwaysFalse)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+    const alwaysFalse = () => false;
+    expect(forceAddReason("git add .pai-scratch/x.ts", alwaysFalse, "/w")).toBe(reason);
   });
 
   it("should deny git add ./.pai-scratch/a/b.ts with isIgnored always false", () => {
-    const alwaysFalse = (path: string) => false;
-    expect(forceAddReason("git add ./.pai-scratch/a/b.ts", alwaysFalse)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+    const alwaysFalse = () => false;
+    expect(forceAddReason("git add ./.pai-scratch/a/b.ts", alwaysFalse, "/w")).toBe(reason);
   });
 
   it("should deny git add /w/t/.pai-scratch/c.ts with isIgnored always false", () => {
-    const alwaysFalse = (path: string) => false;
-    expect(forceAddReason("git add /w/t/.pai-scratch/c.ts", alwaysFalse)).toBe("Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)");
+    const alwaysFalse = () => false;
+    expect(forceAddReason("git add /w/t/.pai-scratch/c.ts", alwaysFalse, "/w")).toBe(reason);
+  });
+
+  it("passes the cd-tracked dir and the resolved path to isIgnored", () => {
+    const seen: [string, string][] = [];
+    forceAddReason("cd sub && git add src/a.ts", (p, d) => { seen.push([p, d]); return false; }, "/w");
+    expect(seen).toEqual([["/w/sub/src/a.ts", "/w/sub"]]);
+  });
+
+  it("passes the git -C dir to isIgnored", () => {
+    const dirs: string[] = [];
+    forceAddReason("git -C /other add src/a.ts", (p, d) => { dirs.push(d); return false; }, "/w");
+    expect(dirs).toEqual(["/other"]);
+  });
+
+  it("git -C wins over a preceding cd", () => {
+    const dirs: string[] = [];
+    forceAddReason("cd sub && git -C /other add src/a.ts", (p, d) => { dirs.push(d); return false; }, "/w");
+    expect(dirs).toEqual(["/other"]);
   });
 });
 
 describe("gitAddPaths", () => {
-  it("should return paths for git add", () => {
-    expect(gitAddPaths("git add src/a.ts src/b.ts")).toEqual(["src/a.ts", "src/b.ts"]);
+  it("should return resolved paths for git add", () => {
+    expect(gitAddPaths("git add src/a.ts src/b.ts", "/w")).toEqual([
+      { path: "/w/src/a.ts", dir: "/w" },
+      { path: "/w/src/b.ts", dir: "/w" },
+    ]);
   });
 
-  it("should return paths for git add with flags", () => {
-    expect(gitAddPaths("git add -f src/a.ts src/b.ts")).toEqual(["src/a.ts", "src/b.ts"]);
+  it("should return resolved paths for git add with flags", () => {
+    expect(gitAddPaths("git add -f src/a.ts src/b.ts", "/w")).toEqual([
+      { path: "/w/src/a.ts", dir: "/w" },
+      { path: "/w/src/b.ts", dir: "/w" },
+    ]);
   });
 
-  it("should return paths for git add with ignored paths", () => {
-    expect(gitAddPaths("git add Notes/x.md src/a.ts")).toEqual(["Notes/x.md", "src/a.ts"]);
+  it("should return resolved paths for git add with ignored paths", () => {
+    expect(gitAddPaths("git add Notes/x.md src/a.ts", "/w")).toEqual([
+      { path: "/w/Notes/x.md", dir: "/w" },
+      { path: "/w/src/a.ts", dir: "/w" },
+    ]);
   });
 
   it("should return empty array for git add -A", () => {
-    expect(gitAddPaths("git add -A")).toEqual([]);
+    expect(gitAddPaths("git add -A", "/w")).toEqual([]);
   });
 
   it("should return empty array for git add with no paths", () => {
-    expect(gitAddPaths("git add")).toEqual([]);
+    expect(gitAddPaths("git add", "/w")).toEqual([]);
   });
 
-  it("should return paths for cd && git add", () => {
-    expect(gitAddPaths("cd x && git add src/a.ts")).toEqual(["src/a.ts"]);
+  it("should return the resolved path with the cd-tracked dir for cd && git add", () => {
+    expect(gitAddPaths("cd x && git add src/a.ts", "/w")).toEqual([{ path: "/w/x/src/a.ts", dir: "/w/x" }]);
+  });
+
+  it("should return the resolved path with the git -C dir", () => {
+    expect(gitAddPaths("git -C /r add src/a.ts", "/w")).toEqual([{ path: "/r/src/a.ts", dir: "/r" }]);
   });
 });
 describe("maskedProofReason", () => {

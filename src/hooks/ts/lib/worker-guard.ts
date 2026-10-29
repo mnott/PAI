@@ -55,8 +55,8 @@ export interface WorkerGuardContext {
   sharedCheckout?: () => boolean;
   /** package.json `scripts.test` of the tree, null when unknown. */
   testScript: () => string | null;
-  /** Whether git ignores this path (git check-ignore); absent = nothing is ignored. */
-  isIgnored?: (path: string) => boolean;
+  /** Whether git ignores this path (git check-ignore) as seen from `dir` (where the command runs); absent = nothing is ignored. */
+  isIgnored?: (path: string, dir: string) => boolean;
   /** The operator's go for benchmarks and model servers (env PAI_BENCH_GO=1). */
   benchGo?: boolean;
 }
@@ -599,7 +599,7 @@ export function decideWorkerGuard(
       const cmd = ti.command as string;
       const cfg = parseCommand(cmd).map((sg) => configMutationReason(sg.words, env, ctx().home)).find((r) => r);
       if (cfg) return deny(cfg);
-      const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false));
+      const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
       if (why) return deny(why);
       if (isLocalWorker(env)) {
         const why2 = localRmReason(parseCommand(cmd), ctx().cwd);
