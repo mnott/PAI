@@ -104,7 +104,7 @@ const SHELLS = new Set(["bash", "sh", "zsh"]);
 const base = (w: string): string => w.slice(w.lastIndexOf("/") + 1);
 
 /** Drop env assignments and wrapper commands (with their flags) from the front. */
-function stripPrefix(ws: string[]): string[] {
+export function stripPrefix(ws: string[]): string[] {
   let i = 0;
   for (;;) {
     if (i >= ws.length) return [];

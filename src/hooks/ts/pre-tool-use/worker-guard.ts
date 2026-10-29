@@ -30,6 +30,8 @@ import { workersLogDir } from "../../../workers/paths.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { failLedgerOn } from "../lib/fail-ledger.js";
 import { evaluate } from "../../../guard/evaluate.js";
+import { loadBuildsConfig, runsDoor } from "../lib/build-gate.js";
+import { operatorTestsReason } from "../lib/worker-test-rules.js";
 import { loopDenyReason, actionKey, worktreeFingerprint } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
@@ -77,6 +79,8 @@ function buildContext(cwd: string): WorkerGuardContext {
       }
     },
     isIgnored: (p: string, dir: string) => git(dir, ["check-ignore", "-q", "--", p]) !== null,
+    // tests: operator: a test runner or a door run in test mode (`sh tools/build.sh test …`)
+    testCommand: (command: string) => operatorTestsReason(command, (ws, dir) => runsDoor(ws, dir, loadBuildsConfig(dir)), cwd),
   };
 }
 
@@ -209,7 +213,7 @@ async function main(): Promise<void> {
   }
   // test runs (worker or main session) go through test-run: it takes the machine-wide test slot and probes a silent run
   const command = (input.tool_input as { command?: unknown } | undefined)?.command;
-  if (input.tool_name === "Bash" && typeof command === "string" && isTestCommand(command)) {
+  if (input.tool_name === "Bash" && typeof command === "string" && process.env.PAI_WORKER_ALLOW_TESTS !== "1" && isTestCommand(command)) {
     process.stdout.write(renderDecision({ decision: "allow", updatedInput: { ...(input.tool_input as object), command: wrapTestCommand(command) } }) + "\n");
   }
 }

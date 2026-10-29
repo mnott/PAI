@@ -73,6 +73,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--no-pool` | flag | — | Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) runs unpooled anyway and says so on stderr |
 | `--browser` | flag | — | Allow browser tools |
 | `--no-browser` | flag | — | Remove every browser tool from this worker |
+| `--allow-tests` | flag | — | Let this worker run tests even when the project has `.pai/checks.yaml` `tests: operator`; use only when the operator asked for tests |
 | `--print-cmd` | flag | — | Print the claude command as JSON and exit without starting anything |
 | `--report FORMAT` | string | — | Final report format: json or ag2 (default ag2) |
 | `--no-report-retry` | flag | — | Do not ask once more when the final report is malformed |

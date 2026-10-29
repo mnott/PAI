@@ -33,6 +33,9 @@ Optional, at the project root. Names the project's fast commands so the contract
 ```yaml
 fast: npx tsc --noEmit            # type-check / lint, seconds
 test_one: npx vitest run {class}  # run one test class; {class} is the touched class
+tests: operator                   # the operator runs the tests: the contract names none
 ```
+
+`tests: operator` enforces the operator-tests loop in the harness, not just in the contract: the worker Bash guard denies every test command (vitest/jest/pytest/`npm test`/`go test`/`cargo test`/`swift test`, `xcodebuild … test`, `tools/check.sh`, and a registered build door invoked in a test mode such as `sh tools/build.sh test mac --wait`). The worker builds the touched target, reports, stops. `pai worker run --allow-tests` opts one run back in (`PAI_WORKER_ALLOW_TESTS=1`) — use it only when the operator asked for tests.
 
 Missing file: the contract names no commands.

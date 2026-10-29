@@ -144,7 +144,8 @@ export function isWaitResult(response: unknown): boolean {
 export const RUN_DENY_AT = shipped("repeated-failure", "deny_at");
 export const RUN_STOP_AT = shipped("repeated-failure", "stop_at");
 
-const RUNNER = /^(?:npx\s+|bunx\s+|pnpm (?:exec\s+)?|yarn\s+)?(vitest|jest|pytest|tsdown|tsc|xcodebuild|npm (?:run )?test|npm run build|swift test|cargo test|go test|bun test)\b\s*(.*)$/;
+/** Test/build runners; the worker Bash guard's operator-tests rule keys on this same list (worker-test-rules.ts). */
+export const RUNNER = /^(?:npx\s+|bunx\s+|pnpm (?:exec\s+)?|yarn\s+)?(vitest|jest|pytest|tsdown|tsc|xcodebuild|npm (?:run )?test|npm run build|swift test|cargo test|go test|bun test)\b\s*(.*)$/;
 
 /**
  * Action key of a Bash command: the test/build runner and its target files, with nohup, env prefixes,
