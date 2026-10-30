@@ -5,9 +5,7 @@
 
 export type GateDecision =
   | { decision: "allow"; updatedInput?: Record<string, unknown>; context?: string }
-  | { decision: "deny"; reason: string }
-  /** Confirm verdict: Claude Code shows its native approval prompt to the operator. */
-  | { decision: "ask"; reason: string };
+  | { decision: "deny"; reason: string };
 
 /** Prefix of every PAI guard deny reason. */
 export const GUARD_MARKER = "PAI guard: ";
@@ -21,15 +19,6 @@ export function renderDecision(d: GateDecision): string {
         permissionDecision: "allow",
         ...(d.updatedInput && { updatedInput: d.updatedInput }),
         ...(d.context && { additionalContext: d.context }),
-      },
-    });
-  }
-  if (d.decision === "ask") {
-    return JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "ask",
-        permissionDecisionReason: d.reason,
       },
     });
   }

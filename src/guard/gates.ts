@@ -133,6 +133,5 @@ export function decideWorkerGate(c: Call, g: GateSet): Decision | null {
   if (!g.worker) return null;
   const d = decideWorkerGuard({ tool_name: c.tool, cwd: c.cwd, tool_input: c.input as never }, c.env, g.worker);
   if (d.decision === "deny") return deny(d.reason, "worker-guard");
-  if (d.decision === "ask") return deny(d.reason, "worker-guard");
   return d.updatedInput || d.context ? { action: "allow", updatedInput: d.updatedInput, message: d.context } : null;
 }
