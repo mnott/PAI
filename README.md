@@ -29,6 +29,7 @@ You burn your premium tokens on work a local model could do. You hit the weekly 
 - Messaging and rules: [AIBroker](docs/features.md#aibroker) · [whisper rules](docs/features.md#whisper-rules) · [budget advisor](docs/features.md#budget-and-advisor-mode)
 - Make and share: [art and diagrams](docs/features.md#art-and-diagrams) · [share](docs/features.md#share) · [research](docs/features.md#research-and-extraction)
 - Care: [setup](docs/features.md#setup-and-update) · [backup](docs/features.md#backup-and-restore)
+- Other harnesses: [OpenCode as the chat](docs/harnesses/opencode.md) · [Codex CLI](docs/harnesses/codex.md) · [UHP servers](docs/harnesses/uhp.md) · [overview](docs/harnesses/README.md)
 
 Everything PAI does: [docs/features.md](docs/features.md)
 

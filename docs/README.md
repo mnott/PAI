@@ -43,6 +43,13 @@ Orchestration, in reading order:
 
 Deeper worker material: [worker reference (long)](worker.md) · [workers.yaml](workers-config.md) · [large coding jobs](three-tier-coding.md) · [project setup](worker-project-setup.md) · [issue claims](issue-claims.md) · [hook denials](worker-denials.md)
 
+## Harnesses
+
+- [Harnesses overview](harnesses/README.md): how PAI attaches to each chat frontend — MCP server, session adapters, runner engines
+- [OpenCode as a frontend](harnesses/opencode.md): `pai harness setup opencode`, the bridge plugin, hook parity
+- [Codex CLI](harnesses/codex.md): `engine: codex` workers and read-only session ingestion
+- [UHP servers](harnesses/uhp.md): any harness speaking the Unified Harness Protocol, as a worker engine
+
 ## Cockpit
 
 - [The cockpit page](cockpit.md): sections, aliases, layout
