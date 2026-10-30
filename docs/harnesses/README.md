@@ -13,8 +13,8 @@ Three distinct seams, and a harness can use any of them:
 1. **The MCP server** (`src/daemon-mcp/index.ts`, one shim per session, all
    shims sharing the PAI daemon). It exposes the memory tools
    (`memory_search`, `memory_get`, …) and the delegation tools
-   (`worker_run`, `worker_ps`, `worker_say`, `plan_save`, `plan_run`,
-   `queue_add`, `queue_run`, …). Any harness that speaks MCP can register it.
+   (`worker_run`, `worker_ps`, `plan_save`, `plan_run`, `queue_add`,
+   `queue_run`, …). Any harness that speaks MCP can register it.
 2. **Session-log adapters** (`src/harness/`): read-only ingestion of a
    harness's session store — `pai harness list` / `pai harness sessions`.
    The registry is `src/harness/index.ts` (`claude-code`, `codex`); the
