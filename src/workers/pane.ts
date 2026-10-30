@@ -182,6 +182,12 @@ const fits = (h: { cols: number; rows: number }) => h.cols >= panePolicy().minCo
  * the discussion pane. The small fallback keeps that order: a stacked half of a
  * PAI pane over any vertical split, a discussion pane never a fallback.
  * null = nothing splits at all.
+ *
+ * After a non-first "v" split iTerm can shrink the discussion pane below 50%
+ * (equalised columns); there is no reliable way to restore it — a JXA
+ * `session.columns = …` resizes the whole window in visible steps, which the
+ * split code has always refused — so no restore is attempted; the stacking
+ * policy above keeps the discussion pane at its half in normal use.
  */
 export function pickSplit(panes: TabPane[], hostId: string, sameWorker?: string): (SplitChoice & { small: boolean }) | null {
   const pai = panes.filter((p) => p.pai === true);
