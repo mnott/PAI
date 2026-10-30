@@ -78,9 +78,22 @@ describe("security-validator", () => {
     "git push --force --force-with-lease origin main",
     "git push --force-with-lease origin main --force",
     "git push origin main -f",
-  ])("denies %s", (command) => {
-    const { status } = runHook(command);
+  ])("asks on %s", (command) => {
+    const { status, stdout } = runHook(command);
+    expect(status).toBe(0);
+    expect(stdout).toContain('"permissionDecision":"ask"');
+  });
+
+  it.each([
+    "git push --force origin main",
+    "git push -f origin main",
+    "git push --force --force-with-lease origin main",
+    "git push --force-with-lease origin main --force",
+    "git push origin main -f",
+  ])("denies %s for an in-place worker", (command) => {
+    const { status, stderr } = runHook(command, { PAI_WORKER: "1" });
     expect(status).toBe(2);
+    expect(stderr).toContain("dangerous operation");
   });
 
   it.each([
@@ -140,10 +153,24 @@ describe("security-validator", () => {
     "git push origin '+main'",
     'git commit -m "x" && git push --force',
     "git reset --hard HEAD~1",
-  ])("denies a forced push or hard reset %s", (command) => {
-    const { status, stderr } = runHook(command);
+  ])("asks on a forced push or hard reset %s", (command) => {
+    const { status, stdout } = runHook(command);
+    expect(status).toBe(0);
+    expect(stdout).toContain('"permissionDecision":"ask"');
+  });
+
+  it.each([
+    "git push -f origin main",
+    "git push origin +main",
+    "git push origin '+main'",
+    'git commit -m "x" && git push --force',
+    "git reset --hard HEAD~1",
+  ])("denies a forced push or hard reset %s for an in-place worker", (command) => {
+    const { status, stderr } = runHook(command, { PAI_WORKER: "1" });
     expect(status).toBe(2);
-    expect(stderr).toContain("dangerous operation");
+    // git reset --hard is caught by the worker-guard rule before the confirm
+    // rule, so the reason differs there; both are denies.
+    expect(stderr).toMatch(/dangerous operation|in-place worker/);
   });
 
   it("allows git push --force-with-lease and a plain push", () => {
