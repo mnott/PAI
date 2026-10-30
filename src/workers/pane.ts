@@ -116,7 +116,9 @@ const RESTORE_ACTIVE = `try {
 // is still marked by the time the next placement is computed. Any non-empty
 // value marks a PAI pane, not just "1": the follow view and `pane exec` set the
 // variable to the worker/run id, which would otherwise read as a discussion
-// pane again. This script is the one place that decides the mark; the TS side
+// pane again. A value that names a worker/run id is passed through as-is
+// (pickSplit's sameWorker groups a worker's panes together); a bare mark comes
+// back as "1". This script is the one place that decides the mark; the TS side
 // (chooseSplit) reads only the fourth field.
 export const TAB_SIZES_SCRIPT = `${FIND_SESSION}
 function run(argv) {
@@ -128,7 +130,7 @@ function run(argv) {
         var pai = "";
         try {
             var v = String(o.variable({ named: "user.paiWorkerPane" }));
-            if (v !== "" && v !== "missing value" && v !== "null") pai = "1";
+            if (v !== "" && v !== "missing value" && v !== "null") pai = v === "1" ? "1" : v;
         } catch (e) {}
         return o.id() + "\\t" + o.columns() + "\\t" + o.rows() + "\\t" + pai;
     }).join("\\n");
@@ -140,6 +142,8 @@ export interface TabPane {
   rows: number;
   /** True when the pane carries the `user.paiWorkerPane` flag: PAI created it. */
   pai?: boolean;
+  /** The flag's value when it names a worker/run id ("" or "1" when it marks only "a PAI pane"). */
+  worker?: string;
 }
 export interface SplitChoice {
   id: string;
@@ -163,15 +167,29 @@ const fits = (h: { cols: number; rows: number }) => h.cols >= panePolicy().minCo
  * (new pane to its right, side by side) only as the first pane, when the tab
  * holds no PAI pane yet; which non-PAI pane takes that first split is the
  * caller's own pane (`hostId`) or, for a caller outside the tab, the largest
- * non-PAI pane. Once PAI panes exist they are the only candidates — the largest
- * wins, either direction by the wide/fits logic — and the small fallback
- * considers them alone: a small PAI pane is preferred over shrinking a
- * discussion pane, whatever the sizes. Side by side only if both halves keep
- * >= 80 columns or the pane is wider than 3.5x its height in cells (a cell is
- * ~2x taller than wide), else stacked; the other direction is the fallback when
- * the preferred one leaves too small a pane. null = nothing splits at all.
+ * non-PAI pane. That first split gives the discussion pane ~50% of the tab and
+ * the PAI area the other half.
+ *
+ * Once PAI panes exist they are the only candidates and the direction is always
+ * "h" while any of them can still be stacked to >= minRows: iTerm equalises the
+ * sibling columns of one row on every vertical split, so a new column next to
+ * the discussion pane squeezes it too — the operator wants at least half the
+ * screen for the discussion and the PAI panes stacked in the right-hand area.
+ * A pane of the worker/run the new pane belongs to (`sameWorker`) is stacked
+ * first, so the same topic sits together; otherwise the newest PAI pane (tab
+ * order) stacks first. Only when no PAI pane can be stacked does a "v" split
+ * open a new column — inside the right area, on the TALLEST PAI pane, never on
+ * the discussion pane. The small fallback keeps that order: a stacked half of a
+ * PAI pane over any vertical split, a discussion pane never a fallback.
+ * null = nothing splits at all.
+ *
+ * After a non-first "v" split iTerm can shrink the discussion pane below 50%
+ * (equalised columns); there is no reliable way to restore it — a JXA
+ * `session.columns = …` resizes the whole window in visible steps, which the
+ * split code has always refused — so no restore is attempted; the stacking
+ * policy above keeps the discussion pane at its half in normal use.
  */
-export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { small: boolean }) | null {
+export function pickSplit(panes: TabPane[], hostId: string, sameWorker?: string): (SplitChoice & { small: boolean }) | null {
   const pai = panes.filter((p) => p.pai === true);
   // no PAI pane yet: a non-PAI pane splits, and only "v" — the first pane
   // opens to its right, never below it. The caller's own pane takes the split;
@@ -187,18 +205,27 @@ export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { sm
     // still never stacked: an "h" half would sit below a pane PAI did not create
     return h.cols > 0 && h.rows > 0 ? { id: host.id, dir: "v", ...v, small: true } : null;
   }
-  const options: Array<SplitChoice & { cells: number; small: boolean }> = [];
-  for (const p of pai) {
-    const wide = Math.floor((p.cols - 1) / 2) >= 80 || p.cols > 3.5 * p.rows;
-    const order: Array<"h" | "v"> = wide ? ["v", "h"] : ["h", "v"];
-    const dir = order.find((d) => fits(halves(p, d)));
-    if (dir) options.push({ id: p.id, dir, ...halves(p, dir), cells: p.cols * p.rows, small: false });
+  // stacked first, newest group first: the new pane of a worker that already
+  // has one goes under that worker's pane, else under the newest PAI pane (tab
+  // order); only when none can be stacked does a "v" split open a new column
+  const stack = [...pai].reverse();
+  if (sameWorker) stack.sort((a, b) => Number(b.worker === sameWorker) - Number(a.worker === sameWorker));
+  for (const p of stack) {
+    const h = halves(p, "h");
+    if (fits(h)) return { id: p.id, dir: "h", ...h, small: false };
   }
-  options.sort((a, b) => b.cells - a.cells);
-  if (options[0]) return options[0];
+  // no pane stacks to the minimum any more: open a new column, on the tallest
+  // PAI pane (newest wins a tie) — a new column inside the right area, never
+  // beside the discussion pane
+  let vBest: (SplitChoice & { small: boolean }) | null = null;
+  for (const p of [...pai].reverse()) {
+    const v = halves(p, "v");
+    if (fits(v) && (!vBest || p.rows > vBest.rows)) vBest = { id: p.id, dir: "v", ...v, small: false };
+  }
+  if (vBest) return vBest;
   // nothing reaches the minimum: a small pane never stops a start, so take the
-  // PAI-pane split whose smaller half is largest — a discussion pane is never
-  // a fallback
+  // PAI-pane split whose smaller half is largest — stacked before side by side,
+  // a discussion pane is never a fallback
   let best: (SplitChoice & { small: boolean; score: number }) | null = null;
   for (const p of pai) {
     for (const d of ["h", "v"] as const) {
@@ -1357,17 +1384,20 @@ let tmuxPaneTitle = "";
  * `pai pane run` / `pai build run` pane, a reopened pane — so there is one
  * placement, no per-path variant. A pane PAI did not create (the discussion
  * pane) is never split stacked: with PAI panes present the split lands in a PAI
- * pane, never the discussion pane.
+ * pane, never the discussion pane. `sameWorker` names the worker/run the new
+ * pane belongs to: its pane in this tab stacks first (same topic together).
  */
-async function chooseSplit(hostUid: string): Promise<SplitChoice | null> {
+async function chooseSplit(hostUid: string, sameWorker?: string): Promise<SplitChoice | null> {
   const sizes = (await osascript(TAB_SIZES_SCRIPT, [hostUid])).stdout.trim();
   const panes: TabPane[] = sizes.includes("\t")
     ? sizes.split("\n").map((l) => {
-        const [id, c, r, pai] = l.split("\t");
-        return { id, cols: Number(c), rows: Number(r), pai: pai === "1" };
+        const [id, c, r, v] = l.split("\t");
+        // any non-empty value marks a PAI pane; a value that names a worker/run
+        // id (the follow view, `pane exec`) also carries it for pickSplit
+        return { id, cols: Number(c), rows: Number(r), pai: !!v, worker: v && v !== "1" ? v : undefined };
       })
     : [];
-  const choice = panes.length ? pickSplit(panes, hostUid) : null;
+  const choice = panes.length ? pickSplit(panes, hostUid, sameWorker) : null;
   if (choice?.small) {
     process.stderr.write(`[pai worker] pane: no pane of the tab splits to ${panePolicy().minCols}x${panePolicy().minRows}; opening a small ${choice.cols}x${choice.rows} pane\n`);
   }
@@ -1480,7 +1510,7 @@ export async function openPaneForWorker(
   const cmd = command ?? followCommand(wid);
   // registry newest first: the split lands below the lowest live worker pane
   const cands = [...reg].reverse().map((e) => e.session).join(",");
-  const choice = await chooseSplit(uid);
+  const choice = await chooseSplit(uid, reg.some((e) => e.worker === wid) ? wid : undefined);
   const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile, choice?.id ?? "", choice?.dir ?? "v", workerPaneTitle(logDir, wid)]);
   const out = p.stdout.trim();
   if (out === "notfound" || out === "notrunning") {
@@ -1601,6 +1631,7 @@ export async function openFollowPane(
   // one exec-able line, no shell syntax — see followCommand(); the same
   // placement policy as every other pane (chooseSplit -> WORKER_SPLIT_SCRIPT)
   const cmd = followCommand();
+  // no worker id to group by: the newest PAI pane stacks first
   const choice = await chooseSplit(uid);
   const s = await osascript(WORKER_SPLIT_SCRIPT, [uid, "", cmd, "", choice?.id ?? "", choice?.dir ?? "v", "worker follow"]);
   const sout = s.stdout.trim();
