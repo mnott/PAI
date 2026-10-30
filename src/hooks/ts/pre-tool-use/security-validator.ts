@@ -24,6 +24,7 @@ import { securityEventsPath } from '../lib/pai-paths.js';
 import { isSharedCheckout } from '../lib/shared-checkout.js';
 import { maskSecrets } from '../lib/loop-guard.js';
 import { loadRules, projectRuleDirs, allRuleDirs } from '../lib/rules/load.js';
+import { renderDecision } from '../lib/render-decision.js';
 import { evaluate } from '../../../guard/evaluate.js';
 import { readWorkersSection } from '../../../workers/config.js';
 import { expandHome } from '../../../daemon/config.js';
@@ -243,7 +244,17 @@ async function main(): Promise<void> {
       session_id: input.session_id,
     });
 
-    deny(`This is a dangerous operation (${command.slice(0, 50)}...). This can cause data loss. If you're sure, explicitly confirm this command.`);
+    // A confirm rule must be confirmable: emit "ask" so Claude Code shows its
+    // native approval prompt. A worker has no operator at the prompt, so it
+    // keeps the deny.
+    if (process.env.PAI_WORKER === '1') {
+      deny(`This is a dangerous operation (${command.slice(0, 50)}...). This can cause data loss. If you're sure, explicitly confirm this command.`);
+    }
+    process.stdout.write(renderDecision({
+      decision: 'ask',
+      reason: `Dangerous operation (${command.slice(0, 50)}...): this can cause data loss, approve to run it.`,
+    }) + '\n');
+    process.exit(0);
   }
 
   if (result.warned) {
