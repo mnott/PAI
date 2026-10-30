@@ -9,7 +9,7 @@ harness view.
   chat in; there is no setup command that writes a UHP client config.
 - **Workers:** yes. A provider with `engine: uhp` runs headless workers
   (`-p '<prompt>'` only — interactive use is refused,
-  `src/workers/run/worker.ts`). Routing, queueing, the ledger, `follow`,
+  `src/workers/run/execute-uhp.ts`). Routing, queueing, the ledger, `follow`,
   `replay` and the AG2 report work as for any other worker.
 - **Harness ids:** one harness per enabled (provider, class) pair, served at
   `GET <base>/v1/harnesses` (`src/uhp-server/harnesses.ts`).
