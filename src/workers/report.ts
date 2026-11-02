@@ -409,7 +409,9 @@ export function verifyReportChanges(
 /**
  * The file paths a `changed` entry names. A report writes several files in one
  * entry as `a/b.ts+c.ts` (later parts relative to the first's directory) or
- * `dir/{x,y}.md`; trailing `,;)` and backticks are punctuation. A token with
+ * `dir/{x,y}.md`. A `+` separates files only after a file extension; one with
+ * no extension before it is part of the name (`Reader+Topic.swift` stays whole,
+ * `Reader+X.swift+Y.swift` is two files). Trailing `,;)` and backticks are punctuation. A token with
  * no `/` or `.` is not a path (a summary fragment a `|` in the summary split off).
  */
 export function claimedPaths(raw: string): string[] {
@@ -419,10 +421,11 @@ export function claimedPaths(raw: string): string[] {
   };
   const clean = raw.replace(/[`'"]/g, "").replace(/^[a-z]=/, "").replace(/[,;)]+$/, "");
   const whole = braces(clean);
-  if (!clean.includes("+") || !clean.split("+")[0].includes("/") && !/\.\w+$/.test(clean.split("+")[0])) return whole.filter(isPathLike);
-  return braces(clean.split("+")[0]).flatMap((first) => {
+  const parts = clean.split(/(?<=\.\w+)\+/);
+  if (parts.length < 2) return whole.filter(isPathLike);
+  return braces(parts[0]).flatMap((first) => {
     const dir = first.includes("/") ? first.slice(0, first.lastIndexOf("/") + 1) : "";
-    return [first, ...clean.split("+").slice(1).flatMap(braces).map((rest) => (dir && rest.startsWith(first.split("/")[0] + "/") ? rest : dir + rest))];
+    return [first, ...parts.slice(1).flatMap(braces).map((rest) => (dir && rest.startsWith(first.split("/")[0] + "/") ? rest : dir + rest))];
   }).filter(isPathLike);
 }
 
