@@ -6,7 +6,9 @@
  * local-model answer, the git context). Those arrive through GateSet as functions, so nothing here reads Claude-Code state.
  */
 
-import { resolve } from "node:path";
+import { existsSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { ORCHESTRATOR_START_BLOCK } from "../workers/report.js";
 import { detectUnsafePlutil, plutilGuardMessage } from "../hooks/ts/lib/plutil-guard.js";
 import { decideWorkerGitGuard, workerGitGuardMessage } from "../hooks/ts/lib/worker-git-guard.js";
 import { mainSessionBashReason } from "../hooks/ts/lib/main-session-git-gate.js";
@@ -63,6 +65,14 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
   if (g.orchestrator && isBash && c.env.PAI_WORKER_ORCHESTRATOR === "1" && c.env.PAI_WORKER === "1" && typeof (c.input as { command?: unknown } | undefined)?.command === "string") {
     const o = decideOrchestratorBash((c.input as { command: string }).command);
     if (o.decision === "block") return deny(o.reason, "orchestrator-bash");
+    // an orchestrator reading the long run help is hunting for how to start an implementer: answer once with the compact block
+    if (/^\s*pai\s+worker\s+run\s+(--help|-h)(\s|$)/.test((c.input as { command: string }).command) && c.env.TMPDIR) {
+      const marker = join(c.env.TMPDIR, ".orchestrator-run-help-shown");
+      if (!existsSync(marker)) {
+        try { writeFileSync(marker, "1"); } catch { /* unwritable scratch: no denial */ return null; }
+        return deny(ORCHESTRATOR_START_BLOCK, "orchestrator-run-help");
+      }
+    }
   }
   if (g.credential) {
     const why = checkCredentialLiteral({ tool_name: c.tool, tool_input: c.input as never }, c.env);

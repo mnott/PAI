@@ -192,10 +192,20 @@ function fullContractPrompt(format: "ag2" | "json", scratch?: string): string {
   return lines.join("\n");
 }
 
+/** How an orchestrator starts and follows an implementer: the one copy, used by the brief and by the `pai worker run --help` guard reply. */
+export const ORCHESTRATOR_START_BLOCK = [
+  "Start an implementer (run it in the background, at most 3 at once):",
+  "  pai worker run --class implement --label \"<goal>\" -p \"$(cat spec.txt)\" --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json",
+  "- `--cwd DIR` runs it in another directory; `--max-minutes N` bounds it; implement gets its own git worktree by default in a git repo.",
+  "- Add `--provider <p>` only when your brief names a local provider; otherwise none. Never wrap it in `pai pane run`.",
+  "- The answer is the JSON `result` field (an AG2 R message). Follow with `pai worker ps`, `pai worker follow <id>`, `pai worker wait <ids> --max 100`.",
+  "- Read its report and diff and run its proof; merging the branch is the L0 session's job, not yours.",
+].join("\n");
+
 /** Appended to the contract of a --orchestrate worker: what the mode means and how units are spawned. */
 export const ORCHESTRATOR_CONTRACT =
   "Orchestrator mode: you plan, delegate and review; code edits are denied to you (Edit/Write on code files and in-place Bash writes) and go to local units. " +
-  "Write each unit spec to a file under /tmp, start it with `pai worker run --provider <the local provider named in your brief> --class implement -p \"$(cat <spec>)\"` (at most 3 at once), wait with `pai worker wait <ids> --max 100`, then read its report and diff, run its proof and merge. " +
+  `Write each unit spec to a file under /tmp, then:\n${ORCHESTRATOR_START_BLOCK}\n` +
   "Pending deletions that local workers report as `delete: <file> (<reason>)` are done by you with `git rm`. " +
   "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them directly; do not commit new tests (tests are governed: tests/KEPT.md). " +
   "When several unit specs share rules, the AG2 report format or a Do-not list, write that block once at the top of each spec between a line `--- shared ---` and a line `--- unit ---` (byte-identical across the specs), then the unit's own goal after the second marker: the pool puts the shared block into the slot's cached system prompt.";
