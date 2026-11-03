@@ -199,7 +199,7 @@ export const ORCHESTRATOR_START_BLOCK = [
   "- `--cwd DIR` runs it in another directory; `--max-minutes N` bounds it; implement gets its own git worktree by default in a git repo.",
   "- Add `--provider <p>` only when your brief names a local provider; otherwise none. Never wrap it in `pai pane run`.",
   "- The answer is the JSON `result` field (an AG2 R message). Follow with `pai worker ps`, `pai worker follow <id>`, `pai worker wait <ids> --max 100`.",
-  "- Read its report and diff and run its proof; merging the branch is the L0 session's job, not yours.",
+  "- Read its report and diff, run its proof, then merge it into your own branch with `pai worker merge <id>`; the L0 session merges your branch.",
 ].join("\n");
 
 /** Appended to the contract of a --orchestrate worker: what the mode means and how units are spawned. */
