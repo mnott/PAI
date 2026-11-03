@@ -190,6 +190,14 @@ const fits = (h: { cols: number; rows: number }) => h.cols >= panePolicy().minCo
  * policy above keeps the discussion pane at its half in normal use.
  */
 export function pickSplit(panes: TabPane[], hostId: string, sameWorker?: string): (SplitChoice & { small: boolean }) | null {
+  // a tab where no pane carries the mark but several panes exist was filled by
+  // an older build that never marked its panes (iTerm's `set variable` takes
+  // `to:`, not `value:`): the first pane in tab order is the discussion pane,
+  // every later one is a PAI pane, so the next pane stacks instead of adding
+  // yet another column
+  if (panes.length > 1 && !panes.some((p) => p.pai === true)) {
+    panes = panes.map((p, i) => (i === 0 ? p : { ...p, pai: true }));
+  }
   const pai = panes.filter((p) => p.pai === true);
   // no PAI pane yet: a non-PAI pane splits, and only "v" — the first pane
   // opens to its right, never below it. The caller's own pane takes the split;
@@ -290,7 +298,7 @@ function run(argv) {
     live.push(newS);
     // mark the new pane as PAI's before anything runs in it: pickSplit reads
     // the mark (TAB_SIZES_SCRIPT) and only ever splits marked panes
-    try { newS.setVariable({ named: "user.paiWorkerPane", value: "1" }); } catch (e) {}
+    try { newS.setVariable({ named: "user.paiWorkerPane", to: "1" }); } catch (e) {}
     // the pane's purpose in the title bar; a session that vanished right after
     // the split must not fail the script
     if (paneTitle) { try { newS.name = paneTitle; } catch (e) {} }
