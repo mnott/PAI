@@ -73,6 +73,7 @@ const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null
     return null;
   },
   "missing-path": () => null,
+  "spec-paths": (p) => (p.max_tokens === undefined || num(p.max_tokens) ? null : "max_tokens must be a number"),
   /** A recorded case with no live detector (a promoted candidate): fixtures only, nothing acts on it. */
   observed: () => null,
 };
