@@ -16,7 +16,8 @@ import { basename, join } from "node:path";
 import { applyUrgency, listUrgency, readUrgency } from "../../workers/urgency.js";
 import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
-import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
+import { specPathsWarning } from "../../workers/spec-paths.js";
+import { longInlinePromptHint,parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
 import { LOCAL_MECHANISM_LINE } from "../../workers/local-provider.js";
 import { runChain } from "../../workers/chain.js";
@@ -135,6 +136,9 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
     const hint = longInlinePromptHint(parseRunnerArgs(ctx.rest).prompt);
     if (hint) process.stderr.write(hint + "\n");
   }
+
+  const specWarn = specPathsWarning(parseRunnerArgs(claudeArgs).prompt, cwd ?? process.cwd());
+  if (specWarn) process.stderr.write(specWarn + "\n");
 
   let label = str(o.label);
   let agentClass: string | undefined;

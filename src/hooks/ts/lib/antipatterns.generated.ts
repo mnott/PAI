@@ -128,6 +128,47 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "paths/mangled-var-folders-path.yaml"
   },
   {
+    "id": "spec-paths-missing",
+    "layer": "baseline",
+    "status": "test",
+    "mode": "monitor",
+    "version": 1,
+    "created": "2026-11-06",
+    "category": "paths",
+    "title": "Spec names relative paths that do not exist under the worker cwd",
+    "description": "A spec said \"../Notes/...\", \"../memory/\", \"./memory/\" while the worker was started with --cwd on a scratch directory holding only the spec files. The worker spent its first turns on ls calls hunting for what the spec assumed. The cause is in the spec, so it is checked before the spawn.\n",
+    "detector": {
+      "kind": "spec-paths",
+      "params": {
+        "max_tokens": 3
+      }
+    },
+    "action": "note",
+    "message": "spec names paths that do not exist under {cwd}: {tokens}. Start the worker with --cwd where they exist, or give absolute paths.",
+    "level": "low",
+    "blind_spots": [
+      "paths written without a ./ or ../ prefix",
+      "paths described in prose (\"under cwd\")",
+      "tokens inside fenced code blocks are checked like the rest"
+    ],
+    "tests": {
+      "match": [
+        "Read ../zz-missing-dir-a/notes.md and ./zz-missing-dir-b/ first."
+      ],
+      "no_match": [
+        "Read /abs/path/file.md and src/index.ts.",
+        "Look at ./zz-*/ and ../<name>/ and ../$DIR/x."
+      ]
+    },
+    "provenance": {
+      "date": "2026-11-06",
+      "model": "various",
+      "observed": "three parallel implement workers started with --cwd on a spec-only scratch directory, spec paths relative to a project tree"
+    },
+    "proxy": "monitor",
+    "source": "paths/spec-paths-missing.yaml"
+  },
+  {
     "id": "distinct-rewrites",
     "layer": "behaviour",
     "status": "stable",
