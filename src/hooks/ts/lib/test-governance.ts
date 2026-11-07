@@ -115,7 +115,8 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
     const t = resolveVars(raw.replace(/^["']|["']$/g, ""), vars);
     if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return false;
     const base = t.startsWith("/") || t.startsWith("$") || t.startsWith("~") ? t : join(cwdAfterCds(command.slice(0, at), cwd), t);
-    return looksLikeTest(base);
+    if (!looksLikeTest(base)) return false;
+    return !promoted(base, cwdAfterCds(command.slice(0, at), cwd)); // a KEPT.md-promoted path is not an unkept new test
   };
   // heredoc bodies are data, not commands: a `cat > f <<EOF` start line writes f
   let pos = 0;
@@ -151,12 +152,15 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
   return null;
 }
 
+/** The ledger folder as projects spell it: `tests/KEPT.md` or `Tests/KEPT.md` (case-sensitive volumes too). */
+const LEDGER_PATHS = [KEPT_LEDGER, join("Tests", "KEPT.md")];
+
 /** True when tests/KEPT.md (project root) names this path or its basename. */
 function promoted(abs: string, cwd: string): boolean {
   let dir = resolve(cwd);
   for (;;) {
-    const ledger = join(dir, KEPT_LEDGER);
-    if (existsSync(ledger)) {
+    const ledger = LEDGER_PATHS.map((p) => join(dir, p)).find((p) => existsSync(p));
+    if (ledger) {
       let text = "";
       try {
         text = readFileSync(ledger, "utf8");
