@@ -263,7 +263,7 @@ function entryDoc(e: Entry, cwd: string): { doc: Record<string, unknown>; path: 
   for (const k of ["tool", "category"] as const) if (r[k]) doc[k] = r[k];
   if (r.match) doc.match = r.match;
   if (r.flags) doc.flags = r.flags;
-  for (const k of ["quoted", "text_ok", "results"] as const) if (r[k]) doc[k] = true;
+  for (const k of ["quoted", "as_written", "text_ok", "results"] as const) if (r[k]) doc[k] = true;
   if (r.sequence) doc.sequence = r.sequence;
   doc.reason = r.reason;
   if (r.tests) doc.tests = r.tests;

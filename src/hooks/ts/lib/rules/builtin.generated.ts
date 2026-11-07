@@ -633,9 +633,10 @@ export const BUILTIN_RULES: LoadedRule[] = [
     "created": "2026-10-25",
     "severity": "block",
     "quoted": true,
+    "as_written": true,
     "category": "resource_exhaustion",
     "flags": "m",
-    "match": "(?:^|[;&|(\\`\\n{]|\\$\\(|\\b(?:then|do|else)\\s|\\b(?:ba|z|da)?sh\\s+-\\w*c\\s+[\"'])\\s*(?:(?:(?:\\\\|\\/[^\\s;&|\"']*\\/)?(?:command|env|exec|nohup|time|builtin|sudo|doas|nice|xargs|stdbuf)(?:\\s+-[^\\s;&|]+(?:\\s+\\d+(?=\\s))?)*|[A-Za-z_]\\w*=[^\\s;&|]*)\\s+)*(?:\\\\|\\/[^\\s;&|\"']*\\/)?\\$?(?:timeout\\s+(?:-[^\\s;&|]+\\s+)*\\d+[smhd]?\\s+)?(?:(?:find|fd|fdfind|rg|ag)(?=\\s)|grep(?=\\s)(?=[^;&|]*\\s(?:-\\w*[rR]\\w*|--recursive)(?=\\s)))(?:\\s+[^\\s;&|]+){0,16}?\\s+[\"']?(?:~|\\$\\{?HOME\\}?|\\/Users\\/[^\\s\\/;&|\"']+|\\/)\\/*[\"']?(?=[\\s;&|)\"'\\`]|$)",
+    "match": "(?:^|[;&|(\\`\\n{]|\\$\\(|\\b(?:then|do|else)\\s|\\b(?:ba|z|da)?sh\\s+-\\w*c\\s+[\"'])\\s*(?:(?:(?:\\\\|\\/[^\\s;&|\"']*\\/)?(?:command|env|exec|nohup|time|builtin|sudo|doas|nice|xargs|stdbuf)(?:\\s+-[^\\s;&|]+(?:\\s+\\d+(?=\\s))?)*|[A-Za-z_]\\w*=[^\\s;&|]*)\\s+)*(?:\\\\|\\/[^\\s;&|\"']*\\/)?\\$?(?:timeout\\s+(?:-[^\\s;&|]+\\s+)*\\d+[smhd]?\\s+)?(?:(?:find|fd|fdfind|rg|ag)(?=\\s)|grep(?=\\s)(?=[^;&|]*\\s(?:-\\w*[rR]\\w*|--recursive)(?=\\s)))(?:\\s+(?:[^\\s;&|\"']|\"[^\"]*\"|'[^']*')+){0,16}?\\s+(?:([\"'])(?:~|\\$\\{?HOME\\}?|\\/Users\\/[^\\s\\/;&|\"']+|\\/)\\/*\\1|(?:~|\\$\\{?HOME\\}?|\\/Users\\/[^\\s\\/;&|\"']+|\\/)\\/*)[\"']?(?=[\\s;&|)\"'\\`]|$)",
     "reason": "recursive search over the home directory or / is blocked; search a named project or cache directory, e.g. rg -n PATTERN ~/strata-020 (mdfind uses the index and is fine)",
     "tests": {
       "match": [
@@ -661,7 +662,12 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "grep -rn foo ~/.cache/pai/x",
         "rg foo /Users/someone/dev/ai/PAI",
         "echo \"find /\"",
-        "ls ~ && grep -rn foo src"
+        "ls ~ && grep -rn foo src",
+        "grep -rn \"inverted() as CGAffineTransform?\" Sources | head",
+        "grep -rn \"/ 1000 \\* \\(probe\\.\\)\\?state.fontSize\" Sources/Core/Text | head -20",
+        "grep -rln \"ColourGridPopover\" Sources/Mac | head -2",
+        "{\"grep -rn \\\"320 / 11\\\\|truncatingRemainder(dividingBy\":\"360)\\\" Sources | head\"}",
+        "grep -rln \"recursive search over the home directory or / is blocked\" --include=*.ts . | head"
       ]
     },
     "proxy": "monitor",

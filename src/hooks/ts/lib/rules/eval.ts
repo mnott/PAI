@@ -137,7 +137,7 @@ export function evaluateRules(rules: Rule[], toolName: string, content: string):
           }
           hit = segs.some((seg) => confirmHit(rule, re, seg, test));
         } else {
-          hit = rule.quoted === true ? variants.some((t) => test(re, t)) : test(re, bare);
+          hit = rule.quoted === true ? (rule.as_written ? [bare, capped] : variants).some((t) => test(re, t)) : test(re, bare);
         }
       } catch {
         // a project regex that did not finish in time: fail closed for block and confirm

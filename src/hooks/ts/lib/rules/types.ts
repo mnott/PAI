@@ -42,6 +42,8 @@ export interface Rule extends Partial<Lifecycle> {
   sequence?: RuleSequence;
   /** Also test the text with only the quote marks removed (default: quoted strings are dropped). */
   quoted?: boolean;
+  /** With `quoted`: test the text as written, not with the quote marks removed (the pattern must then parse quoted strings itself). */
+  as_written?: boolean;
   /** Confirm rules only: skip commit messages, grep/rg patterns, echo/printf text and heredoc bodies written to a file (text that mentions the payload without running it). */
   text_ok?: boolean;
   /** Single-step rule for the after-the-fact scan: also test tool results (default: tool calls only). */

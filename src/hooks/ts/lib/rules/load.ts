@@ -283,6 +283,7 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
     match: source2,
     flags: flags || undefined,
     quoted: raw.quoted === true ? true : undefined,
+    as_written: raw.as_written === true ? true : undefined,
     text_ok: raw.text_ok === true ? true : undefined,
     results: raw.results === true ? true : undefined,
     reason,

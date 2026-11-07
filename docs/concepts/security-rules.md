@@ -66,7 +66,7 @@ Fields:
 
 By default a rule tests the command with quoted strings removed. Text inside a commit message or an `echo` is not a command, so `git commit -m "git reset --hard notes"` does not hit the rule above.
 
-Some payloads are dangerous inside quotes, for example a reverse shell inside `bash -c "..."`. A rule with `quoted: true` also tests the text as written and with only the quote marks removed. Anchor such a rule on command position, so a message that merely mentions the payload stays allowed. Every built-in block rule that needs this is marked.
+Some payloads are dangerous inside quotes, for example a reverse shell inside `bash -c "..."`. A rule with `quoted: true` also tests the text as written and with only the quote marks removed. Anchor such a rule on command position, so a message that merely mentions the payload stays allowed. Every built-in block rule that needs this is marked. Add `as_written: true` to skip the quote-stripped variant: the pattern then reads quoted strings itself (as `recursive-search-root` does, so a `/` inside a quoted grep pattern is not taken for the root path).
 
 Patterns should not cross `;`, `&&` or `|`. Match within one command segment.
 
