@@ -383,6 +383,17 @@ export function commitLines(dir: string, base: string): string[] {
 }
 
 /**
+ * The main checkout a directory belongs to. A child spawned inside an orchestrator's worktree has
+ * that worktree as cwd; the orchestrator's empty-result cleanup removes it, so the child's record
+ * must name the repo itself or merge/discard/gc lose track of the child's branch.
+ */
+export function repoCheckoutOf(dir: string): string {
+  const common = commonDir(dir);
+  if (!common) return dir;
+  return basename(common) === ".git" ? dirname(common) : common;
+}
+
+/**
  * Record the worktree result in the status file: branch and commit count on
  * success, the worktree cleaned up on failure. Returns the updated status.
  */
@@ -393,6 +404,7 @@ export function recordWorktree(
   ok: boolean
 ): WorkerStatus {
   const s = { ...status };
+  if (isRealWorktree(s.cwd) && !isSlotWorktree(s.cwd)) s.cwd = repoCheckoutOf(s.cwd);
   if (ok) {
     s.branch = info.branch;
     s.commits = commitsSince(info.dir, info.base);
@@ -1842,6 +1854,15 @@ function mustHaveBranch(logDir: string, id: string): WorkerStatus & Required<Pic
       `worker ${id} has no worktree branch to ${st.branch ? "clean up" : "merge"} — ` +
         `it ran in place or its branch was already handled`
     );
+  }
+  // the recorded cwd can be an orchestrator's worktree that is gone by now: land in the repo the child's own tree belongs to
+  if (!existsSync(st.cwd) && st.worktreeDir && existsSync(st.worktreeDir)) {
+    try {
+      const common = resolve(st.worktreeDir, git(st.worktreeDir, ["rev-parse", "--git-common-dir"]));
+      st.cwd = basename(common) === ".git" ? dirname(common) : common;
+    } catch {
+      // keep the recorded cwd; the git call that follows reports it
+    }
   }
   return st as WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">>;
 }

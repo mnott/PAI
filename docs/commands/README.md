@@ -285,6 +285,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai project pins` | List the MCP/tool pins of the current project |
 | `pai project promote` | Turn a session note into a new standalone project |
 | `pai project rebind` | Point a project at a new folder after you moved it |
+| `pai project rename` | Change a project's slug (the old one stays as an alias) |
 | `pai project tag` | Add tags to a project |
 | `pai project tools` | Show or set the built-in tools a project's session loads |
 | `pai project unarchive` | Bring an archived project back |
@@ -314,6 +315,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai projects pins` | List the MCP/tool pins of the current project |
 | `pai projects promote` | Turn a session note into a new standalone project |
 | `pai projects rebind` | Point a project at a new folder after you moved it |
+| `pai projects rename` | Change a project's slug (the old one stays as an alias) |
 | `pai projects tag` | Add tags to a project |
 | `pai projects tools` | Show or set the built-in tools a project's session loads |
 | `pai projects unarchive` | Bring an archived project back |

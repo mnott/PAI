@@ -5,6 +5,7 @@
  * deprecated alias that forwards here with a stderr notice.
  */
 
+import { cmdRename } from "./rename.js";
 import { cmdPromote } from "../../../session/promote.js";
 import {
   cmdAdd,
@@ -86,6 +87,11 @@ export async function projectMergeCmd(from: string, into: string, opts: { execut
 }
 
 // New functions for remaining converted commands
+export async function projectRenameCmd(oldSlug: string, newSlug: string, opts: { displayName?: string; dryRun?: boolean }): Promise<number> {
+  await cmdRename(oldSlug, newSlug, opts);
+  return 0;
+}
+
 export async function projectUnregisterCmd(slug: string, opts: { execute?: boolean; force?: boolean }): Promise<number> {
   await cmdUnregister(slug, opts);
   return 0;

@@ -186,6 +186,13 @@ describe("worktree escape", () => {
     expect(deny("cd /Users/x/dev/PAI && npx tsc --noEmit")).toBe(false);
     expect(deny("cd /Users/x/dev/PAI && git log --oneline -1")).toBe(false);
   });
+  it("treats branch/tag --list with patterns as read-only, writes still blocked", () => {
+    expect(deny("cd ~/.pai/logs/workers/worktrees; for i in 18489 18490; do git -C 20261108-103802-$i branch --show-current; git -C 20261108-103802-$i log --oneline -1; done; cd - >/dev/null; git branch --list 'worker/20261108-1038*'")).toBe(false);
+    expect(deny("cd /main && git tag -l 'v1.*'")).toBe(false);
+    expect(deny("cd /main && git branch -D x --list")).toBe(true);
+    expect(deny("git -C /elsewhere branch newbranch")).toBe(true);
+    expect(deny("cd /main && git tag -d v1 --list")).toBe(true);
+  });
   it("blocks relative and env/flag retargeting", () => {
     expect(deny("git -C ../../main commit -am x")).toBe(true);
     expect(deny("cd ../../main && git commit -am x")).toBe(true);

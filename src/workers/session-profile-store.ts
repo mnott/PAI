@@ -164,3 +164,13 @@ export function updateProfile(name: string, patch: ProfilePatch, path: string = 
 export function currentSessionName(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env[SESSION_NAME_ENV]?.trim() || undefined;
 }
+
+/** Re-key one profile (exact key match). False when `from` has no profile or `to` already has one. */
+export function renameProfile(from: string, to: string, path: string = profilesPath()): boolean {
+  const profiles = readProfiles(path);
+  if (!(from in profiles) || to in profiles) return false;
+  profiles[to] = profiles[from];
+  delete profiles[from];
+  writeAtomic(path, profiles);
+  return true;
+}

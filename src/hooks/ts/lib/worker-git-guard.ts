@@ -120,10 +120,15 @@ function segmentWritesGit(segment: string, rest: string[]): boolean {
   if (READONLY_GIT.has(sub)) return false;
   const opts = (set: string[]) => args.every((a) => set.some((s) => a === s || a.startsWith(`${s}=`)));
   const noPositional = args.every((a) => a.startsWith("-"));
+  // With a list flag the positionals are patterns, so it only reads unless a write flag is present.
+  const listOnly = (listFlags: string[], writeFlags: string[]) =>
+    args.some((a) => listFlags.includes(a)) && !args.some((a) => writeFlags.some((w) => a === w || a.startsWith(`${w}=`)));
   switch (sub) {
     case "tag":
+      if (listOnly(["-l", "--list"], ["-d", "--delete", "-a", "-s", "-u", "-f", "--force", "-m", "-F"])) return false;
       return !(args.length === 0 || (noPositional && opts(["-l", "--list", "--sort", "--contains", "--points-at", "--merged", "--no-merged", "-n", "--format"])));
     case "branch":
+      if (listOnly(["-l", "--list"], ["-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy", "-u", "--set-upstream-to", "--unset-upstream", "-f", "--force", "--edit-description"])) return false;
       return !(args.length === 0 || (noPositional && opts(["--list", "-l", "-a", "-r", "--all", "--remotes", "--show-current", "--contains", "--merged", "--no-merged", "-v", "-vv", "--sort", "--format", "--points-at"])));
     case "config":
       return !(args[0] === "--get" || args[0] === "--get-all" || args[0] === "--list" || args[0] === "-l");

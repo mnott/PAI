@@ -5,6 +5,7 @@
  */
 
 import { getRegistryBackend } from "../../../storage/factory.js";
+import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import type { ProjectRow } from "./types.js";
 
 /**
@@ -21,8 +22,11 @@ import type { ProjectRow } from "./types.js";
  * returns first.
  */
 export async function getProject(slug: string): Promise<ProjectRow | undefined> {
-  const backend = await getRegistryBackend();
+  return findProject(await getRegistryBackend(), slug);
+}
 
+/** getProject against an explicit backend (rename and tests use this). */
+export async function findProject(backend: RegistryBackend, slug: string): Promise<ProjectRow | undefined> {
   const direct = await backend.getProjectBySlug(slug);
   if (direct) return direct;
 

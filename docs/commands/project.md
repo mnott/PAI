@@ -193,6 +193,35 @@ pai project merge old-app my-app --execute
 
 See also: `pai project unregister`, `pai project archive`
 
+### pai project rename
+
+Change a project's slug (the old one stays as an alias)
+
+```
+pai project rename OLD_SLUG NEW_SLUG [options]
+```
+
+Change a project's slug (the old one stays as an alias).
+
+Rename a project in the registry; the folder is not touched. The old slug is kept as an alias so it still resolves. Sessions, notes, tags, aliases and launch config move with the project; session-routing.json, session-profiles.yaml and the AIBroker manage brief are re-keyed. --display-name also renames the AIBroker owner (`aibroker owner rename`). Rerunning after success does nothing.
+
+| Argument | Required | Description |
+|---|---|---|
+| `OLD_SLUG` | yes | Current slug |
+| `NEW_SLUG` | yes | New slug |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--display-name NAME` | string | — | Also set the display name |
+| `--dry-run` | flag | — | Show the planned changes, write nothing |
+
+```sh
+pai project rename old-app my-app --dry-run
+pai project rename old-app my-app --display-name "My App"
+```
+
+See also: `pai project merge`, `pai project alias`
+
 ### pai project unregister
 
 Remove a project that should never have been registered
@@ -746,6 +775,7 @@ See also: `pai project pins`
 | `pai project info` | Show everything known about one project |
 | `pai project archive` | Hide a project you no longer work on |
 | `pai project merge` | Fold a duplicate project into another (preview unless --execute) |
+| `pai project rename` | Change a project's slug (the old one stays as an alias) |
 | `pai project unregister` | Remove a project that should never have been registered |
 | `pai project unarchive` | Bring an archived project back |
 | `pai project move` | Record that a project's folder has a new location |
