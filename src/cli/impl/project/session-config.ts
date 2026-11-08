@@ -284,6 +284,22 @@ export function withSessionProfile(effective: SessionConfig, names: string[], pr
   return { ...effective, env, ...(flags !== undefined ? { flags } : {}) };
 }
 
+/** Effective session config of a project: global defaults, project config over them, then its session profile. */
+export async function effectiveSessionConfig(project: ProjectRow): Promise<SessionConfig> {
+  const aliases = await getProjectAliases(project.id);
+  return withSessionProfile({ ...getGlobalDefaults(), ...getSessionConfig(project) }, [project.slug, ...aliases]);
+}
+
+/** Effective session config for the project covering `cwd`; {} when none (or the registry is unreadable). */
+export async function effectiveSessionConfigForDir(cwd: string): Promise<SessionConfig> {
+  try {
+    const project = await currentProject(cwd);
+    return project ? await effectiveSessionConfig(project) : getGlobalDefaults();
+  } catch {
+    return {};
+  }
+}
+
 export async function cmdConfig(
   identifier: string | undefined,
   opts: {

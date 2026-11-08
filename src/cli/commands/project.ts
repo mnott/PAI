@@ -172,11 +172,12 @@ export const projectSubcommands: CommandDef[] = [
 {
   name: "alias",
   summary: "Give a project a second name that also finds it",
-  description: "Give a project a second name that also finds it.",
+  description: "Give a project a second name that also finds it.\n\nWith --remove, drop ALIAS again; it must belong to SLUG.",
   args: [{ name: "SLUG", summary: "Project name (see: pai project list)", required: true }, { name: "ALIAS", summary: "The second name", required: true }],
-  examples: ["pai project alias my-app app","pai project info my-app"],
+  options: [{ name: "remove", type: "boolean", summary: "Remove ALIAS from SLUG instead of adding it" }],
+  examples: ["pai project alias my-app app","pai project alias my-app app --remove","pai project info my-app"],
   seeAlso: ["pai project edit","pai project tag"],
-  run: (ctx) => projectAliasCmd(ctx.args.SLUG as string, ctx.args.ALIAS as string),
+  run: (ctx) => projectAliasCmd(ctx.args.SLUG as string, ctx.args.ALIAS as string, { remove: ctx.opts.remove === true }),
 },
 {
   name: "edit",

@@ -197,7 +197,8 @@ export async function buildLaunchPlan(
       `provider "${providerName}" runs through the ${provider.engine === "codex" ? "Codex" : "OpenCode"} CLI (engine: ${provider.engine}) — pai launch starts the Claude Code harness only`
     );
   }
-  const model = resolveLaunchModel(provider, modelName);
+  // interactive session: the native login's chat model is the orchestrator model, not the worker default
+  const model = resolveLaunchModel(provider, modelName ?? (provider.native ? nativeOrchestratorModel() : undefined));
 
   let proxyUrl: string | undefined;
   if (provider.protocol === "openai") {

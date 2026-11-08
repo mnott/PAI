@@ -17,6 +17,8 @@ import { SESSION_NAME_ENV, getProfile } from "../../workers/session-profile-stor
 import { SESSION_WORKER_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { routeVerdictLine } from "../../workers/run-env.js";
 import { printExitDir } from "./exit-dir.js";
+import { sessionLaunchExtras } from "./launch.js";
+import { effectiveSessionConfigForDir } from "../impl/project/session-config.js";
 
 export interface Harness {
   cmd: "claude";
@@ -27,6 +29,8 @@ export interface Harness {
   model: string;
   /** Route preflight verdict (see buildLaunchPlan); absent when not probed. */
   route?: LaunchPlan["route"];
+  /** Env the project's session config added (already merged into `env`); shown by --dry-run. */
+  sessionEnv?: Record<string, string>;
 }
 
 /** `--name N "/Name N"`: label the session and tab (same as launchPrompt in lib/launch.ts). `named`: the session already carries N, so no /Name is sent. */
@@ -44,7 +48,20 @@ export async function buildHarness(
   const p = getProfile(opts.name);
   const wp = p?.workers && !p.workers_implicit ? p.workers.provider : undefined;
   if (wp) plan.env[SESSION_WORKER_PROVIDER_ENV] = wp;
-  return { cmd: "claude", argv: plan.argv, env: plan.env, cwd: opts.cwd, provider: plan.providerName, model: plan.model, route: plan.route };
+  // the project's session config (project over global defaults) adds its claude flags and env;
+  // the launch plan always carries the provider's --model, so a configured model never overrides it
+  const extras = sessionLaunchExtras(await effectiveSessionConfigForDir(opts.cwd), plan.argv, !plan.argv.includes("--model"));
+  Object.assign(plan.env, extras.env);
+  return {
+    cmd: "claude",
+    argv: [...plan.argv, ...extras.args],
+    env: plan.env,
+    cwd: opts.cwd,
+    provider: plan.providerName,
+    model: plan.model,
+    route: plan.route,
+    sessionEnv: extras.env,
+  };
 }
 
 const quote = (a: string) => (/[\s"'$`\\{}]/.test(a) ? JSON.stringify(a) : a);
@@ -63,6 +80,7 @@ export function dryRunText(h: Harness): string {
     .sort()
     .filter((k) => /^(ANTHROPIC_|CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC|ENABLE_TOOL_SEARCH|PAI_WORKER|PAI_SESSION_)/.test(k))
     .map((k) => `  ${k}=${masked[k]}`);
+  for (const [k, v] of Object.entries(h.sessionEnv ?? {})) if (!(k in masked && env.some((l) => l.startsWith(`  ${k}=`)))) env.push(`  ${k}=${v}`);
   const verdict = routeVerdictLine(h.route);
   return [...(verdict ? [verdict] : []), execLine(h), ...(env.length ? ["env:", ...env] : [])].join("\n");
 }

@@ -183,12 +183,12 @@ async function offerResume(
   });
 }
 
-function launchSession(
+async function launchSession(
   session: ScannedSession,
   allSessions: ScannedSession[],
   dryRun: boolean,
   resume: boolean
-): boolean {
+): Promise<boolean> {
   const resumableUuid = resumeTargetFor(session, allSessions, resume);
 
   const { dir: projectDir } = resolveSessionDir(session);
@@ -222,7 +222,7 @@ function launchSession(
   // config (provider when routing is on), a wanted resume stays claude because
   // its transcript is claude-format. Duplicating that dance here is also how
   // probeResume ended up fixed in one copy and not the others.
-  launchInDir(projectDir, name, { resumableUuid, dryRun, named: terminalHasName(name, process.env.ITERM_SESSION_ID ?? "") });
+  await launchInDir(projectDir, name, { resumableUuid, dryRun, named: terminalHasName(name, process.env.ITERM_SESSION_ID ?? "") });
   return true;
 }
 
@@ -356,10 +356,10 @@ async function openMatch(
   if (entry.diskSession) {
     const wantResume =
       resume || (await offerResume(entry.diskSession, allSessions, auto, dryRun));
-    if (launchSession(entry.diskSession, allSessions, dryRun, wantResume)) return true;
+    if (await launchSession(entry.diskSession, allSessions, dryRun, wantResume)) return true;
   }
   if (entry.project && existsSync(entry.project)) {
-    launchInDir(entry.project, entry.name, { dryRun });
+    await launchInDir(entry.project, entry.name, { dryRun });
     return true;
   }
   return false;
@@ -425,7 +425,7 @@ export async function cmdMain(
     const byUuid = allSessions.filter((s) => s.uuid.startsWith(query.toLowerCase()));
     if (byUuid.length === 1) {
       // A UUID names a transcript, so resuming it is the whole request.
-      launchSession(byUuid[0], allSessions, opts.dryRun ?? false, true);
+      await launchSession(byUuid[0], allSessions, opts.dryRun ?? false, true);
       return;
     }
     if (byUuid.length > 1) {
@@ -585,7 +585,7 @@ export async function cmdMain(
     });
     for (const p of byName) {
       if (p.root_path && existsSync(p.root_path)) {
-        launchInDir(p.root_path, p.display_name ?? query, { dryRun: opts.dryRun ?? false });
+        await launchInDir(p.root_path, p.display_name ?? query, { dryRun: opts.dryRun ?? false });
         return;
       }
     }
@@ -618,7 +618,7 @@ export async function cmdMain(
   console.log(renderTable(HISTORY_TABLE_HEADERS, rows));
   console.log();
 
-  const launchHistoryMatch = (match: SessionMatch) => {
+  const launchHistoryMatch = async (match: SessionMatch) => {
     const session = matchToSession(match, allSessions);
     if (!session) {
       console.error(err("Could not resolve session for launch (no project path)."));
@@ -626,7 +626,7 @@ export async function cmdMain(
       return;
     }
     // A picked history row IS a conversation, so it is resumed like a UUID.
-    launchSession(session, allSessions, opts.dryRun ?? false, true);
+    await launchSession(session, allSessions, opts.dryRun ?? false, true);
   };
 
   if (pickN !== undefined) {

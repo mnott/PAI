@@ -17,7 +17,7 @@ import chalk from "chalk";
 import { trustProjectPath } from "../../../config/claude-json.js";
 import { unregistrableReason } from "../../../registry/registrable.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
-import type { Project } from "../../../storage/registry-interface.js";
+import type { Project, RegistryBackend } from "../../../storage/registry-interface.js";
 import {
   ok,
   warn,
@@ -264,6 +264,18 @@ export function findMovedPath(registeredPath: string): { found?: string; ambiguo
 // Command implementations
 // ---------------------------------------------------------------------------
 
+/**
+ * A new project's slug must not also be an alias of another project: slug lookup
+ * would win, but alias-based lookups would still resolve to the old owner.
+ * Removes such an alias and returns the line to print, or null.
+ */
+export async function dropShadowedAlias(backend: RegistryBackend, slug: string): Promise<string | null> {
+  const owner = await backend.getProjectByAlias(slug);
+  if (!owner) return null;
+  await backend.removeAlias(slug);
+  return `Alias ${slug} removed from ${owner.slug}: ${slug} is now its own project`;
+}
+
 export async function cmdAdd(
   rawPath: string,
   opts: { slug?: string; type?: string; displayName?: string; trust?: boolean }
@@ -329,6 +341,8 @@ export async function cmdAdd(
   }
 
   const ts = now();
+  const aliasNote = await dropShadowedAlias(backend, slug);
+  if (aliasNote) console.log(aliasNote);
   await backend.createProject({
     slug,
     displayName,
@@ -555,12 +569,39 @@ export async function cmdTag(
   }
 }
 
-export async function cmdAlias(
+/** Remove ALIAS from SLUG. Returns an error message, or null when removed. */
+export async function removeProjectAlias(
+  backend: RegistryBackend,
   slug: string,
   alias: string
+): Promise<string | null> {
+  const owner = await backend.getProjectByAlias(alias);
+  if (!owner) return `Alias "${alias}" does not exist.`;
+  if (owner.slug !== slug) {
+    return `Alias "${alias}" belongs to project "${owner.slug}", not "${slug}".`;
+  }
+  await backend.removeAlias(alias);
+  return null;
+}
+
+export async function cmdAlias(
+  slug: string,
+  alias: string,
+  opts: { remove?: boolean } = {}
 ): Promise<void> {
   await requireProject(slug);
   const backend = await getRegistryBackend();
+
+  if (opts.remove) {
+    const message = await removeProjectAlias(backend, slug, alias);
+    if (message) {
+      console.error(err(message));
+      process.exitCode = 1;
+    } else {
+      console.log(ok(`Alias removed: ${bold(alias)} (was → ${slug})`));
+    }
+    return;
+  }
 
   const conflict = await backend.getProjectBySlug(alias);
   if (conflict) {

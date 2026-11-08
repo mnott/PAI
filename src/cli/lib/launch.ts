@@ -48,6 +48,8 @@ import { buildRunEnv, nativeLaunchEnv, claudeCommand, pinnedSettingsArgs, native
 import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 import { printExitDir } from "./exit-dir.js";
+import { effectiveSessionConfigForDir } from "../impl/project/session-config.js";
+import type { SessionConfig } from "../impl/project/types.js";
 
 export interface ProbeResult {
   ok: boolean;
@@ -637,8 +639,81 @@ export function resumeOfferBlock(
 
 /** Display form of the resume argv — shared by the dry-run paths so they
  *  cannot drift from what launchInDir actually spawns. */
-export function resumeArgvText(uuid: string, name: string, plan: ProviderResumePlan | null, named = false): string {
-  return `${(plan ? plan.cmd : ["claude"]).join(" ")} --resume ${uuid} --name "${name}"${named ? "" : ` "${launchPrompt(name)}"`}`;
+export function resumeArgvText(uuid: string, name: string, plan: ProviderResumePlan | null, named = false, extra: string[] = []): string {
+  return `${(plan ? plan.cmd : ["claude"]).join(" ")} --resume ${uuid} --name "${name}"${named ? "" : ` "${launchPrompt(name)}"`}${extra.length ? " " + extra.join(" ") : ""}`;
+}
+
+/** Split a flags string like a shell would (quotes and backslashes), without running one. */
+export function splitFlags(flags: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let has = false;
+  let quote: string | null = null;
+  for (let i = 0; i < flags.length; i++) {
+    const c = flags[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      else if (c === "\\" && quote === '"' && i + 1 < flags.length) cur += flags[++i];
+      else cur += c;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      has = true;
+    } else if (c === "\\" && i + 1 < flags.length) {
+      cur += flags[++i];
+      has = true;
+    } else if (/\s/.test(c)) {
+      if (has || cur) out.push(cur);
+      cur = "";
+      has = false;
+    } else {
+      cur += c;
+      has = true;
+    }
+  }
+  if (has || cur) out.push(cur);
+  return out;
+}
+
+/** What a project's session config adds to a claude launch. */
+export interface SessionLaunchExtras {
+  args: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * Claude flags and env from an effective session config. Flags already in
+ * `present` (a `--flag` and its values) are not repeated; `model` becomes
+ * `--model` only when `allowModel` and no --model is present or configured.
+ */
+export function sessionLaunchExtras(cfg: SessionConfig, present: string[], allowModel: boolean): SessionLaunchExtras {
+  const tokens = splitFlags(cfg.flags ?? "");
+  if (allowModel && cfg.model && !tokens.some((t) => t === "--model" || t.startsWith("--model="))) {
+    tokens.push("--model", cfg.model);
+  }
+  const args: string[] = [];
+  for (let i = 0; i < tokens.length; ) {
+    let j = i + 1;
+    while (j < tokens.length && !tokens[j].startsWith("-")) j++;
+    const group = tokens.slice(i, j);
+    const flag = group[0].split("=")[0];
+    if (!group[0].startsWith("--") || !present.some((a) => typeof a === "string" && (a === flag || a.startsWith(flag + "=")))) args.push(...group);
+    i = j;
+  }
+  return { args, env: { ...(cfg.env ?? {}) } };
+}
+
+/** Session-config extras for a launch in `cwd`; the one place every launch path reads them. */
+export async function resolveSessionLaunchExtras(cwd: string, present: string[], allowModel: boolean): Promise<SessionLaunchExtras> {
+  return sessionLaunchExtras(await effectiveSessionConfigForDir(cwd), present, allowModel);
+}
+
+/** Dry-run lines for the session-config extras. */
+export function sessionExtrasLines(x: SessionLaunchExtras): string[] {
+  const lines: string[] = [];
+  if (x.args.length) lines.push(`  flags:    ${x.args.join(" ")}`);
+  const env = Object.entries(x.env).map(([k, v]) => `${k}=${v}`);
+  if (env.length) lines.push(`  env:      ${env.join(" ")}`);
+  return lines;
 }
 
 export interface LaunchOpts {
@@ -736,7 +811,7 @@ export function workerRunArgv(label: string, cwd: string): string[] {
  * Claude session label (--name) and the /Name slash command (tab/statusline).
  * Never returns on the live path — it exits the process after claude exits.
  */
-export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): void {
+export async function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): Promise<void> {
   let cwd: string;
   try {
     cwd = realpathSync(dir);
@@ -766,15 +841,20 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   } catch {
     /* routing stays off for this launch */
   }
+  const baseArgs = ["--name", name, ...promptArgs];
+  const explicitModel = !!(opts.provider || opts.model);
+  const sessionCfg = await effectiveSessionConfigForDir(cwd);
+  let extras = sessionLaunchExtras(sessionCfg, baseArgs, !explicitModel);
+  const withEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({ ...env, ...extras.env });
   if (opts.provider) {
     const wantsResume = !opts.forceFresh && !!opts.resumableUuid;
     const argv = providerLaunchArgv(
       opts.provider,
       opts.model,
-      [...(wantsResume ? ["--resume", opts.resumableUuid!] : []), "--name", name, ...promptArgs],
+      [...(wantsResume ? ["--resume", opts.resumableUuid!] : []), "--name", name, ...promptArgs, ...extras.args],
       opts.dryRun
     );
-    const result = spawnSync("pai", argv, { cwd, stdio: "inherit", env: nativeLaunchEnv() });
+    const result = spawnSync("pai", argv, { cwd, stdio: "inherit", env: withEnv(nativeLaunchEnv()) });
     if (result.error) {
       console.error(err(`Failed to launch pai launch: ${result.error.message}`));
       process.exitCode = 1;
@@ -786,14 +866,19 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   }
   const route = resolveLaunchRoute(workers, opts);
   const wantResume = route.resume;
+  // A provider resume plan pins its own route and passes no --model (providerPlan).
+  if (wantResume && !explicitModel && providerResumePlan(opts.resumableUuid!, cwd, workers)) {
+    extras = sessionLaunchExtras(sessionCfg, baseArgs, false);
+  }
 
   if (opts.dryRun) {
     if (route.engine === "worker") {
       console.log("\n" + chalk.bold("Dry run — would exec (WORKER path):") + "\n");
       console.log(`  cwd:  ${chalk.cyan(cwd)}`);
       console.log(
-        `  argv: pai worker run --label "${name}" --cwd ${cwd} --name "${name}" "${launchPrompt(name)}"`
+        `  argv: ${["pai", ...workerRunArgv(name, cwd).map((a) => (/\s/.test(a) ? `"${a}"` : a)), ...extras.args].join(" ")}`
       );
+      for (const l of sessionExtrasLines(extras)) console.log(l);
       console.log();
       return;
     }
@@ -808,7 +893,8 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       if (plan) {
         console.log(`  route:    ${plan.provider} (${plan.model})`);
       }
-      console.log(`  argv:     ${chalk.white(resumeArgvText(opts.resumableUuid!, name, plan, promptArgs.length === 0))}`);
+      console.log(`  argv:     ${chalk.white(resumeArgvText(opts.resumableUuid!, name, plan, promptArgs.length === 0, extras.args))}`);
+      for (const l of sessionExtrasLines(extras)) console.log(l);
       console.log(`  fallback: claude --name "${name}" "${launchPrompt(name)}"`);
     } else {
       console.log("\n" + chalk.bold("Dry run — would exec (FRESH path):") + "\n");
@@ -817,7 +903,8 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       const verdict = routeVerdictLine(pf.probe);
       if (verdict) console.log(`  route: ${verdict}`);
       const pin = pf.probe && !pf.probe.live ? pinnedSettingsArgs(process.env, false) : [];
-      console.log(`  argv: ${["claude", ...pin.map((a) => (/[\s"{]/.test(a) ? `'${a}'` : a))].join(" ")} --name "${name}" "${launchPrompt(name)}"`);
+      console.log(`  argv: ${["claude", ...pin.map((a) => (/[\s"{]/.test(a) ? `'${a}'` : a))].join(" ")} --name "${name}" "${launchPrompt(name)}"${extras.args.length ? " " + extras.args.join(" ") : ""}`);
+      for (const l of sessionExtrasLines(extras)) console.log(l);
     }
     console.log();
     return;
@@ -825,10 +912,10 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
 
   // Worker path: interactive `pai worker run`, fresh by design — no resume.
   if (route.engine === "worker") {
-    const result = spawnSync("pai", workerRunArgv(name, cwd), {
+    const result = spawnSync("pai", [...workerRunArgv(name, cwd), ...extras.args], {
       cwd,
       stdio: "inherit",
-      env: nativeLaunchEnv(),
+      env: withEnv(nativeLaunchEnv()),
     });
     if (result.error) {
       console.error(err(`Failed to launch pai worker run: ${result.error.message}`));
@@ -841,10 +928,10 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   }
 
   const fresh = () => {
-    const result = spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--name", name, ...freshPromptArgs], {
+    const result = spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--name", name, ...freshPromptArgs, ...extras.args], {
       cwd,
       stdio: "inherit",
-      env: nativeLaunchEnv(),
+      env: withEnv(nativeLaunchEnv()),
     });
     if (result.error) {
       console.error(err(`Failed to launch claude: ${result.error.message}`));
@@ -867,13 +954,13 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       const result = plan
         ? spawnSync(
             plan.cmd[0],
-            [...plan.cmd.slice(1), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs],
-            { cwd, stdio: "inherit", env: plan.env }
+            [...plan.cmd.slice(1), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs, ...extras.args],
+            { cwd, stdio: "inherit", env: withEnv(plan.env) }
           )
-        : spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs], {
+        : spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs, ...extras.args], {
             cwd,
             stdio: "inherit",
-            env: nativeLaunchEnv(),
+            env: withEnv(nativeLaunchEnv()),
           });
       if (result.error) {
         console.error(err(`Failed to launch claude: ${result.error.message}`));

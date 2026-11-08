@@ -6,6 +6,7 @@ import DatabaseCtor from "better-sqlite3";
 import { initializeSchema } from "../../../storage/sqlite/registry-schema.js";
 import { SQLiteRegistryBackend } from "../../../storage/registry-sqlite.js";
 import { renameProject } from "./rename.js";
+import { dropShadowedAlias, removeProjectAlias } from "./commands.js";
 import { findProject } from "./helpers.js";
 
 let dir: string;
@@ -71,5 +72,38 @@ describe("project rename", () => {
     expect(calls).toEqual([["Alpha", "Gamma Co"]]);
 
     expect((await renameProject(backend, "alpha", "gamma", opts)).status).toBe("noop");
+  });
+
+  it("add: a new slug equal to another project's alias removes that alias; rename refuses it", async () => {
+    const a = await addProject("proj-a", "A");
+    await backend.addAlias("x", a.id);
+    expect((await backend.getProjectByAlias("x"))!.id).toBe(a.id);
+
+    // rename onto another project's alias is refused
+    const c = await addProject("proj-c", "C");
+    expect((await renameProject(backend, "proj-c", "x", {})).status).toBe("refused");
+    expect((await backend.getProjectById(c.id))!.slug).toBe("proj-c");
+
+    // before the fix, creating slug x left the alias in place
+    await addProject("x", "B");
+    expect((await backend.getProjectByAlias("x"))!.id).toBe(a.id);
+    // add path: alias dropped, message printed by caller
+    expect(await dropShadowedAlias(backend, "x")).toBe("Alias x removed from proj-a: x is now its own project");
+    expect(await backend.getProjectByAlias("x")).toBeNull();
+    expect((await backend.getProjectBySlug("x"))!.display_name).toBe("B");
+    expect(await dropShadowedAlias(backend, "x")).toBeNull();
+  });
+});
+
+describe("project alias --remove", () => {
+  it("removes an alias of the slug, refuses another owner's or a missing alias", async () => {
+    const a = await addProject("alpha", "Alpha");
+    await addProject("beta", "Beta");
+    await backend.addAlias("al", a.id);
+    expect(await removeProjectAlias(backend, "beta", "al")).toContain('belongs to project "alpha"');
+    expect(await backend.getProjectByAlias("al")).not.toBeNull();
+    expect(await removeProjectAlias(backend, "alpha", "nope")).toContain("does not exist");
+    expect(await removeProjectAlias(backend, "alpha", "al")).toBeNull();
+    expect(await backend.getProjectByAlias("al")).toBeNull();
   });
 });

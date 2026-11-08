@@ -379,18 +379,25 @@ See also: `pai project alias`, `pai project here`
 Give a project a second name that also finds it
 
 ```
-pai project alias SLUG ALIAS
+pai project alias SLUG ALIAS [options]
 ```
 
 Give a project a second name that also finds it.
+
+With --remove, drop ALIAS again; it must belong to SLUG.
 
 | Argument | Required | Description |
 |---|---|---|
 | `SLUG` | yes | Project name (see: pai project list) |
 | `ALIAS` | yes | The second name |
 
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--remove` | flag | — | Remove ALIAS from SLUG instead of adding it |
+
 ```sh
 pai project alias my-app app
+pai project alias my-app app --remove
 pai project info my-app
 ```
 

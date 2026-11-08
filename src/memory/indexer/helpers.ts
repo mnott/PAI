@@ -269,12 +269,27 @@ export function walkContentFiles(rootPath: string): string[] {
 /** Paths that must never be indexed — system/temp dirs that can contain backup snapshots. */
 const BLOCKED_ROOTS = new Set(["/tmp", "/private/tmp", "/var", "/private/var"]);
 
+const CODE_MARKERS = [
+  "package.json", "pyproject.toml", "setup.py", "Cargo.toml", "go.mod", "pom.xml",
+  "build.gradle", "Gemfile", "composer.json", "Makefile", "CMakeLists.txt",
+  "Package.swift", "deno.json",
+];
+
+function hasCodeMarker(dir: string): boolean {
+  if (CODE_MARKERS.some((m) => existsSync(join(dir, m)))) return true;
+  try {
+    return readdirSync(dir).some((n) => n.endsWith(".xcodeproj"));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Returns true if rootPath should skip the recursive content scan.
  *
  * Skips content scanning for:
  *  - The home directory itself or any ancestor (too broad — millions of files)
- *  - Git repositories (code repos — index memory/ and Notes/ only, not all .md files)
+ *  - Git repositories with a code marker (package.json, Cargo.toml, ...); docs-only git repos are scanned
  *
  * The content scan is still useful for Obsidian vaults, Notes folders, and
  * other doc-centric project trees where ALL markdown files are meaningful.
@@ -304,9 +319,9 @@ export function isPathTooBroadForContentScan(rootPath: string): boolean {
     if (depth === 0) return true;
   }
 
-  // Skip git repositories — content scan is only for doc-centric projects
-  // (Obsidian vaults, knowledge bases). Code repos use memory/ and Notes/ only.
-  if (existsSync(join(normalized, ".git"))) {
+  // Skip git repositories that look like code (memory/ and Notes/ only).
+  // A git repo without a code marker is a docs repo and gets the content scan.
+  if (existsSync(join(normalized, ".git")) && hasCodeMarker(normalized)) {
     return true;
   }
 

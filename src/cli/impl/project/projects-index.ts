@@ -122,8 +122,8 @@ export async function projectTagCmd(slug: string, tags: string[]): Promise<numbe
   return 0;
 }
 
-export async function projectAliasCmd(slug: string, alias: string): Promise<number> {
-  await cmdAlias(slug, alias);
+export async function projectAliasCmd(slug: string, alias: string, opts: { remove?: boolean } = {}): Promise<number> {
+  await cmdAlias(slug, alias, opts);
   return 0;
 }
 

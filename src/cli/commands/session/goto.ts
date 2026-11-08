@@ -45,6 +45,8 @@ import {
 } from "../../lib/session-scan.js";
 import {
   launchInDir,
+  resolveSessionLaunchExtras,
+  sessionExtrasLines,
   launchPrompt,
   providerResumePlan,
   resumeArgvText,
@@ -124,9 +126,10 @@ export async function cmdGoto(
 
   // ---- 5. Dry-run mode ----
   if (opts.dryRun) {
+    const extras = await resolveSessionLaunchExtras(projectDir, ["--name", name], true);
     if (resumableUuid) {
       const plan = providerResumePlan(resumableUuid, projectDir);
-      const argvResume = resumeArgvText(resumableUuid, name, plan, named);
+      const argvResume = resumeArgvText(resumableUuid, name, plan, named, extras.args);
       const argvFresh = `claude --name "${name}" "${launchPrompt(name)}"`;
       console.log(
         "\n" + chalk.bold("Dry run — would probe then exec (RESUME path):") + "\n"
@@ -137,6 +140,7 @@ export async function cmdGoto(
         console.log(`  route:    ${plan.provider} (${plan.model})`);
       }
       console.log(`  argv:     ${chalk.white(argvResume)}`);
+      for (const l of sessionExtrasLines(extras)) console.log(l);
       console.log(`  fallback: ${chalk.yellow(argvFresh)}`);
       if (resumableSession) {
         console.log(`\n  uuid:     ${resumableSession.uuid}`);
@@ -151,6 +155,7 @@ export async function cmdGoto(
       );
       console.log(`  cwd:   ${chalk.cyan(projectDir)}`);
       console.log(`  argv:  ${chalk.white(argvFresh)}`);
+      for (const l of sessionExtrasLines(extras)) console.log(l);
     }
     console.log();
     return;
@@ -163,5 +168,5 @@ export async function cmdGoto(
   // bug. `engine: "claude"` keeps goto's fresh paths exactly what they were —
   // plain claude, no worker routing — while the resume inherits the provider
   // the transcript actually ran on.
-  launchInDir(projectDir, name, { resumableUuid, engine: "claude", named });
+  await launchInDir(projectDir, name, { resumableUuid, engine: "claude", named });
 }
