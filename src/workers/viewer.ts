@@ -615,6 +615,8 @@ export async function followWorkers(
   const inboxSeen = new Map<string, number>();
   const states = new Map<string, FollowState>();
   const started = Date.now();
+  let scanCache: Map<string, WorkerStatus> | null = null;
+  let scanAt = 0;
   let idleSince: number | null = null;
   let aborted = false;
   // why this pane's follow last exited — recorded in the ledger's PANE-CLOSED
@@ -1146,8 +1148,6 @@ export async function followWorkers(
    * that can throw (rendering, terminal writes) is still covered by that
    * path, so one bad event or write never takes the whole pane down with it.
    */
-  let scanCache: Map<string, WorkerStatus> | null = null;
-  let scanAt = 0;
   async function runOneTick(): Promise<TickOutcome> {
     // ponytail: a pinned pane reads its one status file; an all-workers pane
     // rescans the (thousands of) status files at most every 2 s
