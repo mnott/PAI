@@ -14,7 +14,7 @@ import { SHIPPED_ANTIPATTERNS } from "../hooks/ts/lib/antipatterns.generated.js"
 import { BUILTIN_RULES } from "../hooks/ts/lib/rules/builtin.generated.js";
 import { commitHomeChange } from "../config/home-git.js";
 import { paiHomePath } from "../config/pai-home.js";
-import { CATEGORIES, loadAntipatterns, resetAntipatternCache, userAntipatternsDir, validateAntipattern, type Antipattern } from "../hooks/ts/lib/antipatterns.js";
+import { CATEGORIES, loadAntipatterns, shippedAntipattern, resetAntipatternCache, userAntipatternsDir, validateAntipattern, type Antipattern } from "../hooks/ts/lib/antipatterns.js";
 import { lifecycleDoc, type Layer, type Lifecycle, type Mode, type ProxyMode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
 import { candidatesDir, labelsPath, readFirings, readFiringsResolved, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
 import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
@@ -351,7 +351,10 @@ export function setParam(id: string, param: string, value: unknown, reason: stri
   if (!reason || !reason.trim()) throw new Error("--reason is required");
   const a = loadAntipatterns().find((x) => x.id === id);
   if (!a) throw new Error(`unknown pattern ${id}: set works on detector patterns (see: pai antipatterns list; shell rules have no parameters)`);
-  const params = a.detector.params;
+  const own = a.detector.params;
+  // a user copy written before a param existed lacks it: the shipped default counts as its current value
+  const shipped = shipped1(id)?.detector.params ?? {};
+  const params = { ...shipped, ...own };
   const valid = Object.keys(params);
   if (!(param in params)) throw new Error(`${id} has no param ${param}; valid params: ${valid.join(", ") || "(none)"}`);
   const to = parseValue(value);
@@ -362,7 +365,7 @@ export function setParam(id: string, param: string, value: unknown, reason: stri
   const perModel = (doc.per_model ?? {}) as Record<string, { params?: Record<string, unknown> }>;
   const next = o.model
     ? { ...doc, version: a.version + 1, modified: date, per_model: { ...perModel, [o.model]: { ...perModel[o.model], params: { ...(perModel[o.model]?.params ?? {}), [param]: to } } }, changes }
-    : { ...doc, version: a.version + 1, modified: date, detector: { ...a.detector, params: { ...params, [param]: to } }, changes };
+    : { ...doc, version: a.version + 1, modified: date, detector: { ...a.detector, params: { ...own, [param]: to } }, changes };
   const bad = validateAntipattern(next, a.category, path);
   if (typeof bad === "string") throw new Error(`${param}=${JSON.stringify(to)} is not valid for ${id}: ${bad}`);
   mkdirSync(dirname(path), { recursive: true });
@@ -442,4 +445,12 @@ export function conflicts(cwd = process.cwd()): Conflict[] {
     }
   }
   return out;
+}
+
+function shipped1(id: string): Antipattern | undefined {
+  try {
+    return shippedAntipattern(id);
+  } catch {
+    return undefined;
+  }
 }

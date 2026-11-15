@@ -40,6 +40,8 @@ const live = (id: string): { params: Record<string, unknown>; message: string } 
 export const LOOP_MAX_REPEATS = shipped("growing-command", "max_repeats");
 /** Identical writes of one file (same bytes) after which the write is denied and the session stopped; a rewrite costs nothing, so only a runaway loop trips it. */
 export const IDENTICAL_WRITE_STOP_AT = shipped("identical-write", "stop_at");
+/** Identical rewrites summed over all files of the session at which the write is denied and the session stopped. */
+export const IDENTICAL_WRITE_TOTAL_STOP_AT = shipped("identical-write", "total_stop_at");
 /** Reverts of one file (a Write whose content equals an earlier, not the current, version) at which a note is added / the write is denied and the session stopped. */
 export const REVERT_NOTE_AT = shipped("revert", "note_at");
 export const REVERT_STOP_AT = shipped("revert", "stop_at");
@@ -627,6 +629,19 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
         key: ek.split("\t")[1],
         count: n,
         reason: fillMessage(iw.params.stop_message as string, { file, n }),
+      };
+    // identical rewrites summed over all files: a model cycling through finished files never reaches stop_at on one
+    const totalStopAt = (iw.params.total_stop_at ?? IDENTICAL_WRITE_TOTAL_STOP_AT) as number;
+    const total = Object.values(writes).reduce((a, w) => a + Math.max(0, w.n - 1), 0);
+    if (total >= totalStopAt)
+      return {
+        state: { ...emptyLoopState(), writes },
+        deny: true,
+        stop: true,
+        id: "identical-write",
+        key: ek.split("\t")[1],
+        count: total,
+        reason: fillMessage((iw.params.total_stop_message ?? shippedAntipattern("identical-write").detector.params.total_stop_message) as string, { file, n: total }),
       };
     if (reverts >= (rv.params.stop_at as number))
       return {
