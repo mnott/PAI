@@ -1162,7 +1162,7 @@ export const realHostDeps: HostDeps = {
         const m = /^(\S+)\s+(.*)$/.exec(out);
         if (m) rows.push({ pid, tty: m[1], started: Date.parse(m[2]) || 0 });
       }
-      return rows.sort((a, b) => b.started - a.started).map(({ pid, tty }) => ({ pid, tty }));
+      return rows.sort((x, y) => y.started - x.started).map(({ pid, tty }) => ({ pid, tty }));
     } catch {
       return [];
     }
@@ -1240,10 +1240,16 @@ function claudeIdOf(cmd: string): string | undefined {
   return new RegExp(`--session-id[ =](${UUID_RE})`, "i").exec(cmd)?.[1] ?? /--bg-pty-host\s+\S*\/pty\/([0-9a-f]{8})\.sock/i.exec(cmd)?.[1];
 }
 
+/** Parent Claude session id from `--resume <uuid>`, `--resume <dir>/<uuid>.jsonl` or `--resume=…` in a command line (a fork resumes its parent). */
+export function resumeParentIdOf(cmd: string): string | undefined {
+  return new RegExp(`--resume[ =]\\S*?(${UUID_RE})(?:\\.jsonl)?(?=\\s|$)`, "i").exec(cmd)?.[1];
+}
+
 /**
  * The one place that decides which iTerm session hosts this process; first hit
  * wins:
- *  0. map: the statusline-recorded session-claude-map.json entry for the Claude session id, when live
+ *  0. map: the statusline-recorded session-claude-map.json entry for the Claude session id, when live; a fork
+ *     without an entry uses its `--resume` parent's entry
  *  1. foreground: a session whose jobPid is CLAUDE_PID or an ancestor pid
  *  2. background (`claude attach <short>`): the Claude session id from env or an
  *     ancestor's command line, matched against each session's jobPid command;
@@ -1284,9 +1290,22 @@ export async function resolveHostSession(
     const mapLive = mapped && sessions.find((s) => s.id === mapped);
     if (mapLive) return found(mapLive, "map");
     notes.push(mapped ? `map: entry for ${cid.slice(0, 8)} names ${mapped}, not a live session` : `map: no entry for ${cid.slice(0, 8)}`);
+    if (!mapped) {
+      const parent = ancestors.map((p) => resumeParentIdOf(cmds.get(p) ?? "")).find(Boolean);
+      if (parent) {
+        const pm = deps.mapHost?.(parent) ?? "";
+        const pLive = pm && sessions.find((s) => s.id === pm);
+        if (pLive) return found(pLive, `map (parent ${parent.slice(0, 8)})`);
+        notes.push(pm ? `map: parent ${parent.slice(0, 8)} names ${pm}, not a live session` : `map: no entry for parent ${parent.slice(0, 8)}`);
+      }
+    }
   }
 
-  const fg = new Set(ancestors);
+  // A daemon-hosted session (resume/fork) runs under a pty host spawned by the shared claude daemon, whose own
+  // ancestry leads to whichever window first started that daemon. Past the pty host, ancestors say nothing about
+  // where this session is shown, so the foreground match stops there.
+  const hostAt = ancestors.findIndex((p) => /--bg-pty-host\b/.test(cmds.get(p) ?? ""));
+  const fg = new Set(hostAt >= 0 ? ancestors.slice(0, hostAt + 1) : ancestors);
   if (Number(env.CLAUDE_PID)) fg.add(Number(env.CLAUDE_PID));
   const byJob = sessions.find((s) => s.jobPid && fg.has(s.jobPid));
   if (byJob) return found(byJob, "foreground jobPid");
@@ -1329,6 +1348,11 @@ export async function resolveHostSession(
   if (byTty) return found(byTty, "tty");
   notes.push(tty ? `tty: ancestor tty ${tty} matched no session` : "tty: no tty ancestor");
 
+  // Under a pty host the env comes from the daemon's spawner (another window), so it says nothing about this session.
+  if (hostAt >= 0) {
+    notes.push("env: ITERM_SESSION_ID / TERM_SESSION_ID skipped, inherited from the daemon's spawner");
+    return { uid: "", term: "", via: "none", reason: `no live iTerm2 session matched; ${notes.join("; ")}` };
+  }
   if (envUid && sessions.some((s) => s.id === envUid)) return { uid: envUid, term: envTerm, via: "env" };
   notes.push(`env: ITERM_SESSION_ID ${envTerm ? `${envTerm} is not live` : "is unset"}`);
 

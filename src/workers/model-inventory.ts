@@ -280,20 +280,30 @@ async function detectOllama(input: InventoryInput, deps: InventoryDeps): Promise
   return rt;
 }
 
+/**
+ * Docker Model Runner over its TCP API, never the `docker model` CLI: each CLI call leaks
+ * Unix sockets inside com.docker.backend (never released; exhausts kern.maxfiles in days).
+ *   `docker model status` -> GET /engines/status (any answer = runner up; refused = down)
+ *   `docker model ls`     -> GET /models   (tags[0], config.size)
+ *   `docker model ps`     -> GET /engines/ps (model_name)
+ */
+const DMR_URL = "http://127.0.0.1:12434";
+
 async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | null> {
-  const status = await deps.run("docker", ["model", "status"]);
-  const ls = await deps.run("docker", ["model", "ls"]);
-  if (status === null && ls === null) return null; // docker or the plugin is absent
-  const running = /is running/i.test(status ?? "");
+  const [status, ls] = await Promise.all([deps.getJson(`${DMR_URL}/engines/status`), deps.getJson(`${DMR_URL}/models`)]);
+  const running = status !== null || ls !== null;
+  // runner down: still listed as stopped when docker is installed, absent otherwise (`--version` is client-only, no backend socket)
+  if (!running && (await deps.run("docker", ["--version"])) === null) return null;
   const rt: InventoryRuntime = { name: "docker-model-runner", kind: "docker-model-runner", status: running ? "idle" : "stopped", models: [], users: [] };
-  // "running" is what is loaded (`docker model ps`), not that the runner process is up
-  const psRows = running ? parseTable((await deps.run("docker", ["model", "ps"])) ?? "") : [];
-  const loadedNames = new Set(psRows.map((r) => r["MODEL NAME"]).filter(Boolean));
+  // "running" is what is loaded (`/engines/ps`), not that the runner process is up
+  const psRows = running ? (((await deps.getJson(`${DMR_URL}/engines/ps`)) as Array<{ model_name?: string }> | null) ?? []) : [];
+  const loadedNames = new Set(psRows.map((r) => r.model_name?.replace(/:latest$/, "")).filter(Boolean));
   if (loadedNames.size) rt.status = "running";
-  for (const r of parseTable(ls ?? "")) {
-    const name = r["MODEL NAME"];
+  type DM = { tags?: string[]; config?: { size?: string } };
+  for (const r of Array.isArray(ls) ? (ls as DM[]) : []) {
+    const name = r.tags?.[0]?.replace(/:latest$/, ""); // the CLI table omits the default tag
     if (!name) continue;
-    rt.models.push({ model: name, kind: modelKind(name), loaded: loadedNames.has(name), sizeMb: parseSizeMb(r["SIZE"] ?? ""), usedBy: [] });
+    rt.models.push({ model: name, kind: modelKind(name), loaded: loadedNames.has(name), sizeMb: parseSizeMb(r.config?.size ?? ""), usedBy: [] });
   }
   return rt;
 }

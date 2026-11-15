@@ -829,13 +829,17 @@ export function renderStatusLine(
 ): string {
   // isChatPane carries the migration shim for pre-`origin` entries (see
   // status.ts): the chat pane is not a worker row and not counted in ▶N.
-  const running = mine.filter((s) => !isChatPane(s) && isLive(s));
+  const live = mine.filter((s) => !isChatPane(s) && isLive(s));
+  // an L1 orchestrator (class orchestrate/plan) is not a worker: shown apart as "orch <model>", never in ▶N
+  const isOrch = (s: WorkerStatus): boolean => s.className === "orchestrate" || s.className === "plan";
+  const running = live.filter((s) => !isOrch(s));
+  const orchPart = [...new Set(live.filter(isOrch).map((s) => (s.provider === ANTHROPIC_NATIVE ? shortModel(s.model) || s.provider : s.provider || "?")))].map((n) => `orch ${n}`).join(" · ");
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const doneToday = mine.filter((s) => s.state !== "running" && s.state !== "queued" && s.started.startsWith(today));
   const ok = doneToday.filter((s) => s.state === "done").length;
   const bad = doneToday.length - ok;
   const tail = doneToday.length ? `   ✓${ok} ✗${bad} today` : "";
-  if (!running.length) return tail.trim();
+  if (!running.length) return `${orchPart}${tail}`.trim();
 
   // nested: spawned by another worker (its parent has a status file; a chain
   // id or a session is a root, as in tree.ts workerDepth)
@@ -862,7 +866,7 @@ export function renderStatusLine(
     providers = budget > 0 ? shortText(providersFull, budget) : "";
   }
   const mid = [providers, oldestPart].filter(Boolean).join(" · ");
-  return `${head} · ${mid}${tail}`;
+  return `${orchPart ? `${orchPart} · ` : ""}${head} · ${mid}${tail}`;
 }
 
 /** The bottom line of a `pai pane run` pane: label · started HH:MM · elapsed. */

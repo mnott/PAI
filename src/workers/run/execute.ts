@@ -271,6 +271,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     outputFormat: parsed.outputFormat,
     // CLI engines take instructions through the prompt, not the AG2 contract flag
     reportFormat: "json",
+    ...(a.className ? { className: a.className } : {}),
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
     // a CLI engine has no init event of its own: the synthetic one below

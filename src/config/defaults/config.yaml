@@ -465,7 +465,7 @@ models:
     docker-model-runner:
       start: docker model run
       stop: docker model unload
-      ready: docker model status
+      ready: http://127.0.0.1:12434/engines/status
       note: idle loads a model on the first request
 # Worker panes (src/workers/pane*.ts; read through src/workers/pane-policy.ts).
 panes:

@@ -193,15 +193,15 @@ function callerChainSessionIds(
 }
 
 /** True when the calling session is one of the worker's owner identities. */
-export function isOwner(
+export async function isOwner(
   s: WorkerStatus,
   env: NodeJS.ProcessEnv,
   proc: CallerProcessInfo = {}
-): boolean {
+): Promise<boolean> {
   const owners = ownerIdentities(s);
   if (owners.includes(callerDescription(env))) return true;
   // same resolver spawn uses to record sessionKey/term
-  const me = callerIdentity(env, { claudeDir: proc.home ? join(proc.home, ".claude") : undefined });
+  const me = await callerIdentity(env, { claudeDir: proc.home ? join(proc.home, ".claude") : undefined });
   if (me.term && owners.includes(me.term)) return true;
   if (me.jobName && owners.includes(me.jobName)) return true;
   if (env.CLAUDE_CODE_SESSION_ID && owners.includes(env.CLAUDE_CODE_SESSION_ID)) return true;
@@ -220,22 +220,22 @@ export function isOwner(
  * Refusal text when a session-originated kill targets another session's worker, else null.
  * No recorded owner keeps the old behaviour; the owner session always passes.
  */
-export function killRefusal(
+export async function killRefusal(
   s: WorkerStatus,
   env: NodeJS.ProcessEnv,
   force: boolean,
   reason?: string,
   proc: CallerProcessInfo = {}
-): string | null {
+): Promise<string | null> {
   const owners = ownerIdentities(s);
   if (force) {
     if (env.PAI_WORKER) return `worker ${s.id}: --force is only for the operator's terminal, not from a worker process`;
-    if (owners.length && !isOwner(s, env, proc) && !reason?.trim())
+    if (owners.length && !(await isOwner(s, env, proc)) && !reason?.trim())
       return `worker ${s.id}: --force on another session's worker needs --reason "<text>"`;
     return null;
   }
   if (!owners.length) return null;
-  if (isOwner(s, env, proc)) return null;
+  if (await isOwner(s, env, proc)) return null;
   const owner = s.session?.name || s.sessionKey || owners[0];
   return `worker ${s.id} belongs to session ${owner}; refused (use --force from the operator's terminal or that session)`;
 }
@@ -430,23 +430,23 @@ export async function killTree(
   if (!root) throw new Error(`no worker named "${id}"`);
   const proc = opts.proc ?? {};
   if (opts.caller) {
-    const refusal = killRefusal(root, opts.caller.env, opts.caller.force, opts.reason, proc);
+    const refusal = await killRefusal(root, opts.caller.env, opts.caller.force, opts.reason, proc);
     if (refusal) throw new Error(refusal);
   }
   const by = opts.by ?? callerDescription(opts.caller?.env);
-  const stop = (s: WorkerStatus): Stop => ({
+  const stop = async (s: WorkerStatus): Promise<Stop> => ({
     by,
     forced: opts.caller?.force === true,
     reason: opts.reason?.trim() || (opts.by ? `stopped by ${opts.by}` : "no reason given"),
     // a session killing someone else's worker, or an internal killer (guard, deadline) stopping a worker its owner did not ask to stop
-    foreign: opts.caller ? !isOwner(s, opts.caller.env, proc) : opts.by !== "plan",
+    foreign: opts.caller ? !(await isOwner(s, opts.caller.env, proc)) : opts.by !== "plan",
   });
   const order = opts.only ? [] : descendantsLeavesFirst(loadStatuses(logDir), id);
   if (!opts.skipRoot) order.push(root);
   const lines: string[] = [];
   for (const s of order) {
     try {
-      lines.push(await killOne(logDir, s, d, stop(s)));
+      lines.push(await killOne(logDir, s, d, await stop(s)));
     } catch (e) {
       if (s.id === id) throw e;
       lines.push(`worker ${s.id}: kill failed: ${e instanceof Error ? e.message : String(e)}`);

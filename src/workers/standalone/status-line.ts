@@ -21,6 +21,7 @@ import { readRoutingState } from "../routing.js";
 import { detectSessionName } from "../session-name.js";
 import { getProfile, resolveWorkers } from "../session-profile.js";
 import { readSessionNameCache, sessionNameCachePath, writeSessionNameCache } from "./session-name-cache.js";
+import { workersLabel } from "./status-route.js";
 import { readUrgency } from "../urgency.js";
 
 const term = process.argv[2] ?? process.env.ITERM_SESSION_ID ?? "";
@@ -55,7 +56,8 @@ try {
   const namePath = sessionNameCachePath(logDir, process.env, cwd);
   const sessionName = readSessionNameCache(namePath) ?? (await cacheAndReturn(namePath));
   const r = resolveWorkers({}, { cfg: workers, profile: getProfile(sessionName), env: process.env, budgets: {}, routing: readRoutingState(logDir) });
-  if (r.provider) out = [`workers: ${r.provider}${r.model && r.model !== "default" ? `/${r.model}` : ""}`, out].filter(Boolean).join(" ");
+  const label = await workersLabel(r, workers, logDir);
+  if (label) out = [`workers: ${label}`, out].filter(Boolean).join(" ");
   if (out) process.stdout.write(out + "\n");
 } catch {
   // no workers section or a broken config: no line, never an error in the bar

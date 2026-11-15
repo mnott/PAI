@@ -272,9 +272,11 @@ export async function startSession(a: StartArgs): Promise<number> {
   // the setup's workers apply to this launch only (the env pin dies with the
   // session); the global provider and class map are never written, and the
   // profile pin is marked implicit so later spawns keep global routing
-  harness.env[SESSION_WORKER_PROVIDER_ENV] = setup.workers;
+  // an "<provider> only" row picks the chat, not the workers: they follow the routing policy
+  const pinWorkers = setup.workers !== setup.orchestrator.provider || !!setup.workersModel;
+  if (pinWorkers) harness.env[SESSION_WORKER_PROVIDER_ENV] = setup.workers;
   harness.env[SESSION_NAME_ENV] = name;
-  out(`Workers run on ${setup.workers} for this session only.`);
+  out(pinWorkers ? `Workers run on ${setup.workers} for this session only.` : "Workers follow the routing policy.");
   if (dryRun) {
     out(dryRunText(harness));
     return 0;

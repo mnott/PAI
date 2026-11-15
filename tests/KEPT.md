@@ -23,3 +23,5 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/cli/impl/project/rename.test.ts | b | `pai project rename` re-keys registry and ~/.pai state and must refuse a NEW that is a slug or alias of another project (destructive re-key) |
 | src/cli/lib/launch-session-config.test.ts | a | interactive launcher ignored project/global session_config (--dangerously-skip-permissions, env), so resumed sessions kept their stored permission mode |
 | src/memory/indexer/helpers.test.ts | a | docs-only git repo lost its ~60 .md docs from search because every .git folder skipped the content scan; only git repos with a code marker skip it |
+| src/workers/pane-host.test.ts | a | pane host resolution after claude resume/fork: fork without map entry uses its --resume parent entry; foreground match stops at the bg-pty-host; daemon spawner inherited env not trusted (2026-11-13 Archiware panes opened in Webseiten window) |
+| src/workers/standalone/status-route.test.ts | a | status line showed no worker target under global routing (only "✓4 ✗3 today"); label is now the default tier serving entry, 30 s cached, pins unchanged |

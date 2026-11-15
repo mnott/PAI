@@ -115,7 +115,9 @@ export function detectSessionProvider(
   const env = opts.env ?? process.env;
   if (opts.side === "workers") {
     const worker = env[SESSION_WORKER_PROVIDER_ENV]?.trim();
-    if (worker) return { name: worker, why: `session workers on ${worker}` };
+    // the chat's own provider and the parent's model never pin workers: only
+    // an explicit worker pin does, else the class's tier list decides
+    return worker ? { name: worker, why: `session workers on ${worker}` } : null;
   }
   const named = env[SESSION_PROVIDER_ENV]?.trim();
   if (named) return { name: named, why: `launched on ${named}` };

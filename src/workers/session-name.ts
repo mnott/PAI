@@ -34,7 +34,7 @@ let cached: { key: string; name: string | undefined } | null = null;
 export async function detectSessionName(env: NodeJS.ProcessEnv = process.env, deps: SessionNameDeps = {}): Promise<string | undefined> {
   const fromEnv = currentSessionName(env);
   if (fromEnv) return fromEnv;
-  const job = callerIdentity(env, { claudeDir: deps.claudeDir }).jobName;
+  const job = (await callerIdentity(env, { claudeDir: deps.claudeDir, daemonHosted: () => false })).jobName;
   if (job) return job;
   const cwd = deps.cwd ?? process.cwd();
   const key = [env.ITERM_SESSION_ID, env.CLAUDE_CODE_SESSION_ID, cwd, deps.registryPath, deps.mapPath, deps.projectsDir].join("|");

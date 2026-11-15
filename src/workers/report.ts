@@ -146,7 +146,7 @@ function fullContractPrompt(format: "ag2" | "json", scratch?: string): string {
     "single child worker and step back — that is delegation, not work. Child workers are for two things",
     "only: (1) PARALLELISING independent parts of your task, each part a self-contained spec; (2) CHEAPER",
     "bounded sub-tasks — probes, renders, test runs, lookups — run one tier down with --class spotcheck or",
-    "--class simple. Always pin --provider anthropic on children.",
+    "--class simple. Never add --provider to a child unless your brief names one: routing picks it.",
     "You own your children's results: run them in the foreground or poll until each has finished, read",
     "their result, verify it, and fold it into your own report. When your turn ends this run ends and any",
     "running child is killed, so never end with a child still running.",

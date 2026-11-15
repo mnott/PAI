@@ -1,0 +1,29 @@
+# Raw forge write made with the operator's token. AIBROKER_FORGE_TOKEN is the
+# operator's account, so the webhook sender is the operator and the ingress
+# echoes the write back as if the operator had typed it. Matches a curl that
+# references the token, is a write (-X/--request POST|PATCH|PUT|DELETE, or a
+# body flag -d/--data*/--json/-F/--form* that implies POST) and targets
+# /api/v1/repos/. A plain GET with the token does not match.
+id: forge-write-with-operator-token
+layer: baseline
+status: stable
+mode: enforce
+version: 1
+created: 2026-11-11
+severity: block
+quoted: true
+flags: m
+match: /^(?=[\s\S]*\$\{?AIBROKER_FORGE_TOKEN(?![\w]))(?=[\s\S]*(?<![\w-])curl(?![\w-])[\s\S]*(?:(?:-X|--request)[\s=]*["']?(?:POST|PATCH|PUT|DELETE)(?![\w])|\s(?:-d|--data[\w-]*|--json|-F|--form[\w-]*)(?=[\s=@'"]|$)))[\s\S]*\/api\/v1\/repos\//
+reason: "Forge writes go through aibroker_issue (MCP) / `aibroker issue`, which writes as the bot so the ingress does not echo it back, and only to trackers you own. For another session's tracker, send that session a message."
+tests:
+  match:
+    - "curl -s -X POST -H \"Authorization: token $AIBROKER_FORGE_TOKEN\" -H \"Content-Type: application/json\" --data @body.json https://git.example.org/api/v1/repos/acme/app/issues"
+    - "curl -s -X PATCH -H \"Authorization: token ${AIBROKER_FORGE_TOKEN}\" https://git.example.org/api/v1/repos/acme/app/issues/7"
+    - "curl -s -H \"Authorization: token $AIBROKER_FORGE_TOKEN\" -d '{\"body\":\"hi\"}' https://git.example.org/api/v1/repos/acme/app/issues/7/comments"
+    - "set -a; . ~/.aibroker/env; set +a; curl -s --request DELETE -H \"Authorization: token $AIBROKER_FORGE_TOKEN\" https://git.example.org/api/v1/repos/acme/app/issues/7"
+  no_match:
+    - "curl -s -H \"Authorization: token $AIBROKER_FORGE_TOKEN\" https://git.example.org/api/v1/repos/acme/app/issues"
+    - "curl -s -X GET -H \"Authorization: token $AIBROKER_FORGE_TOKEN\" https://git.example.org/api/v1/repos/acme/app/issues"
+    - "curl -s -X POST -d '{\"body\":\"hi\"}' https://git.example.org/api/v1/repos/acme/app/issues"
+    - "curl -s -X POST -H \"Authorization: token $AIBROKER_FORGE_TOKEN\" https://git.example.org/api/v1/user/keys"
+    - "echo $AIBROKER_FORGE_TOKEN | wc -c"

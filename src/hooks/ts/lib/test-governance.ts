@@ -108,6 +108,26 @@ function toolWriteTargets(words: string[]): string[] {
   return [];
 }
 
+/** Command with heredoc bodies (and terminators) blanked to spaces; offsets and line starts are preserved. */
+function blankHeredocBodies(command: string): string {
+  const lines = command.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const h = lines[i].match(HEREDOC_START);
+    if (!h) continue;
+    const tag = h[1] ?? h[2] ?? h[3];
+    const dash = /<<-/.test(lines[i]);
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const l = dash ? lines[j].replace(/^\t+/, "") : lines[j];
+      const end = l === tag;
+      lines[j] = " ".repeat(lines[j].length);
+      if (end) break;
+    }
+    i = j;
+  }
+  return lines.join("\n");
+}
+
 /** Why this Bash command creates a new test file outside scratch, or null. */
 export function bashCreatesNewTest(command: string, cwd: string): string | null {
   const vars = simpleAssignments(command);
@@ -120,7 +140,7 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
   };
   // heredoc bodies are data, not commands: a `cat > f <<EOF` start line writes f
   let pos = 0;
-  for (const line of command.split("\n")) {
+  for (const line of blankHeredocBodies(command).split("\n")) {
     const h = line.match(HEREDOC_START);
     if (h && HEREDOC_SINK.test(line)) {
       const target = /(?<![>&\d])>>?\s*([^\s;&|)]+)/.exec(line)?.[1] ?? /\btee\s+(?:-\w+\s+)*([^\s;&|<>-])/.exec(line)?.[1] ?? /(?<![>&\d])>\s*([^\s;&|)]+)/.exec(line)?.[1];
@@ -128,9 +148,10 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
     }
     pos += line.length + 1;
   }
-  for (const m of command.matchAll(ANY_REDIRECT)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
-  for (const m of command.matchAll(ANY_TEE)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
-  for (const seg of parseCommand(command)) {
+  const scan = blankHeredocBodies(command);
+  for (const m of scan.matchAll(ANY_REDIRECT)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
+  for (const m of scan.matchAll(ANY_TEE)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
+  for (const seg of parseCommand(scan)) {
     for (const t of toolWriteTargets([...seg.words])) if (consider(t, 0)) return DENY_TEXT;
   }
   // an interpreter script (inline -c/-e, or a /tmp script) that writes repo code:
@@ -144,7 +165,7 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
       }
     })
   ) {
-    const paths = [...command.matchAll(/['"]([^'"\n]+)['"]/g)]
+    const paths = [...scan.matchAll(/['"]([^'"\n]+)['"]/g)]
       .map((m) => m[1])
       .filter((s) => s.includes("/") || /\.\w{1,5}$/.test(s));
     if (paths.some((p) => looksLikeTest(p.startsWith("/") ? p : join(cwd, p)))) return DENY_TEXT;
