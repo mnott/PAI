@@ -268,6 +268,8 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "params": {
         "note_at": 2,
         "stop_at": 20,
+        "total_stop_at": 12,
+        "total_stop_message": "loop guard: you rewrote finished files with unchanged content {n} times across files. Your work is done; write your R report now.",
         "stop_message": "loop guard: you wrote {file} with exactly the same content {n} times. It already contains this content; stop rewriting it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
       }
     },
