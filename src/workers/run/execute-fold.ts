@@ -337,11 +337,11 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   };
 
   const resultGrace = armResultGrace(headless ? proc.pid : undefined);
-  stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid)) : null;
+  stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid), Date.now, {}, wid) : null;
   stopTrack = trackBlocked(logDir, status, limit);
   // a local run past workers.localHandoffMinutes hands its branch to the cloud (handoff.ts)
   const handoff = headless && a.route?.local && a.route.policy !== "local-only" && !isBenchmarkLabel(label) ? handoffLimit(config.localHandoffMinutes, limit) : null;
-  const stopHandoff = handoff ? armDeadline(proc, handoff, () => fireHandoff(logDir, status, ledger, handoff.minutes), undefined, () => blockedMsOf(logDir, wid)) : null;
+  const stopHandoff = handoff ? armDeadline(proc, handoff, () => fireHandoff(logDir, status, ledger, handoff.minutes), undefined, () => blockedMsOf(logDir, wid), Date.now, {}, wid) : null;
   const stopLimit = stopDeadline;
   stopDeadline = () => {
     stopLimit?.();
@@ -451,7 +451,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     }
     const origin = await reportOriginWithHost();
     if (origin) {
-      state.trouble = new TroubleWatcher(wid, label, runMessenger(logDir), origin);
+      state.trouble = new TroubleWatcher(wid, label, runMessenger(logDir), origin, logDir);
       state.troubleTimer = setInterval(() => state.trouble?.tick(), 60_000);
       state.troubleTimer.unref();
     }

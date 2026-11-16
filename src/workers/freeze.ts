@@ -104,6 +104,86 @@ export function frozenMsFor(id: string, now: number = Date.now()): number {
   return (readAcct().workers[id] ?? 0) + open;
 }
 
+/** The freeze spans of this worker, merged and sorted: the closed spell(s) from the accounts plus the open one when the marker names it. `horizon` is `now` for a live tick; detection passes the tick's own time so a back-dated tick never charges future freezes (or pauses). */
+function frozenSpans(id: string, horizon: number, openEnd: number = horizon): Array<[number, number]> {
+  const m = readFreeze();
+  const out: Array<[number, number]> = [];
+  if (m && m.pids.some((p) => p.kind === "worker" && p.id === id)) out.push([m.since, Math.max(m.since, openEnd)]);
+  // the accounts carry only totals; a single closed spell is the usual shape: [horizon - total, horizon] ending at the thaw
+  const closed = readAcct().workers[id] ?? 0;
+  if (closed > 0) out.push([horizon - closed, horizon]);
+  // merge overlapping spells
+  out.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const s of out) {
+    const last = merged[merged.length - 1];
+    if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]);
+    else merged.push(s);
+  }
+  return merged;
+}
+
+/** ms of the wall interval [from, to] that ran inside this worker's freeze spans. */
+export function frozenMsBetween(id: string, from: number, to: number): number {
+  let ms = 0;
+  for (const [s, e] of frozenSpans(id, to)) if (from < e) ms += Math.max(0, Math.min(to, e) - Math.max(from, s));
+  return ms;
+}
+
+/** The moment this worker entered the freeze in progress, or undefined when it is not frozen right now. */
+export function frozenSince(id: string): number | undefined {
+  const m = readFreeze();
+  return m && m.pids.some((p) => p.kind === "worker" && p.id === id) ? m.since : undefined;
+}
+
+/** ms of the quiet spell that started at `since` (wall epoch) which ran while this worker was frozen — closed spells included. */
+export function frozenMsOf(id: string, since: number, now: number = Date.now()): number {
+  return frozenMsBetween(id, since, now);
+}
+
+/** The pause spans of this worker from its status fields: the open window [pausedAt, horizon] while paused, plus one closed spell [horizon - pausedMs, horizon]. The horizon is `now` for a live tick; detection passes the tick's own time so a back-dated tick never charges future pauses. */
+function pausedSpans(s: { paused?: boolean; pausedAt?: number; pausedMs?: number }, horizon: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (s.paused && typeof s.pausedAt === "number") out.push([s.pausedAt, Math.max(s.pausedAt, horizon)]);
+  const closed = Number(s.pausedMs) || 0;
+  if (closed > 0) out.push([horizon - closed, horizon]);
+  out.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const sp of out) {
+    const last = merged[merged.length - 1];
+    if (last && sp[0] <= last[1]) last[1] = Math.max(last[1], sp[1]);
+    else merged.push(sp);
+  }
+  return merged;
+}
+
+/** ms of the wall interval [from, to] that ran inside this worker's pause spans. */
+export function pausedMsBetween(s: { paused?: boolean; pausedAt?: number; pausedMs?: number }, from: number, to: number): number {
+  let ms = 0;
+  for (const [a, b] of pausedSpans(s, to)) if (from < b) ms += Math.max(0, Math.min(to, b) - Math.max(from, a));
+  return ms;
+}
+
+/** Wall ms since `since` minus everything this worker spent frozen AND paused — the one clock every quiet/stall/escalation notice runs on. A preemption or `pai worker pause` is not idleness any more than a freeze is; after either ends the spell restarts from its end. */
+export function activeMsOf(
+  id: string,
+  since: number,
+  now: number = Date.now(),
+  pause: { paused?: boolean; pausedAt?: number; pausedMs?: number } = {}
+): number {
+  const frozen = frozenSpans(id, now, Math.max(now, Date.now())); // an open freeze never ends before real now: the live marker is current truth even for a back-dated tick
+  const spans = [...frozen, ...pausedSpans(pause, now)].sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const sp of spans) {
+    const last = merged[merged.length - 1];
+    if (last && sp[0] <= last[1]) last[1] = Math.max(last[1], sp[1]);
+    else merged.push(sp);
+  }
+  let ms = 0;
+  for (const [a, b] of merged) if (since < b) ms += Math.max(0, Math.min(now, b) - Math.max(since, a));
+  return Math.max(0, now - since - ms);
+}
+
 /** A clock that stands still while frozen: the wait verbs' --max budgets run on it. */
 export const activeNow = (): number => Date.now() - frozenTotalMs();
 
