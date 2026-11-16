@@ -158,9 +158,25 @@ function bareCommand(w: string): string {
   return t.includes("/") && !t.startsWith("-") ? t.slice(t.lastIndexOf("/") + 1) : t;
 }
 
+/** The trailing `)` that closes a `$(…` opened inside the segment (an unquoted command substitution): `sed -n "$(grep …),+8p" f` splits at the inner `|`, so without this every later rule misses the command. */
+function stripSubClose(words: string[]): string[] {
+  let opens = 0;
+  for (const w of words) {
+    const s = w.replace(/\\[$(`]/g, ""); // an escaped $ ( "…\$…" ) does not open
+    for (const m of s.matchAll(/\$\(|[(`]/g)) void m, opens++;
+    for (let i = 0; i < s.length; i++) if (s[i] === ")") opens--;
+  }
+  if (opens <= 0 || words.length === 0) return words;
+  const out = [...words];
+  const last = out[out.length - 1].replace(/\)+$/, "");
+  if (last) out[out.length - 1] = last;
+  else out.pop();
+  return out;
+}
+
 /** Drop env assignments, wrapper commands, control keywords and xargs flags from the front. */
 function stripPrefix(words: string[]): string[] {
-  const out = [...words];
+  const out = stripSubClose([...words]);
   while (out.length) {
     const w = bareCommand(out[0]);
     if (/^[A-Za-z_]\w*=/.test(w) || WRAPPERS.has(w) || CONTROL_WORDS.has(w) || w === "") {
@@ -302,6 +318,39 @@ const PATTERN_KILL_REASON =
 const SED_INPLACE_REASON =
   "`sed -i` without an explicit suffix argument is blocked on macOS: BSD sed takes the next word as the backup suffix and leaves a stray copy (e.g. file.ts-e); use `sed -i '' -e …` or the Edit tool";
 
+const GNU_SED_RANGE_REASON =
+  "BSD sed has no GNU `,+N` range: use the Read tool with offset/limit, `sed -n 'X,Yp'` with an absolute end line, or `grep -n -A N pattern file`.";
+
+/** The sed address grammar: a line number, `/re/`, `\|re\|`, `%`, `$` — optionally followed by an offset (`+N` / `-N`). */
+const SED_ADDR = String.raw`(?:\d+|/[^\n]*?/\\?|\|[^|\n]+\|\\?|%|\$)(?:[+-]\d+)?`;
+/** A `$(…)`/backtick substitution standing in for a line number, e.g. `"$(grep -n x f | cut -d: -f1),+8p"`. */
+const SED_ADDR_SUBST = String.raw`(?:\$\([^)]*\)|` + "`[^`]*`" + `)`;
+/** `<addr>,+N<p>`: the GNU-only relative end line, with or without spaces (`, +8p`). */
+const GNU_SED_RANGE = new RegExp(String.raw`^(?:${SED_ADDR}|${SED_ADDR_SUBST}),\s*\+\d+\s*[pned]`);
+
+/**
+ * True when a sed script starts with a GNU `,+N` address range (`18,+8p`, `$(…),+8p`).
+ * A `,+<digits>` at the head of the script can only be an address: in a substitution or
+ * address-less command it sits inside the s/// body, which never begins with a bare `,`.
+ * The `$(…)` part of a quoted script survives parseCommand as text, so `$(grep …),+8p` matches too.
+ */
+export function hasGnuSedRange(script: string): boolean {
+  return GNU_SED_RANGE.test(script);
+}
+
+/** The sed args after the program options that take a separate value (`-e 'script'`, `-f file`). */
+function sedOperands(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") continue;
+    if (a === "-e" || a === "--expression" || a === "-f" || a === "--file") { i++; continue; }
+    if (/^-[ef]$/.test(a)) continue; // `-en`, `-fp`: no separate value in BSD sed
+    out.push(a);
+  }
+  return out;
+}
+
 const SEARCH_ROOT_REASON = "recursive search over the home directory or / is blocked; search a named project or cache directory, e.g. rg -n PATTERN ~/strata-020 (mdfind uses the index and is fine)";
 
 /** find/fd/rg/ag/grep -r whose search root (explicit, or the cwd when no path is given) is the home directory or /. */
@@ -361,6 +410,8 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
     const i = args.indexOf("-i");
     const next = i >= 0 ? args[i + 1] : undefined;
     if (next !== undefined && next !== "" && (isFlag(next) || /^[sy]([/|#,]|$)/.test(next))) return deny(SED_INPLACE_REASON);
+    // BSD sed rejects every GNU `,+N` range (`sed -n "18,+8p" f`): it fails with `invalid command code ,`, every time
+    if (sedOperands(args).some(hasGnuSedRange)) return deny(GNU_SED_RANGE_REASON);
   }
 
   const chrome = chromeStartReason(cmd, args);
