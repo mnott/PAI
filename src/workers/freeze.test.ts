@@ -246,6 +246,7 @@ describe("supervision stands down while frozen", () => {
     await w.flush();
     expect(n).toBe(1); // active quiet after the thaw is only the pre-freeze 30 min, already told
     unthrottle(w);
+    (w as unknown as { stallTold: boolean }).stallTold = false; // a new quiet spell for the once-per-spell latch
     now += 45 * 60_000; // NEW active quiet (30 + 45 = 75 min) past the stall threshold tells again — frozen minutes never count
     w.tick();
     await w.flush();
@@ -273,7 +274,7 @@ describe("supervision stands down while frozen", () => {
     const specFile = join(process.env.PAI_FREEZE_FILE!, "..", "spec.txt");
     writeFileSync(specFile, "task", "utf8");
     // the local stamp parses against the machine's zone, so build it from `now` (the test's local epoch)
-    const startedStamp = (t: number): string => new Date(t).toISOString().slice(0, 19).replace("T", " ");
+    const startedStamp = (t: number): string => { const d = new Date(t); const p = (n: number): string => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
     const at = now; // 60 min after the start below
     const s = st("L1", 100, { state: "running", started: startedStamp(now - 60 * 60_000), spec: specFile });
     const p = { queuedMaxMin: 5, stallMaxMin: 30, stallFailedCalls: 5 };
@@ -284,19 +285,19 @@ describe("supervision stands down while frozen", () => {
     expect(escalationReason(s, at, p)).toBeNull(); // the hour was frozen time: no "no edit or commit for 60m"
     const q = st("L1", 100, { state: "queued", now: true, started: startedStamp(now - 60 * 60_000), spec: specFile });
     expect(escalationReason(q, at, p)).toBeNull(); // queued minutes frozen too (acct L1 = 60m covers the whole wait)
-    marker(at - 45 * 60_000, ["L9"]); // another worker's freeze moves this one's clock not at all
+    acct({}); marker(at - 45 * 60_000, ["L9"]); // another worker's freeze moves this one's clock not at all
     expect(escalationReason(s, at, p)).toMatch(/no edit or commit for 60m/);
   });
 
   it("paused workers (preemption or `pai worker pause`) tell no stall and their paused minutes never count", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pause-sup-"));
-    const startedStamp = (t: number): string => new Date(t).toISOString().slice(0, 19).replace("T", " ");
+    const startedStamp = (t: number): string => { const d = new Date(t); const p = (n: number): string => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
     // a worker paused by a --now preemption 20 min ago, quiet for 30 active minutes around it
     const paused = st("L1", 100, { spawnerSession: "own", updated: startedStamp(now - 50 * 60_000), turns: 3, paused: true, pausedBy: "now-run", pausedAt: now - 20 * 60_000 });
     const opts = { stallMs: 10 * 60_000, now: new Date(now), isAlive: () => true };
     expect(detectSupervisionEvents([paused], opts)).toEqual([]); // paused: no stalled verdict at all
     // after the resume: the paused 20 min leave the clock; only the older 30 active min remain, already past the threshold — a worker that never resumed mid-spell still stalls on its ACTIVE quiet
-    const resumed = { ...paused, paused: false, pausedAt: undefined, pausedMs: 20 * 60_000 };
+    const resumed = { ...paused, started: startedStamp(now - 50 * 60_000), paused: false, pausedAt: undefined, pausedMs: 20 * 60_000 };
     expect(detectSupervisionEvents([resumed], opts).map((e) => e.kind)).toEqual(["stalled"]);
     // a fully paused-since-start worker: every minute was paused time, nothing to tell after the resume either
     const allPaused = st("L2", 101, { spawnerSession: "own", updated: startedStamp(now - 50 * 60_000), turns: 3, pausedMs: 50 * 60_000 });
@@ -306,12 +307,12 @@ describe("supervision stands down while frozen", () => {
     writeFileSync(specFile, "task", "utf8");
     const p = { queuedMaxMin: 5, stallMaxMin: 30, stallFailedCalls: 5 };
     expect(escalationReason(paused, now, p)).toBeNull(); // paused: never escalated
-    expect(escalationReason(resumed, now, p)).toMatch(/no edit or commit for 30m/); // only the active half of the spell counts
+    expect(escalationReason({ ...resumed, spec: specFile }, now, p)).toMatch(/no edit or commit for 30m/); // only the active half of the spell counts
     // TroubleWatcher: a worker whose status says paused tells nothing while parked
     const sent: string[] = [];
     let n = 0;
     const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), n++, true) } as unknown as Messenger;
-    writeFileSync(join(dir, "L1.json"), JSON.stringify({ id: "L1", pid: 100, state: "running", paused: true, pausedAt: now - 20 * 60_000 }), "utf8");
+    writeFileSync(join(dir, "L1.status"), JSON.stringify({ id: "L1", pid: 100, state: "running", paused: true, pausedAt: now - 20 * 60_000 }), "utf8");
     const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, dir, () => now);
     (w as unknown as { lastActivity: number }).lastActivity = now - 30 * 60_000; // quiet 30 min on the injected clock
     w.tick();

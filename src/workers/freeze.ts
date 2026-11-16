@@ -105,10 +105,10 @@ export function frozenMsFor(id: string, now: number = Date.now()): number {
 }
 
 /** The freeze spans of this worker, merged and sorted: the closed spell(s) from the accounts plus the open one when the marker names it. `horizon` is `now` for a live tick; detection passes the tick's own time so a back-dated tick never charges future freezes (or pauses). */
-function frozenSpans(id: string, horizon: number): Array<[number, number]> {
+function frozenSpans(id: string, horizon: number, openEnd: number = horizon): Array<[number, number]> {
   const m = readFreeze();
   const out: Array<[number, number]> = [];
-  if (m && m.pids.some((p) => p.kind === "worker" && p.id === id)) out.push([m.since, Math.max(m.since, horizon)]);
+  if (m && m.pids.some((p) => p.kind === "worker" && p.id === id)) out.push([m.since, Math.max(m.since, openEnd)]);
   // the accounts carry only totals; a single closed spell is the usual shape: [horizon - total, horizon] ending at the thaw
   const closed = readAcct().workers[id] ?? 0;
   if (closed > 0) out.push([horizon - closed, horizon]);
@@ -171,7 +171,7 @@ export function activeMsOf(
   now: number = Date.now(),
   pause: { paused?: boolean; pausedAt?: number; pausedMs?: number } = {}
 ): number {
-  const frozen = frozenSpans(id, Math.max(now, Date.now())); // an open freeze never ends before real now: the live marker is current truth even for a back-dated tick
+  const frozen = frozenSpans(id, now, Math.max(now, Date.now())); // an open freeze never ends before real now: the live marker is current truth even for a back-dated tick
   const spans = [...frozen, ...pausedSpans(pause, now)].sort((a, b) => a[0] - b[0]);
   const merged: Array<[number, number]> = [];
   for (const sp of spans) {
