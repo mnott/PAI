@@ -36,6 +36,32 @@ export interface StorageHealthStatus {
     failed?: number;
     total?: number;
   } | null;
+  /** p50/p99/max event-loop delay over the last minute (ms), with when it was sampled. */
+  loopLag?: { p50: number; p99: number; max: number; at: number } | null;
+}
+
+/** Above this max loop delay the daemon is not responsive to IPC: say so, loudly. */
+export const LOOP_LAG_WARN_MS = 250;
+/** Above this it has been held for seconds: an outage of responsiveness. */
+export const LOOP_LAG_ERROR_MS = 2_000;
+
+/** How fresh a lag sample must be (epoch ms `at`) to describe the live process; the daemon rolls its window every minute. */
+export const LOOP_LAG_FRESH_MS = 120_000;
+
+/** The event-loop lag line, when the number means something: a healthy loop gets no paragraph. */
+export function loopLagLine(
+  lag: StorageHealthStatus["loopLag"],
+  now = Date.now()
+): HealthLine | null {
+  if (!lag || !(lag.at > 0) || now - lag.at > LOOP_LAG_FRESH_MS) return null;
+  const text = `Event loop:  p50 ${lag.p50}ms, p99 ${lag.p99}ms, max ${lag.max}ms (last minute)`;
+  if (lag.max >= LOOP_LAG_ERROR_MS) {
+    return { severity: "error", text: `${text} — held for seconds: IPC and the cockpit time out while this lasts` };
+  }
+  if (lag.max >= LOOP_LAG_WARN_MS) {
+    return { severity: "warn", text: `${text} — busy: slow to answer IPC` };
+  }
+  return null;
 }
 
 /**
@@ -71,6 +97,11 @@ export function formatStorageHealth(
         (f.gaveUp ? " (retries exhausted)" : ` (attempt ${f.attempts}, retrying)`),
     });
   }
+
+  // A held loop explains a status call that times out and a cockpit that says
+  // "daemon down" while the process lives — it outranks the queue backlog.
+  const lag = loopLagLine(s.loopLag, now);
+  if (lag) lines.push(lag);
 
   const queue = queueLine(s.workQueue, outage !== null);
   if (queue) lines.push(queue);

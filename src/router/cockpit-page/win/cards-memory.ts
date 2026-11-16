@@ -36,9 +36,11 @@ function memPillText(m){
 }
 /** The status card's run line: the pill text with spaced percent and the rate in chunks/s. */
 function memRunStatus(m){return memPillText(m).replace(/(\d)%/,"$1 %").replace(/\/s\b/," chunks/s")}
+/** Held, not gone: the IPC call failed while the process lived and its lag sample was recent (the server decides, payload.daemonBusy). */
+function memHeldText(m){return m&&m.daemonBusy?"daemon busy (event loop held "+(Math.round((m.daemonBusy.heldMs||0)/100)/10)+" s)":""}
 function memKvView(m){
  if(!m)return null;
- var pill=!m.daemon?"daemon down":m.level==="green"?"healthy":m.level==="amber"?"attention":"problem";
+ var pill=!m.daemon?(memHeldText(m)||"daemon down"):m.level==="green"?"healthy":m.level==="amber"?"attention":"problem";
  var run=memRunStatus(m),d={v:'<span class="'+memLvl(m.level)+'">'+esc(pill)+'</span>',s:esc(m.reason||"")+(run?'<span data-part="run" style="display:block">'+esc(run)+'</span>':""),status:["",""]};
  if(m.run)d.t=memRunLine(m.run);
  return d;
@@ -113,10 +115,12 @@ function memLessonsView(m){
  (l.candidates||[]).forEach(function(k){x+=memLine("dim",esc(k.title)+(k.ageSec==null?"":" · "+memDur(k.ageSec)+" ago"))});
  return{v:String(c.candidate||0),u:"",s:"awaiting review",x:x};
 }
+/** p50/p99/max over the last minute, ms; empty when unknown. */
+function memLagText(l){return l?"p50 "+l.p50+" · p99 "+l.p99+" · max "+l.max+" ms":""}
 function memDaemonView(m){
- var d=m.daemonInfo;
- if(!d)return{v:null,u:"",s:m.daemon?"status not sampled yet":"daemon not answering",x:""};
- return{v:memDur(d.uptimeSecs),u:"",s:"uptime",x:memLine("","pid "+esc(String(d.pid))+" · v"+esc(d.version)+" · storage "+esc(d.storage))};
+ var d=m.daemonInfo,l=memLagText(m.loopLag);
+ if(!d)return{v:null,u:"",s:m.daemon?"status not sampled yet":(memHeldText(m)||"daemon not answering"),x:l?memLine("dim","last lag sample: "+l):""};
+ return{v:memDur(d.uptimeSecs),u:"",s:"uptime",x:memLine("","pid "+esc(String(d.pid))+" · v"+esc(d.version)+" · storage "+esc(d.storage))+(l?memLine("","loop lag "+l):"")};
 }
 function memMetricView(m,ctx){
  if(!m)return null;
