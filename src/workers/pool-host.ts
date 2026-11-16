@@ -1173,7 +1173,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
           handoffLim,
           () => fireHandoff(logDir, status, ledger, handoffLim.minutes),
           undefined,
-          () => blockedMsOf(logDir, wid)
+          () => blockedMsOf(logDir, wid),
+          Date.now,
+          {},
+          wid
         )
       : null;
 

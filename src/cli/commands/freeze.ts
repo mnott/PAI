@@ -35,12 +35,13 @@ async function freezeRun(ctx: RunContext): Promise<number> {
     }
   }
   try {
-    const deps = await realFreezeDeps();
-    if (ctx.opts["workers-only"] === true) deps.servers = () => [];
+    const deps = realFreezeDeps();
     const only = typeof ctx.opts.only === "string" ? ctx.opts.only.split(",").map((x) => x.trim()).filter(Boolean) : undefined;
+    // --only never stalls every other worker's shared model server: it implies --workers-only unless --models says otherwise
+    if (ctx.opts["workers-only"] === true || (only && ctx.opts.models !== true)) deps.servers = async () => [];
     const exceptIds = list(ctx.opts.except);
     const exceptSession = typeof ctx.opts["except-session"] === "string" ? ctx.opts["except-session"] : undefined;
-    const r = freezeAll(logDir(), by(), forMs, deps, only, exceptIds || exceptSession ? { ids: exceptIds, session: exceptSession } : undefined);
+    const r = await freezeAll(logDir(), by(), forMs, deps, only, exceptIds || exceptSession ? { ids: exceptIds, session: exceptSession } : undefined);
     console.log(r.lines.join("\n"));
     return 0;
   } catch (e) {
@@ -51,14 +52,15 @@ async function freezeRun(ctx: RunContext): Promise<number> {
 async function thawRun(ctx?: RunContext): Promise<number> {
   const ids = list(ctx?.opts.only);
   const session = typeof ctx?.opts.session === "string" ? ctx.opts.session : undefined;
-  const deps = await realFreezeDeps();
+  const deps = realFreezeDeps();
   const r = ids || session ? thawSome(logDir(), deps, { ids, session }) : thawAll(logDir(), deps);
   console.log(r.lines.join("\n"));
   return 0;
 }
 
 const WORKERS_ONLY_OPT = { name: "workers-only", type: "boolean", summary: "Leave the local model server running (freeze the worker trees only)" } as const;
-const ONLY_OPT = { name: "only", type: "string", value: "IDS", summary: "Freeze only these worker ids (comma list)" } as const;
+const ONLY_OPT = { name: "only", type: "string", value: "IDS", summary: "Freeze only these worker ids (comma list); implies --workers-only — the shared model server keeps running for every other worker (add --models to freeze it too)" } as const;
+const MODELS_OPT = { name: "models", type: "boolean", summary: "With --only: also freeze the local model server(s) (off by default; a plain `pai freeze` always takes them)" } as const;
 const EXCEPT_OPT = { name: "except", type: "string", value: "IDS", summary: "Freeze everything except these worker ids (comma list) and their children" } as const;
 const EXCEPT_SESSION_OPT = { name: "except-session", type: "string", value: "NAME", summary: "Freeze everything except this session's workers (and their children)" } as const;
 const FOR_OPT = { name: "for", type: "string", value: "DURATION", summary: "Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works" } as const;
@@ -67,12 +69,13 @@ export const freezeCommand: CommandDef = {
   name: "freeze",
   summary: "Stop all running workers and the local model server to free the CPU/GPU now",
   description:
-    "SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s). Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).",
-  examples: ["pai freeze", "pai freeze --for 30m", "pai freeze --status", "pai freeze --except-session CaseLeaf", "pai thaw", "pai thaw --session CaseLeaf"],
+    "SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s) — one entry per server, found by its listening port and named by the model it serves there. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).",
+  examples: ["pai freeze", "pai freeze --for 30m", "pai freeze --only w-1234", "pai freeze --status", "pai freeze --except-session CaseLeaf", "pai thaw", "pai thaw --session CaseLeaf"],
   options: [
     FOR_OPT,
     WORKERS_ONLY_OPT,
     ONLY_OPT,
+    MODELS_OPT,
     EXCEPT_OPT,
     EXCEPT_SESSION_OPT,
     { name: "status", type: "boolean", summary: "Show since when, by whom and what is frozen" },
@@ -109,6 +112,7 @@ export const workerFreezeCommand: CommandDef = {
     FOR_OPT,
     WORKERS_ONLY_OPT,
     ONLY_OPT,
+    MODELS_OPT,
     EXCEPT_OPT,
     EXCEPT_SESSION_OPT,
   ],

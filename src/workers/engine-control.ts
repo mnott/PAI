@@ -69,11 +69,12 @@ export function setWorkerPaused(logDir: string, id: string, paused: boolean, who
   }
   if (paused && status.state !== "running" && status.state !== "queued") throw new Error(`worker ${id} is ${status.state}; only a running worker can be paused`);
   status.paused = paused;
-  if (paused && preemptedBy) {
-    status.pausedBy = preemptedBy;
+  // the pause window is kept for every kind of pause, not just a preemption: the quiet/stall clocks run on active time and need the span (activeMsOf)
+  if (paused) {
+    if (preemptedBy) status.pausedBy = preemptedBy;
     status.pausedAt = now;
   } else if (!paused) {
-    // preemption time is not work: closed here, added to the deadline (active-time.ts)
+    // pause time is not work: closed here, added to the deadline (active-time.ts)
     if (status.pausedAt !== undefined) status.pausedMs = (status.pausedMs ?? 0) + Math.max(0, now - status.pausedAt);
     delete status.pausedBy;
     delete status.pausedAt;

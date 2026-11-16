@@ -12,7 +12,8 @@
  *
  * Order: workers deepest first (an L2 before its L1, so no L1 ever runs next to a
  * frozen child), then the model server. Thaw: model server, then workers deepest
- * first again (the L1 last).
+ * first again (the L1 last). `--only <id>` implies `--workers-only`: freezing one
+ * worker must never stall every other worker's shared model server.
  *
  * Never stopped: this process and its ancestors, the daemon, router, AIBroker,
  * pool hosts, docker. Only worker pids, their descendants and model servers.
@@ -103,6 +104,86 @@ export function frozenMsFor(id: string, now: number = Date.now()): number {
   return (readAcct().workers[id] ?? 0) + open;
 }
 
+/** The freeze spans of this worker, merged and sorted: the closed spell(s) from the accounts plus the open one when the marker names it. `horizon` is `now` for a live tick; detection passes the tick's own time so a back-dated tick never charges future freezes (or pauses). */
+function frozenSpans(id: string, horizon: number, openEnd: number = horizon): Array<[number, number]> {
+  const m = readFreeze();
+  const out: Array<[number, number]> = [];
+  if (m && m.pids.some((p) => p.kind === "worker" && p.id === id)) out.push([m.since, Math.max(m.since, openEnd)]);
+  // the accounts carry only totals; a single closed spell is the usual shape: [horizon - total, horizon] ending at the thaw
+  const closed = readAcct().workers[id] ?? 0;
+  if (closed > 0) out.push([horizon - closed, horizon]);
+  // merge overlapping spells
+  out.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const s of out) {
+    const last = merged[merged.length - 1];
+    if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]);
+    else merged.push(s);
+  }
+  return merged;
+}
+
+/** ms of the wall interval [from, to] that ran inside this worker's freeze spans. */
+export function frozenMsBetween(id: string, from: number, to: number): number {
+  let ms = 0;
+  for (const [s, e] of frozenSpans(id, to)) if (from < e) ms += Math.max(0, Math.min(to, e) - Math.max(from, s));
+  return ms;
+}
+
+/** The moment this worker entered the freeze in progress, or undefined when it is not frozen right now. */
+export function frozenSince(id: string): number | undefined {
+  const m = readFreeze();
+  return m && m.pids.some((p) => p.kind === "worker" && p.id === id) ? m.since : undefined;
+}
+
+/** ms of the quiet spell that started at `since` (wall epoch) which ran while this worker was frozen — closed spells included. */
+export function frozenMsOf(id: string, since: number, now: number = Date.now()): number {
+  return frozenMsBetween(id, since, now);
+}
+
+/** The pause spans of this worker from its status fields: the open window [pausedAt, horizon] while paused, plus one closed spell [horizon - pausedMs, horizon]. The horizon is `now` for a live tick; detection passes the tick's own time so a back-dated tick never charges future pauses. */
+function pausedSpans(s: { paused?: boolean; pausedAt?: number; pausedMs?: number }, horizon: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (s.paused && typeof s.pausedAt === "number") out.push([s.pausedAt, Math.max(s.pausedAt, horizon)]);
+  const closed = Number(s.pausedMs) || 0;
+  if (closed > 0) out.push([horizon - closed, horizon]);
+  out.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const sp of out) {
+    const last = merged[merged.length - 1];
+    if (last && sp[0] <= last[1]) last[1] = Math.max(last[1], sp[1]);
+    else merged.push(sp);
+  }
+  return merged;
+}
+
+/** ms of the wall interval [from, to] that ran inside this worker's pause spans. */
+export function pausedMsBetween(s: { paused?: boolean; pausedAt?: number; pausedMs?: number }, from: number, to: number): number {
+  let ms = 0;
+  for (const [a, b] of pausedSpans(s, to)) if (from < b) ms += Math.max(0, Math.min(to, b) - Math.max(from, a));
+  return ms;
+}
+
+/** Wall ms since `since` minus everything this worker spent frozen AND paused — the one clock every quiet/stall/escalation notice runs on. A preemption or `pai worker pause` is not idleness any more than a freeze is; after either ends the spell restarts from its end. */
+export function activeMsOf(
+  id: string,
+  since: number,
+  now: number = Date.now(),
+  pause: { paused?: boolean; pausedAt?: number; pausedMs?: number } = {}
+): number {
+  const frozen = frozenSpans(id, now, Math.max(now, Date.now())); // an open freeze never ends before real now: the live marker is current truth even for a back-dated tick
+  const spans = [...frozen, ...pausedSpans(pause, now)].sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const sp of spans) {
+    const last = merged[merged.length - 1];
+    if (last && sp[0] <= last[1]) last[1] = Math.max(last[1], sp[1]);
+    else merged.push(sp);
+  }
+  let ms = 0;
+  for (const [a, b] of merged) if (since < b) ms += Math.max(0, Math.min(now, b) - Math.max(since, a));
+  return Math.max(0, now - since - ms);
+}
+
 /** A clock that stands still while frozen: the wait verbs' --max budgets run on it. */
 export const activeNow = (): number => Date.now() - frozenTotalMs();
 
@@ -151,8 +232,8 @@ const PROTECTED = /(pai-daemon|daemon\/index|aibroker|AIBroker|pool-host|pool_ho
 export interface FreezeDeps {
   procs: () => ProcRow[];
   statuses: (logDir: string) => WorkerStatus[];
-  /** Listening model-server pids, with a label. */
-  servers: () => { pid: number; label: string }[];
+  /** One entry per RUNNING model server: the listening pid and the name of what it serves (its port's /v1/models id). Async because naming a server is an HTTP probe. */
+  servers: () => Promise<{ pid: number; label: string }[]>;
   signal: (pid: number, sig: "SIGSTOP" | "SIGCONT") => void;
   owns: (s: WorkerStatus) => boolean;
   self: number;
@@ -160,18 +241,16 @@ export interface FreezeDeps {
   note: (logDir: string, id: string, text: string) => void;
 }
 
-/** The live deps; async because the model-server lookup lives in the CLI module (loaded on demand). */
-export async function realFreezeDeps(): Promise<FreezeDeps> {
-  const { listServers } = await import("../cli/commands/worker-config.js");
-  const { readLocalConfig } = await import("./local-tiers.js");
-  const { workersYamlPath } = await import("./workers-config.js");
+/** The live deps. Nothing is read here: building them must cost nothing, so a caller that may not need them (the daemon tick's auto-thaw check) pays only for what it actually calls. `servers` loads the model-server lookup on first use — it lives in the CLI module. */
+export function realFreezeDeps(): FreezeDeps {
   return {
     procs: () => parseProcs(psTable("pid=,ppid=,lstart=,command=")),
     statuses: (d) => loadStatuses(d),
-    // the listening pid of every running local model, found the way `pai models` finds it
-    servers: () => {
+    // one entry per running model server: its listening pid, named by what it serves
+    servers: async () => {
       try {
-        return listServers(readLocalConfig(workersYamlPath())).map((s) => ({ pid: s.pid, label: `${s.provider ?? s.tier ?? "model"}${s.port ? `:${s.port}` : ""}` }));
+        const { runningModelServers } = await import("./model-servers.js");
+        return await runningModelServers();
       } catch {
         return [];
       }
@@ -247,11 +326,17 @@ export function planFreeze(statuses: WorkerStatus[], rows: ProcRow[], servers: {
       out.push({ pid: r.pid, lstart: r.lstart, kind: "worker", id: w.s.id, role, depth });
     }
   }
+  // one entry per running model server (its listening pid): the listener's whole tree,
+  // children before the listener itself, under the name of what it serves
   for (const m of servers) {
     const r = byPid.get(m.pid);
     if (!r || claimed.has(r.pid) || safe.has(r.pid)) continue;
-    claimed.add(r.pid);
-    out.push({ pid: r.pid, lstart: r.lstart, kind: "model", id: m.label, role: "model", depth: -1 });
+    const tree = [r, ...descendants(rows, r.pid)].reverse(); // children before the listener
+    for (const p of tree) {
+      if (claimed.has(p.pid) || protectedPid(p)) continue;
+      claimed.add(p.pid);
+      out.push({ pid: p.pid, lstart: p.lstart, kind: "model", id: m.label, role: "model", depth: -1 });
+    }
   }
   return out;
 }
@@ -282,7 +367,7 @@ export interface Except {
 /** A model-server label ("provider:port") belongs to a worker when it starts with the worker's provider. */
 const serverOf = (label: string, s: WorkerStatus): boolean => !!s.provider && (label === s.provider || label.startsWith(`${s.provider}:`));
 
-export function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[], except?: Except): FreezeReport {
+export async function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[], except?: Except): Promise<FreezeReport> {
   if (process.env.PAI_WORKER === "1") throw new Error("a worker cannot freeze its siblings (PAI_WORKER=1)");
   const existing = readFreeze();
   if (existing) throw new Error(`already frozen since ${new Date(existing.since).toISOString()} by ${existing.by}; \`pai thaw\` first`);
@@ -305,9 +390,10 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
   const marker: FreezeMarker = { since, by, ...(forMs ? { until: since + forMs } : {}), pids: stopped };
   writeJson(freezePath(), marker);
   const wanted = new Set<number>();
-  const stopPass = (): void => {
+  const stopPass = async (): Promise<void> => {
     const rows = d.procs();
-    const servers = d.servers().filter((m) => !sparedLive.some((s) => serverOf(m.label, s)));
+    // a model server an excepted worker runs on keeps serving it
+    const servers = (await d.servers()).filter((m) => !sparedLive.some((s) => serverOf(m.label, s)));
     const plan = planFreeze(live, rows, servers, d.self).filter((e) => !wanted.has(e.pid));
     // a worker's tree root first (no new children), model servers last
     for (const e of plan) {
@@ -316,8 +402,8 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
     }
     writeJson(freezePath(), marker);
   };
-  stopPass();
-  stopPass(); // stragglers forked between the scan and the stop
+  await stopPass();
+  await stopPass(); // stragglers forked between the scan and the stop
   appendLedger(ledgerPath(logDir), "WORKERS-FREEZE", { by, pids: stopped.length, ...(forMs ? { forMin: Math.round(forMs / 60_000) } : {}) });
   const lines: string[] = [];
   const ids = [...new Set(stopped.filter((e) => e.kind === "worker").map((e) => e.id))];
@@ -325,9 +411,12 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
     const mine = stopped.filter((e) => e.id === id && e.kind === "worker");
     lines.push(`frozen ${mine[0].role} ${id}: ${mine.length} processes`);
   }
-  for (const e of stopped.filter((x) => x.kind === "model")) lines.push(`frozen model ${e.id} (pid ${e.pid})`);
+  // one line per server: the label is shared by its whole tree (the listener's pid leads)
+  const modelEntries = new Map<string, FrozenEntry[]>();
+  for (const e of stopped.filter((x) => x.kind === "model")) (modelEntries.get(e.id) ?? modelEntries.set(e.id, []).get(e.id)!).push(e);
+  for (const [label, mine] of modelEntries) lines.push(`frozen model ${label} (pid ${mine[mine.length - 1].pid}, ${mine.length} processes)`);
   if (spared.size) lines.push(`spared ${[...spared].join(", ")} (and children)`);
-  lines.push(`frozen ${ids.length} workers + ${stopped.filter((e) => e.kind === "model").length} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
+  lines.push(`frozen ${ids.length} workers + ${modelEntries.size} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
   return { lines, total: stopped.length, marker };
 }
 
@@ -470,7 +559,7 @@ export function thawAll(logDir: string, d: FreezeDeps): ThawReport {
   return { lines, continued, skipped, wasFrozen: true };
 }
 
-/** Daemon tick: thaw when the marker's `until` has passed. Returns the report when it thawed. */
+/** Daemon tick: thaw when the marker's `until` has passed. Returns the report when it thawed. Cheap when nothing is due: one read of the marker, no deps touched — the heavy ones (the process table, the model-server probes) are only called once a thaw actually runs. */
 export function autoThawDue(logDir: string, d: FreezeDeps): ThawReport | null {
   const m = readFreeze();
   if (!m || m.until === undefined || d.now() < m.until) return null;
@@ -487,6 +576,8 @@ export function freezeStatusLines(now: number = Date.now()): string[] {
     const mine = m.pids.filter((e) => e.kind === "worker" && e.id === id);
     lines.push(`  ${mine[0].role} ${id}: ${mine.length} processes`);
   }
-  for (const e of m.pids.filter((x) => x.kind === "model")) lines.push(`  model ${e.id}: pid ${e.pid}`);
+  const modelEntries = new Map<string, FrozenEntry[]>();
+  for (const e of m.pids.filter((x) => x.kind === "model")) (modelEntries.get(e.id) ?? modelEntries.set(e.id, []).get(e.id)!).push(e);
+  for (const [label, mine] of modelEntries) lines.push(`  model ${label}: pid ${mine[mine.length - 1].pid}, ${mine.length} processes`);
   return lines;
 }

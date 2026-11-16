@@ -19,7 +19,7 @@ import { createPgPool } from "./pg-pool.js";
 import { assertDestructiveAllowed } from "./foreign-config-guard.js";
 import { MergeError } from "../registry/merge.js";
 import { paiHomePath } from "../config/pai-home.js";
-import { CHUNK_HASH_TWIN, FILE_HASH_TWIN, countHashTwins, runDelete, type DeleteTarget } from "./orphan-delete.js";
+import { anyHashTwin, CHUNK_HASH_TWIN, FILE_HASH_TWIN, countHashTwins, runDelete, type DeleteTarget } from "./orphan-delete.js";
 import { backupTableName, backupsToPrune, logRegistryReset, sortBackups } from "./registry-reset.js";
 import type { Pool, PoolClient } from "pg";
 import { DEFAULT_PG_CONNECTION_TIMEOUT_MS, postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
@@ -199,12 +199,33 @@ export class PostgresRegistryBackend implements RegistryBackend {
     );
   }
 
-  async countOrphanedChunks(): Promise<OrphanCounts> {
+  async countOrphanedChunks(probe = false): Promise<OrphanCounts> {
     const r = await this.pool.query(
       `SELECT (SELECT COUNT(*) FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)) AS orphaned,
               (SELECT COUNT(*) FROM pai_chunks) AS total`
     );
-    return { orphaned: Number(r.rows[0].orphaned), total: Number(r.rows[0].total) };
+    const orphaned = Number(r.rows[0].orphaned);
+    let actionable: boolean | undefined;
+    if (probe && orphaned > 0) {
+      // cheaply: mapped (a backup row names a current project) or one hash twin exists
+      try {
+        const ids = (await this.pool.query(
+          `SELECT DISTINCT c.project_id FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)`
+        )).rows.map((x: { project_id: number }) => Number(x.project_id));
+        let mapped = false;
+        for (const t of await this.backupTables()) {
+          const m = await this.pool.query(
+            `SELECT 1 FROM ${t} b JOIN projects p ON p.root_path = b.root_path WHERE b.id = ANY($1::int[]) LIMIT 1`,
+            [ids]
+          );
+          if (m.rows.length > 0) { mapped = true; break; }
+        }
+        actionable = mapped || (await anyHashTwin(this.pool));
+      } catch {
+        // the mapping cannot be probed: leave it unknown, the warning stays generic
+      }
+    }
+    return { orphaned, total: Number(r.rows[0].total), actionable };
   }
 
   /**

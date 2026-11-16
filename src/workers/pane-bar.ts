@@ -83,14 +83,29 @@ export const CONTINUE_NOTE = "The operator says continue: resume the task where 
 /** The pause reason the worker guard answers with. */
 export const PAUSE_DENY = "paused by the operator — answer, then wait for /continue";
 
-/** The pause reason for a worker the router parked because a --now run preempted it: not the operator's pause, nothing to answer or wait for. */
-export const preemptDeny = (by: string): string => `paused: preempted by ${by}, resumes automatically`;
+/**
+ * The pause reason for a worker a --now run preempted: not the operator's pause, nothing to answer or wait
+ * for. The guard waits in the gate up to 100 s before answering with this (`waitWhilePreempted`), so it is
+ * only seen after a full wait; `waitedSec` says how long this call already sat.
+ */
+export const preemptDeny = (by: string, waitedSec?: number): string =>
+  `paused by priority run ${by}${waitedSec ? `, waited ${waitedSec}s for it to end` : ""} — it resumes automatically when that run ends; do not retry tools in the meantime`;
 
 /** Who preempted the worker, when its pause is a preemption (status file). */
 export function workerPreemptedBy(logDir: string, id: string): string | undefined {
   try {
     const s = JSON.parse(readFileSync(statusPath(logDir, id), "utf8")) as { paused?: boolean; pausedBy?: string };
     return s.paused === true && s.pausedBy ? s.pausedBy : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The worker's pause and its preemptor from ONE read of the status file (the guard must not tear across a resume between two reads). */
+export function readPauseState(logDir: string, id: string): { paused: boolean; pausedBy?: string } | undefined {
+  try {
+    const s = JSON.parse(readFileSync(statusPath(logDir, id), "utf8")) as { paused?: boolean; pausedBy?: string };
+    return { paused: s.paused === true, ...(s.paused === true && s.pausedBy ? { pausedBy: s.pausedBy } : {}) };
   } catch {
     return undefined;
   }
@@ -109,11 +124,17 @@ export function workerPaused(logDir: string, id: string): boolean {
   }
 }
 
-/** Write the pause into the status file (a missing worker is left alone). */
+/** Write the pause into the status file (a missing worker is left alone). The window fields ride along so the quiet/stall clocks can discount paused time like any other pause. */
 function setWorkerPausedStatus(logDir: string, id: string, paused: boolean): void {
   try {
     const path = statusPath(logDir, id);
-    const s = JSON.parse(readFileSync(path, "utf8")) as { paused?: boolean };
+    const s = JSON.parse(readFileSync(path, "utf8")) as { paused?: boolean; pausedAt?: number; pausedMs?: number };
+    const now = Date.now();
+    if (paused) s.pausedAt = now;
+    else {
+      if (s.pausedAt !== undefined) s.pausedMs = (s.pausedMs ?? 0) + Math.max(0, now - s.pausedAt);
+      delete s.pausedAt;
+    }
     s.paused = paused;
     writeFileSync(path, JSON.stringify(s), "utf8");
   } catch {

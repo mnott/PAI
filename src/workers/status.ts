@@ -478,15 +478,19 @@ export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStat
   if (!existsSync(logDir)) return [];
   const out: WorkerStatus[] = [];
   const seen = new Set<string>();
+  // the recheck window is a trust bound, not a duty: a cached terminal entry stays fresh until its file changes (the stat below catches that), and loadLiveStatusesCached skips its stat entirely for sweeps that only want live entries.
   for (const name of readdirSync(logDir).sort()) {
     if (!name.endsWith(".status")) continue;
     const path = join(logDir, name);
     seen.add(path);
     try {
       let hit = statusCache.get(path);
-      if (hit?.status && isTerminal(hit.status.state) && now - hit.checked < TERMINAL_RECHECK_MS) {
-        out.push(hit.status);
-        continue;
+      if (hit?.status && isTerminal(hit.status.state)) {
+        // a terminal file the cache holds needs no stat to be believed again within its trust window; past it, one stat decides
+        if (now - hit.checked < TERMINAL_RECHECK_MS) {
+          out.push(hit.status);
+          continue;
+        }
       }
       const st = statSync(path);
       if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
@@ -509,6 +513,39 @@ export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStat
   return out;
 }
 
+/**
+ * loadStatusesCached for a sweep that only ever acts on live entries: a cached terminal file is not even
+ * statted (a finished worker's file no longer changes), so a warm tick over thousands of historical files
+ * costs one readdir plus a stat per non-terminal file. The returned objects are shared with the cache: read-only.
+ */
+export function loadLiveStatusesCached(logDir: string, now = Date.now()): WorkerStatus[] {
+  if (!existsSync(logDir)) return [];
+  const out: WorkerStatus[] = [];
+  for (const name of readdirSync(logDir).sort()) {
+    if (!name.endsWith(".status")) continue;
+    const path = join(logDir, name);
+    const hit = statusCache.get(path);
+    if (hit?.status && isTerminal(hit.status.state)) continue; // trusted terminal: no stat, not wanted anyway
+    try {
+      const st = statSync(path);
+      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+        let status: WorkerStatus | null = null;
+        try {
+          status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
+        } catch {
+          // a half-written or damaged status file is not worth a crash
+        }
+        statusCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, status, checked: now });
+      } else hit.checked = now;
+      const cur = statusCache.get(path)?.status;
+      if (cur && !isTerminal(cur.state)) out.push(cur);
+    } catch {
+      statusCache.delete(path);
+    }
+  }
+  return out;
+}
+
 export function loadStatus(logDir: string, id: string): WorkerStatus | null {
   const path = statusPath(logDir, id);
   if (!existsSync(path)) return null;
@@ -517,6 +554,36 @@ export function loadStatus(logDir: string, id: string): WorkerStatus | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * loadStatus for the daemon's periodic tasks: one stat, and a parse only when mtime or size changed (a
+ * terminal file is not even statted inside its recheck window). The returned object is shared with the
+ * cache — read-only. Kill paths and writers keep the uncached loadStatus: they must see the bytes on disk.
+ */
+export function loadStatusCached(logDir: string, id: string, now = Date.now()): WorkerStatus | null {
+  const path = statusPath(logDir, id);
+  let hit = statusCache.get(path);
+  if (hit?.status && isTerminal(hit.status.state) && now - hit.checked < TERMINAL_RECHECK_MS) return hit.status;
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(path);
+  } catch {
+    statusCache.delete(path);
+    return null;
+  }
+  if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+    let status: WorkerStatus | null = null;
+    try {
+      status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
+    } catch {
+      // a half-written or damaged status file is not worth a crash
+    }
+    hit = { mtimeMs: st.mtimeMs, size: st.size, status, checked: now };
+    statusCache.set(path, hit);
+  }
+  hit.checked = now;
+  return hit.status;
 }
 
 /**

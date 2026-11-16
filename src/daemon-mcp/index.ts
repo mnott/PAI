@@ -1908,7 +1908,8 @@ async function startShim(): Promise<void> {
     ].join("\n"),
     {
       for: z.string().optional().describe("Auto-thaw after this long, e.g. 30m or 2h (the daemon thaws)."),
-      only: z.string().optional().describe("Freeze only these worker ids (comma list)."),
+      only: z.string().optional().describe("Freeze only these worker ids (comma list); implies workers-only — the shared model server keeps running for every other worker."),
+      models: z.boolean().optional().describe("With only: also freeze the local model server(s) (off by default; a plain freeze always takes them)."),
       except: z.string().optional().describe("Freeze everything except these worker ids (comma list) and their children."),
       session: z.string().optional().describe("Freeze everything except this session's workers (and their children)."),
     },
@@ -1917,7 +1918,11 @@ async function startShim(): Promise<void> {
         if (process.env.PAI_WORKER === "1") return workerError(new Error("a worker cannot freeze its siblings"));
         const { freezeAll, parseDuration, realFreezeDeps } = await import("../workers/freeze.js");
         const csv = (v?: string) => (v ? v.split(",").map((x) => x.trim()).filter(Boolean) : undefined);
-        const r = freezeAll(workersLogDir(readWorkersSection().workers), "mcp", args.for ? parseDuration(args.for) : undefined, await realFreezeDeps(), csv(args.only), args.except || args.session ? { ids: csv(args.except), session: args.session } : undefined);
+        const deps = realFreezeDeps();
+        // --only never stalls every other worker's shared model server: it implies workers-only unless models says otherwise
+        const only = csv(args.only);
+        if (only && args.models !== true) deps.servers = async () => [];
+        const r = await freezeAll(workersLogDir(readWorkersSection().workers), "mcp", args.for ? parseDuration(args.for) : undefined, deps, only, args.except || args.session ? { ids: csv(args.except), session: args.session } : undefined);
         return workerText(r.lines.join("\n"));
       } catch (e) {
         return workerError(e);
@@ -1939,8 +1944,8 @@ async function startShim(): Promise<void> {
         if (args.status) return workerText(freezeStatusLines().join("\n"));
         const dir = workersLogDir(readWorkersSection().workers);
         const ids = args.only ? args.only.split(",").map((x) => x.trim()).filter(Boolean) : undefined;
-        if (ids || args.session) return workerText(thawSome(dir, await realFreezeDeps(), { ids, session: args.session }).lines.join("\n"));
-        return workerText(thawAll(dir, await realFreezeDeps()).lines.join("\n"));
+        if (ids || args.session) return workerText(thawSome(dir, realFreezeDeps(), { ids, session: args.session }).lines.join("\n"));
+        return workerText(thawAll(dir, realFreezeDeps()).lines.join("\n"));
       } catch (e) {
         return workerError(e);
       }

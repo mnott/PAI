@@ -31,7 +31,8 @@ import { isScratchRootFile } from "./worker-scratch-name.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
 import { benchStartReason } from "./worker-bench-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
-import { PAUSE_DENY, preemptDeny, workerPaused, workerPreemptedBy } from "../../../workers/pane-bar.js";
+import { operatorNamesValue } from "./delegation-gate.js";
+import { PAUSE_DENY, preemptDeny, readPauseState, workerPaused } from "../../../workers/pane-bar.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
@@ -62,6 +63,8 @@ export interface WorkerGuardContext {
   benchGo?: boolean;
   /** Whether a command runs a test runner or a door in test mode (worker-test-rules.ts); the caller reads the project's doors. */
   testCommand?: (command: string) => string | null;
+  /** This worker's own task text (its brief), for the child-routing rule; absent = unreadable, which denies an override. */
+  taskText?: () => string | undefined;
 }
 
 interface Segment {
@@ -72,6 +75,22 @@ interface Segment {
 
 const deny = (reason: string): GateDecision => ({ decision: "deny", reason });
 const ALLOW: GateDecision = { decision: "allow" };
+
+/**
+ * Sit still while a preemption pause holds the worker, polling its status file, up to `maxMs` (the hook
+ * process is killed past ~120 s, so callers pass one Bash timeout). True when it waited at all; false
+ * when it gave up early or slept nothing. Sync on purpose: this runs inside a PreToolUse hook.
+ */
+export function waitWhilePreempted(logDir: string, wid: string, maxMs: number, pollMs = 250): boolean {
+  if (maxMs <= 0 || !workerPaused(logDir, wid)) return false;
+  const nap = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  const t0 = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    nap(pollMs);
+    if (!workerPaused(logDir, wid)) break;
+  }
+  return true;
+}
 
 /** Split into segments; quotes group words, operators outside quotes split. */
 export function parseCommand(raw: string): Segment[] {
@@ -199,6 +218,44 @@ function stripPrefix(words: string[]): string[] {
 
 const isFlag = (w: string): boolean => w.startsWith("-") && w.length > 1;
 
+export const WORKER_CHILD_ROUTE_REASON =
+  "children follow the mode chain and wait for their slot; --model/--provider only when your brief names it; priority is the operator's call";
+
+/** Values of --model / --provider after `pai worker run|resume` in the segment (`--model X`, `--model=X`, quoted). */
+function childOverrides(words: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++; // leading env assignments retarget the command
+  if (!(words[i] === "pai" || bareCommand(words[i] ?? "") === "pai")) return out;
+  if (!(words[i + 1] === "worker" && (words[i + 2] === "run" || words[i + 2] === "resume"))) return out;
+  for (let j = i + 3; j < words.length; j++) {
+    const eq = /^(?:--model|--provider)=(.*)$/.exec(words[j]);
+    if (eq) { if (eq[1]) out.push(eq[1]); continue; }
+    if (/^--(?:model|provider)$/.test(words[j])) {
+      const v = words[j + 1];
+      if (v !== undefined && !v.startsWith("-")) { out.push(v); j++; }
+      else out.push(""); // a missing or flag-shaped value: nothing is named, deny
+    }
+  }
+  return out;
+}
+
+/**
+ * The worker child-routing rule: `pai worker run|resume` with --model/--provider is denied unless the
+ * worker's own brief names that model/provider (operatorNamesValue, as L0). An unreadable brief denies.
+ * `pai worker help` (the budgeted stronger-model call) and every other command pass.
+ */
+export function childRouteReason(command: string, taskText: string | undefined): string | null {
+  const text = dropHeredocBodies(command);
+  if (!/pai\s+worker\s+(?:run|resume)/.test(text)) return null;
+  for (const seg of parseCommand(command)) {
+    const overrides = childOverrides(seg.words);
+    if (!overrides.length) continue;
+    if (overrides.some((v) => !operatorNamesValue(taskText, v))) return WORKER_CHILD_ROUTE_REASON;
+  }
+  return null;
+}
+
 function expand(p: string, home: string): string {
   return p.replace(/^~(?=\/|$)/, home).replace(/^\$\{?HOME\}?(?=\/|$)/, home);
 }
@@ -320,6 +377,29 @@ const SED_INPLACE_REASON =
 
 const GNU_SED_RANGE_REASON =
   "BSD sed has no GNU `,+N` range: use the Read tool with offset/limit, `sed -n 'X,Yp'` with an absolute end line, or `grep -n -A N pattern file`.";
+
+const GIT_GREP_ORDER_REASON =
+  "git grep reads words after the pattern as revisions: put options before the pattern, e.g. `git grep -n -A 20 \"pattern\" -- path`.";
+
+/** Options that end at their own word (a value follows separately); everything else before the first non-option word is a leading option. */
+const GIT_GREP_VALUE_OPTS = new Set(["-e", "--and", "--or", "--not", "--max-depth"]);
+
+/**
+ * True when `git grep` carries an option after its bare pattern and before `--`:
+ * git reads it as a revision (`git grep -n "pat" -A 20 -- src` → `fatal: unable to resolve revision: -A`).
+ * A pattern given with `-e` has no bare pattern, so options may follow it; a quoted word starting
+ * with `-` is the pattern itself, not an option (parseCommand strips the quotes).
+ */
+export function gitGrepOptionsAfterPattern(args: string[]): boolean {
+  let i = 0;
+  while (i < args.length && isFlag(args[i])) {
+    if (GIT_GREP_VALUE_OPTS.has(args[i])) i++; // -e <pattern>, --and <expr>: skip the value word
+    i++;
+  }
+  if (i >= args.length || args[i] === "--") return false; // no bare pattern: nothing to be after
+  for (i++; i < args.length && args[i] !== "--"; i++) if (isFlag(args[i])) return true;
+  return false;
+}
 
 /** The sed address grammar: a line number, `/re/`, `\|re\|`, `%`, `$` — optionally followed by an offset (`+N` / `-N`). */
 const SED_ADDR = String.raw`(?:\d+|/[^\n]*?/\\?|\|[^|\n]+\|\\?|%|\$)(?:[+-]\d+)?`;
@@ -473,6 +553,8 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
     const g = gitSub(args);
     if (!g) return ALLOW;
     if (g.sub === "push") return deny("git push blocked: pushing is the orchestrator's; commit on your branch and stop");
+    // `git grep -n "pat" -A 20 -- src` fails with `fatal: unable to resolve revision: -A`: options go before the pattern
+    if (g.sub === "grep" && gitGrepOptionsAfterPattern(g.rest)) return deny(GIT_GREP_ORDER_REASON);
     if (g.sub === "commit" && AI_ATTRIBUTION.test(commitMessageText(g.rest, st.cwd, st.raw, ctx.home))) {
       return deny("no AI attribution in commits (operator rule): drop the Co-Authored-By / Generated-with line and commit again");
     }
@@ -638,9 +720,26 @@ export function decideWorkerGuard(
       logDir = ""; // unresolvable logDir: no pause to read, work goes on
     }
     const wid = logDir && currentWorkerId(env, logDir);
-    if (wid && workerPaused(logDir, wid)) {
-      const by = workerPreemptedBy(logDir, wid);
-      return deny(by ? preemptDeny(by) : PAUSE_DENY);
+    if (wid) {
+      // paused and its who-by from ONE file read: two reads can tear across the sweep's resume between
+      // them (paused true, pausedBy gone) and deny a preemption pause with the operator's text
+      const st = readPauseState(logDir, wid);
+      if (st?.paused === true) {
+        const by = st.pausedBy;
+        // a preemption pause is not the operator's: it ends with the preemptor. Denying every tool call
+        // while it lasts only burns turns (the 28-denials loop), so wait in the gate for it to clear —
+        // bounded at one Bash timeout (100 s): past that deny once, and a worker that stops calling tools
+        // is released by the sweep with no denials at all. The env escape hatch keeps tests (and any
+        // caller that must not block) immediate.
+        if (by && env.PAI_WORKER_PREEMPT_WAIT !== "0") {
+          const t0 = Date.now();
+          const maxMs = Number(env.PAI_WORKER_PREEMPT_WAIT_MS) > 0 ? Number(env.PAI_WORKER_PREEMPT_WAIT_MS) : 100_000;
+          const waited = waitWhilePreempted(logDir, wid, maxMs);
+          if (!workerPaused(logDir, wid)) return ALLOW;
+          return deny(preemptDeny(by, waited ? Math.round((Date.now() - t0) / 1000) : undefined));
+        }
+        return deny(PAUSE_DENY);
+      }
     }
   }
 
@@ -662,6 +761,9 @@ export function decideWorkerGuard(
       }
       const cfg = parseCommand(cmd).map((sg) => configMutationReason(sg.words, env, ctx().home)).find((r) => r);
       if (cfg) return deny(cfg);
+      // a worker starts children on the mode chain: --model/--provider only when its own brief names one
+      const route = childRouteReason(cmd, ctx().taskText?.());
+      if (route) return deny(route);
       const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
       if (why) return deny(why);
       if (isLocalWorker(env)) {

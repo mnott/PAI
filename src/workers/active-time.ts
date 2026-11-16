@@ -57,13 +57,13 @@ export function buildWaitMs(logDir: string, id: string, now: number = Date.now()
   return w.ms + (w.since === null ? 0 : Math.max(0, now - w.since));
 }
 
-/** "active 12 of 60 min, waited 31" for a limited run (waited = slot queue + build-gate + router-queue waits); null without a limit. */
+/** "active 12 of 60 min, waited 31" for a limited run (waited = slot queue + build-gate + router-queue waits); null without a limit. `id` adds the live freeze time to `blockedMs`, so an open freeze shows as waited. */
 export function activeText(
-  s: { started: string; maxMinutes?: number | null; queueWaitedMs?: number | null; blockedMs?: number | null },
+  s: { id?: string; started: string; maxMinutes?: number | null; queueWaitedMs?: number | null; blockedMs?: number | null },
   now: number
 ): string | null {
   if (!s.maxMinutes) return null;
-  const blocked = s.blockedMs ?? 0;
+  const blocked = (s.blockedMs ?? 0) + (s.id ? frozenMsFor(s.id, now) : 0);
   const startedAt = Date.parse(s.started.replace(" ", "T"));
   const active = Number.isFinite(startedAt) ? Math.max(0, now - startedAt - blocked) : 0;
   const m = (ms: number): number => Math.floor(ms / 60_000);

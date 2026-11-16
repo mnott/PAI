@@ -10,9 +10,9 @@ import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers
 import { workersLogDir } from "../../workers/paths.js";
 import { closeEndedPanes, loadRegistry, paneMayClose, workerEnded } from "../../workers/pane.js";
 import { isPaneRunId } from "../../workers/pane-run.js";
-import { isFrozen } from "../../workers/freeze.js";
+import { isFrozen, readFreeze } from "../../workers/freeze.js";
 import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from "../../workers/reaper.js";
-import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
+import { alive, loadStatus, loadStatusCached, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { sweepRuns } from "../../workers/run-events.js";
 import { panePolicy } from "../../workers/pane-policy.js";
@@ -642,7 +642,8 @@ export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean
  * touching iTerm only when the registry lists one.
  */
 export async function reapEndedPanesOnce(logDir: string, now = Date.now()): Promise<string[]> {
-  const due = loadRegistry(logDir).some((e) => isPaneRunId(e.worker) || paneReapable(loadStatus(logDir, e.worker), now));
+  // this runs every 2 s: the registry is small, but a loadStatus per entry was a full sync read per tick — the cached loader parses only what changed
+  const due = loadRegistry(logDir).some((e) => isPaneRunId(e.worker) || paneReapable(loadStatusCached(logDir, e.worker), now));
   if (!due) return [];
   const r = await closeEndedPanes(
     logDir,
@@ -687,9 +688,12 @@ export function startWorkerSupervisor(): void {
   const paneAudit = setInterval(() => {
     const dir = workersLogDir(readWorkersSection().workers);
     // `pai freeze --for`: thaw when the time is up; while frozen nothing below judges the (healthy, stopped) workers
+    // The marker decides first (one read): with no marker or a future `until` nothing runs. Building the real deps costs a dynamic import every tick and calling them (the process table, the model-server probes) tens of ms — an auto-thaw happens minutes apart at most, never per tick.
     void timedTask("freeze-autothaw", async () => {
+      const m = readFreeze();
+      if (!m || m.until === undefined || Date.now() < m.until) return;
       const { autoThawDue, realFreezeDeps } = await import("../../workers/freeze.js");
-      const r = autoThawDue(dir, await realFreezeDeps());
+      const r = autoThawDue(dir, realFreezeDeps());
       if (r) for (const l of r.lines) process.stderr.write(`[pai-daemon] Freeze: ${l}\n`);
     }).catch(() => undefined);
     if (isFrozen()) return;

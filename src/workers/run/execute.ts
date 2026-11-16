@@ -413,7 +413,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     ...(target.provider.contextWindow ? { context_window: target.provider.contextWindow } : {}),
   });
 
-  stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!), undefined, () => blockedMsOf(logDir, wid)) : null;
+  stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!), undefined, () => blockedMsOf(logDir, wid), Date.now, {}, wid) : null;
   stopTrack = trackBlocked(logDir, status, a.limit);
 
   const rl = createInterface({ input: proc.stdout! });

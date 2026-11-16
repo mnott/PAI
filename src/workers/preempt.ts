@@ -7,15 +7,17 @@
  * deadline (active-time.ts preemptedMsOf).
  */
 
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { getProviderOrNative, isLocalProvider, readWorkersSection } from "./config.js";
-import { providerCap } from "./capacity.js";
+import { providerCap, queueDir, writeTicket } from "./capacity.js";
 import { readUrgencyFor } from "./urgency.js";
 import { setWorkerPaused, setWorkerPriority } from "./engine-control.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { isLive, loadStatuses, loadStatus, saveStatus, slotLent, type WorkerStatus } from "./status.js";
+import { isLive, ownsPidCached, loadStatuses, loadLiveStatusesCached, loadStatus, saveStatus, slotLent, type WorkerStatus } from "./status.js";
 
-/** Slots free on `provider`: its cap minus the live running workers that are not paused by a preemption. Unlimited when uncapped. */
+/** Slots free on `provider`: its cap minus every live running worker that holds one — including a preempted one whose pause has ended. A released preemption goes back through the capacity gate's queue like any other run, never over the cap (a slot its victim held during the pause may already have gone to another run). Unlimited when uncapped. */
 function roomOn(statuses: WorkerStatus[], provider: string): number {
   let cap: number | undefined;
   try {
@@ -24,7 +26,7 @@ function roomOn(statuses: WorkerStatus[], provider: string): number {
     cap = undefined;
   }
   if (cap === undefined) return Number.MAX_SAFE_INTEGER;
-  const holding = statuses.filter((s) => s.provider === provider && s.state === "running" && !slotLent(s) && !(s.paused && s.pausedBy) && isLive(s)).length;
+  const holding = statuses.filter((s) => s.provider === provider && s.state === "running" && !slotLent(s) && isLive(s)).length;
   return cap - holding;
 }
 
@@ -39,6 +41,53 @@ function takeRoom(room: Map<string, number>, all: WorkerStatus[], provider: stri
   }
   room.set(provider, left - 1);
   return true;
+}
+
+/**
+ * A preempted worker whose pause ends but has no free slot (the slot it held went to another run during
+ * the pause): its pause is closed and it waits for a slot at the capacity gate's queue — `front`, so it
+ * keeps its place at the head — instead of running over the cap. A "running" status with no slot is what
+ * the gate's own wait looks like, so the worker's next admission poll (the reroute guard) sees it queued
+ * and picks the wait up; when a slot frees the capacity gate flips it back to "running". The sweep keeps
+ * its ticket alive (the gate drops dead ones): `pai worker ps` shows it waiting, not paused.
+ */
+function parkAtGate(logDir: string, s: WorkerStatus, by: string, now: number): boolean {
+  const dir = queueDir(logDir, s.provider);
+  mkdirSync(dir, { recursive: true });
+  writeTicket(join(dir, s.id), `${s.runPid ?? s.pid} front @${now}`);
+  return setWorkerPaused(logDir, s.id, false, `preempt:${by}`, undefined, now);
+}
+
+/** Whether the preemption pause of `s` (paused with pausedBy set) has ended: its preemptor is gone from the ledger or no longer live. */
+function preemptorGone(s: WorkerStatus, all: WorkerStatus[]): boolean {
+  const by = all.find((x) => x.id === s.pausedBy);
+  return !by || !isLive(by);
+}
+
+/**
+ * The sweep's one pass over a preempted worker `s`: resume it when its preemptor is gone and a slot is
+ * free; hand it to another urgent worker still running on its provider; park it at the capacity gate's
+ * queue (front, pause closed) while no slot is free. Returns "resumed" or "queued" for the ledger line.
+ */
+function sweepOne(logDir: string, s: WorkerStatus, all: WorkerStatus[], room: Map<string, number>, roomFn: RoomFn, now: number): "resumed" | "queued" | undefined {
+  // pausedBy comes from the FRESH file: an operator pause that took the worker over since `all` was read
+  // cleared it, and that pause must stay (the sweep may not release what the operator holds)
+  const cur = loadStatus(logDir, s.id);
+  if (!cur?.paused || !cur.pausedBy || (s.pausedBy && cur.pausedBy !== s.pausedBy)) return undefined;
+  const by = cur.pausedBy;
+  if (!preemptorGone(cur, all)) return undefined;
+  const next = otherUrgent(all.filter((x) => isLive(x)), cur.provider, by);
+  if (next) {
+    if (cur.pausedBy === by) {
+      cur.pausedBy = next.id;
+      saveStatus(logDir, cur, new Date(now), true);
+    }
+    return undefined;
+  }
+  // a paused victim holds no slot (roomOn does not count it), so its release must claim one: without room
+  // it waits at the gate's queue (front) — the pause is over either way, it just never runs over the cap.
+  if (!takeRoom(room, all, cur.provider, roomFn)) return parkAtGate(logDir, cur, by, now) ? "queued" : undefined;
+  return setWorkerPaused(logDir, s.id, false, `preempt:${by}`, undefined, now) ? "resumed" : undefined;
 }
 
 /** An urgent worker still running or waiting on `provider`, other than `except`. */
@@ -62,37 +111,28 @@ export function preemptLocal(logDir: string, provider: string, by: string, now =
 }
 
 /**
- * Resume exactly the workers `by` paused; one the operator paused separately (pausedBy cleared) stays paused.
- * While another urgent worker still runs on the provider the victims stay paused, now preempted by that one.
+ * End the preemption pause of exactly the workers `by` paused; one the operator paused separately
+ * (pausedBy cleared) stays paused. While another urgent worker still runs on the provider the victims stay
+ * paused, now preempted by that one. A victim with a free slot resumes into it; one whose slot went to
+ * another run meanwhile has its pause closed and waits at the capacity gate's queue (front) — never over
+ * the cap. Returns every id whose pause ended (resumed or parked at the gate).
  */
 export function resumePreempted(logDir: string, by: string, now = Date.now(), roomFn: RoomFn = roomOn): string[] {
-  const resumed: string[] = [];
+  const released: string[] = [];
   const all = loadStatuses(logDir);
   const room = new Map<string, number>();
   for (const s of all) {
     if (s.pausedBy !== by || s.state !== "running" || !loadStatus(logDir, s.id)?.paused) continue;
-    const next = otherUrgent(all, s.provider, by);
-    if (next) {
-      try {
-        const cur = loadStatus(logDir, s.id);
-        if (cur?.paused && cur.pausedBy === by) {
-          cur.pausedBy = next.id;
-          saveStatus(logDir, cur, new Date(now), true);
-        }
-      } catch {
-        /* gone */
-      }
-      continue;
-    }
-    // a preempted worker is queued: it resumes only into a free slot (else the sweep resumes it when one frees)
-    if (!takeRoom(room, all, s.provider, roomFn)) continue;
     try {
-      if (setWorkerPaused(logDir, s.id, false, `preempt:${by}`, undefined, now)) resumed.push(s.id);
+      // the preemptor ending here counts as gone: its victims are not handed to it (a victim already
+      // handed to another urgent worker still keeps that one, so `all` minus this by stays the pool)
+      const what = sweepOne(logDir, s, all.filter((x) => x.id !== by), room, roomFn, now);
+      if (what) released.push(s.id);
     } catch {
       /* gone */
     }
   }
-  return resumed;
+  return released;
 }
 
 /**
@@ -144,31 +184,28 @@ export function applyPriority(logDir: string, id: string, level: PriorityLevel, 
 
 /**
  * Supervision sweep (daemon, every 30 s): a worker paused with "preempted by X" whose X is no longer
- * running (killed, crashed, never started) is resumed, or handed to another urgent worker still running
- * on its provider. Preemption always gives back what it took.
+ * running or live (killed, crashed, never started) has its pause ended — resumed into a free slot, handed
+ * to another urgent worker still running on its provider, or parked at the capacity gate's queue (front,
+ * pause closed) when its slot went to another run meanwhile: it waits in line, never runs over the cap.
+ * Preemption always gives back what it took. Returns every id whose pause ended this sweep.
  */
 export function resumeOrphaned(logDir: string, now = Date.now(), roomFn: RoomFn = roomOn): string[] {
-  const all = loadStatuses(logDir);
-  const resumed: string[] = [];
+  // the daemon's sweep runs every 30 s over thousands of historical files: only live entries are ever of interest here (a paused worker is running), so the cached live load skips every terminal file's stat, and with nothing paused there is nothing to release — return before touching anything else.
+  // The scan is cached, the actions are not: sweepOne re-reads each candidate's fresh file (loadStatus) before it releases a pause, and its pool comes from the same live-only view (a terminal entry is never in it), so no stale copy can act on its own.
+  const all = loadLiveStatusesCached(logDir);
+  if (!all.some((s) => s.paused && s.pausedBy)) return [];
+  const released: string[] = [];
   const room = new Map<string, number>();
   for (const s of all) {
     if (!s.paused || !s.pausedBy) continue;
-    const by = all.find((x) => x.id === s.pausedBy);
-    if (by && isLive(by)) continue;
-    const next = otherUrgent(all.filter((x) => isLive(x)), s.provider, s.pausedBy);
     try {
-      if (next) {
-        const cur = loadStatus(logDir, s.id);
-        if (cur?.paused && cur.pausedBy === s.pausedBy) {
-          cur.pausedBy = next.id;
-          saveStatus(logDir, cur, new Date(now), true);
-        }
-      } else if (takeRoom(room, all, s.provider, roomFn) && setWorkerPaused(logDir, s.id, false, `preempt:${s.pausedBy}`, undefined, now)) resumed.push(s.id);
+      const what = sweepOne(logDir, s, all, room, roomFn, now);
+      if (what) released.push(s.id);
     } catch {
       /* ended meanwhile */
     }
   }
-  return resumed;
+  return released;
 }
 
 /** Whether `s`'s session still has an urgency window open that reaches `until` (a cleared or expired window does not). */
@@ -183,8 +220,12 @@ function windowOpenFor(s: WorkerStatus, until: number, now: number): boolean {
  */
 export function endExpiredWindowNow(logDir: string, now = Date.now(), roomFn: RoomFn = roomOn): string[] {
   const done: string[] = [];
-  for (const s of loadStatuses(logDir)) {
-    if (!s.now || !s.nowFrom || !isLive(s) || windowOpenFor(s, s.nowFrom.until, now)) continue;
+  // the daemon's sweep runs every 30 s over thousands of historical files: only live entries are ever of interest here (isLive below refuses a terminal one), so the cached live load skips every terminal file's stat, and with no window-tied "now" run live there is nothing to end.
+  // The scan is cached, the actions are not: every release path re-reads the fresh file (cur?.now) first, so nothing acts on a stale view. ownsPidCached keeps isLive to one ps per running candidate at most.
+  const all = loadLiveStatusesCached(logDir);
+  if (!all.some((s) => s.now && s.nowFrom)) return [];
+  for (const s of all) {
+    if (!s.now || !s.nowFrom || !isLive(s, ownsPidCached) || windowOpenFor(s, s.nowFrom.until, now)) continue;
     const cur = loadStatus(logDir, s.id);
     if (!cur?.now || !cur.nowFrom) continue;
     cur.priority = cur.nowFrom.prev;

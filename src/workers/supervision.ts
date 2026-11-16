@@ -77,6 +77,7 @@ import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
 import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
+import { activeMsOf, frozenSince } from "./freeze.js";
 
 // ---------------------------------------------------------------------------
 // Events
@@ -132,6 +133,17 @@ function ageMs(ts: string, now: Date): number {
   const t = Date.parse(ts.replace(" ", "T"));
   if (Number.isNaN(t)) return 0;
   return Math.max(0, now.getTime() - t);
+}
+
+/** The stamp's epoch ms, NaN-safe (unparsable → the tick's own time: a zero age). */
+function stampMs(ts: string, now: Date): number {
+  const t = Date.parse(ts.replace(" ", "T"));
+  return Number.isNaN(t) ? now.getTime() : t;
+}
+
+/** The worker's quiet spell on the active clock: wall ms since `ts` minus every frozen and paused span it covers (closed spells too), so after a thaw or resume a quiet worker only stalls again from its end. */
+function activeAgeMs(s: WorkerStatus, ts: string, now: Date): number {
+  return activeMsOf(s.id, stampMs(ts, now), now.getTime(), { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs });
 }
 
 /**
@@ -268,14 +280,24 @@ export function detectSupervisionEvents(
       // hollow registration: never ran a turn and its runner is long gone —
       // there is no run to report on, so nothing to alert about
       continue;
-    } else if (!isAlive(s.pid) && ageMs(s.updated, opts.now) > deadGraceMs) {
+    } else if (!isAlive(s.pid) && activeAgeMs(s, s.updated, opts.now) > deadGraceMs) {
       // state says running but the runner is gone (SIGKILL, crash) — the
-      // status will never get its rc, so supervision is the only witness
+      // status will never get its rc, so supervision is the only witness.
+      // The grace runs on the active clock: a freeze or pause older than the
+      // grace is not read as a dead runner after a thaw/resume (the accounts
+      // and the status fields carry those minutes).
       kind = "failed";
       rc = null;
-    } else if (ageMs(s.updated, opts.now) > opts.stallMs) {
+    } else if (frozenSince(s.id) !== undefined || s.paused) {
+      // stopped by the operator — in the active freeze marker, or paused (a
+      // --now preemption, `pai worker pause`) — healthy by definition: no
+      // stall or sleeping verdict while it stands, and those minutes never count
+      continue;
+    } else if (activeAgeMs(s, s.updated, opts.now) > opts.stallMs) {
+      // the stall clock is the active clock: frozen and paused spans never
+      // count, so after a thaw or resume a quiet worker only stalls again from its end
       kind = "stalled";
-      stalledMin = Math.floor(ageMs(s.updated, opts.now) / 60_000);
+      stalledMin = Math.floor(activeAgeMs(s, s.updated, opts.now) / 60_000);
     } else if ((s.consecFails ?? 0) >= (opts.thrashFails ?? DEFAULT_THRASH_FAILS)) {
       kind = "thrashing";
     } else if (s.sleepSec != null) {
@@ -588,7 +610,8 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   const ownedIds = new Set(statuses.filter((s) => ownershipKey(s)).map((s) => s.id));
   for (const p of detectRunningWorkerErrors(
     statuses
-      .filter((s) => s.state === "running" && ownershipKey(s))
+      // frozen/paused workers are skipped: no new records while stopped, and the daemon's sweep stands down anyway
+      .filter((s) => s.state === "running" && ownershipKey(s) && !s.paused && frozenSince(s.id) === undefined)
       .map((s) => ({ id: s.id, session: ownershipKey(s)! })),
     records,
     runningSent,
@@ -634,7 +657,9 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
 
   const loopSent = (state.loopSent ??= {});
   for (const w of Object.keys(loopSent)) if (!statuses.some((s) => s.id === w)) delete loopSent[w];
-  for (const f of await checkLoops(logDir, statuses.filter((s) => ownershipKey(s)), loopSent, opts.loops ?? {})) {
+  // frozen/paused workers are skipped: a stopped or parked process produces no new transcript lines, and the pass reads transcripts itself
+  const loopWatched = statuses.filter((s) => ownershipKey(s) && !s.paused && frozenSince(s.id) === undefined);
+  for (const f of await checkLoops(logDir, loopWatched, loopSent, opts.loops ?? {})) {
     const owner = byId.get(f.worker);
     if (!owner) continue;
     pending.push({
