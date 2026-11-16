@@ -231,6 +231,20 @@ providers:
       # aliases: the CLI resolves each to its newest model on every run.
       default: sonnet
       fast: haiku
+  # Apple on-device model (FoundationModels) via tools/apple-fm-bridge. Opt-in:
+  # not in any tier, used only when named (--local apple-fm / --where apple-fm).
+  apple-fm:
+    enabled: true
+    url: http://127.0.0.1:8037
+    tier: 1
+    models:
+      default: apple-fm
+      fast: apple-fm
+    env:
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "8192"
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "1024"
+    note: Apple on-device model, ~8k context; opt-in only
+    maxConcurrent: 1
 
 # Chat model alias of the built-in login's own orchestrator session. Not a
 # worker model: it passes through on the native provider only. A value in the
