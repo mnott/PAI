@@ -321,6 +321,29 @@ const SED_INPLACE_REASON =
 const GNU_SED_RANGE_REASON =
   "BSD sed has no GNU `,+N` range: use the Read tool with offset/limit, `sed -n 'X,Yp'` with an absolute end line, or `grep -n -A N pattern file`.";
 
+const GIT_GREP_ORDER_REASON =
+  "git grep reads words after the pattern as revisions: put options before the pattern, e.g. `git grep -n -A 20 \"pattern\" -- path`.";
+
+/** Options that end at their own word (a value follows separately); everything else before the first non-option word is a leading option. */
+const GIT_GREP_VALUE_OPTS = new Set(["-e", "--and", "--or", "--not", "--max-depth"]);
+
+/**
+ * True when `git grep` carries an option after its bare pattern and before `--`:
+ * git reads it as a revision (`git grep -n "pat" -A 20 -- src` → `fatal: unable to resolve revision: -A`).
+ * A pattern given with `-e` has no bare pattern, so options may follow it; a quoted word starting
+ * with `-` is the pattern itself, not an option (parseCommand strips the quotes).
+ */
+export function gitGrepOptionsAfterPattern(args: string[]): boolean {
+  let i = 0;
+  while (i < args.length && isFlag(args[i])) {
+    if (GIT_GREP_VALUE_OPTS.has(args[i])) i++; // -e <pattern>, --and <expr>: skip the value word
+    i++;
+  }
+  if (i >= args.length || args[i] === "--") return false; // no bare pattern: nothing to be after
+  for (i++; i < args.length && args[i] !== "--"; i++) if (isFlag(args[i])) return true;
+  return false;
+}
+
 /** The sed address grammar: a line number, `/re/`, `\|re\|`, `%`, `$` — optionally followed by an offset (`+N` / `-N`). */
 const SED_ADDR = String.raw`(?:\d+|/[^\n]*?/\\?|\|[^|\n]+\|\\?|%|\$)(?:[+-]\d+)?`;
 /** A `$(…)`/backtick substitution standing in for a line number, e.g. `"$(grep -n x f | cut -d: -f1),+8p"`. */
@@ -473,6 +496,8 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
     const g = gitSub(args);
     if (!g) return ALLOW;
     if (g.sub === "push") return deny("git push blocked: pushing is the orchestrator's; commit on your branch and stop");
+    // `git grep -n "pat" -A 20 -- src` fails with `fatal: unable to resolve revision: -A`: options go before the pattern
+    if (g.sub === "grep" && gitGrepOptionsAfterPattern(g.rest)) return deny(GIT_GREP_ORDER_REASON);
     if (g.sub === "commit" && AI_ATTRIBUTION.test(commitMessageText(g.rest, st.cwd, st.raw, ctx.home))) {
       return deny("no AI attribution in commits (operator rule): drop the Co-Authored-By / Generated-with line and commit again");
     }
