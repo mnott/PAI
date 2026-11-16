@@ -34,7 +34,7 @@ import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
-import { announceId, rerunFromEnv } from "../../workers/reroute.js";
+import { announceId, announceRerunId, rerunFromEnv } from "../../workers/reroute.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
 import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -336,6 +336,7 @@ const runCommand: CommandDef = {
         const prev = plan.run.onWorkerStart;
         plan.run.onWorkerStart = (id) => {
           announceId(id);
+          announceRerunId(id); // a waiting reroute holds the old run until this line ran
           prev?.(id);
         };
       } else {
