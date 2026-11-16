@@ -213,8 +213,8 @@ export interface RegistryBackend {
    */
   resetRegistry(): Promise<{ backupTable: string | null; projects: number }>;
 
-  /** Chunks whose project_id is not in `projects`, against all chunks. Zeros where chunks are not stored with the registry (SQLite). */
-  countOrphanedChunks(): Promise<OrphanCounts>;
+  /** `probe` also asks whether plain repair-orphans can act (slow on a large table; daemon only). Chunks whose project_id is not in `projects`, against all chunks. Zeros where chunks are not stored with the registry (SQLite). */
+  countOrphanedChunks(probe?: boolean): Promise<OrphanCounts>;
 
   /**
    * Re-point chunks/files orphaned by a registry rebuild to the current project

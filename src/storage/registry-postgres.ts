@@ -199,14 +199,14 @@ export class PostgresRegistryBackend implements RegistryBackend {
     );
   }
 
-  async countOrphanedChunks(): Promise<OrphanCounts> {
+  async countOrphanedChunks(probe = false): Promise<OrphanCounts> {
     const r = await this.pool.query(
       `SELECT (SELECT COUNT(*) FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)) AS orphaned,
               (SELECT COUNT(*) FROM pai_chunks) AS total`
     );
     const orphaned = Number(r.rows[0].orphaned);
     let actionable: boolean | undefined;
-    if (orphaned > 0) {
+    if (probe && orphaned > 0) {
       // cheaply: mapped (a backup row names a current project) or one hash twin exists
       try {
         const ids = (await this.pool.query(

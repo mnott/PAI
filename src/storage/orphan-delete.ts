@@ -67,9 +67,8 @@ export const FILE_HASH_TWIN = `hash IN (SELECT hash FROM pai_files WHERE project
  */
 export async function anyHashTwin(pool: Querier): Promise<boolean> {
   const r = await pool.query(
-    `SELECT 1 FROM pai_chunks c
-       JOIN (SELECT DISTINCT hash FROM pai_chunks WHERE embedding IS NOT NULL AND project_id IN (${CURRENT})) t ON t.hash = c.hash
-      WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id) LIMIT 1`
+    `SELECT 1 FROM (SELECT DISTINCT hash FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)) o
+      WHERE EXISTS (SELECT 1 FROM pai_chunks t WHERE t.hash = o.hash AND t.embedding IS NOT NULL AND t.project_id IN (${CURRENT})) LIMIT 1`
   );
   return r.rows.length > 0;
 }
