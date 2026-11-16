@@ -33,9 +33,14 @@ import { isPollCommand } from "./wait-poll.js";
 // The exported constants are the shipped values; the step functions read the active pattern on every call.
 const shipped = (id: string, key: string): number => shippedAntipattern(id).detector.params[key] as number;
 // per_model entries tune thresholds for one model (or a glob) at evaluation time, without touching the file's global params.
+// A local-model worker (PAI_WORKER_LOCAL=1) starts from `local_stop_at` where a pattern has one (identical-write: 3, gyro-m wasted ~9 min at 8);
+// a per_model entry still wins over that local default.
 const live = (id: string): { params: Record<string, unknown>; message: string } => {
   const ap = activeAntipattern(id);
-  return { params: paramsForModel(ap.detector.params, ap, modelOf()), message: ap.message };
+  // a user copy of the pattern predates the key: the shipped one supplies it
+  const localStop = ap.detector.params.local_stop_at ?? shippedAntipattern(id).detector.params.local_stop_at;
+  const base = process.env.PAI_WORKER_LOCAL === "1" && typeof localStop === "number" ? { ...ap.detector.params, stop_at: localStop } : ap.detector.params;
+  return { params: paramsForModel(base, ap, modelOf()), message: ap.message };
 };
 export const LOOP_MAX_REPEATS = shipped("growing-command", "max_repeats");
 /** Identical writes of one file (same bytes) after which the write is denied and the session stopped; a rewrite costs nothing, so only a runaway loop trips it. */
@@ -890,9 +895,21 @@ function trackStreaks(r: LoopStep, prev: LoopState, tool: string, input: string 
     nf = { ...nf, fired: true };
     out = { ...out, note: fillMessage(rn.message, { n: nf.n }), id: "runaway-new-files", key: String(obj?.file_path ?? "") };
   }
+  // candidate in monitor mode: a worker reading PAI's hook sources; applyLifecycle neutralises it and records what it would have done
+  const hs = out.deny || out.note ? null : hookSourceProbe(tool, input);
+  if (hs) out = { ...out, note: fillMessage(live("hook-source-read").message, { key: hs }), id: "hook-source-read", key: hs };
   const next = nf.n || missing ? { ...(nf.n ? { newFiles: nf } : {}), ...(missing ? { missing } : {}) } : undefined;
   if (JSON.stringify(next) === JSON.stringify(prev.streaks)) return out;
   return { ...out, state: { ...out.state, streaks: next } };
+}
+
+/** A PAI hook source (~/.claude/hooks/*, ~/.pai/Hooks/*) named by a Read/Grep/Glob path or a Bash command. */
+const HOOK_SOURCE = /(?:^|[\s"'=:])(?:~|\$HOME|\$\{HOME\}|[^\s"']*?)\/\.(?:claude\/hooks|pai\/Hooks)\/[^\s"']*/;
+export function hookSourceProbe(tool: string, input: string | Record<string, unknown> | undefined): string | null {
+  const o = typeof input === "object" ? input : undefined;
+  const text = tool === "Bash" ? (typeof input === "string" ? input : o?.command) : tool === "Read" ? o?.file_path : o?.path ?? o?.pattern;
+  if (typeof text !== "string") return null;
+  return HOOK_SOURCE.exec(text)?.[0].trim().replace(/^["'=:]/, "") ?? null;
 }
 
 function applyLifecycle(r: LoopStep, source: "hook" | "proxy" = "hook"): LoopStep {

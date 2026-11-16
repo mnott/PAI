@@ -32,7 +32,8 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
 import { ensureScratchExcluded, isGitRepo } from "../../../workers/worktree.js";
 import { isTestPath as auditIsTestPath } from "../../../testgov/audit.js";
 import { parseKept } from "../../../testgov/kept.js";
@@ -68,12 +69,30 @@ export function isTmpPath(p: string): boolean {
   return /\/pai-scratch\/|\/var\/folders\/[^/]+\/[^/]+\/T\/pai-scratch\/|(^|[\\/])\$TMPDIR([\\/]|$)/.test(p);
 }
 
+/**
+ * Outside the governed scope: a path under the eval fixtures (~/.cache/pai/strata-bench) or one that
+ * lies in no git repository at all. The rule keeps a repo's suite from growing; a fixture tree or a
+ * bare directory has no suite to protect. Absolute paths only; the nearest existing ancestor decides.
+ */
+export function outsideGovernedRepos(abs: string, home: string = homedir()): boolean {
+  if (!abs.startsWith("/")) return false;
+  const bench = join(home, ".cache", "pai", "strata-bench");
+  if (abs === bench || abs.startsWith(bench + sep)) return true;
+  let dir = dirname(abs);
+  while (!existsSync(dir)) {
+    const parent = dirname(dir);
+    if (parent === dir) return true;
+    dir = parent;
+  }
+  return !isGitRepo(dir);
+}
+
 /** A target whose extension cannot be trusted (variable or glob tail): unknown, fail closed. */
 const UNRESOLVABLE = /[$`(){}~]|\*|\?|\[/;
 
 /** True when the (already cwd-resolved) target names a test file we cannot prove exists. */
 function looksLikeTest(target: string): boolean {
-  if (isScratchPath(target) || isTmpPath(target)) return false;
+  if (isScratchPath(target) || isTmpPath(target) || outsideGovernedRepos(target)) return false;
   if (UNRESOLVABLE.test(target)) return isTestPath(target); // unresolvable: fail closed on the literal shape
   return !existsSync(target) && isTestPath(target); // an existing file: an edit, always allowed
 }
@@ -224,7 +243,7 @@ export function decideTestGovernance(input: TestGovernanceInput): TestGovernance
   const abs = input.filePath;
   if (!abs || !isTestPath(abs)) return { decision: "allow" };
   ensureScratchIgnored(input.cwd);
-  if (isScratchPath(abs) || isTmpPath(abs)) return { decision: "allow" };
+  if (isScratchPath(abs) || isTmpPath(abs) || outsideGovernedRepos(abs)) return { decision: "allow" };
   if (existsSync(abs)) return { decision: "allow" }; // an edit of an existing test file
   if (promoted(abs, input.cwd)) return { decision: "allow" };
   return { decision: "deny", reason: DENY_TEXT };

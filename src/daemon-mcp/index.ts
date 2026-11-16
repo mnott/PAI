@@ -21,6 +21,7 @@
  *   resources    — reference docs read when needed (guides, constitution).
  */
 
+import { MODE_SUMMARY, WORK_MODES, effectiveMode, modeLine, readMode, writeMode } from "../workers/mode.js";
 import { clearUrgency, DEFAULT_URGENCY_WINDOW_MIN, recordUrgency, urgencyKeys } from "../workers/urgency.js";
 import { lowPowerActive } from "../daemon/low-power.js";
 import { buildNext, buildsDir, listBuilds, renderBuildQueue } from "../builds/queue.js";
@@ -1074,6 +1075,7 @@ async function startShim(): Promise<void> {
       "Manage worker providers (list, add, update, remove, use, enable, disable, test).",
       "",
       "action=list (default) shows providers (with cost tier and tags), classes and routing.",
+      "The speed | balanced | budget mode (worker_mode tool) rides along in the listing.",
       "Every loopback (local) provider is marked running or not running by an HTTP",
       "probe (GET /v1/models): an enabled provider that is not running is not usable — never pick a",
       "local provider by name; pass where: \"local\" to the delegation tools instead.",
@@ -1770,6 +1772,29 @@ async function startShim(): Promise<void> {
         const logDir = workersLogDir(workers);
         if (args.goal !== undefined) setWorkerLabel(logDir, args.id, args.goal);
         return workerText(`${await sayToWorker(logDir, args.id, args.text)} (${args.id})`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_mode",
+    [
+      "Show or set the worker mode: speed | balanced | budget (persisted as `mode:` in workers.yaml, same as `pai worker mode`).",
+      "",
+      ...WORK_MODES.map((m) => `${m}: ${MODE_SUMMARY[m]}`),
+      "An open urgency window (urgency_set) acts as speed for that session. Only on the operator's request; never from a worker.",
+    ].join("\n"),
+    { mode: z.enum(WORK_MODES).optional().describe("The mode to set; omit to show it.") },
+    async (args) => {
+      try {
+        if (args.mode) {
+          if (process.env.PAI_WORKER === "1") return workerText("worker session: mode is the operator's");
+          writeMode(args.mode);
+        }
+        const e = effectiveMode();
+        return workerText(`${modeLine(readMode(), "config")}${e.source === "urgency" ? "\nthis session: speed (urgency window open)" : ""}`);
       } catch (e) {
         return workerError(e);
       }

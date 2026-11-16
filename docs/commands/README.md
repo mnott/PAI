@@ -477,6 +477,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker log` | Worker ledger or the raw events of one worker |
 | `pai worker mcp` | MCP servers workers may load |
 | `pai worker merge` | Merge a worker's branch into your checkout |
+| `pai worker mode` | Switch workers between speed, balanced and budget |
 | `pai worker model` | Show or set the model a provider uses |
 | `pai worker off` | Stop routing: Agent tool runs on Anthropic again |
 | `pai worker on` | Send Agent-tool subagents to workers |

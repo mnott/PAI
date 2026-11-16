@@ -631,6 +631,8 @@ export interface WorkersConfig {
   priority?: PriorityConfig;
   /** Operator urgency window (workers.urgency); see urgency.ts. */
   urgency?: { windowMinutes: number };
+  /** Orchestrate requests for one repo within mergeWindowSec become one L1 job (workers.orchestrate); see orchestrate-merge.ts. */
+  orchestrate?: { mergeWindowSec: number };
   /** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
   localIdle: LocalIdleConfig;
   /** Escalation one tier up (workers.escalate); see escalation.ts. */
@@ -764,6 +766,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     },
     priority: { sessions: prioritySessions(prio.sessions, (path, msg) => { throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`); }) },
     urgency: { windowMinutes: num(obj(w.urgency).windowMinutes, 30) },
+    orchestrate: { mergeWindowSec: num(obj(w.orchestrate).mergeWindowSec, 20) },
     localIdle: {
       enabled: bool(localIdle.enabled, true),
       gpuBelowPct: num(localIdle.gpuBelowPct, 10),
@@ -1526,6 +1529,15 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       urgency.windowMinutes = t.windowMinutes as number;
     }
   }
+  const orchestrate = { mergeWindowSec: d.orchestrate?.mergeWindowSec ?? 20 };
+  if (w.orchestrate !== undefined) {
+    const t = w.orchestrate as Record<string, unknown>;
+    if (typeof t !== "object" || t === null || Array.isArray(t)) bad(".orchestrate", "must be an object");
+    if (t.mergeWindowSec !== undefined) {
+      if (typeof t.mergeWindowSec !== "number" || !Number.isFinite(t.mergeWindowSec) || t.mergeWindowSec < 0) bad(".orchestrate.mergeWindowSec", "must be a number >= 0 (0 = never merge)");
+      orchestrate.mergeWindowSec = t.mergeWindowSec as number;
+    }
+  }
   const localIdle = { ...d.localIdle };
   if (w.localIdle !== undefined) {
     if (typeof w.localIdle !== "object" || w.localIdle === null || Array.isArray(w.localIdle)) {
@@ -1656,6 +1668,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     capacity,
     priority,
     urgency,
+    orchestrate,
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
     loopGuard,
@@ -1828,6 +1841,7 @@ export function writeWorkersSection(
         capacity: workers.capacity,
         priority: workers.priority,
         ...(workers.urgency ? { urgency: workers.urgency } : {}),
+        ...(workers.orchestrate ? { orchestrate: workers.orchestrate } : {}),
         localIdle: workers.localIdle,
         escalate: workers.escalate,
         loopGuard: workers.loopGuard,

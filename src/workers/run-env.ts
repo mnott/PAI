@@ -246,6 +246,11 @@ export function buildRunEnv(
     env.API_TIMEOUT_MS = LOCAL_API_TIMEOUT_MS;
     for (const k of LOCAL_STREAM_IDLE_VARS) env[k] = LOCAL_API_TIMEOUT_MS;
   }
+  // read by the loop guard: a local model gets the tighter identical-write stop (antipatterns/tool-loop/identical-write.yaml local_stop_at)
+  if (headless) {
+    delete env.PAI_WORKER_LOCAL;
+    if (isLoopbackProvider(provider)) env.PAI_WORKER_LOCAL = "1";
+  }
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   // The billing header Claude Code puts first in the system prompt changes on
