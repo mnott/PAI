@@ -1504,6 +1504,11 @@ With no argument shows the mode; with one sets it (persisted as `mode:` in worke
   speed     t2 = anthropic/sonnet first, L1 children = anthropic/haiku, no local model
   balanced  t2 = local first, anthropic/sonnet on takeover; L1 = anthropic/sonnet (default)
   budget    t2 = local only; cloud only as L1 and as takeover after a failed retry
+Routing by mode (L0 starts --class implement directly for one small change, --class orchestrate for several related or one larger multi-file change):
+  mode      single small change (implement, direct L2)         larger / grouped (orchestrate, L1 + L2s)
+  speed     anthropic/sonnet                                   L1 anthropic/sonnet, L2s anthropic/haiku
+  balanced  local (gyro-l); anthropic/sonnet on failure        L1 anthropic/sonnet, local L2s, sonnet takeover
+  budget    local only, failure reported (no cloud takeover)   L1 anthropic/sonnet, local L2s, sonnet only after a failed retry
 An open urgency window (`/now`, `pai now`) acts as speed for that session while it is open.
 
 | Argument | Required | Description |

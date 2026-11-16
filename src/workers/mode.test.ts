@@ -49,7 +49,7 @@ describe("applyMode", () => {
 });
 
 describe("mode in workers.yaml", () => {
-  it("defaults to balanced, round-trips, keeps other keys, and balanced removes the key", () => {
+  it("defaults to balanced, round-trips, keeps other keys, and balanced is written explicitly", () => {
     const f = join(mkdtempSync(join(tmpdir(), "mode-")), "workers.yaml");
     writeFileSync(f, "# mine\nenabled: true\n");
     expect(readMode(f)).toBe("balanced");
@@ -59,12 +59,44 @@ describe("mode in workers.yaml", () => {
     writeMode("budget", f);
     expect(readMode(f)).toBe("budget");
     writeMode("balanced", f);
-    expect(readFileSync(f, "utf8")).not.toContain("mode:");
+    expect(readFileSync(f, "utf8")).toContain("mode: balanced");
+    expect(readMode(f)).toBe("balanced");
   });
 
   it("refuses an unknown value", () => {
     const f = join(mkdtempSync(join(tmpdir(), "mode-")), "workers.yaml");
     writeFileSync(f, "mode: warp\n");
     expect(() => readMode(f)).toThrow(/mode must be/);
+  });
+});
+
+describe("routing by mode x {implement direct, orchestrate}", () => {
+  const direct = (m: "speed" | "balanced" | "budget") => models(applyMode(tiers(), m, { isLocal }), "t2");
+  const l1 = (m: "speed" | "balanced" | "budget") => models(applyMode(tiers(), m, { isLocal }), "t1");
+  const kids = (m: "speed" | "balanced" | "budget") => models(applyMode(tiers(), m, { isLocal, underOrchestrator: true }), "t2");
+
+  it("speed: direct sonnet; L1 sonnet, children haiku", () => {
+    expect(direct("speed")[0]).toBe("anthropic/sonnet");
+    expect(direct("speed").some(isLocal)).toBe(false);
+    expect(l1("speed")[0]).toBe("anthropic/sonnet");
+    expect(kids("speed")[0]).toBe("anthropic/haiku");
+  });
+
+  it("balanced: direct local first, sonnet takeover; L1 sonnet, local children, sonnet takeover", () => {
+    expect(direct("balanced").slice(0, 2)).toEqual(["gyro-l", "anthropic/sonnet"]);
+    expect(l1("balanced")[0]).toBe("anthropic/sonnet");
+    expect(kids("balanced").slice(0, 2)).toEqual(["gyro-l", "anthropic/sonnet"]);
+  });
+
+  it("budget: direct local only (no cloud); L1 sonnet, local children only", () => {
+    expect(direct("budget")).toEqual(["gyro-l"]);
+    expect(l1("budget")[0]).toBe("anthropic/sonnet");
+    expect(kids("budget")).toEqual(["gyro-l"]);
+  });
+
+  it("no mode key defaults to balanced", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "mode-")), "workers.yaml");
+    writeFileSync(f, "enabled: true\n");
+    expect(readMode(f)).toBe("balanced");
   });
 });
