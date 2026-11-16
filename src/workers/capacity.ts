@@ -16,7 +16,7 @@
  * on the next check. Running workers are never interrupted — only the order
  * of the waiting ones changes.
  */
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
@@ -74,7 +74,7 @@ export function providerCap(config: { providers: Record<string, { maxConcurrent?
 /** Queue key of a session's `max_parallel` gate (a provider name never contains "~"). */
 export const sessionScopeKey = (name: string): string => `session~${name}`;
 
-const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.~-]/g, "_"));
+export const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.~-]/g, "_"));
 
 interface QueueEntry {
   id: string;
@@ -89,7 +89,7 @@ interface QueueEntry {
 }
 
 /** Write a ticket atomically (temp + rename): a poller never reads it half-written. The ".tmp" suffix keeps it out of the listing. */
-function writeTicket(path: string, text: string): void {
+export function writeTicket(path: string, text: string): void {
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, text);
   renameSync(tmp, path);
@@ -602,7 +602,9 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const entry = join(dir, self.id);
   const t0 = now();
   const ticketText = (front: boolean): string => `${self.pid ?? process.pid}${front ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`;
-  writeTicket(entry, ticketText(o.priority === "front" || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
+  // a run the preemption sweep parked here ("front", pause closed, no slot): this poll takes the wait over, its place at the head kept
+  const parked = existsSync(entry) && o.priority !== "front";
+  writeTicket(entry, ticketText(o.priority === "front" || parked || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
 
   let madeUrgent = false;
 

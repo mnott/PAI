@@ -32,7 +32,7 @@ import { chromeStartReason } from "./worker-chrome-rules.js";
 import { benchStartReason } from "./worker-bench-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
 import { operatorNamesValue } from "./delegation-gate.js";
-import { PAUSE_DENY, preemptDeny, workerPaused, workerPreemptedBy } from "../../../workers/pane-bar.js";
+import { PAUSE_DENY, preemptDeny, readPauseState, workerPaused } from "../../../workers/pane-bar.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
@@ -75,6 +75,22 @@ interface Segment {
 
 const deny = (reason: string): GateDecision => ({ decision: "deny", reason });
 const ALLOW: GateDecision = { decision: "allow" };
+
+/**
+ * Sit still while a preemption pause holds the worker, polling its status file, up to `maxMs` (the hook
+ * process is killed past ~120 s, so callers pass one Bash timeout). True when it waited at all; false
+ * when it gave up early or slept nothing. Sync on purpose: this runs inside a PreToolUse hook.
+ */
+export function waitWhilePreempted(logDir: string, wid: string, maxMs: number, pollMs = 250): boolean {
+  if (maxMs <= 0 || !workerPaused(logDir, wid)) return false;
+  const nap = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  const t0 = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    nap(pollMs);
+    if (!workerPaused(logDir, wid)) break;
+  }
+  return true;
+}
 
 /** Split into segments; quotes group words, operators outside quotes split. */
 export function parseCommand(raw: string): Segment[] {
@@ -704,9 +720,26 @@ export function decideWorkerGuard(
       logDir = ""; // unresolvable logDir: no pause to read, work goes on
     }
     const wid = logDir && currentWorkerId(env, logDir);
-    if (wid && workerPaused(logDir, wid)) {
-      const by = workerPreemptedBy(logDir, wid);
-      return deny(by ? preemptDeny(by) : PAUSE_DENY);
+    if (wid) {
+      // paused and its who-by from ONE file read: two reads can tear across the sweep's resume between
+      // them (paused true, pausedBy gone) and deny a preemption pause with the operator's text
+      const st = readPauseState(logDir, wid);
+      if (st?.paused === true) {
+        const by = st.pausedBy;
+        // a preemption pause is not the operator's: it ends with the preemptor. Denying every tool call
+        // while it lasts only burns turns (the 28-denials loop), so wait in the gate for it to clear —
+        // bounded at one Bash timeout (100 s): past that deny once, and a worker that stops calling tools
+        // is released by the sweep with no denials at all. The env escape hatch keeps tests (and any
+        // caller that must not block) immediate.
+        if (by && env.PAI_WORKER_PREEMPT_WAIT !== "0") {
+          const t0 = Date.now();
+          const maxMs = Number(env.PAI_WORKER_PREEMPT_WAIT_MS) > 0 ? Number(env.PAI_WORKER_PREEMPT_WAIT_MS) : 100_000;
+          const waited = waitWhilePreempted(logDir, wid, maxMs);
+          if (!workerPaused(logDir, wid)) return ALLOW;
+          return deny(preemptDeny(by, waited ? Math.round((Date.now() - t0) / 1000) : undefined));
+        }
+        return deny(PAUSE_DENY);
+      }
     }
   }
 
