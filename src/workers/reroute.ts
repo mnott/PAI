@@ -25,7 +25,7 @@ import { appendLedger } from "./ledger.js";
 import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
-import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
 import { markHandover } from "./run/follow-reroute.js";
 
 export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
@@ -74,6 +74,23 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
   const last = stampMs(s.progressAt) ?? stampMs(s.started);
   const min = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause) / 60_000;
   return min >= p.stallMaxMin ? `no edit or commit for ${Math.floor(min)}m` : null;
+}
+
+/** A finished fall-through still blocks another reroute of its origin this long. */
+export const FALLTHROUGH_RECENT_MS = 5 * 60_000;
+
+/**
+ * The run that already continues `origin`, read UNCACHED from the status files (a daemon restart or a stale cached
+ * view cannot hide it): queued/running, or finished within FALLTHROUGH_RECENT_MS. Null when there is none.
+ */
+export function liveFallThrough(logDir: string, origin: string, nowMs: number = Date.now()): string | null {
+  for (const s of loadStatuses(logDir)) {
+    if (s.fallThroughOf !== origin || s.id === origin) continue;
+    if (s.state === "queued" || s.state === "running") return s.id;
+    const t = stampMs(s.updated);
+    if (t !== null && nowMs - t < FALLTHROUGH_RECENT_MS) return s.id;
+  }
+  return null;
 }
 
 export interface RerouteTarget {
@@ -327,6 +344,13 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const target = await (d.resolve ?? defaultResolve)(where);
   if (target.provider === old.provider) throw new Error(`worker ${id} already runs on ${old.provider}`);
   const text = taskText(old);
+  if (d.reason) {
+    // an automatic reroute: one per origin. The marker and the fall-through are read uncached (the caller's list may be stale).
+    const fresh = loadStatus(d.logDir, id);
+    if (fresh?.rerouted) throw new Error(`reroute skipped: ${id} already rerouted (${fresh.rerouted})`);
+    const cont = liveFallThrough(d.logDir, id);
+    if (cont) throw new Error(`reroute skipped: ${cont} already continues ${id}`);
+  }
   const by = d.by ?? "reroute";
   const reason = d.reason ?? `${by}: ${where}`;
   // the marker first: a second tick or command sees it and does not start another reroute. A queued run's own

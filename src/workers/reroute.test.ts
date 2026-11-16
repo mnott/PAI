@@ -131,3 +131,27 @@ describe("rerouteWorker", () => {
     expect(loadStatus(dir, "w2")!.rerouted).toBeUndefined();
   });
 });
+
+describe("one live fall-through per origin", () => {
+  const run = async (stale: WorkerStatus[], spawned: string[]) =>
+    escalateOverdue(stale, { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now(), { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+  const origin = () => queued({ promptFile: join(dir, "spec.txt"), now: true, capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs: Date.now() - 16 * 60_000 } });
+
+  it("three ticks on a stale cached view produce one fall-through", async () => {
+    saveStatus(dir, origin());
+    const stale = [loadStatus(dir, "w1")!]; // never refreshed: no rerouted mark in it
+    const spawned: string[] = [];
+    for (let i = 0; i < 3; i++) await run(stale, spawned);
+    expect(spawned).toEqual(["w1"]);
+  });
+
+  it("after a restart a running fall-through blocks the reroute (marker lost too)", async () => {
+    saveStatus(dir, origin());
+    saveStatus(dir, queued({ id: "w9", state: "running", provider: "fakeB", fallThroughOf: "w1", updated: new Date().toISOString().replace("T", " ") }));
+    const spawned: string[] = [];
+    const done = await run([loadStatus(dir, "w1")!], spawned);
+    expect(spawned).toEqual([]);
+    expect(done).toEqual([]);
+  });
+});
+
