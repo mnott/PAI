@@ -257,7 +257,7 @@ spawn({
 **Note**: `spawn(...)` in the examples of this file is this harness's way of starting an agent or worker. Multiple spawn calls in ONE message = parallel execution.
 
 <!-- only:claude-code -->
-**Claude Code**: `spawn` is the `Task` tool (`Agent` in newer builds). In an interactive PAI session a hook denies it: start every worker with `pai worker run` from the Bash tool instead (see CLAUDE.md in `~/.claude`).
+**Claude Code**: `spawn` is the `Task` tool (`Agent` in newer builds). In an interactive PAI session a hook denies it: start every worker with `pai worker run` from the Bash tool instead (PAI injects the routes and commands at session start).
 <!-- /only -->
 <!-- only:opencode -->
 **OpenCode**: `spawn` is the PAI MCP tool `worker_run` (tool name `pai_worker_run`), which starts a legitimate Claude Code session as a PAI worker. Follow it with `pai_worker_ps` and read results through PAI, not by polling. OpenCode's own `task` tool is denied by the PAI bridge plugin; edits on code files go through workers too.

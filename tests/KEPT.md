@@ -27,3 +27,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/workers/standalone/status-route.test.ts | a | status line showed no worker target under global routing (only "✓4 ✗3 today"); label is now the default tier serving entry, 30 s cached, pins unchanged |
 | src/workers/mode.test.ts | c | `pai worker mode` speed/balanced/budget tier mapping and the `mode:` key in workers.yaml; operator-facing switch (2026-11-16 eval night: Sonnet->Haiku L2 faster and -17 % cloud, Gyro-L L2 -35 % cloud but 6x slower) |
 | src/workers/orchestrate-merge.test.ts | c | `--class orchestrate` requests for one repo inside workers.orchestrate.mergeWindowSec merge into one numbered L1 job, others never do (eval night 2026-11-15/16: 2 tasks per L1 saved money, 1 per L1 cost more) |
+| src/hooks/ts/lib/delegation-gate.test.ts | b | L0 route, worker-pane and no-root-search guards moved from the out-of-repo caseleaf hook into PAI (operator 2026-11-16) |

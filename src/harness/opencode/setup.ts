@@ -54,6 +54,7 @@ export const BRIDGED_HOOKS: { hook: string; tools: string[] }[] = [
   { hook: "test-file-governance", tools: ["edit", "write", "multiedit", "patch"] },
   { hook: "block-sleep-poll", tools: ["bash"] },
   { hook: "security-validator", tools: ["bash"] },
+  { hook: "delegation-guard", tools: ["bash"] },
 ];
 
 const readJson = (p: string): Record<string, unknown> | null => {

@@ -8,6 +8,14 @@ import { CONFIG_DIR } from "../../../../daemon/config.js";
 import { renderInstructions } from "../../../../harness/instructions.js";
 import { c, line, section, type Rl, promptYesNo, getTemplatesDir } from "../utils.js";
 
+const DELEGATION_MARKED = /<!-- PAI:delegation:start -->[\s\S]*?<!-- PAI:delegation:end -->\n?/g;
+const DELEGATION_HEADING = /^## ABSOLUTE RULE: all delegation goes through `pai worker run`[^\n]*\n[\s\S]*?(?=^## |(?![\s\S]))/m;
+
+/** PAI injects the delegation guidance itself at session start; CLAUDE.md never carries it. Removes a marked block or the old heading section. */
+export function stripDelegationSection(text: string): string {
+  return text.replace(DELEGATION_MARKED, "").replace(DELEGATION_HEADING, "");
+}
+
 export async function stepClaudeMd(rl: Rl): Promise<boolean> {
   section("Step 4: Agent Configuration (CLAUDE.md)");
   line();
@@ -40,6 +48,13 @@ export async function stepClaudeMd(rl: Rl): Promise<boolean> {
 
     const overwrite = await promptYesNo(rl, "Update ~/.claude/CLAUDE.md with the latest PAI template?", isGenerated, "claude-md");
     if (!overwrite) {
+      const stripped = stripDelegationSection(content);
+      if (stripped !== content) {
+        writeFileSync(`${claudeMd}.bak-delegation`, content, "utf-8");
+        writeFileSync(claudeMd, stripped, "utf-8");
+        console.log(c.ok("Removed the delegation section from CLAUDE.md (PAI injects it at session start)."));
+        return true;
+      }
       console.log(c.dim("  Keeping existing CLAUDE.md unchanged."));
       return false;
     }
@@ -52,7 +67,7 @@ export async function stepClaudeMd(rl: Rl): Promise<boolean> {
   }
 
   let template = readFileSync(templatePath, "utf-8");
-  template = renderInstructions("claude-code", template, homedir());
+  template = stripDelegationSection(renderInstructions("claude-code", template, homedir()));
 
   if (!existsSync(claudeDir)) {
     mkdirSync(claudeDir, { recursive: true });
