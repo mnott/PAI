@@ -465,7 +465,8 @@ pai worker freeze [options]
 | `--status` | flag | — | Show what is frozen |
 | `--for DURATION` | string | — | Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works |
 | `--workers-only` | flag | — | Leave the local model server running (freeze the worker trees only) |
-| `--only IDS` | string | — | Freeze only these worker ids (comma list) |
+| `--only IDS` | string | — | Freeze only these worker ids (comma list); implies --workers-only — the shared model server keeps running for every other worker (add --models to freeze it too) |
+| `--models` | flag | — | With --only: also freeze the local model server(s) (off by default; a plain `pai freeze` always takes them) |
 
 ```sh
 pai worker freeze --all
