@@ -21,6 +21,7 @@ export const modelsCommand: CommandDef = {
     "picks the runtime by format (MLX: mlx_lm.server; GGUF: llama-server if installed, else refused with the reason), assigns a free port " +
     "and writes a DISABLED registry entry (workers.yaml) with location, start, health and port filled. It never enables or routes to the model. " +
     "--try then starts it, waits for health, runs one 16-token completion, stops it and reports tok/s and memory. " +
+    "`pai models chat <provider>` is a small REPL against a running local model: it sends /v1/messages with a rolling history trimmed to the model's context (~4 chars/token), streams the answer; /reset clears, /quit exits. No API key. " +
     "`pai models rules list|test|probe|reload` manages the tool-call repair rules the router applies to local models' tool calls " +
     "(see the rules file format below): list shows each rule with its hits, last hit and stale marker (no hit within router.toolCallRulesStaleDays, default 14; nothing is ever deleted); " +
     "test runs every rule's example through the repair with all rules (must equal expect) and without that rule (must differ, else redundant); " +
@@ -28,8 +29,8 @@ export const modelsCommand: CommandDef = {
     "reload validates every rules file and asks the running router to re-read them now (it also re-reads a changed file within 5 s). " +
     "--from FILE picks the rules file (default: the one config router.toolCallRules maps to --provider/--model, else the shipped rules).",
   args: [
-    { name: "OP", summary: "start | stop | add | rules (omit for the inventory table)" },
-    { name: "RUNTIME", summary: "start/stop: the runtime (a name under models.runtimes); add: the HF id or weights path; rules: list | test | probe | reload" },
+    { name: "OP", summary: "start | stop | add | chat | rules (omit for the inventory table)" },
+    { name: "RUNTIME", summary: "start/stop: the runtime (a name under models.runtimes); add: the HF id or weights path; chat: the provider (apple-fm, gyro-l); rules: list | test | probe | reload" },
   ],
   options: [
     { name: "fresh", type: "boolean", summary: "Probe now instead of reading the daemon's cache" },
@@ -43,7 +44,7 @@ export const modelsCommand: CommandDef = {
     { name: "rounds", type: "number", summary: "rules probe: times each rule's probe is sent (default 3)" },
     { name: "out", type: "string", value: "FILE", summary: "rules probe: where the adapted rules file is written (default <PAI home>/tool-call-rules/probe-<provider>.yaml)" },
   ],
-  examples: ["pai models rules list", "pai models rules test", "pai models rules probe --provider strata --rounds 5 --out /tmp/rules.yaml", "pai models rules reload", "pai models add mlx-community/Qwen3-4B-4bit --try", "pai models add ~/models/x.gguf --name x", "pai models", "pai models --fresh --json", "pai models start ollama", "pai models stop docker-model-runner --model e5"],
+  examples: ["pai models rules list", "pai models rules test", "pai models rules probe --provider strata --rounds 5 --out /tmp/rules.yaml", "pai models rules reload", "pai models add mlx-community/Qwen3-4B-4bit --try", "pai models add ~/models/x.gguf --name x", "pai models chat apple-fm", "pai models", "pai models --fresh --json", "pai models start ollama", "pai models stop docker-model-runner --model e5"],
   seeAlso: ["pai worker local"],
   async run(ctx) {
     const words = [ctx.args.OP, ctx.args.RUNTIME].filter((x): x is string => typeof x === "string" && x.length > 0);
@@ -60,6 +61,18 @@ export const modelsCommand: CommandDef = {
       );
       process.stdout.write(r.text + "\n");
       if (!r.ok) process.exitCode = 1;
+      return;
+    }
+    if (words[0] === "chat") {
+      const name = words[1];
+      if (!name) throw new Error("usage: pai models chat <provider>   (e.g. apple-fm, gyro-l; the runtime must be running)");
+      const { readWorkersCached } = await import("../../workers/config.js");
+      const p = readWorkersCached().providers[name];
+      if (!p) throw new Error(`unknown provider ${name}`);
+      const win = Number(p.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+      const out = Number(p.env?.CLAUDE_CODE_MAX_OUTPUT_TOKENS);
+      const { runChat } = await import("./models-chat.js");
+      await runChat({ baseUrl: p.baseUrl, model: typeof ctx.opts.model === "string" ? ctx.opts.model : p.models.default, contextTokens: win > 0 ? win : 32768, maxTokens: out > 0 ? out : 1024 });
       return;
     }
     if (words[0] === "add") {
