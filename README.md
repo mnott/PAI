@@ -4,7 +4,7 @@
 
 > **Measured, not claimed.** The design choices in PAI come out of a series of lab reports, published with DOIs:
 > [PAI Reports](https://github.com/mnott/PAI-Reports) ([doi:10.5281/zenodo.24274093](https://doi.org/10.5281/zenodo.24274093)).
-> The latest, *Planner and Worker* ([doi:10.5281/zenodo.24274094](https://doi.org/10.5281/zenodo.24274094)), shows when a cloud
+> The latest, *Planner and Worker* ([doi:10.5281/zenodo.24274754](https://doi.org/10.5281/zenodo.24274754)), shows when a cloud
 > planner over a local coder pays off: a local model alone handles small changes for free; on larger multi-file work a
 > Sonnet planner over a local worker matches Sonnet alone at about a third less cloud cost. That is what
 > `pai worker mode speed|balanced|budget` switches between.
