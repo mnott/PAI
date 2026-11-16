@@ -243,3 +243,47 @@ export function decideEditGate(ctx: EditGateContext): EditGateDecision {
       "then `plan_run`. Report to the user in plain words; never ask the user to run commands.",
   };
 }
+
+export const PLANNER_LOCK_REASON =
+  "L1 plans and reviews: start an L2 with `pai worker run --class implement` for this package; you may take over only after an L2 has failed on it";
+
+/** A path an L1 may write: .pai-scratch/, the system tmp dirs, its own $TMPDIR. */
+function plannerScratch(p: string, tmpdir?: string): boolean {
+  if (/^\$\{?TMPDIR\}?(\/|$)/.test(p) || /^(?:\/private)?\/tmp\//.test(p)) return true;
+  if (tmpdir && (p === tmpdir || p.startsWith(tmpdir.replace(/\/$/, "") + "/"))) return true;
+  return isOrchestratorScratch(p);
+}
+
+/** Edit/Write by an L1 (class orchestrate/plan, no --orchestrate flag): anything inside its cwd except scratch is denied. */
+export function decidePlannerLockEdit(filePath: string, cwd: string, tmpdir?: string): EditGateDecision {
+  if (plannerScratch(filePath, tmpdir)) return { decision: "allow" };
+  const root = cwd.replace(/\/$/, "");
+  if (filePath !== root && !filePath.startsWith(root + "/")) return { decision: "allow" };
+  return { decision: "block", reason: PLANNER_LOCK_REASON };
+}
+
+/** Bash by an L1: in-place writes (sed -i, perl -i, >, >>, tee, mv/cp) to anything but scratch are denied; git and the rest pass. */
+export function decidePlannerLockBash(rawCommand: string, tmpdir?: string): EditGateDecision {
+  const command = stripHeredocBodies(rawCommand);
+  for (const seg of command.split(/&&|\|\||;|\n|\|(?!\|)/)) {
+    const words = shellWords(seg.trim());
+    if (!words.length || words[0] === "git") continue;
+    // redirects: look at the segment with quoted strings blanked
+    const bare = seg.replace(/"[^"]*"|'[^']*'/g, '""');
+    for (const m of bare.matchAll(/(?<![<>&])>>?\s*(&?[^\s;&|<>]*)/g)) {
+      const t = m[1];
+      if (!t || t.startsWith("&") || t.startsWith("/dev/") || plannerScratch(t, tmpdir)) continue;
+      return { decision: "block", reason: PLANNER_LOCK_REASON };
+    }
+    const cmd = words.find((w) => !/^[A-Za-z_]\w*=/.test(w)) ?? "";
+    const args = words.slice(words.indexOf(cmd) + 1).filter((w) => !w.startsWith("-"));
+    const last = args[args.length - 1];
+    let targets: string[] = [];
+    if (cmd === "sed" && words.some((w) => /^-[A-Za-z]*i|^--in-place/.test(w))) targets = args.slice(1);
+    else if (cmd === "perl" && words.some((w) => /^-[A-Za-z0-9]*i/.test(w))) targets = args.slice(1);
+    else if (cmd === "tee") targets = args;
+    else if ((cmd === "mv" || cmd === "cp") && last) targets = [last];
+    if (targets.some((t) => !plannerScratch(t, tmpdir))) return { decision: "block", reason: PLANNER_LOCK_REASON };
+  }
+  return { decision: "allow" };
+}

@@ -19,7 +19,7 @@ import { currentWorkerId } from "../../../workers/worker-id.js";
 import { markToolWait } from "../../../workers/tool-wait.js";
 import { isWorkerSession } from "../lib/worker-session.js";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { renderDecision } from "../lib/render-decision.js";
@@ -162,6 +162,23 @@ function markToolWaitOf(input: WorkerGuardInput): void {
   }
 }
 
+/** True once a child of this worker (status.parent = its id) has ended unsuccessfully. Reads only status files newer than the parent. */
+function failedChildOf(env: NodeJS.ProcessEnv): boolean {
+  try {
+    const logDir = env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
+    const id = currentWorkerId(env, logDir);
+    if (!id) return false;
+    for (const name of readdirSync(logDir)) {
+      if (!name.endsWith(".status") || name <= `${id}.status`) continue;
+      try {
+        const st = JSON.parse(readFileSync(join(logDir, name), "utf8")) as { parent?: string; state?: string; rc?: number | null };
+        if (st.parent === id && (st.state === "failed" || st.state === "lost" || (typeof st.rc === "number" && st.rc !== 0))) return true;
+      } catch { /* damaged file */ }
+    }
+  } catch { /* unreadable: stay locked */ }
+  return false;
+}
+
 async function main(): Promise<void> {
   let text = "";
   try {
@@ -180,7 +197,7 @@ async function main(): Promise<void> {
 
   markToolWaitOf(input);
   const cwd = input.cwd || process.cwd();
-  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true } });
+  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true, planner: { childFailed: () => failedChildOf(process.env) } } });
   if (orch.action === "deny") {
     process.stdout.write(renderDecision({ decision: "deny", reason: orch.message! }) + "\n");
     return;
