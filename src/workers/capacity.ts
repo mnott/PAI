@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
-import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, reconcileStatuses, slotLent, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig, QueuePriority };
 
@@ -590,7 +590,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   // stays every other reader's job (`pai worker ps`, wait.ts, viewer.ts, the daemon): a dead holder is
   // dropped from the queue by liveEntries' pid check, so a grant never waits on reconcile — and one
   // pass per poll (not per status) bounds the `ps` cost when ownership entries go stale.
-  const load = o.load ?? ((dir: string) => (reconcileStatuses(dir, new Date(), 0, ownsPidCached), loadStatusesCached(dir)));
+  const load = o.load ?? ((dir: string) => loadStatusesCached(dir));
   const now = o.now ?? Date.now;
   const isAlive = o.isAlive ?? alive;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
