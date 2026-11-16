@@ -78,7 +78,9 @@ export function operatorNamesValue(prompt: string | undefined, value: string): b
     // an exact model id names its provider outright: "use glm-5.3-flash"
     // authorises --provider glm
     const fam = p.split(/[^a-z0-9]+/).find((w) => /^[a-z][a-z0-9]*$/.test(w));
-    return !!fam && words.has(fam) && familiesOf(p).includes(fam);
+    if (!!fam && words.has(fam) && familiesOf(p).includes(fam)) return true;
+    // a provider value ("anthropic") is authorised by a family it serves ("sonnet")
+    return providerFamilies(p).some((f) => f !== p && words.has(f));
   }
   // the operator named the provider itself, or a family it serves ("build it
   // on sonnet" -> --provider anthropic); "claude" and friends carry no signal
