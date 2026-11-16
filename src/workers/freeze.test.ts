@@ -1,9 +1,13 @@
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { activeNow, freezeAll, freezeHold, frozenMsFor, parseDuration, parseProcs, planFreeze, thawAll, type FreezeDeps, type ProcRow } from "./freeze.js";
+import { activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, type FreezeDeps, type ProcRow } from "./freeze.js";
 import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
+import { detectSupervisionEvents } from "./supervision.js";
+import { TroubleWatcher } from "./worker-trouble.js";
+import { escalationReason } from "./reroute.js";
+import type { Messenger, RunOrigin } from "./run-events.js";
 import type { WorkerStatus } from "./status.js";
 
 const row = (pid: number, ppid: number, command: string): ProcRow => ({ pid, ppid, lstart: `Mon Nov 16 10:00:0${pid % 10} 2026`, command });
@@ -168,6 +172,151 @@ describe("freeze / thaw", () => {
     expect(frozenMsFor("L1", now)).toBe(5 * 60_000);
     expect(activeNow()).toBeLessThanOrEqual(Date.now() - 5 * 60_000 + 1000);
     expect(thawAll("/nonexistent-log", deps()).wasFrozen).toBe(false);
+  });
+});
+
+// supervision's elapsed-time notices must never fire for a frozen worker, and after a thaw the quiet clock restarts from the thaw time (frozen minutes do not count) — the one helper both sides share is tested here against an isolated marker (PAI_FREEZE_FILE), never the live one.
+describe("supervision stands down while frozen", () => {
+  const saved = { file: process.env.PAI_FREEZE_FILE, w: process.env.PAI_WORKER };
+  let now: number;
+  beforeEach(() => {
+    process.env.PAI_FREEZE_FILE = join(mkdtempSync(join(tmpdir(), "freeze-sup-")), "freeze.json");
+    delete process.env.PAI_WORKER;
+    now = Date.now();
+  });
+  afterEach(() => {
+    if (saved.file === undefined) delete process.env.PAI_FREEZE_FILE;
+    else process.env.PAI_FREEZE_FILE = saved.file;
+    if (saved.w === undefined) delete process.env.PAI_WORKER;
+    else process.env.PAI_WORKER = saved.w;
+  });
+
+  const marker = (since: number, ids: string[]): void => {
+    writeFileSync(process.env.PAI_FREEZE_FILE!, JSON.stringify({ since, by: "t", pids: ids.map((id) => ({ pid: 100, lstart: "x", kind: "worker", id, role: "worker", depth: 0 })) }), "utf8");
+  };
+  const acct = (w: Record<string, number>): void => {
+    mkdirSync(join(process.env.PAI_FREEZE_FILE!, ".."), { recursive: true });
+    writeFileSync(`${process.env.PAI_FREEZE_FILE}.acct`, JSON.stringify({ totalMs: Math.max(0, ...Object.values(w)), workers: w }), "utf8");
+  };
+  // the trouble throttle is real config (5 min): step past it for a deliberate second send
+  const unthrottle = (w: TroubleWatcher): void => {
+    (w as unknown as { lastSent: number }).lastSent = -Infinity;
+  };
+
+  it("frozenSince / frozenMsOf / activeMsOf", () => {
+    expect(frozenSince("L1")).toBeUndefined();
+    marker(now - 5 * 60_000, ["L1"]);
+    expect(frozenSince("L1")).toBe(now - 5 * 60_000);
+    expect(frozenSince("L9")).toBeUndefined();
+    // the quiet spell started 8 min ago; it froze 5 min ago: 3 active minutes
+    expect(activeMsOf("L1", now - 8 * 60_000, now)).toBe(3 * 60_000);
+    // a quiet spell older than the freeze: only the minutes outside it count
+    expect(activeMsOf("L1", now - 20 * 60_000, now)).toBe(15 * 60_000);
+    acct({ L1: 3 * 60_000 }); // a closed freeze spell (the accounts' horizon [now-3m, now]) plus the open one, merged where they overlap
+    expect(activeMsOf("L1", now - 20 * 60_000, now)).toBe(15 * 60_000); // fully inside the open freeze: adds nothing to the covered span
+    // paused spans discount the same clock: an open pause window [pausedAt, now]
+    expect(activeMsOf("L9", now - 8 * 60_000, now, { paused: true, pausedAt: now - 5 * 60_000 })).toBe(3 * 60_000);
+    // and a closed pause [now - pausedMs, now] (the accounts' horizon): after the resume only minutes since it ended count
+    expect(activeMsOf("L9", now - 20 * 60_000, now, { pausedMs: 15 * 60_000 })).toBe(5 * 60_000);
+  });
+
+  it("TroubleWatcher tells no stall while frozen and restarts the quiet clock at the thaw", async () => {
+    const sent: string[] = [];
+    // the messenger chain is async: count when the line lands in toSession
+    let n = 0;
+    const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), n++, true) } as unknown as Messenger;
+    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, "", () => now);
+    // quiet 30 min BEFORE the freeze even began: the freeze covers none of it
+    now -= 30 * 60_000;
+    w.activity();
+    now += 30 * 60_000;
+    w.tick();
+    await w.flush();
+    expect(n).toBe(1); // a normal long quiet spell still tells once (the throttle is real config, so no second send below)
+    // freeze the worker mid-quiet: no further stall, however many ticks pass
+    marker(now - 58 * 60_000, ["L1"]);
+    now += 58 * 60_000;
+    w.tick();
+    await w.flush();
+    expect(n).toBe(1);
+    // thaw: the frozen minutes leave the clock, and with a 30-min spell already told the watcher stays quiet until a NEW active stall
+    acct({ L1: 58 * 60_000 }); // the closed spell ends at `now` (the thaw horizon)
+    rmSync(process.env.PAI_FREEZE_FILE!);
+    w.tick();
+    await w.flush();
+    expect(n).toBe(1); // active quiet after the thaw is only the pre-freeze 30 min, already told
+    unthrottle(w);
+    now += 45 * 60_000; // NEW active quiet (30 + 45 = 75 min) past the stall threshold tells again — frozen minutes never count
+    w.tick();
+    await w.flush();
+    expect(n).toBe(2);
+    expect(sent[1]).toContain("has produced no output for 75 min");
+  });
+
+  it("detectSupervisionEvents: no stalled verdict while frozen, none from frozen minutes after a thaw", () => {
+    const s = st("L1", 100, { spawnerSession: "own", updated: "2026-11-16 10:00:00", turns: 3 });
+    const at = Date.parse("2026-11-16 11:00:00"); // 60 min without a turn, all of it frozen
+    marker(at - 60 * 60_000, ["L1"]);
+    const opts = { stallMs: 10 * 60_000, now: new Date(at), isAlive: () => true };
+    expect(detectSupervisionEvents([s], opts)).toEqual([]);
+    // thawed: the hour was frozen time, so nothing stalled
+    acct({ L1: 60 * 60_000 });
+    rmSync(process.env.PAI_FREEZE_FILE!);
+    expect(detectSupervisionEvents([s], opts)).toEqual([]);
+    // a worker not named by the marker keeps its stall verdict (the wall clock, unchanged)
+    const other = { ...s, id: "L9" };
+    expect(detectSupervisionEvents([other], opts).map((e) => e.kind)).toEqual(["stalled"]);
+  });
+
+  it("escalationReason: no verdict for a frozen worker, and frozen minutes never count after a thaw", () => {
+    // the spec path must exist: escalationReason refuses a job with no task copy to restart
+    const specFile = join(process.env.PAI_FREEZE_FILE!, "..", "spec.txt");
+    writeFileSync(specFile, "task", "utf8");
+    // the local stamp parses against the machine's zone, so build it from `now` (the test's local epoch)
+    const startedStamp = (t: number): string => new Date(t).toISOString().slice(0, 19).replace("T", " ");
+    const at = now; // 60 min after the start below
+    const s = st("L1", 100, { state: "running", started: startedStamp(now - 60 * 60_000), spec: specFile });
+    const p = { queuedMaxMin: 5, stallMaxMin: 30, stallFailedCalls: 5 };
+    marker(at - 60 * 60_000, ["L1"]);
+    expect(escalationReason(s, at, p)).toBeNull(); // frozen: never escalated
+    acct({ L1: 60 * 60_000 });
+    rmSync(process.env.PAI_FREEZE_FILE!);
+    expect(escalationReason(s, at, p)).toBeNull(); // the hour was frozen time: no "no edit or commit for 60m"
+    const q = st("L1", 100, { state: "queued", now: true, started: startedStamp(now - 60 * 60_000), spec: specFile });
+    expect(escalationReason(q, at, p)).toBeNull(); // queued minutes frozen too (acct L1 = 60m covers the whole wait)
+    marker(at - 45 * 60_000, ["L9"]); // another worker's freeze moves this one's clock not at all
+    expect(escalationReason(s, at, p)).toMatch(/no edit or commit for 60m/);
+  });
+
+  it("paused workers (preemption or `pai worker pause`) tell no stall and their paused minutes never count", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pause-sup-"));
+    const startedStamp = (t: number): string => new Date(t).toISOString().slice(0, 19).replace("T", " ");
+    // a worker paused by a --now preemption 20 min ago, quiet for 30 active minutes around it
+    const paused = st("L1", 100, { spawnerSession: "own", updated: startedStamp(now - 50 * 60_000), turns: 3, paused: true, pausedBy: "now-run", pausedAt: now - 20 * 60_000 });
+    const opts = { stallMs: 10 * 60_000, now: new Date(now), isAlive: () => true };
+    expect(detectSupervisionEvents([paused], opts)).toEqual([]); // paused: no stalled verdict at all
+    // after the resume: the paused 20 min leave the clock; only the older 30 active min remain, already past the threshold — a worker that never resumed mid-spell still stalls on its ACTIVE quiet
+    const resumed = { ...paused, paused: false, pausedAt: undefined, pausedMs: 20 * 60_000 };
+    expect(detectSupervisionEvents([resumed], opts).map((e) => e.kind)).toEqual(["stalled"]);
+    // a fully paused-since-start worker: every minute was paused time, nothing to tell after the resume either
+    const allPaused = st("L2", 101, { spawnerSession: "own", updated: startedStamp(now - 50 * 60_000), turns: 3, pausedMs: 50 * 60_000 });
+    expect(detectSupervisionEvents([allPaused], opts)).toEqual([]);
+    // escalation: a paused worker has no verdict, and its paused minutes do not count toward stallMaxMin
+    const specFile = join(dir, "spec.txt");
+    writeFileSync(specFile, "task", "utf8");
+    const p = { queuedMaxMin: 5, stallMaxMin: 30, stallFailedCalls: 5 };
+    expect(escalationReason(paused, now, p)).toBeNull(); // paused: never escalated
+    expect(escalationReason(resumed, now, p)).toMatch(/no edit or commit for 30m/); // only the active half of the spell counts
+    // TroubleWatcher: a worker whose status says paused tells nothing while parked
+    const sent: string[] = [];
+    let n = 0;
+    const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), n++, true) } as unknown as Messenger;
+    writeFileSync(join(dir, "L1.json"), JSON.stringify({ id: "L1", pid: 100, state: "running", paused: true, pausedAt: now - 20 * 60_000 }), "utf8");
+    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, dir, () => now);
+    (w as unknown as { lastActivity: number }).lastActivity = now - 30 * 60_000; // quiet 30 min on the injected clock
+    w.tick();
+    await w.flush();
+    expect(n).toBe(0); // paused (preempted): no stall notice at all
   });
 });
 

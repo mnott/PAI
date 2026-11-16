@@ -9,6 +9,8 @@
 
 import { eventLine, type Messenger, type RunOrigin } from "./run-events.js";
 import { troublePolicy } from "./notice-policy.js";
+import { loadStatus } from "./status.js";
+import { activeMsOf, frozenSince } from "./freeze.js";
 
 const short = (s: string, n: number): string => s.replace(/\s+/g, " ").trim().slice(0, n);
 
@@ -24,6 +26,8 @@ export class TroubleWatcher {
     private readonly label: string,
     private readonly msg: Messenger,
     private readonly origin: RunOrigin,
+    /** The worker's status file is read per tick for the pause window (preemption and `pai worker pause` are not idleness). */
+    private readonly logDir: string = "",
     private readonly now: () => number = Date.now,
   ) {
     this.lastActivity = now();
@@ -47,6 +51,18 @@ export class TroubleWatcher {
     this.stallTold = false;
   }
 
+  /** Quiet ms on the active clock: frozen and paused spans never count, so after a thaw or a resume the quiet spell restarts from its end. */
+  private quietMs(t: number): number {
+    let pause = {};
+    try {
+      const s = this.logDir ? loadStatus(this.logDir, this.id) : null;
+      pause = { paused: s?.paused, pausedAt: s?.pausedAt, pausedMs: s?.pausedMs };
+    } catch {
+      /* a status read that fails only loses the pause discount for one tick */
+    }
+    return activeMsOf(this.id, this.lastActivity, t, pause);
+  }
+
   /** One guard denial; from the 3rd in the window on, tell the session (throttled). */
   onDenial(hook: string, reason: string): void {
     const policy = troublePolicy();
@@ -64,9 +80,17 @@ export class TroubleWatcher {
     this.send("loop-stopped", {}, `${this.who} was stopped by the loop guard: ${short(reason, 160)}`, true);
   }
 
-  /** Timer tick while running: no activity for notices.trouble.stallMinutes tells once per quiet spell (throttled). */
+  /** Timer tick while running: no activity for notices.trouble.stallMinutes tells once per quiet spell (throttled). A worker stopped by the operator — listed in the active freeze marker, or paused (a --now preemption or `pai worker pause`) — is not stalled: it tells nothing, and its quiet clock restarts at the thaw or resume. */
   tick(): void {
-    const quiet = this.now() - this.lastActivity;
+    const t = this.now();
+    if (frozenSince(this.id) !== undefined) return; // frozen: no stall notice, the frozen minutes never count
+    try {
+      const s = this.logDir ? loadStatus(this.logDir, this.id) : null;
+      if (s?.paused) return; // paused by preemption or the operator: no stall notice, paused minutes never count
+    } catch {
+      /* a status read that fails reads as not paused */
+    }
+    const quiet = this.quietMs(t);
     if (quiet < troublePolicy().stallMs || this.stallTold) return;
     this.stallTold = true;
     this.send("stalled", { quiet_min: Math.round(quiet / 60_000) }, `${this.who} has produced no output for ${Math.round(quiet / 60_000)} min while running.`);

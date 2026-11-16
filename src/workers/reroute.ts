@@ -20,6 +20,7 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { escalationPolicy } from "./config.js";
+import { activeMsOf, frozenSince } from "./freeze.js";
 import { appendLedger } from "./ledger.js";
 import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
@@ -49,14 +50,20 @@ const stampMs = (stamp: string | undefined): number | null => {
 
 /**
  * Why this job should move to the fallback provider now, or null. Pure: status in, reason out.
- * Skips a pinned provider, an already rerouted job, a paused one, a job without a task copy to restart.
+ * Skips a pinned provider, an already rerouted job, a paused one (a --now preemption or `pai worker pause`
+ * is stopped by the engine control, never overdue), a job without a task copy to restart,
+ * and any worker listed in the active freeze marker (a frozen run is stopped by the operator, never overdue).
+ * Every elapsed-time threshold runs on the active clock: freeze AND paused minutes never count, so after a
+ * thaw or resume the overdue spell restarts from its end.
  */
 export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy()): string | null {
   if (s.rerouted || s.origin === "chat" || s.paused || providerPinned(s)) return null;
+  if (frozenSince(s.id) !== undefined) return null; // frozen by the operator: no escalation verdict
   if (!s.spec && !s.promptFile) return null;
+  const pause = { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs };
   if (s.state === "queued") {
     const since = s.capacity?.sinceMs ?? stampMs(s.started);
-    const min = since === null || since === undefined ? 0 : (nowMs - since) / 60_000;
+    const min = since === null || since === undefined ? 0 : activeMsOf(s.id, since, nowMs, pause) / 60_000;
     // a queued job waits for its slot unless the operator gave priority (now: /now window, --now, `pai worker priority <id> now`)
     if (!s.now) return null;
     const limit = p.queuedMaxMin > 0 ? p.queuedMaxMin : URGENT_QUEUED_MIN;
@@ -65,7 +72,7 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
   if (s.state !== "running") return null;
   if ((s.consecFails ?? 0) >= p.stallFailedCalls) return `${s.consecFails} failed tool calls in a row`;
   const last = stampMs(s.progressAt) ?? stampMs(s.started);
-  const min = last === null ? 0 : (nowMs - last) / 60_000;
+  const min = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause) / 60_000;
   return min >= p.stallMaxMin ? `no edit or commit for ${Math.floor(min)}m` : null;
 }
 

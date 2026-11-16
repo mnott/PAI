@@ -124,11 +124,17 @@ export function workerPaused(logDir: string, id: string): boolean {
   }
 }
 
-/** Write the pause into the status file (a missing worker is left alone). */
+/** Write the pause into the status file (a missing worker is left alone). The window fields ride along so the quiet/stall clocks can discount paused time like any other pause. */
 function setWorkerPausedStatus(logDir: string, id: string, paused: boolean): void {
   try {
     const path = statusPath(logDir, id);
-    const s = JSON.parse(readFileSync(path, "utf8")) as { paused?: boolean };
+    const s = JSON.parse(readFileSync(path, "utf8")) as { paused?: boolean; pausedAt?: number; pausedMs?: number };
+    const now = Date.now();
+    if (paused) s.pausedAt = now;
+    else {
+      if (s.pausedAt !== undefined) s.pausedMs = (s.pausedMs ?? 0) + Math.max(0, now - s.pausedAt);
+      delete s.pausedAt;
+    }
     s.paused = paused;
     writeFileSync(path, JSON.stringify(s), "utf8");
   } catch {
