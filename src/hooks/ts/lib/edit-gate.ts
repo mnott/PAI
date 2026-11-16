@@ -157,6 +157,15 @@ function simpleAssignments(command: string): Map<string, string> {
   return vars;
 }
 
+/** Same, but values may reference other variables (`S=$TMPDIR`): one pass per var, later assignments winning. */
+function assignableVars(command: string): Map<string, string> {
+  const vars = new Map<string, string>();
+  for (const m of command.matchAll(/(?:^|[;&|(\s])([A-Za-z_]\w*)=(?:"([^"$`]*)"|'([^']*)'|(\$)([^\s;&|()"']+)|([^\s;&|$`()"']+))(?=\s|;|&|\||$)/g)) {
+    vars.set(m[1], m[2] ?? m[3] ?? (m[4] ? `$${m[5]}` : m[6]));
+  }
+  return vars;
+}
+
 function resolveVars(target: string, vars: Map<string, string>): string {
   return target.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, a, b) => vars.get(a ?? b) ?? whole);
 }
@@ -262,18 +271,90 @@ export function decidePlannerLockEdit(filePath: string, cwd: string, tmpdir?: st
   return { decision: "block", reason: PLANNER_LOCK_REASON };
 }
 
-/** Bash by an L1: in-place writes (sed -i, perl -i, >, >>, tee, mv/cp) to anything but scratch are denied; git and the rest pass. */
-export function decidePlannerLockBash(rawCommand: string, tmpdir?: string): EditGateDecision {
+/** Bash by an L1: in-place writes (sed -i, perl -i, >, >>, tee, mv/cp) whose resolved target lies inside the L1's own worktree (outside .pai-scratch/) are denied; git and every write outside the worktree pass. */
+export function decidePlannerLockBash(rawCommand: string, tmpdir?: string, cwd?: string, toplevel?: string): EditGateDecision {
   const command = stripHeredocBodies(rawCommand);
-  for (const seg of command.split(/&&|\|\||;|\n|\|(?!\|)/)) {
-    const words = shellWords(seg.trim());
+  // effective directory: starts at the hook cwd; a resolvable `cd` moves it, an unresolvable one makes the rest unknown (fall back to the text rule)
+  let dir = (cwd ?? process.cwd()).replace(/\/+$/, "") || "/";
+  let unknown = false;
+  // simple same-command assignments (`S=$TMPDIR`, NAME=value, values may reference other variables): later ones win, substituted when resolving targets
+  const vars = assignableVars(command);
+  if (tmpdir && !vars.has("TMPDIR")) vars.set("TMPDIR", tmpdir.replace(/\/+$/, ""));
+  if (process.env.HOME && !vars.has("HOME")) vars.set("HOME", process.env.HOME.replace(/\/+$/, ""));
+  // loop variables (`for n in 881 882 883; do ... $n.out`): the list is literal, so every target of every iteration resolves like the first
+  for (const m of command.matchAll(/\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;|&)]+)/g)) {
+    const values = m[2].trim().split(/\s+/).filter(Boolean);
+    if (values.length) vars.set(m[1], values[0]);
+  }
+  const expand = (t: string): string => {
+    let s = t;
+    for (let pass = 0; pass < 8 && HAS_VAR.test(s); pass++) {
+      const next = s.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, a, b) => vars.get(a ?? b) ?? whole);
+      if (next === s) break;
+      s = next;
+    }
+    if (s.startsWith("~/")) s = (process.env.HOME ?? "") + s.slice(1);
+    else if (s === "~") s = process.env.HOME ?? "";
+    return s;
+  };
+  const joinRel = (rel: string): string => {
+    let r = rel.replace(/\/+$/, "");
+    while (r.startsWith("../")) {
+      r = r.slice(3);
+      dir = dir.slice(0, Math.max(dir.lastIndexOf("/"), 1));
+    }
+    return r ? `${dir}/${r}` : dir;
+  };
+  /** Abs where a target lands; null when it cannot be resolved (unknown: the text rule decides). */
+  const resolveTarget = (raw: string): string | null => {
+    const t = expand(raw);
+    if (HAS_VAR.test(t)) return null;
+    if (/^~(\/|$)/.test(t)) return process.env.HOME ? t.replace(/^~/, process.env.HOME) : null;
+    if (t.startsWith("/")) return t;
+    return joinRel(t);
+  };
+  /** Deny only a resolved path inside the L1's own worktree and outside .pai-scratch/; outside the worktree is not this lock's business. */
+  const denyAbs = (abs: string): EditGateDecision | null => {
+    if (plannerScratch(abs, tmpdir)) return null;
+    const root = toplevel ?? dir;
+    if (abs !== root && !abs.startsWith(root + "/")) return null;
+    return { decision: "block", reason: PLANNER_LOCK_REASON };
+  };
+  /** Today's text rule, for targets that cannot be resolved. */
+  const denyText = (t: string): EditGateDecision | null => {
+    if (!t || t.startsWith("&") || t.startsWith("/dev/") || plannerScratch(t, tmpdir)) return null;
+    return { decision: "block", reason: PLANNER_LOCK_REASON };
+  };
+  // `do` and `done` end a segment like ; — but only as standalone words (a path may contain "do": $TMPDIR/todo.txt)
+  for (const seg of command.split(/&&|\|\||;|\n|\|(?!\|)|\s(?:do|done)(?=\s|$)/g)) {
+    const trimmed = seg.trim();
+    const words = shellWords(trimmed);
     if (!words.length || words[0] === "git") continue;
+    // a segment `cd X` / `cd "X"` moves the effective directory (quotes stripped, $TMPDIR/$HOME/~ expanded); an unresolvable target makes the rest unknown
+    const cd = /^\s*cd\s+(\S+)/.exec(trimmed);
+    if (cd) {
+      const raw = cd[1].replace(/^(["'])(.*)\1$/, "$2");
+      if (raw.includes("$(") || raw.includes("`")) unknown = true;
+      else {
+        const abs = resolveTarget(raw);
+        if (abs === null) unknown = true;
+        else dir = abs.replace(/\/+$/, "") || "/";
+      }
+    }
     // redirects: quoted strings are skipped unless they are the redirect target itself
     for (const m of seg.matchAll(/"[^"]*"|'[^']*'|(?<![<>&])>>?\s*("[^"]*"|'[^']*'|&?[^\s;&|<>]*)/g)) {
       if (m[1] === undefined) continue;
       const t = m[1].replace(/^(["'])(.*)\1$/, "$2");
-      if (!t || t.startsWith("&") || t.startsWith("/dev/") || plannerScratch(t, tmpdir)) continue;
-      return { decision: "block", reason: PLANNER_LOCK_REASON };
+      if (!t || t.startsWith("&") || t.startsWith("/dev/")) continue;
+      if (unknown) {
+        const d = denyText(t);
+        if (d) return d;
+        continue;
+      }
+      if (plannerScratch(t, tmpdir)) continue;
+      const abs = resolveTarget(t);
+      const d = abs === null ? denyText(t) : denyAbs(abs);
+      if (d) return d;
     }
     const cmd = words.find((w) => !/^[A-Za-z_]\w*=/.test(w)) ?? "";
     const args = words.slice(words.indexOf(cmd) + 1).filter((w) => !w.startsWith("-"));
@@ -283,7 +364,16 @@ export function decidePlannerLockBash(rawCommand: string, tmpdir?: string): Edit
     else if (cmd === "perl" && words.some((w) => /^-[A-Za-z0-9]*i/.test(w))) targets = args.slice(1);
     else if (cmd === "tee") targets = args;
     else if ((cmd === "mv" || cmd === "cp") && last) targets = [last];
-    if (targets.some((t) => !plannerScratch(t, tmpdir))) return { decision: "block", reason: PLANNER_LOCK_REASON };
+    for (const t of targets) {
+      if (unknown) {
+        if (!plannerScratch(t, tmpdir)) return { decision: "block", reason: PLANNER_LOCK_REASON };
+        continue;
+      }
+      if (plannerScratch(t, tmpdir)) continue;
+      const abs = resolveTarget(t);
+      const d = abs === null ? denyText(t) : denyAbs(abs);
+      if (d) return d;
+    }
   }
   return { decision: "allow" };
 }

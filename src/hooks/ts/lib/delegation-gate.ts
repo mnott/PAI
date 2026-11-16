@@ -152,6 +152,8 @@ export function decideDelegationGate(command: string, env: NodeJS.ProcessEnv, op
   if (SEARCH_RES.some((r) => r.test(sq))) return { decision: "deny", reason: SEARCH_ROOT_REASON };
   if (env.PAI_WORKER === "1") return { decision: "allow" };
 
+  // `pai worker run --help` / `-h` asks how to start, it starts nothing: never a route denial
+  if (/(?:^|[;&|(]|$)\s*pai\s+worker\s+run\s+(?:--help|-h)(?:\s|$)/m.test(sc)) return { decision: "allow" };
   const run = /pai\s+worker\s+run(?:\s|$)/m.test(sc);
   const workerCmd = /pai\s+worker\s+(?:run|resume)/.test(sc);
   if (/headless-ok|PAI_HEADLESS_OK_FILE/.test(sc)

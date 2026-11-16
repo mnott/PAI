@@ -18,6 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { sep } from "node:path";
 import { appendLedger } from "./ledger.js";
+import { loadStatusesCached, isLive as statusIsLive } from "./status.js";
 import { ledgerPath, slotCurrentPath } from "./paths.js";
 import { slotsDir } from "./slots.js";
 import { loadStatus, saveStatus } from "./status.js";
@@ -53,7 +54,33 @@ export interface ReaperDeps {
   annotate: (logDir: string, id: string, text: string) => void;
   /** Append a ledger line (event, key/values). */
   ledger?: (logDir: string, event: string, kv: Record<string, string | number | undefined>) => void;
+  /** Whether the worker `id` recorded a parent whose status is still live (state running/queued, pid alive): its child is never an orphan. Injectable for tests. */
+  parentLive?: (logDir: string, id: string) => boolean;
 }
+
+/** True when worker `id` exists and names a parent whose status is still live — the reaper spares it: only when the parent is gone too is the child an orphan. */
+export function hasLiveParent(logDir: string, id: string): boolean {
+  const statuses = loadStatusesCached(logDir);
+  const byId = new Map(statuses.map((s) => [s.id, s]));
+  let cur = byId.get(id);
+  const seen = new Set<string>();
+  while (cur?.parent && !seen.has(cur.parent)) {
+    seen.add(cur.parent);
+    const p = byId.get(cur.parent);
+    if (!p) return false;
+    if (statusIsLive(p)) return true;
+    cur = p;
+  }
+  return false;
+}
+
+const parentLiveDefault = (logDir: string, id: string): boolean => {
+  try {
+    return hasLiveParent(logDir, id);
+  } catch {
+    return false; // unreadable ledger: today's behavior — judge it as an orphan
+  }
+};
 
 /** Candidates seen busy: pid -> start (ms epoch) and first busy sample time. */
 export type ReaperState = Map<number, { startMs: number; firstBusy: number }>;
@@ -152,7 +179,20 @@ export function realReaperDeps(log: (line: string) => void): ReaperDeps {
     owner: realOwner,
     annotate: realAnnotate,
     ledger: (dir, event, kv) => appendLedger(ledgerPath(dir), event, kv),
+    parentLive: parentLiveDefault,
   };
+}
+
+/** The worker whose worktree `path` sits in (worktrees/<id>/... or a slot's current file), if any. */
+function ownerOf(deps: ReaperDeps, logDir: string, row: ProcRow): string | undefined {
+  return deps.owner(logDir, row.cwd) ?? deps.owner(logDir, row.command);
+}
+
+/** A worker with a live recorded parent is supervised by that parent — never reaped as an orphan while it runs. */
+function sparedByParent(deps: ReaperDeps, logDir: string, row: ProcRow): boolean {
+  if (!deps.parentLive) return false;
+  const id = ownerOf(deps, logDir, row);
+  return !!id && deps.parentLive(logDir, id);
 }
 
 /** One reaper pass; returns the pids it killed. `state` carries samples between passes. */
@@ -161,10 +201,11 @@ export async function reapOrphansOnce(logDir: string, state: ReaperState, deps: 
   const killed: number[] = [];
   const seen = new Set<number>();
   for (const row of deps.snapshot()) {
+    if (sparedByParent(deps, logDir, row)) continue; // a child of a live worker: its parent owns it, not an orphan
     if (row.ppid === 1 && row.ageSecs >= REAP_MIN_AGE_SECS && isWorkerChrome(row, logDir)) {
       await deps.kill(row.pid);
       killed.push(row.pid);
-      const id = deps.owner(logDir, row.cwd) ?? deps.owner(logDir, row.command);
+      const id = ownerOf(deps, logDir, row);
       const name = row.command.split(/\s--/)[0].split("/").pop() ?? "chrome";
       deps.log(`Reaper: reaped orphan headless Chrome pid ${row.pid} (${Math.round(row.ageSecs / 60)} min old)${id ? ` [${id}]` : ""}`);
       deps.ledger?.(logDir, "WORKER-ORPHAN-KILLED", { pid: row.pid, command: name, id });
@@ -184,7 +225,7 @@ export async function reapOrphansOnce(logDir: string, state: ReaperState, deps: 
     await deps.kill(row.pid);
     killed.push(row.pid);
     const where = row.cwd || row.command;
-    const id = deps.owner(logDir, row.cwd) ?? deps.owner(logDir, where);
+    const id = ownerOf(deps, logDir, row);
     const text = `reaped orphan pid ${row.pid} (${Math.round(row.ageSecs / 60)} min old, ${row.cpu}% CPU): ${row.command.slice(0, 120)}`;
     deps.log(`Reaper: ${text}${id ? ` [${id}]` : ""}`);
     if (id) {

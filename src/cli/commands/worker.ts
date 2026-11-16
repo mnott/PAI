@@ -34,7 +34,7 @@ import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
-import { announceId, rerunFromEnv } from "../../workers/reroute.js";
+import { announceId, rerunFromEnv, startDetachedWorker } from "../../workers/reroute.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
 import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -262,6 +262,20 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   }
 }
 
+/**
+ * `--detach`: start the worker exactly as a foreground `pai worker run` would (same argv, same routing and pane, its own
+ * process group/session so it survives this shell), print {"id": "<worker id>"} the moment the id exists, exit 0 without
+ * waiting. The child re-runs this verb with --detach stripped; PAI_WORKER_ID_FILE carries the id back (reroute.ts).
+ */
+async function runDetached(ctx: RunContext): Promise<number> {
+  if (flag(ctx, "print-cmd")) throw new CliError("--detach and --print-cmd do not go together", "pai worker run --print-cmd -p 'test'");
+  const argv = process.argv.slice(2);
+  const args = argv.filter((a) => a !== "--detach" && a !== "--detach=true");
+  const id = await startDetachedWorker(logDir(), args, { cwd: process.cwd() });
+  out(JSON.stringify({ id }));
+  return 0;
+}
+
 const runCommand: CommandDef = {
   name: "run",
   summary: "Run one task on a worker (another provider or model)",
@@ -314,9 +328,11 @@ const runCommand: CommandDef = {
     { name: "no-report-retry", type: "boolean", summary: "Do not ask once more when the final report is malformed" },
     { name: "orchestrate", type: "boolean", summary: "This worker plans and reviews; code edits are denied and go to local units" },
     { name: "no-merge", type: "boolean", summary: "--class orchestrate: do not wait for or join other orchestrate requests for the same repo (workers.orchestrate.mergeWindowSec)" },
+    { name: "detach", type: "boolean", summary: "Start in its own process group and return at once: prints {\"id\": \"<worker id>\"} as soon as the id exists and exits 0 without waiting; wait for it with `pai worker wait <id> --max 590` (the sanctioned way to start several children in parallel)" },
   ],
   examples: [
     "pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'",
+    "pai worker run --detach --class implement --spec /tmp/a.txt   (prints {\"id\": ...}, then `pai worker wait <ids...> --max 590`)",
     "pai worker run --provider glm --spec /tmp/task.txt",
     "pai worker run --local -p 'Summarize the changelog'",
     "pai worker run --where cloud --model fast --now -p 'Say hi'",
@@ -326,6 +342,7 @@ const runCommand: CommandDef = {
   seeAlso: ["pai worker ps", "pai worker follow", "pai worker merge", "pai worker resume"],
   run: (ctx) =>
     guard("pai worker run --print-cmd -p 'test'   (shows the command without starting it)", async () => {
+      if (flag(ctx, "detach")) return await runDetached(ctx);
       const plan = buildRunPlan(ctx);
       if (flag(ctx, "batch")) process.env[BATCH_ENV] = "1";
       await applyTarget(ctx, plan);
