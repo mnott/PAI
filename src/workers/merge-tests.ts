@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 
 export const DEFAULT_VERIFY_TIMEOUT_SEC = 600;
 
@@ -23,6 +24,12 @@ export interface RelatedResult {
   line: string;
   failing: string[];
   flakyLogs?: string[];
+  /** First assertion/error line of the first failure (max 400 chars), parsed from the gate output. */
+  assert?: string;
+  /** Hint lines for a failed gate, e.g. "dist/ is older than src/: run the build first". */
+  hints?: string[];
+  /** Path of the full gate output kept on disk (<logDir>/<id>.merge-gate-<ts>.log). */
+  logPath?: string;
   /** Tail of the gate output, for the test-growth alarm. */
   output?: string;
 }
@@ -161,7 +168,10 @@ export function runRelatedTests(
   settings: RelatedSettings,
   git: (cwd: string, args: string[]) => string,
   pipeGraceMs?: number,
-  runner: typeof runCommands = runCommands
+  runner: typeof runCommands = runCommands,
+  /** Worker log dir: a failure keeps its full output at <logDir>/<id>.merge-gate-<ts>.log. */
+  logDir?: string,
+  id?: string
 ): RelatedResult {
   const skip = (why: string): RelatedResult => ({ status: "skipped", line: `verify: skipped (${why})`, failing: [] });
   if (!settings.verify.trim()) return skip("workers.merge.verify is empty");
@@ -180,13 +190,31 @@ export function runRelatedTests(
   if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (runner: ${resolved.runner}; ${resolved.cmd})`, failing: [], output: r.output.slice(-20_000) };
   const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
   const tail = r.output.trim().split("\n").slice(-5).join(" | ").slice(0, 400);
-  return { status: "failed", line: `failed (runner: ${resolved.runner}; ${resolved.cmd}) (${exit}): ${tail}`, failing: [] };
+  // keep the FULL output (stdout+stderr) on disk and name what failed: the ledger's 300-char
+  // summary once left a session three blind fix rounds with no test name and no assertion.
+  const f = parseGateFailure(r.output, cwd);
+  const logPath = logDir && id ? saveMergeGateLog(logDir, id, r.output) : null;
+  return {
+    status: "failed",
+    line: `failed (runner: ${resolved.runner}; ${resolved.cmd}) (${exit}): ${tail}`,
+    failing: f.names,
+    ...(f.assert ? { assert: f.assert } : {}),
+    ...(f.hints.length ? { hints: f.hints } : {}),
+    ...(logPath ? { logPath } : {}),
+    output: r.output.slice(-20_000),
+  };
 }
 
 /** The shipped default gate: typecheck plus the kept test core (tests/KEPT.md). */
 export const DEFAULT_VERIFY = "npx tsc --noEmit && PAI_VITEST_MAX_WORKERS=2 npx vitest run";
 
-/** Hint lines printed under a failed check. */
+/** Hint lines printed under a failed check: the kept log, the assertion, stale-build hints, the revert. */
 export function failureHints(r: RelatedResult, mergeCommit: string): string[] {
-  return [...r.failing.map((f) => `  failing: ${f}`), `  revert with: git revert -m 1 ${mergeCommit}`];
+  return [
+    ...(r.logPath ? [`  full gate output: ${r.logPath}`] : []),
+    ...r.failing.map((f) => `  failing: ${f}`),
+    ...(r.assert ? [`  assertion: ${r.assert}`] : []),
+    ...(r.hints ?? []).map((h) => `  hint: ${h}`),
+    `  revert with: git revert -m 1 ${mergeCommit}`,
+  ];
 }
