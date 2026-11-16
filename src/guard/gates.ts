@@ -15,6 +15,7 @@ import { mainSessionBashReason } from "../hooks/ts/lib/main-session-git-gate.js"
 import { buildGateReason } from "../hooks/ts/lib/build-gate.js";
 import { memoryBashRules } from "../hooks/ts/lib/memory-bash-gate.js";
 import { modelServerReason } from "../hooks/ts/lib/model-server-guard.js";
+import { headlessReason } from "../hooks/ts/lib/headless-gate.js";
 import { backgroundReason } from "../hooks/ts/lib/background-gate.js";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
 import { raiseWaitTimeout } from "../hooks/ts/lib/wait-timeout.js";
@@ -120,6 +121,7 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
       : (typeof ti?.command === "string"
         ? (c.env.PAI_WORKER !== "1" ? mainSessionBashReason(command ?? ti.command, c.cwd) : null) ??
           buildGateReason(command ?? ti.command, c.cwd) ??
+          headlessReason(command ?? ti.command, c.env, c.cwd) ??
           modelServerReason(command ?? ti.command, c.env, g.bash.localAnswer())
         : null) ?? backgroundReason(ti, c.env);
     if (why) return deny(why, "bash-gate");
