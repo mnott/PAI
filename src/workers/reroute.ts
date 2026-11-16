@@ -16,7 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { escalationPolicy } from "./config.js";
 import { appendLedger } from "./ledger.js";
@@ -24,6 +24,7 @@ import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { markHandover } from "./run/follow-reroute.js";
 
 export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
 
@@ -83,7 +84,11 @@ export interface RerouteDeps {
   resolve?: (where: string) => Promise<RerouteTarget>;
   /** Stop the old worker the way `pai worker kill` does; it salvages the commits (default: killWorker). */
   kill?: (id: string, reason: string) => Promise<unknown>;
-  /** Start the task on the target provider (default: rerunOn, the fall-through's restart). */
+  /**
+   * Start the task on the target provider (default: defaultSpawn, a detached `pai worker run`). It resolves once
+   * the restart announced its id and throws when it did not start — rerouteWorker then keeps the old run where it
+   * is (queued or running) and clears its marker; a reroute that cannot restart must not drop the job.
+   */
   spawn?: (s: SpawnSpec) => void | Promise<void>;
   /** Wait before the kill so the old pane can print its line (default 1500 when the worker has a pane, tests pass 0). */
   announceMs?: number;
@@ -143,6 +148,38 @@ export function announceId(id: string, env: NodeJS.ProcessEnv = process.env): vo
   if (f) writeFileSync(f, id);
 }
 
+/** Env naming a file `rerunFromEnv` writes the new run's id to at once: defaultSpawn waits on it before the old run is stopped. */
+export const RERUN_ID_FILE_ENV = "PAI_RERUN_ID_FILE";
+
+/** Called by the CLI run verb for a restart (no-op without the env): record this run's id for the waiting reroute. */
+export function announceRerunId(id: string, env: NodeJS.ProcessEnv = process.env): void {
+  const f = env[RERUN_ID_FILE_ENV];
+  if (f) writeFileSync(f, id);
+}
+
+/**
+ * Wait until the restarted process announced its worker id; null when it died first or never announced. The caller
+ * decides what a failed restart means — a reroute must not drop its job over one (see rerouteWorker).
+ */
+export async function waitAnnouncedId(idFile: string, pid: number, timeoutMs = 15_000): Promise<string | null> {
+  const alive = (): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const id = existsSync(idFile) ? readFileSync(idFile, "utf8").trim() : "";
+    if (id) return id;
+    if (!alive()) return null;
+    if (Date.now() > deadline) return null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 /**
  * Start `pai worker <verb> args` detached (own session, survives a daemon restart) and return the worker id
  * once the process has announced it. The caller's env (session identity, urgency window, pane anchoring) is
@@ -182,18 +219,34 @@ export async function startDetachedWorker(
   }
 }
 
-/** The restart is a detached `pai worker run` on the target, linked to the old run through the env (`rerunFromEnv`). */
-export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession): (s: SpawnSpec) => void {
-  return (s) => {
+/**
+ * The restart is a detached `pai worker run` on the target, linked to the old run through the env (`rerunFromEnv`).
+ * It returns once the new process announced its worker id; it throws when that process dies or never announces —
+ * rerouteWorker then leaves the old run alone (a failed restart must not drop the job).
+ */
+export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession): (s: SpawnSpec) => Promise<void> {
+  return async (s) => {
     const st = loadStatus(logDir, s.id);
-    if (!st) return;
+    if (!st) throw new Error(`no worker named "${s.id}" to restart`);
     const args = ["worker", "run", "--provider", s.provider, ...(st.outputFormat && st.outputFormat !== "text" ? ["--output-format", st.outputFormat] : []), ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
     mkdirSync(join(logDir, "runs"), { recursive: true });
-    start(process.env.PAI_BIN || "pai", args, {
+    const idFile = join(logDir, "runs", `rerun-${s.id}.id`);
+    try {
+      rmSync(idFile, { force: true });
+    } catch {
+      /* a stale file is overwritten by the new run */
+    }
+    const pid = start(process.env.PAI_BIN || "pai", args, {
       cwd: st.cwd || process.cwd(),
-      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why },
+      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile },
       outPath: join(logDir, "runs", `reroute-${s.id}.out`),
     });
+    const newId = await waitAnnouncedId(idFile, pid);
+    if (!newId) {
+      const out = join(logDir, "runs", `reroute-${s.id}.out`);
+      const tail = existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").slice(-5).join(" / ") : "";
+      throw new Error(`the restart on ${s.provider} did not start${tail ? `: ${tail}` : ""}`);
+    }
   };
 }
 
@@ -210,6 +263,7 @@ export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.Proces
   run._priorIds = [of];
   if (old?.term) run._hostTerm = old.term;
   run.onWorkerStart = (id2) => {
+    announceRerunId(id2, env); // the waiting reroute holds the old run until this line ran
     if (!old) return;
     old.fallThroughTo = id2;
     saveStatus(logDir, old);
@@ -237,16 +291,40 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const text = taskText(old);
   const by = d.by ?? "reroute";
   const reason = d.reason ?? `${by}: ${where}`;
-  // the marker first: a second tick or command sees it and does not start another reroute
+  // the marker first: a second tick or command sees it and does not start another reroute. A queued run's own
+  // process reads it to tell a hand-over from a kill (follow-reroute.ts); an injected kill that never writes the
+  // status (a test fake) still hands the caller over through markHandover below.
   old.rerouted = `${target.provider}: ${d.reason ?? by}`;
   saveStatus(d.logDir, old, new Date(), true);
-  const wait = d.announceMs ?? (old.pane ? 1500 : 0);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
+  const unmark = (): void => {
+    const st = load(id);
+    if (st && st.rerouted === old.rerouted) {
+      delete st.rerouted;
+      saveStatus(d.logDir, st, new Date(), true);
+    }
+  };
   const branch = old.state === "running" ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
   const specFile = join(d.logDir, `${id}.reroute.prompt`);
   writeFileSync(specFile, branch ? `${continuedNote(id, branch)}\n\n${text}` : text, "utf8");
-  await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+  // the restart first: nothing is stopped before it announced its id — a restart that cannot start must leave the
+  // job where it was (still queued or running) and say so, never drop it (2026-11-16: 93019 lost this way)
+  try {
+    await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+  } catch (e) {
+    unmark();
+    appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
+    throw e;
+  }
+  const wait = d.announceMs ?? (old.pane ? 1500 : 0);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  markHandover(d.logDir, id, old.rerouted ?? `rerouted to ${target.provider} (${reason})`);
+  try {
+    await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
+  } catch (e) {
+    // the restart is live and linked; a kill that failed leaves the old run visible for `pai worker kill`
+    appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `stop failed after the restart: ${(e as Error).message}`.slice(0, 200) });
+    throw e;
+  }
   return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
 }
 

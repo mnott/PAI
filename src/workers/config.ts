@@ -2064,10 +2064,23 @@ export function escalationCloud(): CloudTarget {
 }
 
 /**
+ * A threshold override from the environment (PAI_ESCALATE_QUEUED_MAX_MIN, PAI_ESCALATE_STALL_MAX_MIN):
+ * a positive number wins over the config; anything else (unset, broken) falls back to it — like
+ * PAI_WORKER_STALL_MINUTES does for supervision. Tests and a one-off escalation exercise set it; nothing
+ * production writes it.
+ */
+function escalateEnvOverride(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
  * The time-bound escalation numbers (workers.escalate.queuedMaxMin/stallMaxMin/stallFailedCalls);
- * the shipped ones when the config cannot be read. While macOS Low Power Mode
- * is on the minute thresholds scale by power.lowPower.factor (a slow machine
- * is not stalled); `lowPower` resolves synchronously from the cached reading —
+ * the shipped ones when the config cannot be read, each overridable for one process by its env var.
+ * While macOS Low Power Mode is on the minute thresholds scale by power.lowPower.factor (a slow
+ * machine is not stalled); `lowPower` resolves synchronously from the cached reading —
  * off until the first pmset sample lands.
  */
 export function escalationPolicy(
@@ -2081,6 +2094,11 @@ export function escalationPolicy(
   } catch {
     base = { queuedMaxMin: DEFAULT_ESCALATE.queuedMaxMin, stallMaxMin: DEFAULT_ESCALATE.stallMaxMin, stallFailedCalls: DEFAULT_ESCALATE.stallFailedCalls };
   }
+  base = {
+    ...base,
+    queuedMaxMin: escalateEnvOverride("PAI_ESCALATE_QUEUED_MAX_MIN", base.queuedMaxMin),
+    stallMaxMin: escalateEnvOverride("PAI_ESCALATE_STALL_MAX_MIN", base.stallMaxMin),
+  };
   const f = factor();
   if (!lowPower() || f <= 1) return base;
   return {

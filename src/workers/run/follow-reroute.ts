@@ -13,6 +13,8 @@ export interface FollowDeps {
   logDir: string;
   /** Poll step (tests pass a small one). */
   stepMs?: number;
+  /** How long to wait for the reroute marker (`rerouted`) to land on the old status. */
+  markerTimeoutMs?: number;
   /** How long to wait for the restart to be announced. */
   announceTimeoutMs?: number;
   out?: (s: string) => void;
@@ -21,6 +23,22 @@ export interface FollowDeps {
 
 /** Where the restart's stdout goes (reroute.ts defaultSpawn). */
 export const rerouteOutPath = (logDir: string, oldId: string): string => join(logDir, "runs", `reroute-${oldId}.out`);
+
+/**
+ * The hand-over marker on a queued run's status (`rerouted`), written by the process that stops it — a reroute or an
+ * escalation (reroute.ts) in another process. A queued run whose stopper names no reason for the stop is being killed,
+ * not handed over: its SIGTERM ends the run as before. `rerunOn`'s in-process fall-through needs no marker (the caller
+ * follows the restart by itself). The one reader of the marker on this side is guardQueuedRun below.
+ */
+export function markHandover(logDir: string, id: string, reason: string): void {
+  const st = loadStatus(logDir, id);
+  if (!st || st.rerouted) return;
+  st.rerouted = reason.slice(0, 120);
+  saveStatus(logDir, st, new Date(), true);
+}
+
+/** The hand-over marker a queued run's SIGTERM handler waits for before it decides kill-vs-follow. */
+export const HANDOVER_MARKER_MS = 3_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -47,6 +65,13 @@ export async function followReroute(old: WorkerStatus, d: FollowDeps): Promise<n
   const step = d.stepMs ?? 500;
   const out = d.out ?? ((s: string) => void console.log(s));
   const err = d.err ?? ((s: string) => void process.stderr.write(`${s}\n`));
+  // the marker is normally there when this starts (guardQueuedRun waits for it before following); a caller that
+  // enters here without one still gets bounded grace — the stopper writes it before signalling
+  const mDeadline = Date.now() + (d.markerTimeoutMs ?? HANDOVER_MARKER_MS);
+  while (!old.rerouted && !loadStatus(d.logDir, old.id)?.rerouted) {
+    if (Date.now() > mDeadline) return null;
+    await sleep(step);
+  }
   const deadline = Date.now() + (d.announceTimeoutMs ?? 120_000);
   let next: WorkerStatus | null = null;
   while (!next) {
@@ -61,6 +86,16 @@ export async function followReroute(old: WorkerStatus, d: FollowDeps): Promise<n
   while (!isTerminal(cur.state)) {
     await sleep(step);
     cur = loadStatus(d.logDir, next.id) ?? cur;
+  }
+  // a follower's "killed" is the hand-over, not an end: reconcile (pid gone) would rewrite it to "lost" and drop
+  // rerouted/fallThroughTo — the link the caller's result carries the original id through. Re-save it as terminal
+  // when something rewrote it meanwhile (the follower process stays alive while following, so this is the last word).
+  const now = loadStatus(d.logDir, old.id);
+  if (now && now.state === "lost" && now.rerouted) {
+    now.state = "killed";
+    now.rc = 143;
+    now.last = `rerouted: ${now.rerouted}`;
+    saveStatus(d.logDir, now, new Date(), true);
   }
   const rc = cur.rc ?? (cur.state === "done" ? 0 : 1);
   const file = rerouteOutPath(d.logDir, old.id);
@@ -84,18 +119,28 @@ export function guardQueuedRun(logDir: string, wid: string, deps: { exit?: (rc: 
   let aborted = false;
   const exit = deps.exit ?? ((rc: number) => process.exit(rc));
   const onTerm = (): void => {
-    const st = loadStatus(logDir, wid);
-    if (!st?.rerouted) {
-      exit(143);
-      return;
-    }
-    aborted = true;
-    // the kill waits for a terminal status; writing it here keeps the kill from escalating to SIGKILL
-    st.state = "killed";
-    st.rc = 143;
-    st.last = `rerouted: ${st.rerouted}`;
-    saveStatus(logDir, st);
-    void followReroute(st, { logDir }).then((rc) => exit(rc ?? 143));
+    // the stopper (rerouteWorker in another process) writes `rerouted` before it signals; the signal can win the
+    // race, so wait for the marker a beat — without it this is a plain kill and ends as always
+    void (async () => {
+      let st = loadStatus(logDir, wid);
+      const mDeadline = Date.now() + HANDOVER_MARKER_MS;
+      while (!st?.rerouted && Date.now() < mDeadline) {
+        await sleep(50);
+        st = loadStatus(logDir, wid);
+      }
+      if (!st?.rerouted) {
+        exit(143);
+        return;
+      }
+      aborted = true;
+      // the kill waits for a terminal status; writing it here keeps the kill from escalating to SIGKILL
+      st.state = "killed";
+      st.rc = 143;
+      st.last = `rerouted: ${st.rerouted}`;
+      saveStatus(logDir, st);
+      const rc = await followReroute(st, { logDir });
+      exit(rc ?? 143);
+    })().catch(() => exit(143));
   };
   process.on("SIGTERM", onTerm);
   return { dispose: () => process.off("SIGTERM", onTerm), aborted: () => aborted };
