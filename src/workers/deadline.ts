@@ -6,6 +6,7 @@
  */
 
 import { LOW_POWER_SAMPLE_SEC, lowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
+import { frozenSince } from "./freeze.js";
 import type { WorkerStatus } from "./status.js";
 
 export interface RunLimit {
@@ -129,7 +130,9 @@ export function armDeadline(
   blocked: () => number = () => 0,
   now: () => number = Date.now,
   /** Low Power Mode stretch (minutes-based limits only); the live pmset/config readers by default. */
-  lp: LowPowerOpts = {}
+  lp: LowPowerOpts = {},
+  /** The run's worker id: while the active freeze marker names it, a minutes-based limit waits instead of firing inside frozen time. */
+  workerId = ""
 ): () => void {
   let kill: NodeJS.Timeout | null = null;
   let t: NodeJS.Timeout;
@@ -137,9 +140,17 @@ export function armDeadline(
   /** Last stretch sample: wall ms and whether low power was on then. */
   let lastAt = now();
   let lastActive = false;
+  // a minutes-based limit counts active time: the deadline waits out a freeze (blocked() carries frozenMsFor); an absolute --deadline is wall-clock and stays fixed
+  const waitThroughFreeze = (): boolean => !cur.absolute && frozenSince(workerId) !== undefined;
   const left = (): number => cur.deadlineAt + (cur.absolute ? 0 : blocked()) - now();
   const arm = (): void => {
     clearTimeout(t);
+    if (waitThroughFreeze()) {
+      // the worker is in the active freeze marker: a timer would fire at a wall-clock moment inside frozen time. Re-check on the sample tick; frozen minutes never count against the limit.
+      t = setTimeout(arm, LOW_POWER_SAMPLE_SEC * 1000);
+      t.unref();
+      return;
+    }
     t = setTimeout(fire, Math.max(0, left()));
   };
   const fire = (): void => {

@@ -159,6 +159,9 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
         () => fireDeadline(logDir, status, ledger, a.limit!),
         undefined,
         () => blockedMsOf(logDir, wid),
+        Date.now,
+        {},
+        wid,
       )
     : null;
   const stopTrack = trackBlocked(logDir, status, a.limit);
