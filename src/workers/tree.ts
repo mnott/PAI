@@ -17,7 +17,9 @@
  * and never get a status file — a parent without a status is not capped.
  */
 
+import { readFileSync } from "node:fs";
 import type { WorkersTreeConfig } from "./config.js";
+import { ID_FILE_ENV, RERUN_OF_ENV } from "./reroute.js";
 import { currentWorkerId } from "./worker-id.js";
 import { isLive, loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
 
@@ -95,9 +97,28 @@ export function assertChildAllowed(
 /**
  * The parent a launch should record: an explicit one (chain stage) wins, else
  * the worker this process runs inside. Returns null for top-level runs.
+ *
+ * A `--detach` start (and a reroute restart) spawns its `pai worker run` child
+ * detached in its own session, so that child does NOT inherit PAI_WORKER_ID —
+ * without a fallback its first status write (queued included) would carry
+ * parent=null and the reaper could never see who started it. Two inherited env
+ * facts recover the launcher: `PAI_WORKER_ID_FILE` names the file only a
+ * detached start sets (read it back: the worker id it announces is written
+ * there), and `RERUN_OF_ENV` names the run a restart continues (its parent —
+ * rerunFromEnv deletes its own copy, but this runs before that).
  */
 export function launchParent(explicit: string | undefined, env: NodeJS.ProcessEnv = process.env): string | null {
-  return explicit ?? parentFromEnv(env);
+  const direct = explicit ?? parentFromEnv(env);
+  if (direct) return direct;
+  if (env[ID_FILE_ENV]) {
+    try {
+      const id = readFileSync(env[ID_FILE_ENV]!, "utf8").trim();
+      if (id) return id;
+    } catch {
+      /* no id announced yet: fall through */
+    }
+  }
+  return env[RERUN_OF_ENV] ?? null;
 }
 
 /** Does a status file exist for `id` (i.e. is it a worker rather than a chain)? */
