@@ -196,7 +196,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // Registry scan scheduler only needs the registry DB — safe to start now.
   startRegistryScanScheduler();
-  startOrphanCheck(() => registryBackend.countOrphanedChunks());
+  startOrphanCheck(() => registryBackend.countOrphanedChunks(true));
 
   // Worker supervision reads the workers ledger off disk and pushes events to
   // owning sessions — no backend dependency, so it starts with the IPC server.

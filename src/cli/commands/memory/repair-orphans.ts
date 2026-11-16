@@ -18,6 +18,9 @@ export async function memoryRepairOrphansCmd(opts: { execute: boolean; deleteTwi
   } else {
     console.log(`  ${bold(r.dryRun ? "Would re-point" : "Re-pointed")}   ${r.repointedChunks} chunks, ${r.repointedFiles} files`);
     console.log(`  ${bold(r.dryRun ? "Would drop" : "Dropped")}        ${r.droppedDuplicateChunks} vectorless duplicate chunks, ${r.droppedDuplicateFiles} files`);
+    if (r.orphanChunks > 0 && r.mappedIds === 0) {
+      console.log(warn("\n  Nothing to re-point: these orphans belong to no current project. Use --delete (duplicates of current chunks) or --delete --include-stale (also old versions)."));
+    }
   }
   if (r.dryRun) {
     console.log(dim("\n  Dry run: nothing changed. Add --execute to apply."));

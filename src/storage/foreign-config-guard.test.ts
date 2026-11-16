@@ -114,3 +114,44 @@ describe("foreign config on the live database", () => {
     expect(foreignConfigsOnLiveDb(cache).map((f) => f.path)).toEqual([join(cache, "eval", "live.yaml")]);
   });
 });
+
+describe("countOrphanedChunks actionable probe", () => {
+  const backend = (rows: unknown[]) => {
+    const query = vi.fn(async (sql: string) => ({ rows: /AS orphaned/.test(sql) ? rows : [] }));
+    return Object.assign(Object.create(PostgresRegistryBackend.prototype), {
+      pool: { query },
+      backupTables: async () => ["projects_backup_1"],
+    }) as PostgresRegistryBackend;
+  };
+
+  it("reports actionable=false when no backup maps and no hash twin exists", async () => {
+    expect(await backend([{ orphaned: "6097", total: "100000" }]).countOrphanedChunks(true)).toEqual({
+      orphaned: 6097, total: 100000, actionable: false,
+    });
+  });
+
+  it("reports actionable=true when a backup table maps an orphan id to a current project", async () => {
+    const query = vi.fn(async (sql: string) => ({ rows: /AS orphaned/.test(sql) ? [{ orphaned: "10", total: "100" }] : [{ "?column?": 1 }] }));
+    const reg = Object.assign(Object.create(PostgresRegistryBackend.prototype), {
+      pool: { query },
+      backupTables: async () => ["projects_backup_1"],
+    }) as PostgresRegistryBackend;
+    expect((await reg.countOrphanedChunks(true)).actionable).toBe(true);
+  });
+
+  it("omits actionable when the probe fails, and skips the probe without orphans", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (/AS orphaned/.test(sql)) return { rows: [{ orphaned: "5", total: "10" }] };
+      throw new Error("boom");
+    });
+    const reg = Object.assign(Object.create(PostgresRegistryBackend.prototype), {
+      pool: { query },
+      backupTables: async () => ["projects_backup_1"],
+    }) as PostgresRegistryBackend;
+    expect(await reg.countOrphanedChunks(true)).toEqual({ orphaned: 5, total: 10, actionable: undefined });
+    const clean = vi.fn(async () => ({ rows: [{ orphaned: "0", total: "10" }] }));
+    const quiet = Object.assign(Object.create(PostgresRegistryBackend.prototype), { pool: { query: clean }, backupTables: async () => [] }) as PostgresRegistryBackend;
+    expect(await quiet.countOrphanedChunks(true)).toEqual({ orphaned: 0, total: 10, actionable: undefined });
+    expect(clean).toHaveBeenCalledTimes(1);
+  });
+});

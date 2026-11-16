@@ -61,6 +61,19 @@ export const CHUNK_HASH_TWIN =
 export const FILE_HASH_TWIN = `hash IN (SELECT hash FROM pai_files WHERE project_id IN (${CURRENT}))`;
 
 /**
+ * Does any orphan chunk have a hash twin under a current project? One bounded
+ * semi-join (LIMIT 1, idx_pc_hash_embedded), safe to run where a full
+ * countHashTwins over millions of orphans is not.
+ */
+export async function anyHashTwin(pool: Querier): Promise<boolean> {
+  const r = await pool.query(
+    `SELECT 1 FROM (SELECT DISTINCT hash FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)) o
+      WHERE EXISTS (SELECT 1 FROM pai_chunks t WHERE t.hash = o.hash AND t.embedding IS NOT NULL AND t.project_id IN (${CURRENT})) LIMIT 1`
+  );
+  return r.rows.length > 0;
+}
+
+/**
  * Per old id, how many chunks/files have a hash twin under a current project.
  * One hash join per table instead of a correlated subquery per row.
  */
