@@ -8,6 +8,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { activeNow } from "./freeze.js";
 
 export const PROBE_DEFAULT_SECS = 100;
 export const PROBE_CAP_SECS = 590;
@@ -22,7 +23,7 @@ export interface ProbeDeps {
 }
 
 export const realProbeDeps: ProbeDeps = {
-  now: () => Date.now(),
+  now: activeNow,
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   out: (l) => console.log(l),
   async get(url, timeoutMs) {

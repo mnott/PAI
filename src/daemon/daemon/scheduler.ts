@@ -10,6 +10,7 @@ import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers
 import { workersLogDir } from "../../workers/paths.js";
 import { closeEndedPanes, loadRegistry, paneMayClose, workerEnded } from "../../workers/pane.js";
 import { isPaneRunId } from "../../workers/pane-run.js";
+import { isFrozen } from "../../workers/freeze.js";
 import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from "../../workers/reaper.js";
 import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
@@ -685,6 +686,13 @@ export function startWorkerSupervisor(): void {
   // every running process owns a live pane in its starting session's tab: judged every 30 s
   const paneAudit = setInterval(() => {
     const dir = workersLogDir(readWorkersSection().workers);
+    // `pai freeze --for`: thaw when the time is up; while frozen nothing below judges the (healthy, stopped) workers
+    void timedTask("freeze-autothaw", async () => {
+      const { autoThawDue, realFreezeDeps } = await import("../../workers/freeze.js");
+      const r = autoThawDue(dir, await realFreezeDeps());
+      if (r) for (const l of r.lines) process.stderr.write(`[pai-daemon] Freeze: ${l}\n`);
+    }).catch(() => undefined);
+    if (isFrozen()) return;
     void timedTask("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
     void timedTask("pane-close-finished", () => closeFinishedPanes(dir)).catch(() => undefined);
     // workers paused by a --now run that is gone (killed, crashed) go on again
@@ -694,6 +702,7 @@ export function startWorkerSupervisor(): void {
 
   // the local model must not idle while its workers build: sampled every 30 s, one nudge per backoff
   const localIdle = setInterval(() => {
+    if (isFrozen()) return;
     const w = readWorkersSection().workers;
     void timedTask("local-idle", () => localIdleTick(workersLogDir(w), w, runMessenger(workersLogDir(w)))).catch(() => undefined);
   }, 30_000);
@@ -701,6 +710,7 @@ export function startWorkerSupervisor(): void {
 
   // a build job whose output stands still holds its key: flagged and its owner told, never killed
   const buildStall = setInterval(() => {
+    if (isFrozen()) return;
     const dir = workersLogDir(readWorkersSection().workers);
     const msg = runMessenger(dir);
     void timedTask("build-stall", () =>
@@ -714,6 +724,7 @@ export function startWorkerSupervisor(): void {
 
   let ticking = false; // a slow tick must not overlap the next one
   const tick = () => {
+    if (isFrozen()) return; // frozen workers are healthy: no stall, lost or escalation verdicts
     if (!ticking) {
       ticking = true;
       // detached plan/queue runs that died without a done marker: tell their session once
@@ -746,7 +757,7 @@ export function startWorkerSupervisor(): void {
 
   let reaping = false;
   const reapTimer = setInterval(() => {
-    if (reaping) return;
+    if (reaping || isFrozen()) return;
     reaping = true;
     timedTask("pane-reaper", () => reapEndedPanesOnce(workersLogDir(readWorkersSection().workers)))
       .then((closed) => {
@@ -763,7 +774,7 @@ export function startWorkerSupervisor(): void {
   const reaperDeps = realReaperDeps((l) => process.stderr.write(`[pai-daemon] ${l}\n`));
   let orphanReaping = false;
   const orphanTimer = setInterval(() => {
-    if (orphanReaping) return;
+    if (orphanReaping || isFrozen()) return;
     const { workers } = readWorkersSection();
     if (!workers.reaper) return;
     orphanReaping = true;

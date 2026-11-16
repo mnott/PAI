@@ -448,6 +448,32 @@ pai worker pause w-20260101-abc
 
 See also: `pai worker resume`, `pai worker priority`
 
+### pai worker freeze
+
+Alias of `pai freeze` (--all) and `pai thaw` (--resume)
+
+```
+pai worker freeze [options]
+```
+
+`pai worker freeze --all` is `pai freeze`; `--resume` is `pai thaw`; `--status` shows what is frozen.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--all` | flag | — | Freeze every running worker and the local model server |
+| `--resume` | flag | — | Thaw (same as `pai thaw`) |
+| `--status` | flag | — | Show what is frozen |
+| `--for DURATION` | string | — | Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works |
+| `--workers-only` | flag | — | Leave the local model server running (freeze the worker trees only) |
+| `--only IDS` | string | — | Freeze only these worker ids (comma list) |
+
+```sh
+pai worker freeze --all
+pai worker freeze --resume
+```
+
+See also: `pai freeze`, `pai thaw`
+
 ### pai worker handoff
 
 From inside a worker: pass a question or result to its parent
@@ -1930,6 +1956,7 @@ See also: `pai worker providers`
 | `pai worker goal` | Leave a goal note on a running worker |
 | `pai worker reroute` | Move a queued or running worker to another provider |
 | `pai worker pause` | Park a worker's next engine request until resume |
+| `pai worker freeze` | Alias of `pai freeze` (--all) and `pai thaw` (--resume) |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
 | `pai worker help` | From inside a worker: ask a stronger model to do one sub-task (budgeted) |
 | `pai worker merge` | Merge a worker's branch into your checkout |
@@ -1999,7 +2026,7 @@ use `--cloud` or `--provider`.
 
 ## See also
 
-[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
+[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <command>` to read any of these in the terminal.
 
