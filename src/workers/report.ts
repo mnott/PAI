@@ -24,6 +24,14 @@ export const OPERATOR_MARK = "[operator]";
 const SHORT_CONTRACT_CLASSES = new Set(["spotcheck", "simple"]);
 
 /**
+ * Classes that are L1 planners by role even without the `--orchestrate` flag: an L0 starts
+ * them with `pai worker run --class orchestrate` (no flag, so the L1 may still take over when
+ * its L2 fails), and the implementation-worker opening then steers them to build in place on
+ * their own cloud model instead of cutting packages for L2 implementers (2026-11-16 eval night).
+ */
+const PLANNER_CLASSES = new Set(["orchestrate", "plan"]);
+
+/**
  * The AG2 report block appended to a contract when format is "ag2" — field
  * set matches `aibroker agentish check`'s real R schema (verified 2026-09-20:
  * i/r/t/c are required, not optional as an early draft of this contract had
@@ -139,15 +147,34 @@ function shortContractPrompt(format: "ag2" | "json", scratch?: string): string {
   return lines.join("\n");
 }
 
-/** Every other class (and no class): the full worker/orchestrator contract. */
-function fullContractPrompt(format: "ag2" | "json", scratch?: string): string {
-  const lines = [
+/**
+ * The opening block of the full contract: "worker" (the default) is the implementation-worker
+ * framing; "planner" replaces it for L1 classes (`orchestrate`/`plan`, with or without the
+ * `--orchestrate` flag) — the delegating framing, so an L1 cuts packages for L2 implementers
+ * instead of implementing on its own cloud model.
+ */
+function contractOpening(role: "worker" | "planner"): string[] {
+  if (role === "planner") {
+    return [
+      "You are the L1 planner, run non-interactively by the L0 session. You plan, delegate and review; the L2 implementers write the code.",
+      "Cut the job into self-contained work packages (one spec file each, the exact files, the proof required) and start one L2 implementer per package with --class implement; the mode routes them (local first in balanced and budget). Related small edits go into one package, not one child per line.",
+      "Review each child's diff and test output only, then merge it with `pai worker merge <id>`. If a child fails, send ONE sharper retry spec; if that fails too, take over and do that package yourself. Doing a package yourself before an L2 has tried it is wrong.",
+    ];
+  }
+  return [
     "You are a headless implementation worker, run non-interactively by an orchestrating session.",
     "You are the worker: this task is yours to finish in this process. Never hand your whole task to a",
     "single child worker and step back — that is delegation, not work. Child workers are for two things",
     "only: (1) PARALLELISING independent parts of your task, each part a self-contained spec; (2) CHEAPER",
     "bounded sub-tasks — probes, renders, test runs, lookups — run one tier down with --class spotcheck or",
     "--class simple. Never add --provider to a child unless your brief names one: routing picks it.",
+  ];
+}
+
+/** Every other class (and no class): the full worker/orchestrator contract. */
+function fullContractPrompt(format: "ag2" | "json", scratch?: string, role: "worker" | "planner" = "worker"): string {
+  const lines = [
+    ...contractOpening(role),
     "You own your children's results: start all of them first, then wait for each with one long blocking call",
     "(`pai worker wait-on <pid> --max 590`, repeated only on exit 3) and no checks in between; read",
     "their result, verify it, and fold it into your own report. When your turn ends this run ends and any",
@@ -228,9 +255,15 @@ export function workerContractPrompt(
   noteToken?: string,
   scratch?: string
 ): string {
-  let base = SHORT_CONTRACT_CLASSES.has(cls ?? "") ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch);
+  // planner classes get the L1 opening even without the flag; with it they also get ORCHESTRATOR_CONTRACT below.
+  const short = SHORT_CONTRACT_CLASSES.has(cls ?? "");
+  const planner = !short && (PLANNER_CLASSES.has(cls ?? "") || Boolean(orchestrate));
+  let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
-  return orchestrate ? `${base}\n${ORCHESTRATOR_CONTRACT}` : base;
+  if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;
+  // a planner without the flag still gets the exact start/wait/merge commands.
+  if (planner && !orchestrate) base += `\n${ORCHESTRATOR_START_BLOCK}`;
+  return base;
 }
 
 /** The contract sentence that names the per-run token authenticating `pai worker goal` notes. */
