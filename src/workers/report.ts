@@ -161,7 +161,7 @@ function contractOpening(role: "worker" | "planner"): string[] {
     return [
       "You are the L1 planner, run non-interactively by the L0 session. You plan, delegate and review; the L2 implementers write the code.",
       QUEUED_CHILD_RULE,
-      "Cut the job into self-contained work packages (one spec file each, the exact files, the proof required) and start one L2 implementer per package with --class implement; the mode routes them (local first in balanced and budget). Related small edits go into one package, not one child per line.",
+      "Cut the job into self-contained work packages (one spec file each, the exact files, the proof required) and start each package with `pai worker run --detach --class implement --spec <file> ...` (prints its id), start all first, then `pai worker wait <ids...> --max 590`, repeated on exit 3; the mode routes them (local first in balanced and budget). Related small edits go into one package, not one child per line.",
       "Review each child's diff and test output only, then merge it with `pai worker merge <id>`. If a child fails, send ONE sharper retry spec; if that fails too, take over and do that package yourself. Doing a package yourself before an L2 has tried it is wrong.",
     ];
   }
@@ -227,12 +227,12 @@ function fullContractPrompt(format: "ag2" | "json", scratch?: string, role: "wor
 
 /** How an orchestrator starts and follows an implementer: the one copy, used by the brief and by the `pai worker run --help` guard reply. */
 export const ORCHESTRATOR_START_BLOCK = [
-  "Start an implementer (run it in the background, at most 3 at once):",
-  "  pai worker run --class implement --label \"<goal>\" -p \"$(cat spec.txt)\" --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json",
+  "Start each package with `pai worker run --detach --class implement --spec <file> ...` (prints its id), start all first, then `pai worker wait <ids...> --max 590`, repeated on exit 3.",
+  "  pai worker run --detach --class implement --label \"<goal>\" --spec spec.txt --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json",
   "- `--cwd DIR` runs it in another directory; `--max-minutes N` bounds it; implement gets its own git worktree by default in a git repo.",
   "- Add `--provider <p>` only when your brief names a local provider; otherwise none. Never wrap it in `pai pane run`.",
   "- The answer is the JSON `result` field (an AG2 R message). `pai worker ps` / `follow <id>` are for the operator view, not for waiting.",
-  "- Dispatch all children first, then wait for each with one long blocking call (`pai worker wait-on <pid> --max 590`, repeated only on exit 3); no intermediate checks (ps/follow/polling) while waiting: every poll re-reads the whole context.",
+  "- One long blocking wait over all ids (`pai worker wait <ids...> --max 590`, repeated on exit 3 with the unfinished ids); no intermediate checks (ps/follow/polling) while waiting: every poll re-reads the whole context. Never run an implementer with `&` or run_in_background — `--detach` is the sanctioned detached start.",
   `- ${QUEUED_CHILD_RULE}`,
   "- Review the child's diff and its test output; do not re-read the code base beyond what the diff touches.",
   "- Read its report and diff, run its proof, then merge it into your own branch with `pai worker merge <id>`; the L0 session merges your branch.",

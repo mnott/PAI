@@ -28,6 +28,22 @@ describe("L1 planner lock", () => {
     expect(run("Bash", { command: "printf a > 'NOTES.txt'" }, base)?.action).toBe("deny");
     expect(run("Bash", { command: "pai worker run --class implement -p \"use > to redirect\" --label x" }, base)).toBeNull();
   });
+  it("resolves cd and variables: scratch writes pass, worktree writes deny", () => {
+    const s = "/var/folders/x/T/s";
+    const cmd1 = `cd "$TMPDIR/s"; for n in 881 882 883; do pai worker run --class implement --label "fix $n" --spec $TMPDIR/s/$n.txt --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json > $n.out 2>&1 & echo $! > $n.pid; done; sleep 10; tail -n2 881.out`;
+    const cmd2 = `cd "$TMPDIR/s"; for n in 881 882 883; do nohup sh go.sh $n > /dev/null 2>&1 & echo $! > $n.pid; done`;
+    expect(run("Bash", { command: cmd1 }, base)?.action).not.toBe("deny");
+    expect(run("Bash", { command: cmd2 }, base)?.action).not.toBe("deny");
+    // a variable holding $TMPDIR is tracked like cd (S=$TMPDIR, then > $S/a.out)
+    const varCmd = `S=$TMPDIR; pai worker run --class implement --label x --spec "$S/a.txt" --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json > $S/a.out 2>&1 & echo $! > $S/a.pid`;
+    expect(run("Bash", { command: varCmd }, base)?.action).not.toBe("deny");
+    // a cd into the worktree still locks its writes; a relative cd resolves against it
+    const g = { planner: { childFailed: () => false, worktreeRoot: () => "/w/tree" } };
+    const w = (command: string) => decidePreGates({ tool: "Bash", input: { command }, cwd: "/w/tree", env: base }, g)?.action;
+    expect(w("cd src && echo x > a.ts")).toBe("deny");
+    expect(w("echo x > ../outside.txt")).not.toBe("deny");
+    expect(w(`cd ${s} && echo x > out.json`)).not.toBe("deny");
+  });
   it("lifts after a failed child", () => {
     expect(run("Edit", { file_path: "a.txt" }, base, true)).toBeNull();
     expect(run("Bash", { command: "echo x >> NOTES.txt" }, base, true)).toBeNull();

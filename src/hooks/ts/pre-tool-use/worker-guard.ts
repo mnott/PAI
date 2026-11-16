@@ -208,7 +208,7 @@ async function main(): Promise<void> {
 
   markToolWaitOf(input);
   const cwd = input.cwd || process.cwd();
-  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true, planner: { childFailed: () => failedChildOf(process.env) }, ownChildState: (x) => ownChildState(process.env, x) } });
+  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true, planner: { childFailed: () => failedChildOf(process.env), worktreeRoot: () => git(cwd, ["rev-parse", "--show-toplevel"]) }, ownChildState: (x) => ownChildState(process.env, x) } });
   if (orch.action === "deny") {
     process.stdout.write(renderDecision({ decision: "deny", reason: orch.message! }) + "\n");
     return;
