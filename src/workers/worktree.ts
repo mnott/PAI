@@ -28,6 +28,7 @@ import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
 import { acquireTestSlotSync, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
+import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -1418,7 +1419,7 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
 export function mergeWorker(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; targetToplevel?: string | null } = {}
+  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; cliRoot?: string | null; targetToplevel?: string | null } = {}
 ): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
@@ -1593,6 +1594,9 @@ const withBuild = (text: string, build: string | null): string => (build ? `${te
 export interface BuildResult { ok: boolean; ms: number; tail: string }
 /** Runs `npm run build` in a directory; injectable for tests. */
 export type BuildRunner = (cwd: string) => BuildResult;
+/** Waits for the daemon to come up on the new build and forces a restart when the watcher misses it; injectable for tests. */
+export type RestartVerifier = () => { restarted: boolean; forced: boolean; detail: string };
+const defaultRestartVerify: RestartVerifier = () => waitForDaemonRestart();
 
 /** Environment keys a build needs; everything else (tokens, API keys) stays out. */
 const BUILD_ENV_KEYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "NODE_ENV", "NODE_OPTIONS", "TERM"];
@@ -1619,13 +1623,15 @@ function runningCliRoot(): string | null {
 /**
  * A merge into the repo the running `pai` comes from leaves dist/ stale: the installed CLI, daemon and router keep
  * running old code. Rebuild it. Returns the line to print, or null when no build applies (other repo, opt-out).
- * A failed build never reverts the merge.
+ * A failed build never reverts the merge. After a successful build the restart is VERIFIED, not promised: the
+ * daemon's pid/start time must change within the window (its own watcher), or this command restarts it itself —
+ * tonight (2026-11-16) the watcher missed a build and the line still claimed a self-restart.
  */
 function rebuildDist(
   logDir: string,
   id: string,
   target: string,
-  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null }
+  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; restartVerify?: RestartVerifier }
 ): string | null {
   if (opts.rebuild === false || loadConfig().workers?.merge?.rebuild === false) return null;
   let same = false;
@@ -1643,7 +1649,18 @@ function rebuildDist(
     res = { ok: false, ms: 0, tail: (e as Error).message };
   }
   appendLedger(ledgerPath(logDir), "WORKER-MERGE-BUILD", { id, ok: String(res.ok), ms: res.ms, tail: res.tail.replace(/\s+/g, " ").slice(-300) });
-  if (res.ok) return "build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)";
+  if (res.ok) {
+    let line = "build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)";
+    try {
+      const v = (opts.restartVerify ?? defaultRestartVerify)();
+      line = v.restarted
+        ? `build: ok (dist rebuilt; daemon restarted on the new build${v.forced ? " — its own watcher missed it, this merge restarted it" : ""}: ${v.detail}; the router swaps gaplessly within ~30 s)`
+        : `build: ok (dist rebuilt; WARNING: the daemon was NOT restarted: ${v.detail} — run \`pai daemon restart\`; the router swaps gaplessly within ~30 s)`;
+    } catch (e) {
+      line = `build: ok (dist rebuilt; daemon restart not verified: ${(e as Error).message} — run \`pai daemon restart\`)`;
+    }
+    return line;
+  }
   const last = res.tail.split(/\s*\|\s*|\n/).filter(Boolean).pop() ?? "no output";
   return `build: FAILED — dist unchanged: ${last}`;
 }
