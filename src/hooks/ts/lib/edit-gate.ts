@@ -268,10 +268,10 @@ export function decidePlannerLockBash(rawCommand: string, tmpdir?: string): Edit
   for (const seg of command.split(/&&|\|\||;|\n|\|(?!\|)/)) {
     const words = shellWords(seg.trim());
     if (!words.length || words[0] === "git") continue;
-    // redirects: look at the segment with quoted strings blanked
-    const bare = seg.replace(/"[^"]*"|'[^']*'/g, '""');
-    for (const m of bare.matchAll(/(?<![<>&])>>?\s*(&?[^\s;&|<>]*)/g)) {
-      const t = m[1];
+    // redirects: quoted strings are skipped unless they are the redirect target itself
+    for (const m of seg.matchAll(/"[^"]*"|'[^']*'|(?<![<>&])>>?\s*("[^"]*"|'[^']*'|&?[^\s;&|<>]*)/g)) {
+      if (m[1] === undefined) continue;
+      const t = m[1].replace(/^(["'])(.*)\1$/, "$2");
       if (!t || t.startsWith("&") || t.startsWith("/dev/") || plannerScratch(t, tmpdir)) continue;
       return { decision: "block", reason: PLANNER_LOCK_REASON };
     }
