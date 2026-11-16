@@ -41,6 +41,7 @@ import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistrySc
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
+import { startLoopLag } from "../event-loop-lag.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
@@ -159,6 +160,11 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   );
 
   logWorkersConfigShadowsOnce();
+
+  // The event-loop lag sampler runs from the first line of boot: it is what
+  // tells a blocked loop (IPC times out, "daemon down") apart from a merely
+  // busy one, and slow-task.ts attributes per-task blocks to it.
+  startLoopLag();
 
   // Lower scheduling priority so the daemon yields CPU to interactive sessions
   try { setPriority(process.pid, 10); } catch { /* non-fatal */ }
