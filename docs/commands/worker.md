@@ -467,6 +467,8 @@ pai worker freeze [options]
 | `--workers-only` | flag | — | Leave the local model server running (freeze the worker trees only) |
 | `--only IDS` | string | — | Freeze only these worker ids (comma list); implies --workers-only — the shared model server keeps running for every other worker (add --models to freeze it too) |
 | `--models` | flag | — | With --only: also freeze the local model server(s) (off by default; a plain `pai freeze` always takes them) |
+| `--except IDS` | string | — | Freeze everything except these worker ids (comma list) and their children |
+| `--except-session NAME` | string | — | Freeze everything except this session's workers (and their children) |
 
 ```sh
 pai worker freeze --all

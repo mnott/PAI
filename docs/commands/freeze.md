@@ -8,7 +8,7 @@ Stop all running workers and the local model server to free the CPU/GPU now
 pai freeze [options]
 ```
 
-SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s) — one entry per server, found by its listening port and named by the model it serves there. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker.
+SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s) — one entry per server, found by its listening port and named by the model it serves there. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -16,6 +16,8 @@ SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud:
 | `--workers-only` | flag | — | Leave the local model server running (freeze the worker trees only) |
 | `--only IDS` | string | — | Freeze only these worker ids (comma list); implies --workers-only — the shared model server keeps running for every other worker (add --models to freeze it too) |
 | `--models` | flag | — | With --only: also freeze the local model server(s) (off by default; a plain `pai freeze` always takes them) |
+| `--except IDS` | string | — | Freeze everything except these worker ids (comma list) and their children |
+| `--except-session NAME` | string | — | Freeze everything except this session's workers (and their children) |
 | `--status` | flag | — | Show since when, by whom and what is frozen |
 | `--resume` | flag | — | Same as `pai thaw` |
 
@@ -24,7 +26,9 @@ pai freeze
 pai freeze --for 30m
 pai freeze --only w-1234
 pai freeze --status
+pai freeze --except-session CaseLeaf
 pai thaw
+pai thaw --session CaseLeaf
 ```
 
 See also: `pai thaw`, `pai worker ps`
