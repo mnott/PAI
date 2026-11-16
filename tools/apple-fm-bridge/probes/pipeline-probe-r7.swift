@@ -545,7 +545,7 @@ struct FC { var sec: Sec; var fact: FactRec; var front: String; var back: String
           for it in v.items {
             let srcs = Set(it.sources.filter { $0 >= 1 && $0 <= flat.count }.map { flat[$0 - 1].sec })
             if srcs.isEmpty { bad += 1 }
-            var (txt, ch) = stripDebris(it.text)   // "(1, 3, 4)" stripped; formula-debris bullets dropped entirely
+            let (txt, ch) = stripDebris(it.text)   // "(1, 3, 4)" stripped; formula-debris bullets dropped entirely
             if ch { debris += 1 }
             if txt.isEmpty { formulaDrop += 1; continue }
             if has(rx(#"\bentweder\b[\s\S]*\bor\b"#), txt) || (has(rx(#"\bentweder\b"#), txt) && has(rx(#"\border\b"#), txt)) { eitherOder += 1; droppedSup += 1; items.append(Item(text: txt, secs: srcs, added: false, droppedWhy: "eitherOder")); continue }
