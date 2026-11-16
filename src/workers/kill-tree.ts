@@ -26,6 +26,7 @@ import {
 } from "./status.js";
 import { ledgerPath } from "./paths.js";
 import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
+import { resumePreempted } from "./preempt.js";
 
 export interface KillTreeDeps {
   signal: (pid: number, sig: NodeJS.Signals) => void;
@@ -346,6 +347,8 @@ async function killPooled(logDir: string, recorded: WorkerStatus, status: Worker
     }
   }
   if (!selfReported) markKilled(logDir, recorded, stop, how, `killed (${how})`);
+  // a killed --now run must not leave its victims paused: end their preemption pause now (the supervision sweep is the backstop)
+  try { resumePreempted(logDir, id); } catch { /* best effort */ }
   return `stopped pooled worker ${id} (${how})`;
 }
 
@@ -400,6 +403,8 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
     }
   }
   if (!selfReported) markKilled(logDir, recorded, stop, how, `killed by signal ${how}`);
+  // a killed --now run must not leave its victims paused: end their preemption pause now (the supervision sweep is the backstop; idempotent when the run resumed them itself)
+  try { resumePreempted(logDir, id); } catch { /* best effort */ }
   return `sent ${how} to worker ${id} (pid ${status.pid})`;
 }
 
