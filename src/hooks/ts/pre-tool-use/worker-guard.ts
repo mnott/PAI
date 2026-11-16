@@ -32,6 +32,7 @@ import { failLedgerOn } from "../lib/fail-ledger.js";
 import { evaluate } from "../../../guard/evaluate.js";
 import { loadBuildsConfig, runsDoor } from "../lib/build-gate.js";
 import { operatorTestsReason } from "../lib/worker-test-rules.js";
+import { workerTaskText } from "../lib/worker-task-text.js";
 import { loopDenyReason, actionKey, worktreeFingerprint } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
@@ -81,6 +82,16 @@ function buildContext(cwd: string): WorkerGuardContext {
     isIgnored: (p: string, dir: string) => git(dir, ["check-ignore", "-q", "--", p]) !== null,
     // tests: operator: a test runner or a door run in test mode (`sh tools/build.sh test …`)
     testCommand: (command: string) => operatorTestsReason(command, (ws, dir) => runsDoor(ws, dir, loadBuildsConfig(dir)), cwd),
+    // the worker's brief for the child-routing rule; an unreadable one denies --model/--provider (fails closed)
+    taskText: () => {
+      let logDir = "";
+      try {
+        logDir = process.env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
+      } catch {
+        return undefined; // unresolvable log dir: the rule denies an override
+      }
+      return workerTaskText(process.env, logDir);
+    },
   };
 }
 
