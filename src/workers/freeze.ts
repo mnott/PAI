@@ -12,7 +12,8 @@
  *
  * Order: workers deepest first (an L2 before its L1, so no L1 ever runs next to a
  * frozen child), then the model server. Thaw: model server, then workers deepest
- * first again (the L1 last).
+ * first again (the L1 last). `--only <id>` implies `--workers-only`: freezing one
+ * worker must never stall every other worker's shared model server.
  *
  * Never stopped: this process and its ancestors, the daemon, router, AIBroker,
  * pool hosts, docker. Only worker pids, their descendants and model servers.
@@ -150,8 +151,8 @@ const PROTECTED = /(pai-daemon|daemon\/index|aibroker|AIBroker|pool-host|pool_ho
 export interface FreezeDeps {
   procs: () => ProcRow[];
   statuses: (logDir: string) => WorkerStatus[];
-  /** Listening model-server pids, with a label. */
-  servers: () => { pid: number; label: string }[];
+  /** One entry per RUNNING model server: the listening pid and the name of what it serves (its port's /v1/models id). Async because naming a server is an HTTP probe. */
+  servers: () => Promise<{ pid: number; label: string }[]>;
   signal: (pid: number, sig: "SIGSTOP" | "SIGCONT") => void;
   owns: (s: WorkerStatus) => boolean;
   self: number;
@@ -161,16 +162,14 @@ export interface FreezeDeps {
 
 /** The live deps; async because the model-server lookup lives in the CLI module (loaded on demand). */
 export async function realFreezeDeps(): Promise<FreezeDeps> {
-  const { listServers } = await import("../cli/commands/worker-config.js");
-  const { readLocalConfig } = await import("./local-tiers.js");
-  const { workersYamlPath } = await import("./workers-config.js");
+  const { runningModelServers } = await import("./model-servers.js");
   return {
     procs: () => parseProcs(psTable("pid=,ppid=,lstart=,command=")),
     statuses: (d) => loadStatuses(d),
-    // the listening pid of every running local model, found the way `pai models` finds it
-    servers: () => {
+    // one entry per running model server: its listening pid, named by what it serves
+    servers: async () => {
       try {
-        return listServers(readLocalConfig(workersYamlPath())).map((s) => ({ pid: s.pid, label: `${s.provider ?? s.tier ?? "model"}${s.port ? `:${s.port}` : ""}` }));
+        return await runningModelServers();
       } catch {
         return [];
       }
@@ -246,16 +245,22 @@ export function planFreeze(statuses: WorkerStatus[], rows: ProcRow[], servers: {
       out.push({ pid: r.pid, lstart: r.lstart, kind: "worker", id: w.s.id, role, depth });
     }
   }
+  // one entry per running model server (its listening pid): the listener's whole tree,
+  // children before the listener itself, under the name of what it serves
   for (const m of servers) {
     const r = byPid.get(m.pid);
     if (!r || claimed.has(r.pid) || safe.has(r.pid)) continue;
-    claimed.add(r.pid);
-    out.push({ pid: r.pid, lstart: r.lstart, kind: "model", id: m.label, role: "model", depth: -1 });
+    const tree = [r, ...descendants(rows, r.pid)].reverse(); // children before the listener
+    for (const p of tree) {
+      if (claimed.has(p.pid) || protectedPid(p)) continue;
+      claimed.add(p.pid);
+      out.push({ pid: p.pid, lstart: p.lstart, kind: "model", id: m.label, role: "model", depth: -1 });
+    }
   }
   return out;
 }
 
-export function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[]): FreezeReport {
+export async function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[]): Promise<FreezeReport> {
   if (process.env.PAI_WORKER === "1") throw new Error("a worker cannot freeze its siblings (PAI_WORKER=1)");
   const existing = readFreeze();
   if (existing) throw new Error(`already frozen since ${new Date(existing.since).toISOString()} by ${existing.by}; \`pai thaw\` first`);
@@ -274,9 +279,9 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
   const marker: FreezeMarker = { since, by, ...(forMs ? { until: since + forMs } : {}), pids: stopped };
   writeJson(freezePath(), marker);
   const wanted = new Set<number>();
-  const stopPass = (): void => {
+  const stopPass = async (): Promise<void> => {
     const rows = d.procs();
-    const servers = d.servers();
+    const servers = await d.servers();
     const plan = planFreeze(live, rows, servers, d.self).filter((e) => !wanted.has(e.pid));
     // a worker's tree root first (no new children), model servers last
     for (const e of plan) {
@@ -285,8 +290,8 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
     }
     writeJson(freezePath(), marker);
   };
-  stopPass();
-  stopPass(); // stragglers forked between the scan and the stop
+  await stopPass();
+  await stopPass(); // stragglers forked between the scan and the stop
   appendLedger(ledgerPath(logDir), "WORKERS-FREEZE", { by, pids: stopped.length, ...(forMs ? { forMin: Math.round(forMs / 60_000) } : {}) });
   const lines: string[] = [];
   const ids = [...new Set(stopped.filter((e) => e.kind === "worker").map((e) => e.id))];
@@ -294,8 +299,11 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
     const mine = stopped.filter((e) => e.id === id && e.kind === "worker");
     lines.push(`frozen ${mine[0].role} ${id}: ${mine.length} processes`);
   }
-  for (const e of stopped.filter((x) => x.kind === "model")) lines.push(`frozen model ${e.id} (pid ${e.pid})`);
-  lines.push(`frozen ${ids.length} workers + ${stopped.filter((e) => e.kind === "model").length} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
+  // one line per server: the label is shared by its whole tree (the listener's pid leads)
+  const modelEntries = new Map<string, FrozenEntry[]>();
+  for (const e of stopped.filter((x) => x.kind === "model")) (modelEntries.get(e.id) ?? modelEntries.set(e.id, []).get(e.id)!).push(e);
+  for (const [label, mine] of modelEntries) lines.push(`frozen model ${label} (pid ${mine[mine.length - 1].pid}, ${mine.length} processes)`);
+  lines.push(`frozen ${ids.length} workers + ${modelEntries.size} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
   return { lines, total: stopped.length, marker };
 }
 
@@ -374,6 +382,8 @@ export function freezeStatusLines(now: number = Date.now()): string[] {
     const mine = m.pids.filter((e) => e.kind === "worker" && e.id === id);
     lines.push(`  ${mine[0].role} ${id}: ${mine.length} processes`);
   }
-  for (const e of m.pids.filter((x) => x.kind === "model")) lines.push(`  model ${e.id}: pid ${e.pid}`);
+  const modelEntries = new Map<string, FrozenEntry[]>();
+  for (const e of m.pids.filter((x) => x.kind === "model")) (modelEntries.get(e.id) ?? modelEntries.set(e.id, []).get(e.id)!).push(e);
+  for (const [label, mine] of modelEntries) lines.push(`  model ${label}: pid ${mine[mine.length - 1].pid}, ${mine.length} processes`);
   return lines;
 }

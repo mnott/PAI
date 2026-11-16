@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { activeNow, freezeAll, freezeHold, frozenMsFor, parseDuration, parseProcs, planFreeze, thawAll, type FreezeDeps, type ProcRow } from "./freeze.js";
+import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
 import type { WorkerStatus } from "./status.js";
 
 const row = (pid: number, ppid: number, command: string): ProcRow => ({ pid, ppid, lstart: `Mon Nov 16 10:00:0${pid % 10} 2026`, command });
@@ -47,6 +48,41 @@ describe("planFreeze", () => {
     const pids = p.map((e) => e.pid);
     for (const a of [100, 101, 102, 103]) expect(pids).not.toContain(a);
   });
+
+  it("freezes the model listener's whole tree once, children first", () => {
+    const rows = [...ROWS, row(301, 300, "strata-engine --serve"), row(302, 301, "engine-worker")];
+    const p = planFreeze([], rows, [{ pid: 300, label: "gyro-l:8035 serving gyro-l" }], 60);
+    expect(p.filter((e) => e.kind === "model").map((e) => `${e.id}:${e.pid}`)).toEqual(["gyro-l:8035 serving gyro-l:302", "gyro-l:8035 serving gyro-l:301", "gyro-l:8035 serving gyro-l:300"]);
+  });
+});
+
+describe("model server detection", () => {
+  // gyro-l and gyro-m share port 8035 (only one runs at a time); the engine child 36558 hangs under the listener 36270
+  const PORTS = modelServerPorts(
+    { "gyro-l": { baseUrl: "http://127.0.0.1:8035/v1" }, "gyro-m": { baseUrl: "http://127.0.0.1:8035/v1" }, cloud: { baseUrl: "https://api.example.com/v1" } },
+    [{ port: 8035, provider: "gyro-l" }],
+  );
+  const probe = (deps: Partial<ModelServersDeps>): Promise<{ pid: number; label: string }[]> =>
+    detectModelServers(PORTS, { listeners: () => [], servedIds: async () => null, ...deps });
+
+  it("shares one port between configs into one target; a remote provider is no target", () => {
+    expect(PORTS).toEqual([{ port: 8035, names: ["gyro-l", "gyro-m"] }]);
+  });
+  it("two configs on one port with one listener -> one entry, named by the served id", async () => {
+    const found = await probe({ listeners: (p) => (p === 8035 ? [36270] : []), servedIds: async () => ["gyro-l"] });
+    expect(found).toEqual([{ pid: 36270, label: "gyro-l:8035" }]);
+  });
+  it("the served id decides which shared-port config names the server", async () => {
+    const found = await probe({ listeners: () => [36270], servedIds: async () => ["gyro-m"] });
+    expect(found).toEqual([{ pid: 36270, label: "gyro-m:8035" }]);
+  });
+  it("a port that answers with an unknown id keeps a config name and shows what it serves", async () => {
+    const found = await probe({ listeners: () => [36270], servedIds: async () => ["Qwen3-4B"] });
+    expect(found).toEqual([{ pid: 36270, label: "gyro-l:8035 serving Qwen3-4B" }]);
+  });
+  it("a configured port with nothing serving is not running", async () => {
+    expect(await probe({ listeners: () => [1], servedIds: async (p) => (p === 8035 ? null : []) })).toEqual([]);
+  });
 });
 
 describe("freeze / thaw", () => {
@@ -54,10 +90,10 @@ describe("freeze / thaw", () => {
   let sent: string[];
   let now: number;
   let dead: Set<number>;
-  const deps = (): FreezeDeps => ({
+  const deps = (servers: { pid: number; label: string }[] = [{ pid: 300, label: "gyro" }]): FreezeDeps => ({
     procs: () => ROWS.filter((r) => !dead.has(r.pid)),
     statuses: () => [st("L1", 100), st("L2", 200)],
-    servers: () => [{ pid: 300, label: "gyro" }],
+    servers: async () => servers,
     signal: (pid, sig) => void sent.push(`${sig}:${pid}`),
     owns: () => true,
     self: 60,
@@ -78,24 +114,34 @@ describe("freeze / thaw", () => {
     else process.env.PAI_WORKER = saved.w;
   });
 
-  it("refuses inside a worker", () => {
+  it("refuses inside a worker", async () => {
     process.env.PAI_WORKER = "1";
-    expect(() => freezeAll("/x", "t", undefined, deps())).toThrow(/cannot freeze/);
+    await expect(freezeAll("/x", "t", undefined, deps())).rejects.toThrow(/cannot freeze/);
     expect(sent).toEqual([]);
   });
 
-  it("stops children before the L1 and the model server last; the gate holds while frozen", () => {
-    const r = freezeAll("/nonexistent-log", "t", 60_000, deps());
+  // what the CLI does for --only without --models: deps.servers is emptied (freezeRun)
+  it("--only plans no model entries (the shared server keeps running for the others)", async () => {
+    const d = deps();
+    d.servers = async () => [];
+    const r = await freezeAll("/nonexistent-log", "t", undefined, d, ["L2"]);
+    expect(r.marker.pids.every((e) => e.kind === "worker")).toBe(true);
+    expect(r.marker.pids.map((e) => e.id)).toEqual(["L2", "L2", "L2"]);
+    expect(sent.filter((s) => s.startsWith("SIGSTOP"))).toEqual(["SIGSTOP:200", "SIGSTOP:201", "SIGSTOP:202"]);
+  });
+
+  it("stops children before the L1 and the model server last; the gate holds while frozen", async () => {
+    const r = await freezeAll("/nonexistent-log", "t", 60_000, deps());
     expect(r.total).toBe(8);
     const stops = sent.filter((s) => s.startsWith("SIGSTOP")).map((s) => Number(s.split(":")[1]));
     expect(stops.indexOf(200)).toBeLessThan(stops.indexOf(100));
     expect(stops[stops.length - 1]).toBe(300);
     expect(freezeHold()).toMatch(/frozen/);
-    expect(() => freezeAll("/nonexistent-log", "t", undefined, deps())).toThrow(/already frozen/);
+    await expect(freezeAll("/nonexistent-log", "t", undefined, deps())).rejects.toThrow(/already frozen/);
   });
 
-  it("thaws the model first, the L1 last, tells every worker, skips the dead, and accounts the time", () => {
-    freezeAll("/nonexistent-log", "t", undefined, deps());
+  it("thaws the model first, the L1 last, tells every worker, skips the dead, and accounts the time", async () => {
+    await freezeAll("/nonexistent-log", "t", undefined, deps());
     sent.length = 0;
     now += 5 * 60_000;
     expect(frozenMsFor("L1", now)).toBe(5 * 60_000);
