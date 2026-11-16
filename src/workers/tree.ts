@@ -18,6 +18,7 @@
  */
 
 import type { WorkersTreeConfig } from "./config.js";
+import { RERUN_OF_ENV } from "./reroute.js";
 import { currentWorkerId } from "./worker-id.js";
 import { isLive, loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
 
@@ -95,9 +96,19 @@ export function assertChildAllowed(
 /**
  * The parent a launch should record: an explicit one (chain stage) wins, else
  * the worker this process runs inside. Returns null for top-level runs.
+ *
+ * A reroute restart is spawned detached from the daemon, so it does NOT inherit
+ * PAI_WORKER_ID: without a fallback its first status write (queued included)
+ * would carry parent=null and the reaper could never see who supervises it.
+ * RERUN_OF_ENV names the run it continues (rerunFromEnv deletes its own copy,
+ * but this runs before that): the restart inherits that run's parent.
  */
-export function launchParent(explicit: string | undefined, env: NodeJS.ProcessEnv = process.env): string | null {
-  return explicit ?? parentFromEnv(env);
+export function launchParent(explicit: string | undefined, env: NodeJS.ProcessEnv = process.env, logDir?: string): string | null {
+  const direct = explicit ?? parentFromEnv(env);
+  if (direct) return direct;
+  const of = env[RERUN_OF_ENV];
+  if (of && logDir) return loadStatus(logDir, of)?.parent ?? null;
+  return null;
 }
 
 /** Does a status file exist for `id` (i.e. is it a worker rather than a chain)? */

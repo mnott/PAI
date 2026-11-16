@@ -18,10 +18,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { sep } from "node:path";
 import { appendLedger } from "./ledger.js";
-import { loadStatusesCached, isLive as statusIsLive } from "./status.js";
+import { loadStatusesCached, isLive as statusIsLive, ownsPidCached } from "./status.js";
 import { ledgerPath, slotCurrentPath } from "./paths.js";
 import { slotsDir } from "./slots.js";
-import { loadStatus, saveStatus } from "./status.js";
+import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { killProcessTree } from "./wait-on.js";
 import { worktreesDir } from "./worktree.js";
 import { truncateLines } from "./ps-table.js";
@@ -56,11 +56,17 @@ export interface ReaperDeps {
   ledger?: (logDir: string, event: string, kv: Record<string, string | number | undefined>) => void;
   /** Whether the worker `id` recorded a parent whose status is still live (state running/queued, pid alive): its child is never an orphan. Injectable for tests. */
   parentLive?: (logDir: string, id: string) => boolean;
+  /** Whether the worker `id`'s own status is live (state running/queued and it owns its recorded pid). Defaults to ownsPidCached; injectable for tests. */
+  selfLive?: (status: WorkerStatus) => boolean;
 }
 
 /** True when worker `id` exists and names a parent whose status is still live — the reaper spares it: only when the parent is gone too is the child an orphan. */
 export function hasLiveParent(logDir: string, id: string): boolean {
-  const statuses = loadStatusesCached(logDir);
+  return anyLiveAncestor(loadStatusesCached(logDir), id);
+}
+
+/** hasLiveParent over an already-loaded status table (one read serves a whole reaper pass). */
+function anyLiveAncestor(statuses: WorkerStatus[], id: string, live: (s: WorkerStatus) => boolean = statusIsLive): boolean {
   const byId = new Map(statuses.map((s) => [s.id, s]));
   let cur = byId.get(id);
   const seen = new Set<string>();
@@ -68,19 +74,33 @@ export function hasLiveParent(logDir: string, id: string): boolean {
     seen.add(cur.parent);
     const p = byId.get(cur.parent);
     if (!p) return false;
-    if (statusIsLive(p)) return true;
+    if (live(p)) return true;
     cur = p;
   }
   return false;
 }
 
-const parentLiveDefault = (logDir: string, id: string): boolean => {
+/**
+ * Whether a process mapping to worker `id` is that live worker's own process or one of its children —
+ * and so never an orphan. Two shapes, read off the statuses in one pass:
+ *   - the worker itself runs: state running/queued and it still owns its recorded pid. A launcher
+ *     (`pai worker run`) started from inside a live L1 has exactly this mapping — its cwd sits in the
+ *     L1's worktree, so ownerOf names the L1, not the child; asking for the L1's parent would ask the
+ *     wrong one (an L1 has no parent: the operator started it);
+ *   - or the worker names a live ancestor (the process maps to the child id itself).
+ */
+export function isSupervisedByLive(logDir: string, id: string, selfLive: (s: WorkerStatus) => boolean = ownsPidCached): boolean {
   try {
-    return hasLiveParent(logDir, id);
+    const statuses = loadStatusesCached(logDir);
+    const own = statuses.find((s) => s.id === id);
+    if (own && selfLive(own)) return true;
+    return anyLiveAncestor(statuses, id);
   } catch {
-    return false; // unreadable ledger: today's behavior — judge it as an orphan
+    return false; // unreadable statuses: today's behavior — judge it as an orphan
   }
-};
+}
+
+const parentLiveDefault = (logDir: string, id: string): boolean => isSupervisedByLive(logDir, id);
 
 /** Candidates seen busy: pid -> start (ms epoch) and first busy sample time. */
 export type ReaperState = Map<number, { startMs: number; firstBusy: number }>;
@@ -188,11 +208,18 @@ function ownerOf(deps: ReaperDeps, logDir: string, row: ProcRow): string | undef
   return deps.owner(logDir, row.cwd) ?? deps.owner(logDir, row.command);
 }
 
-/** A worker with a live recorded parent is supervised by that parent — never reaped as an orphan while it runs. */
+/** A worker whose own status is live, or one with a live recorded parent — never reaped as an orphan while its supervisor runs. */
 function sparedByParent(deps: ReaperDeps, logDir: string, row: ProcRow): boolean {
-  if (!deps.parentLive) return false;
   const id = ownerOf(deps, logDir, row);
-  return !!id && deps.parentLive(logDir, id);
+  if (!id) return false;
+  try {
+    const statuses = loadStatusesCached(logDir);
+    const own = statuses.find((s) => s.id === id);
+    if (own && (deps.selfLive ?? ownsPidCached)(own)) return true; // the live worker's own process or child
+    return anyLiveAncestor(statuses, id, deps.selfLive); // a child of a live parent
+  } catch {
+    return deps.parentLive?.(logDir, id) ?? false; // statuses unreadable: the injected check alone (tests keep it exact)
+  }
 }
 
 /** One reaper pass; returns the pids it killed. `state` carries samples between passes. */

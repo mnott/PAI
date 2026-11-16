@@ -102,7 +102,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // Sub-worker bookkeeping: an explicit parent (chain stage, planner child)
   // wins, else the worker this process runs inside (PAI_WORKER_ID). Both
   // caps from workers.tree apply to parents that are workers themselves.
-  const parent = launchParent(opts.parent);
+  const parent = launchParent(opts.parent, process.env, logDir);
   if (parent) assertChildAllowed(logDir, parent, config.tree);
 
   // An explicit --provider always bypasses capability resolution entirely;
