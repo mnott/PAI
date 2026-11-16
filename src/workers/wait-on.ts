@@ -422,12 +422,12 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
 /** The documented long-job recipe, quoted by the worker contract and every deny message. */
 export const WAIT_RECIPE =
   "`nohup sh -c 'CMD; echo $? > $TMPDIR/job.rc' > $TMPDIR/job.log 2>&1 & echo $! > $TMPDIR/job.pid`, then repeat " +
-  "`pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log --rc $TMPDIR/job.rc` (each call returns within 2 min; do other work between calls) until it exits 0 " +
-  "(it reads the job's rc file and exits with that code; exit 4 = the job ended but its status is unknown, never read it as a failure)";
+  "`pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log --rc $TMPDIR/job.rc` (each call returns within 2 min; do other work between calls): " +
+  "exit 0 = done ok, 3 = still running (call again), exit 4 = ended, status unknown (not a failure); with --rc the job's own code";
 
 /** One line naming the bounded wait for each thing a worker can wait on; quoted by the contract and the tier-2 advice. */
 export const WAIT_VERBS =
   "Waiting never needs sleep; use the verb for what you wait on (each returns within 110 s by default, --max up to 590, exit 0 = ready, 3 = not yet, call again): " +
   "child workers `pai worker wait <id...> [--max 100]` (returns when ANY finishes, one status line per id; drop finished ids on the next call); " +
-  "a detached job `pai worker wait-on <pid> [--log f] --rc $TMPDIR/job.rc` (exit 4 = ended, status unknown — not a failure); " +
+  "a detached job `pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log --rc $TMPDIR/job.rc` (exit 4 = ended, status unknown — not a failure; with --rc, the job's own code); " +
   "a server `pai worker wait-url <url>`; files `pai worker wait-file <path...>`.";
