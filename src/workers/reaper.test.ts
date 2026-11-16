@@ -56,7 +56,7 @@ function deps(rows: ProcRow[], logDir: string): ReaperDeps & { killed: number[] 
     // process, which never appears in this ppid-1 snapshot; any other pid reads as already dead.
     selfLive: (s) => {
       const fresh = load(s.id);
-      return !!fresh && (fresh.state === "running" || fresh.state === "queued") && fresh.pid === 4242;
+      return !!fresh && (fresh.state === "running" || fresh.state === "queued") && fresh.pid === 5000;
     },
   };
 }

@@ -66,7 +66,7 @@ export function hasLiveParent(logDir: string, id: string): boolean {
 }
 
 /** hasLiveParent over an already-loaded status table (one read serves a whole reaper pass). */
-function anyLiveAncestor(statuses: WorkerStatus[], id: string): boolean {
+function anyLiveAncestor(statuses: WorkerStatus[], id: string, live: (s: WorkerStatus) => boolean = statusIsLive): boolean {
   const byId = new Map(statuses.map((s) => [s.id, s]));
   let cur = byId.get(id);
   const seen = new Set<string>();
@@ -74,7 +74,7 @@ function anyLiveAncestor(statuses: WorkerStatus[], id: string): boolean {
     seen.add(cur.parent);
     const p = byId.get(cur.parent);
     if (!p) return false;
-    if (statusIsLive(p)) return true;
+    if (live(p)) return true;
     cur = p;
   }
   return false;
@@ -216,7 +216,7 @@ function sparedByParent(deps: ReaperDeps, logDir: string, row: ProcRow): boolean
     const statuses = loadStatusesCached(logDir);
     const own = statuses.find((s) => s.id === id);
     if (own && (deps.selfLive ?? ownsPidCached)(own)) return true; // the live worker's own process or child
-    return anyLiveAncestor(statuses, id); // a child of a live parent
+    return anyLiveAncestor(statuses, id, deps.selfLive); // a child of a live parent
   } catch {
     return deps.parentLive?.(logDir, id) ?? false; // statuses unreadable: the injected check alone (tests keep it exact)
   }
