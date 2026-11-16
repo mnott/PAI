@@ -31,6 +31,7 @@ import { isScratchRootFile } from "./worker-scratch-name.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
 import { benchStartReason } from "./worker-bench-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
+import { operatorNamesValue } from "./delegation-gate.js";
 import { PAUSE_DENY, preemptDeny, workerPaused, workerPreemptedBy } from "../../../workers/pane-bar.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
@@ -62,6 +63,8 @@ export interface WorkerGuardContext {
   benchGo?: boolean;
   /** Whether a command runs a test runner or a door in test mode (worker-test-rules.ts); the caller reads the project's doors. */
   testCommand?: (command: string) => string | null;
+  /** This worker's own task text (its brief), for the child-routing rule; absent = unreadable, which denies an override. */
+  taskText?: () => string | undefined;
 }
 
 interface Segment {
@@ -198,6 +201,44 @@ function stripPrefix(words: string[]): string[] {
 }
 
 const isFlag = (w: string): boolean => w.startsWith("-") && w.length > 1;
+
+export const WORKER_CHILD_ROUTE_REASON =
+  "children follow the mode chain and wait for their slot; --model/--provider only when your brief names it; priority is the operator's call";
+
+/** Values of --model / --provider after `pai worker run|resume` in the segment (`--model X`, `--model=X`, quoted). */
+function childOverrides(words: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++; // leading env assignments retarget the command
+  if (!(words[i] === "pai" || bareCommand(words[i] ?? "") === "pai")) return out;
+  if (!(words[i + 1] === "worker" && (words[i + 2] === "run" || words[i + 2] === "resume"))) return out;
+  for (let j = i + 3; j < words.length; j++) {
+    const eq = /^(?:--model|--provider)=(.*)$/.exec(words[j]);
+    if (eq) { if (eq[1]) out.push(eq[1]); continue; }
+    if (/^--(?:model|provider)$/.test(words[j])) {
+      const v = words[j + 1];
+      if (v !== undefined && !v.startsWith("-")) { out.push(v); j++; }
+      else out.push(""); // a missing or flag-shaped value: nothing is named, deny
+    }
+  }
+  return out;
+}
+
+/**
+ * The worker child-routing rule: `pai worker run|resume` with --model/--provider is denied unless the
+ * worker's own brief names that model/provider (operatorNamesValue, as L0). An unreadable brief denies.
+ * `pai worker help` (the budgeted stronger-model call) and every other command pass.
+ */
+export function childRouteReason(command: string, taskText: string | undefined): string | null {
+  const text = dropHeredocBodies(command);
+  if (!/pai\s+worker\s+(?:run|resume)/.test(text)) return null;
+  for (const seg of parseCommand(command)) {
+    const overrides = childOverrides(seg.words);
+    if (!overrides.length) continue;
+    if (overrides.some((v) => !operatorNamesValue(taskText, v))) return WORKER_CHILD_ROUTE_REASON;
+  }
+  return null;
+}
 
 function expand(p: string, home: string): string {
   return p.replace(/^~(?=\/|$)/, home).replace(/^\$\{?HOME\}?(?=\/|$)/, home);
@@ -662,6 +703,9 @@ export function decideWorkerGuard(
       }
       const cfg = parseCommand(cmd).map((sg) => configMutationReason(sg.words, env, ctx().home)).find((r) => r);
       if (cfg) return deny(cfg);
+      // a worker starts children on the mode chain: --model/--provider only when its own brief names one
+      const route = childRouteReason(cmd, ctx().taskText?.());
+      if (route) return deny(route);
       const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
       if (why) return deny(why);
       if (isLocalWorker(env)) {

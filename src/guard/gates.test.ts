@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decidePreGates, decideWorkerGate } from "./gates.js";
-import type { WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
+import { WORKER_CHILD_ROUTE_REASON, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 
 const base = { PAI_WORKER: "1", PAI_WORKER_CLASS: "orchestrate", TMPDIR: "/var/folders/x/T" } as NodeJS.ProcessEnv;
 const run = (tool: string, input: unknown, env: NodeJS.ProcessEnv, failed = false) =>
@@ -78,6 +78,35 @@ describe("queued child kill", () => {
   });
   it("leaves non-worker callers alone", () => {
     expect(kill("pai worker kill q1", {})).toBeNull();
+  });
+});
+
+describe("worker child routing: --model/--provider only when the brief names it", () => {
+  const ctx = (taskText?: string): WorkerGuardContext => ({ cwd: "/w/tree", home: "/h", worktreeRoot: "/w/tree", inWorktree: false, mainCheckout: null, testScript: () => null, ...(taskText === undefined ? {} : { taskText: () => taskText }) });
+  const g = (command: string, taskText?: string) => decideWorkerGate({ tool: "Bash", input: { command }, cwd: "/w/tree", env: { PAI_WORKER: "1" } }, { worker: () => ctx(taskText) });
+  const run = 'pai worker run --class implement --provider anthropic --label x -p "do the thing"';
+  it("denies --provider when the brief does not name it", () => {
+    const d = g(run, "fix the bug");
+    expect(d?.action).toBe("deny");
+    expect(d?.message).toContain(WORKER_CHILD_ROUTE_REASON);
+  });
+  it("allows --provider the brief names", () => {
+    expect(g(run, "run the children on anthropic")).toBeNull();
+  });
+  it("allows a run without --model/--provider", () => {
+    expect(g('pai worker run --class implement --label x -p "y"', "fix the bug")).toBeNull();
+  });
+  it("denies --model the brief does not name, allows one it names", () => {
+    expect(g('pai worker run --class implement --model claude-opus-5-5 -p x', "fix the bug")?.action).toBe("deny");
+    expect(g('pai worker run --class implement --model claude-opus-5-5 -p x', "start the two children on opus")).toBeNull();
+  });
+  it("denies when the task text cannot be read (fail closed)", () => {
+    expect(g(run)?.action).toBe("deny"); // no taskText in the context at all
+    expect(g(run, "")?.action).toBe("deny");
+  });
+  it("leaves resume covered and help allowed", () => {
+    expect(g("pai worker resume abc123 --provider anthropic", "fix the bug")?.action).toBe("deny");
+    expect(g('pai worker help --task "exactly this" --files a.ts', "fix the bug")).toBeNull();
   });
 });
 
