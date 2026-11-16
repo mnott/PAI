@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { decideDelegationGate, L0_ROUTE_REASON, PANE_REASON, SEARCH_ROOT_REASON, DELEGATION_BLOCK } from "./delegation-gate.js";
+import { decideDelegationGate, latestOperatorPromptFromJsonl, L0_ROUTE_REASON, MODEL_OVERRIDE_REASON, PANE_REASON, SEARCH_ROOT_REASON, DELEGATION_BLOCK } from "./delegation-gate.js";
 
 const L0 = {} as NodeJS.ProcessEnv;
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
-const d = (c: string, e = L0) => decideDelegationGate(c, e);
+const d = (c: string, e = L0, p?: string) => decideDelegationGate(c, e, p);
 
 describe("L0 routes", () => {
   for (const cls of ["implement", "simple", "orchestrate", "plan"]) {
@@ -29,6 +29,36 @@ describe("pane rule", () => {
   it("allows a plain resume", () => expect(d("pai worker resume abc").decision).toBe("allow"));
 });
 
+describe("model override rule", () => {
+  const c = "pai worker run --class orchestrate --model claude-opus-5-5 -p x";
+  it("denies --model with no prompt", () => expect(d(c)).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON }));
+  it("denies --model with an unrelated prompt", () => expect(d(c, L0, "fix the bug")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON }));
+  it("allows when the operator names the family word", () => expect(d(c, L0, "run it on opus").decision).toBe("allow"));
+  it(`denies --provider glm with prompt "use kimi"`, () => expect(d("pai worker run --class implement --provider glm -p x", L0, "use kimi")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON }));
+  it(`allows --provider glm with prompt "do it on glm"`, () => expect(d("pai worker run --class implement --provider glm -p x", L0, "do it on glm").decision).toBe("allow"));
+  it("denies the --model=X form", () => expect(d("pai worker run --class orchestrate --model=claude-opus-5-5 -p x")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON }));
+  it("exempts a worker", () => expect(d(c, W, undefined).decision).toBe("allow"));
+  it("leaves a run without --model/--provider unchanged", () => expect(d("pai worker run --class orchestrate -p x", L0, "fix the bug").decision).toBe("allow"));
+  it('"claude" in a prompt does not authorise claude-opus-5-5', () => expect(d(c, L0, "use claude for this").decision).toBe("deny"));
+  it("denies on resume too", () => expect(d("pai worker resume abc --model claude-opus-5-5")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON }));
+});
+
+describe("transcript tail extractor", () => {
+  const u = (content: unknown) => JSON.stringify({ type: "user", message: { role: "user", content } });
+  const a = (text: string) => JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } });
+  it("takes the last plain-text user entry", () => {
+    expect(latestOperatorPromptFromJsonl([u("first"), a("ok"), u("fix the bug"), JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", content: "out" }] } })].join("\n"))).toBe("fix the bug");
+  });
+  it("takes a text block among tool_results", () => {
+    expect(latestOperatorPromptFromJsonl(u([{ type: "text", text: "run it on opus" }, { type: "tool_result", content: "x" }]))).toBe("run it on opus");
+  });
+  it("skips notifications and other sessions", () => {
+    const j = [u("real one"), u("<task-notification>done</task-notification>"), u("[SYSTEM NOTIFICATION] ping"), u("[Session: abc] hi from another session")].join("\n");
+    expect(latestOperatorPromptFromJsonl(j)).toBe("real one");
+  });
+  it("undefined when nothing genuine", () => expect(latestOperatorPromptFromJsonl([a("x"), JSON.stringify({ type: "user", isMeta: true, message: { content: "meta" } })].join("\n"))).toBeUndefined());
+});
+
 describe("search roots", () => {
   for (const c of ["find / -name x", "find ~ -name x", "rg foo ~/", "grep -rn foo $HOME", 'grep -r foo "$HOME"', "du -sh /Users/someone", "mdfind -onlyin ~ x", "cd x && find / -name y"]) {
     it(`denies ${c}`, () => expect(d(c)).toEqual({ decision: "deny", reason: SEARCH_ROOT_REASON }));
@@ -46,7 +76,7 @@ describe("session-start block", () => {
   it("carries the provider and tools rules after the Start line", () => {
     const lines = DELEGATION_BLOCK.split("\n");
     const start = lines.findIndex((l) => l.startsWith("- Start:"));
-    expect(lines[start + 1]).toContain("No `--provider` unless the operator names one");
+    expect(lines[start + 1]).toContain("No `--model`/`--provider` unless the operator names that model or provider in the request");
     expect(lines[start + 1]).toContain("The Agent tool is denied in this session");
     expect(lines[start + 2]).toContain("`--tools` lists keep ToolSearch");
     expect(lines[start + 2]).toContain("WebSearch,WebFetch to --allowedTools");
