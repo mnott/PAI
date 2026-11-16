@@ -466,6 +466,8 @@ pai worker freeze [options]
 | `--for DURATION` | string | — | Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works |
 | `--workers-only` | flag | — | Leave the local model server running (freeze the worker trees only) |
 | `--only IDS` | string | — | Freeze only these worker ids (comma list) |
+| `--except IDS` | string | — | Freeze everything except these worker ids (comma list) and their children |
+| `--except-session NAME` | string | — | Freeze everything except this session's workers (and their children) |
 
 ```sh
 pai worker freeze --all

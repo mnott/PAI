@@ -689,7 +689,8 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
     holdExempt: isBenchmarkLabel(a.label),
     holdOf: () => {
       // `pai freeze`: nothing is admitted while the machine is frozen
-      const frozen = freezeHold();
+      // priority (--now, urgency window, `pai worker priority <id> now`) passes the freeze
+      const frozen = freezeHold(a.priority === "front" || loadStatus(logDir, wid)?.now === true);
       if (frozen) return frozen;
       try {
         return (readWorkersCached().providers[target.providerName] ?? target.provider).hold?.reason;

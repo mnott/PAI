@@ -8,13 +8,15 @@ Stop all running workers and the local model server to free the CPU/GPU now
 pai freeze [options]
 ```
 
-SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s). Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker.
+SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s). Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--for DURATION` | string | — | Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works |
 | `--workers-only` | flag | — | Leave the local model server running (freeze the worker trees only) |
 | `--only IDS` | string | — | Freeze only these worker ids (comma list) |
+| `--except IDS` | string | — | Freeze everything except these worker ids (comma list) and their children |
+| `--except-session NAME` | string | — | Freeze everything except this session's workers (and their children) |
 | `--status` | flag | — | Show since when, by whom and what is frozen |
 | `--resume` | flag | — | Same as `pai thaw` |
 
@@ -22,7 +24,9 @@ SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud:
 pai freeze
 pai freeze --for 30m
 pai freeze --status
+pai freeze --except-session CaseLeaf
 pai thaw
+pai thaw --session CaseLeaf
 ```
 
 See also: `pai thaw`, `pai worker ps`

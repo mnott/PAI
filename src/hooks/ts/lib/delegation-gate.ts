@@ -183,5 +183,6 @@ export const DELEGATION_BLOCK = [
   "- Every worker runs behind a visible pane: --no-pane, PAI_WORKER_AUTOPANE, PAI_WORKER= are denied. The answer is the JSON `result` (an AG2 R message): review the diff and re-run the key measurement before believing it.",
   "- Visibility: `pai worker ps`, `follow <id>`, `replay <id>`, `goal <id> \"<text>\"`; wait with `pai worker wait|wait-on`, never sleep-poll.",
   "- Machine needed NOW: `pai freeze [--for 30m]` stops every worker tree and the local model server (nothing killed; new runs queue), `pai thaw` continues all exactly where it was; MCP workers_freeze / workers_thaw. Not from inside a worker.",
+  "- During a freeze: a freeze holds new workers; use --now for priority work, or `pai thaw --session <name>`.",
   "- Never search recursively from / or ~: name the directory.",
 ].join("\n");

@@ -107,8 +107,9 @@ export function frozenMsFor(id: string, now: number = Date.now()): number {
 export const activeNow = (): number => Date.now() - frozenTotalMs();
 
 /** The reason the capacity gate admits nothing right now, or undefined. */
-export function freezeHold(): string | undefined {
-  return isFrozen() ? "frozen by the operator (pai freeze); `pai thaw` releases" : undefined;
+export function freezeHold(urgent = false): string | undefined {
+  // priority (--now, an urgency window) passes the freeze
+  return !urgent && isFrozen() ? "frozen by the operator (pai freeze); `pai thaw` releases" : undefined;
 }
 
 /** "30m", "2h", "90s", "1h30m"; a bare number is minutes. Returns ms. */
@@ -255,11 +256,41 @@ export function planFreeze(statuses: WorkerStatus[], rows: ProcRow[], servers: {
   return out;
 }
 
-export function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[]): FreezeReport {
+/** The session a worker belongs to: the AIBroker/PAI name recorded at launch. */
+const sessionOf = (s: WorkerStatus): string[] => [s.session?.name, s.sessionKey].filter((x): x is string => !!x).map((x) => x.toLowerCase());
+
+/**
+ * Ids selected by worker id and/or session name, plus every worker whose chain
+ * parent is selected (children follow their L1), transitively.
+ */
+export function familyIds(all: WorkerStatus[], sel: { ids?: string[]; session?: string }): Set<string> {
+  const out = new Set<string>();
+  const sess = sel.session?.toLowerCase();
+  for (const s of all) if (sel.ids?.includes(s.id) || (sess && sessionOf(s).includes(sess))) out.add(s.id);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const s of all) if (s.parent && out.has(s.parent) && !out.has(s.id)) (out.add(s.id), (grew = true));
+  }
+  return out;
+}
+
+export interface Except {
+  ids?: string[];
+  session?: string;
+}
+
+/** A model-server label ("provider:port") belongs to a worker when it starts with the worker's provider. */
+const serverOf = (label: string, s: WorkerStatus): boolean => !!s.provider && (label === s.provider || label.startsWith(`${s.provider}:`));
+
+export function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[], except?: Except): FreezeReport {
   if (process.env.PAI_WORKER === "1") throw new Error("a worker cannot freeze its siblings (PAI_WORKER=1)");
   const existing = readFreeze();
   if (existing) throw new Error(`already frozen since ${new Date(existing.since).toISOString()} by ${existing.by}; \`pai thaw\` first`);
-  const live = d.statuses(logDir).filter((s) => s.state === "running" && s.pid > 0 && (!only || only.includes(s.id)) && d.owns(s));
+  const all = d.statuses(logDir);
+  const spared = except && (except.ids?.length || except.session) ? familyIds(all, except) : new Set<string>();
+  const live = all.filter((s) => s.state === "running" && s.pid > 0 && (!only || only.includes(s.id)) && !spared.has(s.id) && d.owns(s));
+  // a model server an excepted worker runs on keeps serving it
+  const sparedLive = all.filter((s) => spared.has(s.id) && s.state === "running");
   const sigs = (e: FrozenEntry): boolean => {
     try {
       d.signal(e.pid, "SIGSTOP");
@@ -276,7 +307,7 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
   const wanted = new Set<number>();
   const stopPass = (): void => {
     const rows = d.procs();
-    const servers = d.servers();
+    const servers = d.servers().filter((m) => !sparedLive.some((s) => serverOf(m.label, s)));
     const plan = planFreeze(live, rows, servers, d.self).filter((e) => !wanted.has(e.pid));
     // a worker's tree root first (no new children), model servers last
     for (const e of plan) {
@@ -295,6 +326,7 @@ export function freezeAll(logDir: string, by: string, forMs: number | undefined,
     lines.push(`frozen ${mine[0].role} ${id}: ${mine.length} processes`);
   }
   for (const e of stopped.filter((x) => x.kind === "model")) lines.push(`frozen model ${e.id} (pid ${e.pid})`);
+  if (spared.size) lines.push(`spared ${[...spared].join(", ")} (and children)`);
   lines.push(`frozen ${ids.length} workers + ${stopped.filter((e) => e.kind === "model").length} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
   return { lines, total: stopped.length, marker };
 }
@@ -305,6 +337,87 @@ export interface ThawReport {
   skipped: number;
   wasFrozen: boolean;
 }
+
+/**
+ * Continue only the selected workers (by id, or by session with their children),
+ * keep the rest frozen and rewrite the marker. A local worker's frozen model
+ * server is continued with it. Everything selected-or-nothing-left falls
+ * through to the full thaw.
+ */
+export function thawSome(logDir: string, d: FreezeDeps, sel: { ids?: string[]; session?: string }): ThawReport {
+  const m = readFreeze();
+  if (!m) return { lines: ["not frozen"], continued: 0, skipped: 0, wasFrozen: false };
+  const all = d.statuses(logDir);
+  const fam = familyIds(all, sel);
+  // an id still frozen but unknown to the status files stays selectable by its exact id
+  for (const id of sel.ids ?? []) fam.add(id);
+  const frozenIds = new Set(m.pids.filter((e) => e.kind === "worker").map((e) => e.id));
+  const pick = [...fam].filter((id) => frozenIds.has(id));
+  if (!pick.length) return { lines: [`nothing frozen matches ${sel.session ? `session ${sel.session}` : (sel.ids ?? []).join(",")}`], continued: 0, skipped: 0, wasFrozen: true };
+  const lines: string[] = [];
+  const models = m.pids.filter((e) => e.kind === "model" && pick.some((id) => { const s = all.find((x) => x.id === id); return !!s && serverOf(e.id, s); }));
+  const mine = [...models, ...m.pids.filter((e) => e.kind === "worker" && pick.includes(e.id)).sort((a, b) => b.depth - a.depth)];
+  if (mine.length === m.pids.length) return thawAll(logDir, d);
+  const now = d.now();
+  const rows = new Map(d.procs().map((r) => [r.pid, r]));
+  let continued = 0;
+  let skipped = 0;
+  for (const e of mine) {
+    const r = rows.get(e.pid);
+    try {
+      if (!r || r.lstart !== e.lstart) throw new Error("gone");
+      d.signal(e.pid, "SIGCONT");
+      continued++;
+    } catch {
+      skipped++;
+      lines.push(`skipped ${e.kind} ${e.id} pid ${e.pid}: gone`);
+    }
+  }
+  if (models.length) lines.push(`model ${models.map((e) => e.id).join(", ")} thawed too: the other frozen workers stay stopped, so it serves only ${pick.join(", ")}`);
+  const ms = Math.max(0, now - m.since);
+  const acct = readAcct();
+  for (const id of pick) acct.workers[id] = (acct.workers[id] ?? 0) + ms;
+  writeJson(acctPath(), acct);
+  const gone = new Set(mine);
+  writeJson(freezePath(), { ...m, pids: m.pids.filter((e) => !gone.has(e)) });
+  const mins = Math.max(1, Math.round(ms / 60_000));
+  const text = `Paused by the operator for ${mins} min (pai freeze) and released by itself (pai thaw --only/--session) while others stay frozen; nothing failed, continue where you were. A cloud request that was cut by the pause is simply retried.`;
+  for (const id of [...pick].sort((a, b) => (mine.find((e) => e.id === b)?.depth ?? 0) - (mine.find((e) => e.id === a)?.depth ?? 0))) {
+    try {
+      d.note(logDir, id, text);
+    } catch {
+      /* the worker ended meanwhile */
+    }
+  }
+  appendLedger(ledgerPath(logDir), "WORKERS-THAW", { continued, skipped, partial: pick.join(","), frozenMin: mins });
+  const left = new Set(m.pids.filter((e) => !gone.has(e) && e.kind === "worker").map((e) => e.id)).size;
+  lines.push(`thawed ${pick.length} workers (${pick.join(", ")}), ${continued} processes continued${skipped ? `, ${skipped} skipped` : ""}; ${left} workers stay frozen`);
+  return { lines, continued, skipped, wasFrozen: true };
+}
+
+/** Continue only the frozen model server(s) (an urgent --local run needs it); returns the one-line report or null. */
+export function thawModelServers(logDir: string, d: FreezeDeps): string | null {
+  const m = readFreeze();
+  const models = m?.pids.filter((e) => e.kind === "model") ?? [];
+  if (!m || !models.length) return null;
+  const rows = new Map(d.procs().map((r) => [r.pid, r]));
+  for (const e of models) {
+    const r = rows.get(e.pid);
+    if (r && r.lstart === e.lstart) {
+      try {
+        d.signal(e.pid, "SIGCONT");
+      } catch {
+        /* gone */
+      }
+    }
+  }
+  writeJson(freezePath(), { ...m, pids: m.pids.filter((e) => e.kind !== "model") });
+  appendLedger(ledgerPath(logDir), "WORKERS-THAW", { model: models.map((e) => e.id).join(",") });
+  return `model server ${models.map((e) => e.id).join(", ")} thawed for an urgent --local run (the frozen workers stay stopped)`;
+}
+
+/** True when the freeze marker holds a stopped model server. */
+export const modelFrozen = (): boolean => !!readFreeze()?.pids.some((e) => e.kind === "model");
 
 export function thawAll(logDir: string, d: FreezeDeps): ThawReport {
   const m = readFreeze();
