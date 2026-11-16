@@ -43,6 +43,14 @@ describe("session-start block", () => {
   it("carries routes, mode, run line and visibility", () => {
     for (const s of ["--class implement", "--class orchestrate", "pai worker mode", "--output-format json", "pai worker ps", "run_in_background"]) expect(DELEGATION_BLOCK).toContain(s);
   });
+  it("carries the provider and tools rules after the Start line", () => {
+    const lines = DELEGATION_BLOCK.split("\n");
+    const start = lines.findIndex((l) => l.startsWith("- Start:"));
+    expect(lines[start + 1]).toContain("No `--provider` unless the operator names one");
+    expect(lines[start + 1]).toContain("The Agent tool is denied in this session");
+    expect(lines[start + 2]).toContain("`--tools` lists keep ToolSearch");
+    expect(lines[start + 2]).toContain("WebSearch,WebFetch to --allowedTools");
+  });
 });
 
 import { stripDelegationSection } from "../../../cli/commands/setup/steps/04-claude-md.js";
