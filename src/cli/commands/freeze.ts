@@ -1,15 +1,15 @@
 /** `pai freeze` / `pai thaw` (and `pai worker freeze --all|--resume`): stop and continue all local development work (workers/freeze.ts). */
 
 import { CliError, type CommandDef, type RunContext } from "../define.js";
-import { workersLogDir } from "../../workers/paths.js";
-import { readWorkersSection } from "../../workers/config.js";
-import { freezeAll, freezeStatusLines, parseDuration, realFreezeDeps, thawAll, thawSome } from "../../workers/freeze.js";
+import { freezeAll, freezeLogDir, freezeStatusLines, parseDuration, realFreezeDeps, thawAll, thawSome } from "../../workers/freeze.js";
 
+/** The log dir to operate on: PAI_FREEZE_LOGDIR in test mode (missing = refuse), the real config otherwise. */
 function logDir(): string {
   try {
-    return workersLogDir(readWorkersSection().workers);
+    return freezeLogDir();
   } catch (e) {
-    throw new CliError(`cannot read the worker configuration: ${e instanceof Error ? e.message : String(e)}`, "pai config path");
+    const m = e instanceof Error ? e.message : String(e);
+    throw new CliError(m.startsWith("test mode") ? m : `cannot read the worker configuration: ${m}`, "pai config path");
   }
 }
 
@@ -25,6 +25,7 @@ async function freezeRun(ctx: RunContext): Promise<number> {
     console.log(freezeStatusLines().join("\n"));
     return 0;
   }
+  // a worker is refused by the env var or its process ancestry (`env -u PAI_WORKER` does not clear it); test mode is exempt — see workers/freeze.ts
   if (process.env.PAI_WORKER === "1") throw new CliError("a worker cannot freeze its siblings", "ask the operator to run `pai freeze`");
   let forMs: number | undefined;
   if (typeof ctx.opts.for === "string") {
@@ -69,7 +70,7 @@ export const freezeCommand: CommandDef = {
   name: "freeze",
   summary: "Stop all running workers and the local model server to free the CPU/GPU now",
   description:
-    "SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s) — one entry per server, found by its listening port and named by the model it serves there. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).",
+    "Testing freeze safely: prove `pai freeze` without touching the live machine with three env vars together — PAI_FREEZE_FILE pointing at a throwaway marker, PAI_FREEZE_LOGDIR pointing at an isolated log dir (required in test mode: worker discovery reads only that dir, never the real one), and PAI_FREEZE_SERVERS listing exactly the pids its model discovery may stop (`pid[:label]`, comma list; with nothing listed no server is discovered at all). Isolation is all-or-nothing: a marker alone is not isolation — with test mode half-set (no log dir) the command refuses rather than fall back to the real config. A PAI worker cannot freeze even with PAI_WORKER cleared from its env (`env -u PAI_WORKER`): the process ancestry is checked against the running workers' pids too, and only test mode is exempt. SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s) — one entry per server, found by its listening port and named by the model it serves there. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).",
   examples: ["pai freeze", "pai freeze --for 30m", "pai freeze --only w-1234", "pai freeze --status", "pai freeze --except-session CaseLeaf", "pai thaw", "pai thaw --session CaseLeaf"],
   options: [
     FOR_OPT,
