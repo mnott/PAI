@@ -43,14 +43,13 @@ export function readMode(yamlPath: string = workersYamlPath()): WorkMode {
   return v;
 }
 
-/** Persist the mode (comment-preserving; balanced removes the key, it is the default). */
+/** Persist the mode (comment-preserving; balanced is written explicitly too, so the file shows the choice). */
 export function writeMode(mode: WorkMode, yamlPath: string = workersYamlPath()): void {
   if (!isWorkMode(mode)) throw new WorkersConfigError(`mode must be ${WORK_MODES.join(", ")} (got "${String(mode)}")`);
   const doc = existsSync(yamlPath) ? parseDocument(readFileSync(yamlPath, "utf8")) : new Document({});
   if (doc.errors.length) throw new WorkersConfigError(`${yamlPath}: ${doc.errors[0].message}`);
   const before = String(doc);
-  if (mode === DEFAULT_WORK_MODE) doc.delete("mode");
-  else doc.set("mode", mode);
+  doc.set("mode", mode);
   if (existsSync(yamlPath) && String(doc) === before) return;
   writeWorkersYamlText(yamlPath, String(doc));
 }
