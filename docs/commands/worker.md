@@ -78,6 +78,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--report FORMAT` | string | — | Final report format: json or ag2 (default ag2) |
 | `--no-report-retry` | flag | — | Do not ask once more when the final report is malformed |
 | `--orchestrate` | flag | — | This worker plans and reviews; code edits are denied and go to local units |
+| `--no-merge` | flag | — | --class orchestrate: do not wait for or join other orchestrate requests for the same repo (workers.orchestrate.mergeWindowSec) |
 
 ```sh
 pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'
@@ -1491,6 +1492,32 @@ pai worker config normalize-paths --write
 
 See also: `pai worker config check`
 
+### pai worker mode
+
+Switch workers between speed, balanced and budget
+
+```
+pai worker mode [MODE]
+```
+
+With no argument shows the mode; with one sets it (persisted as `mode:` in workers.yaml, applied on top of the tiers, which stay as written).
+  speed     t2 = anthropic/sonnet first, L1 children = anthropic/haiku, no local model
+  balanced  t2 = local first, anthropic/sonnet on takeover; L1 = anthropic/sonnet (default)
+  budget    t2 = local only; cloud only as L1 and as takeover after a failed retry
+An open urgency window (`/now`, `pai now`) acts as speed for that session while it is open.
+
+| Argument | Required | Description |
+|---|---|---|
+| `MODE` | no | speed | balanced | budget |
+
+```sh
+pai worker mode
+pai worker mode speed
+pai worker mode budget
+```
+
+See also: `pai worker policy`, `pai worker route`, `pai now`
+
 ### pai worker policy
 
 Where workers run: cloud, local, or a mix
@@ -1917,6 +1944,7 @@ See also: `pai worker providers`
 | `pai worker classes` | Which provider serves draft, implement, review, … |
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths |
+| `pai worker mode` | Switch workers between speed, balanced and budget |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
 | `pai worker priority` | Priority of a worker at the local engine, and of a session in the queue |
 | `pai worker route` | Print the routing table: per delegation tier the ordered models |

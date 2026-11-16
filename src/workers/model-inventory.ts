@@ -309,7 +309,7 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
 }
 
 async function detectProviders(input: InventoryInput, deps: InventoryDeps): Promise<InventoryRuntime[]> {
-  const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; configured: number; defaults: string[]; wanted: Array<{ name: string; model?: string }> }>();
+  const byPort = new Map<string, { host: string; port: number; names: string[]; modelOf: Record<string, string | undefined>; enabled: string[]; configured: number; defaults: string[]; wanted: Array<{ name: string; model?: string }> }>();
   const tierProviders = (input.tiers ?? []).map((t) => t.provider);
   // every loopback provider keeps its port slot; a DISABLED one (workers.yaml
   // provider enabled:false) contributes no user, no model and enabled:false —
@@ -319,8 +319,9 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
     const hp = providerHostPort(p);
     if (!hp) continue;
     const key = String(hp.port);
-    const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], configured: 0, defaults: [], wanted: [] }).get(key)!;
+    const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], modelOf: {}, enabled: [], configured: 0, defaults: [], wanted: [] }).get(key)!;
     e.names.push(name);
+    e.modelOf[name] = p.models.default;
     if (p.enabled) e.configured++;
     // a provider a local tier launches is a candidate like an enabled one (the shared predicate of local-provider.ts)
     if (!isLocalCandidate(p, name, tierProviders)) continue;
@@ -343,8 +344,11 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         // a declared endpoint (e.g. strata) can sit behind a provider that is
         // DISABLED in workers.yaml: keep the runtime, attach no worker user
         const decl = input.runtimes.find((r) => r.url && Number(new URL(r.url).port) === e.port);
+        // several providers can share one port (gyro-l, gyro-m on 8035): the running one is the provider whose model the server reports, never the first by port
+        const servedIds = new Set(ids.map((i) => i.toLowerCase()));
+        const servedBy = running && ids.length ? (e.names.find((n) => e.modelOf[n] && servedIds.has(e.modelOf[n]!.toLowerCase())) ?? null) : null;
         const rt: InventoryRuntime = {
-          name: decl?.name ?? e.enabled[0] ?? e.names[0],
+          name: decl?.name ?? servedBy ?? e.enabled[0] ?? e.names[0],
           kind: decl?.kind ?? "openai-server",
           status: running ? "running" : "stopped",
           port: e.port,
@@ -362,7 +366,7 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         const notServed = served ? e.wanted.filter((w) => w.model && !served.has(w.model.toLowerCase())) : [];
         attach(rt, e.wanted.filter((w) => !notServed.includes(w)).map((w) => ({ name: w.name, model: served ? w.model : undefined })));
         if (notServed.length) rt.notServed = notServed.map((w) => w.name);
-        const tier = (input.tiers ?? []).find((t) => e.names.includes(t.provider));
+        const tier = (input.tiers ?? []).find((t) => (servedBy ? t.provider === servedBy : e.names.includes(t.provider)));
         if (tier) {
           tierOf.set(rt, tier.label);
           if (tier.tier) rt.tier = tier.tier;

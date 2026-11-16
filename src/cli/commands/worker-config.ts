@@ -5,6 +5,7 @@
  * them). `pai providers ...` shares the provider subcommands defined here.
  */
 
+import { MODE_SUMMARY, WORK_MODES, effectiveMode, isWorkMode, modeLine, readMode, writeMode, type WorkMode } from "../../workers/mode.js";
 import { duplicateModelIds } from "../../router/router.js";
 import { execFileSync, spawn } from "node:child_process";
 import { connect } from "node:net";
@@ -193,6 +194,12 @@ async function printProviders(): Promise<void> {
   for (const line of describeProviders(workers, CONFIG_FILE, running)) out(`  ${line}`);
   out();
   out(dim(`  workers are ${workers.enabled ? "on" : "off"} — pai worker ${workers.enabled ? "off" : "on"}`));
+  try {
+    const m = effectiveMode();
+    out(dim(`  ${modeLine(m.mode, m.source)} — pai worker mode`));
+  } catch {
+    // an unreadable mode key is reported by `pai worker mode`
+  }
   const legacyNotice = workersYamlLegacyNotice();
   if (legacyNotice) out(dim(`  ${legacyNotice}`));
   out();
@@ -1315,6 +1322,32 @@ export const workerBenchCommand: CommandDef = {
 // policy
 // ---------------------------------------------------------------------------
 
+export const workerModeCommand: CommandDef = {
+  name: "mode",
+  summary: "Switch workers between speed, balanced and budget",
+  description:
+    "With no argument shows the mode; with one sets it (persisted as `mode:` in workers.yaml, applied on top of the tiers, which stay as written).\n" +
+    WORK_MODES.map((m) => `  ${m.padEnd(9)} ${MODE_SUMMARY[m]}`).join("\n") +
+    "\nAn open urgency window (`/now`, `pai now`) acts as speed for that session while it is open.",
+  args: [{ name: "MODE", summary: WORK_MODES.join(" | ") }],
+  examples: ["pai worker mode", "pai worker mode speed", "pai worker mode budget"],
+  seeAlso: ["pai worker policy", "pai worker route", "pai now"],
+  run(ctx) {
+    try {
+      const m = ctx.args.MODE as string | undefined;
+      if (m !== undefined) {
+        if (!isWorkMode(m)) throw new Error(`mode: expected one of ${WORK_MODES.join(", ")} — got "${m}"`);
+        writeMode(m);
+      }
+      const e = effectiveMode();
+      out(modeLine(m !== undefined ? (m as WorkMode) : readMode(), "config"));
+      if (e.source === "urgency") out(dim(`this session: speed (urgency window open)`));
+    } catch (e) {
+      fail(e, "pai worker mode");
+    }
+  },
+};
+
 export const workerPolicyCommand: CommandDef = {
   name: "policy",
   summary: "Where workers run: cloud, local, or a mix",
@@ -1737,6 +1770,7 @@ export const WORKER_CONFIG_COMMANDS: CommandDef[] = [
   workerClassesCommand,
   workerRolesCommand,
   workerConfigCommand,
+  workerModeCommand,
   workerPolicyCommand,
   workerPriorityCommand,
   workerRouteCommand,

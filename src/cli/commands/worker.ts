@@ -5,6 +5,8 @@
  * exit codes are the ones hooks, prompts, skills and shims already call.
  */
 
+import { DEFAULT_MERGE_WINDOW_SEC, announceLeader, closeQueue, joinRepoQueue, mergeNotice, mergedBrief, waitLeaderId } from "../../workers/orchestrate-merge.js";
+import { effectiveMode } from "../../workers/mode.js";
 import { lowPowerActive } from "../../daemon/low-power.js";
 import { isUhpOrigin } from "../../workers/pane-waiver.js";
 import { isCi } from "../../utils/ci.js";
@@ -311,6 +313,7 @@ const runCommand: CommandDef = {
     { name: "report", type: "string", value: "FORMAT", summary: "Final report format: json or ag2 (default ag2)" },
     { name: "no-report-retry", type: "boolean", summary: "Do not ask once more when the final report is malformed" },
     { name: "orchestrate", type: "boolean", summary: "This worker plans and reviews; code edits are denied and go to local units" },
+    { name: "no-merge", type: "boolean", summary: "--class orchestrate: do not wait for or join other orchestrate requests for the same repo (workers.orchestrate.mergeWindowSec)" },
   ],
   examples: [
     "pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'",
@@ -326,6 +329,7 @@ const runCommand: CommandDef = {
       const plan = buildRunPlan(ctx);
       if (flag(ctx, "batch")) process.env[BATCH_ENV] = "1";
       await applyTarget(ctx, plan);
+      if (plan.kind === "run" && (await mergeOrchestrateRequests(plan.run, !flag(ctx, "no-merge")))) return 0;
       if (plan.kind === "run") rerunFromEnv(plan.run, logDir());
       // a detached starter (startDetachedWorker) learns the id from here
       if (plan.kind === "run") {
@@ -344,6 +348,50 @@ const runCommand: CommandDef = {
       return plan.kind === "chain" ? await runChain(plan.chain) : await runWorker(plan.run);
     }),
 };
+
+/**
+ * `--class orchestrate` requests for one repo within workers.orchestrate.mergeWindowSec become ONE L1 job
+ * (orchestrate-merge.ts). The first request waits out the window and runs the merged brief; a later one
+ * joins, prints the job it joined and returns true (nothing to start). A lone request runs unchanged.
+ */
+export async function mergeOrchestrateRequests(run: RunOptions, enabled = true): Promise<boolean> {
+  if (!enabled || run.className !== "orchestrate" || run.printCmd || process.env.PAI_WORKER === "1") return false;
+  const windowSec = readWorkersSection().workers.orchestrate?.mergeWindowSec ?? DEFAULT_MERGE_WINDOW_SEC;
+  if (windowSec <= 0) return false;
+  const prompt = parseRunnerArgs(run.claudeArgs).prompt;
+  if (!prompt) return false;
+  const dir = logDir();
+  const cwd = run.cwd ?? process.cwd();
+  let repo = cwd;
+  try {
+    repo = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || cwd;
+  } catch {
+    /* not a repo: the directory is the key */
+  }
+  const label = run.label ?? "orchestrate";
+  const req = { pid: process.pid, label, prompt, at: Date.now() };
+  const j = await joinRepoQueue(dir, repo, req, windowSec);
+  if (j.role === "follower") {
+    const id = await waitLeaderId(dir, repo, (windowSec + 60) * 1000);
+    process.stderr.write(`pai worker: merged into the orchestrate job of "${j.queue.requests[0].label}" as part ${j.part}${id ? ` (worker ${id})` : ""}; wait on that worker\n`);
+    if (id) out(id);
+    return true;
+  }
+  const wait = j.queue.until - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  const reqs = await closeQueue(dir, repo);
+  const prev = run.onWorkerStart;
+  run.onWorkerStart = (id) => {
+    void announceLeader(dir, repo, id);
+    prev?.(id);
+  };
+  if (reqs.length < 2) return false;
+  const m = mergedBrief(reqs);
+  run.claudeArgs = run.claudeArgs.map((x) => (x === prompt ? m.prompt : x));
+  run.label = m.label;
+  process.stderr.write(`${mergeNotice(reqs)}\n`);
+  return false;
+}
 
 const resumeCommand: CommandDef = {
   name: "resume",
@@ -682,9 +730,20 @@ const statusLineCommand: CommandDef = {
         (ctx.args.SESSION as string | undefined) ?? "",
         new Date()
       );
-      if (line) out(line);
+      const tag = modeTag();
+      if (line || tag) out([line, line || tag !== "mode:balanced" ? tag : ""].filter(Boolean).join(" · "));
     }),
 };
+
+/** The mode shown in the status line: always when it is not balanced, else only next to workers. */
+function modeTag(): string {
+  try {
+    const m = effectiveMode();
+    return `mode:${m.mode}`;
+  } catch {
+    return "";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Talking to workers

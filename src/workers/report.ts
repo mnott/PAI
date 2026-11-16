@@ -103,7 +103,8 @@ function guardRulesBlock(scratch: string): string[] {
     ...(scratch
       ? ["Use this absolute path in Write/Read/Edit — the Write tool does not expand $TMPDIR."]
       : ["is shared by every concurrent worker and gets denied."]),
-    "Stay in the worktree with relative paths — never cd into the main checkout.",
+    "Stay in the worktree with relative paths — never cd into the main checkout; long absolute paths get garbled.",
+    "Probes under $TMPDIR are outside the cwd: import repo files by absolute path or put the probe under ./.pai-scratch/; never a literal /tmp/<name>.",
     "Background processes you start: `cmd & echo $! > \"$TMPDIR/x.pid\"`, stop them with",
     "`kill $(cat \"$TMPDIR/x.pid\")`; never `pkill`/`killall`/`kill` by name or pattern.",
     "Probe scripts import src/ via npx tsx; dist/ is bundled.",
@@ -147,7 +148,8 @@ function fullContractPrompt(format: "ag2" | "json", scratch?: string): string {
     "only: (1) PARALLELISING independent parts of your task, each part a self-contained spec; (2) CHEAPER",
     "bounded sub-tasks — probes, renders, test runs, lookups — run one tier down with --class spotcheck or",
     "--class simple. Never add --provider to a child unless your brief names one: routing picks it.",
-    "You own your children's results: run them in the foreground or poll until each has finished, read",
+    "You own your children's results: start all of them first, then wait for each with one long blocking call",
+    "(`pai worker wait-on <pid> --max 590`, repeated only on exit 3) and no checks in between; read",
     "their result, verify it, and fold it into your own report. When your turn ends this run ends and any",
     "running child is killed, so never end with a child still running.",
     "Ending your turn ends this run. There is no later wake-up: never call ScheduleWakeup, never say you",
@@ -198,7 +200,9 @@ export const ORCHESTRATOR_START_BLOCK = [
   "  pai worker run --class implement --label \"<goal>\" -p \"$(cat spec.txt)\" --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json",
   "- `--cwd DIR` runs it in another directory; `--max-minutes N` bounds it; implement gets its own git worktree by default in a git repo.",
   "- Add `--provider <p>` only when your brief names a local provider; otherwise none. Never wrap it in `pai pane run`.",
-  "- The answer is the JSON `result` field (an AG2 R message). Follow with `pai worker ps`, `pai worker follow <id>`, `pai worker wait <ids> --max 100`.",
+  "- The answer is the JSON `result` field (an AG2 R message). `pai worker ps` / `follow <id>` are for the operator view, not for waiting.",
+  "- Dispatch all children first, then wait for each with one long blocking call (`pai worker wait-on <pid> --max 590`, repeated only on exit 3); no intermediate checks (ps/follow/polling) while waiting: every poll re-reads the whole context.",
+  "- Review the child's diff and its test output; do not re-read the code base beyond what the diff touches.",
   "- Read its report and diff, run its proof, then merge it into your own branch with `pai worker merge <id>`; the L0 session merges your branch.",
 ].join("\n");
 
