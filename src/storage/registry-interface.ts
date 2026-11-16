@@ -152,6 +152,8 @@ export interface ListSessionsForProjectOptions {
 export interface OrphanCounts {
   orphaned: number;
   total: number;
+  /** True when the orphans are mapped (a projects_backup_* row names a current project) or at least one has a hash twin — i.e. `repair-orphans` can act on them. Cheap; false when nothing maps and no twin exists. */
+  actionable?: boolean;
 }
 
 export interface OrphanRepairReport {
