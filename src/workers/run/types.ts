@@ -84,6 +84,8 @@ export interface RunOptions {
   cloud?: boolean;
   /** --local: run on the local model server PAI resolves (resolveLocalProvider); beats --provider. */
   localFlag?: boolean;
+  /** --where value as typed (local, cloud or a provider name): with --model it must name a provider that serves the model. */
+  whereFlag?: string;
   /** --local NAME: this running local model instead of the tier-order pick. */
   localName?: string;
   /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
