@@ -179,6 +179,9 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     }
   }
   const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName, viaRouter, a.orchestrate, runToken);
+  // the guard hook locks edits for an L1 (class orchestrate/plan) until a child has failed
+  delete env.PAI_WORKER_CLASS;
+  if (headless && a.className) env.PAI_WORKER_CLASS = a.className;
   // read by the anti-pattern firing record (which model a pattern fired on)
   if (headless && typeof model === "string" && model) env.PAI_WORKER_MODEL = model;
 

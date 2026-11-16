@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { escalationReason, escalateOverdue, rerouteWorker, type SpawnSpec } from "./reroute.js";
+import { escalationReason, escalateOverdue, rerouteWorker, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 let dir: string;
@@ -17,13 +17,38 @@ afterEach(() => {
 const queued = (over: Partial<WorkerStatus> = {}): WorkerStatus =>
   ({ id: "w1", pid: 4321, label: "l", cwd: "/", term: "", provider: "fakeA", model: "m", state: "queued", started: "", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null, promptFile: "/nonexistent-prompt", ...over }) as WorkerStatus;
 
+const NOW = Date.parse("2026-11-16T12:00:00Z");
+const pol = (queuedMaxMin: number): ReroutePolicy => ({ queuedMaxMin, stallMaxMin: 10, stallFailedCalls: 6 });
+const job = (o: Partial<WorkerStatus>): WorkerStatus => ({ id: "w1", state: "queued", spec: "/x", routeWhy: "auto", started: "", capacity: { sinceMs: NOW - 60 * 60_000 }, ...o }) as unknown as WorkerStatus;
+
+describe("escalationReason queued", () => {
+  it("queuedMaxMin 0 without urgency: waits", () => {
+    expect(escalationReason(job({}), NOW, pol(0))).toBeNull();
+  });
+  it("queuedMaxMin 0 with urgency: moves after the short fixed wait", () => {
+    expect(escalationReason(job({ now: true }), NOW, pol(0))).toContain("queued 60m");
+    expect(escalationReason(job({ now: true, capacity: { sinceMs: NOW - 60_000 } } as never), NOW, pol(0))).toBeNull();
+    expect(URGENT_QUEUED_MIN).toBe(2);
+  });
+  it("queuedMaxMin 15 still applies when urgent, never when not", () => {
+    expect(escalationReason(job({ now: true }), NOW, pol(15))).not.toBeNull();
+    expect(escalationReason(job({ now: true, capacity: { sinceMs: NOW - 5 * 60_000 } } as never), NOW, pol(15))).toBeNull();
+    expect(escalationReason(job({}), NOW, pol(15))).toBeNull();
+  });
+  it("running stall is unchanged", () => {
+    const r = job({ state: "running", progressAt: new Date(NOW - 11 * 60_000).toISOString() } as never);
+    expect(escalationReason(r, NOW, pol(0))).toContain("no edit or commit");
+    expect(escalationReason(job({ state: "running", consecFails: 6 } as never), NOW, pol(0))).toContain("failed tool calls");
+  });
+});
+
 describe("escalationReason", () => {
   it("an overdue queued job moves; a fresh one and an already rerouted one do not", () => {
     const now = Date.now();
     const held = (sinceMs: number): Partial<WorkerStatus> => ({ capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs } });
-    expect(escalationReason(queued(held(now - 16 * 60_000)), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toBe("queued 16m");
+    expect(escalationReason(queued({ ...held(now - 16 * 60_000), now: true }), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toContain("queued 16m");
     expect(escalationReason(queued(held(now - 60_000)), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toBeNull();
-    expect(escalationReason(queued({ ...held(now - 16 * 60_000), rerouted: "x" }), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toBeNull();
+    expect(escalationReason(queued({ ...held(now - 16 * 60_000), now: true, rerouted: "x" }), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toBeNull();
   });
 });
 
@@ -68,7 +93,7 @@ describe("rerouteWorker", () => {
 
   it("escalateOverdue hands every overdue queued job over once", async () => {
     const now = Date.now();
-    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs: now - 16 * 60_000 } }));
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), now: true, capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs: now - 16 * 60_000 } }));
     saveStatus(dir, queued({ id: "w2", promptFile: join(dir, "spec.txt"), provider: "fakeB" })); // already on the fallback
     const done = await escalateOverdue([loadStatus(dir, "w1")!, loadStatus(dir, "w2")!], {
       logDir: dir,
@@ -77,7 +102,7 @@ describe("rerouteWorker", () => {
       spawn: () => undefined,
     }, now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
     expect(done.map((e) => e.id)).toEqual(["w1"]);
-    expect(loadStatus(dir, "w1")!.rerouted).toBe("fakeB: queued 16m"); // the marker names where and why it moved
+    expect(loadStatus(dir, "w1")!.rerouted).toBe("fakeB: queued 16m (operator priority)"); // the marker names where and why it moved
     expect(loadStatus(dir, "w2")!.rerouted).toBeUndefined();
   });
 });

@@ -18,7 +18,7 @@ export const HEADLESS_DENY_MESSAGE = "workers are headless: nothing may appear o
 const PREFIXES = new Set(["nohup", "sudo", "exec", "env", "setsid", "time", "command", "caffeinate", "nice", "xcrun", "arch"]);
 const SHELLS = new Set(["sh", "bash", "zsh"]);
 const OSA_SCREEN = /\bactivate\b|display\s+dialog|display\s+notification|tell\s+application\s+("[^"]*"|\S+)\s+to\s+open/i;
-const SWIFT_WINDOW = /setActivationPolicy|NSWindow\s*\(|makeKeyAndOrderFront|orderFront|NSApp\.run|NSApplication\.shared\.run|NSApplicationMain|\.run\(\)|@main\s+struct\s+\w+\s*:\s*App\b/;
+const SWIFT_WINDOW = /setActivationPolicy|NSWindow\s*\(|makeKeyAndOrderFront|orderFront|NSApp\.run|NSApplication\.shared\.run|NSApplicationMain|@main\s+struct\s+\w+\s*:\s*App\b/;
 const isAssignment = (w: string): boolean => /^[A-Za-z_]\w*=/.test(w);
 const bare = (w: string): string => w.replace(/^(\$\(|[({`])+/, "");
 

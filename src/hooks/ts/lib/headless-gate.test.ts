@@ -9,6 +9,7 @@ const dir = mkdtempSync(join(tmpdir(), "headless-"));
 writeFileSync(join(dir, "win.swift"), "import AppKit\nlet w = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)\n");
 writeFileSync(join(dir, "pol.swift"), "NSApplication.shared.setActivationPolicy(.accessory)\n");
 writeFileSync(join(dir, "plain.swift"), "print(\"hello\")\n");
+writeFileSync(join(dir, "proc.swift"), "let p = Process(); try p.run()\n");
 const r = (c: string, env = W) => headlessReason(c, env, dir);
 
 describe("headless gate", () => {
@@ -21,7 +22,7 @@ describe("headless gate", () => {
 
   it.each([
     "swift build", "xcodebuild -scheme X build", "swift test", "swift plain.swift", "swiftc -o p plain.swift",
-    "git log --oneline", "git log --open", "grep -n open file.txt", "swift missing.swift",
+    "git log --oneline", "git log --open", "grep -n open file.txt", "swift missing.swift", "swift proc.swift",
   ])("allows %s", (c) => expect(r(c)).toBeNull());
 
   it("allows open outside a worker", () => expect(r("open report.pdf", {})).toBeNull());

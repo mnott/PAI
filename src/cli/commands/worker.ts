@@ -46,7 +46,7 @@ import { setMuted } from "../../workers/local-idle.js";
 import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../workers/pane-audit.js";
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
-import { discardWorker, discardWorktree,leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
+import { callerMergeTarget, discardWorker, discardWorktree,leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
@@ -926,7 +926,7 @@ const mergeCommand: CommandDef = {
         } else verify = configured;
       }
       try {
-        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build") }));
+        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: callerMergeTarget(logDir(), ctx.args.ID as string) }));
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) throw new CliError(e.message, "the merge was kept; fix forward or revert it", 3);
         throw e;
