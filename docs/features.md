@@ -207,6 +207,18 @@ Three tiers (session, orchestrator, workers) each hold an ordered list of models
 
 On a model card in the cockpit, **+** and **−** change the provider's `maxConcurrent` by one. It takes effect without a restart. A worker pane waiting for a slot shows its queue position. See [cockpit](cockpit.md#models--runtimes-models).
 
+### Freeze and thaw
+
+Something needs the whole machine for a while (a build, a render, a call with screen sharing)? `pai freeze` stops every running worker and the local model server where they are, without killing anything: each worker's whole process tree (the claude process, its tests, builds and compilers) is suspended with SIGSTOP and uses no CPU or GPU. No new worker starts while frozen. `pai thaw` continues everything exactly where it was, and every worker is told that the operator paused it and nothing failed, so orchestrators do not mistake the gap for a failure. Deadlines, wait budgets and supervision do not count the frozen minutes.
+
+- `pai freeze --for 30m` thaws by itself after the time.
+- `pai freeze --status` shows since when, by whom and what is frozen.
+- `pai freeze --workers-only` leaves the local model running; `--only ID,...` freezes chosen workers.
+- From any Claude session, say "freeze the workers" / "thaw" (PAI tools `workers_freeze`, `workers_thaw`).
+- Your interactive sessions, the router, the daemon, AIBroker and Docker are never frozen, so chat with cloud models keeps working. A worker cannot freeze its siblings.
+
+See [`pai freeze`](commands/freeze.md), [`pai thaw`](commands/thaw.md).
+
 ### Merge a worker, with auto-resolve
 
 `pai worker merge ID` brings a worker's branch back. After the merge it runs `workers.merge.verify` (typecheck plus the kept test core); on a failure the merge is reverted (`--no-verify-tests` skips the check once). Conflicts only in generated files are regenerated, and add-only clashes in the configured files are union-merged (`workers.merge.generated`, `regenerate`, `union`). See [workers](concepts/workers.md), [`pai worker`](commands/worker.md).
