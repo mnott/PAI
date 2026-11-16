@@ -8,6 +8,8 @@
  */
 
 import { readdirSync } from "node:fs";
+import { resolveDaemonPid } from "../daemon/daemon-pid.js";
+import { pidAlive } from "../workers/status.js";
 import type { DashboardState } from "../daemon/dashboard.js";
 import { PaiClient } from "../daemon/ipc-client.js";
 import { loadConfig } from "../daemon/config.js";
@@ -34,6 +36,43 @@ export interface DaemonMemory {
   lastEmbedPass: { at: number; durationMs?: number; outcome: string; embedded: number; reason?: string } | null;
   /** Set when more than 1 % of the chunks belong to no project (daemon/orphan-check.ts). */
   orphans?: { orphaned: number; total: number; message: string } | null;
+  /** p50/p99/max event-loop delay over the last minute (ms), with the epoch ms it was sampled. */
+  loopLag?: { p50: number; p99: number; max: number; at: number } | null;
+}
+
+/** How long ago the daemon's lag sample may be to still describe the live process (its sampler rolls every minute). */
+export const DAEMON_LAG_FRESH_MS = 120_000;
+
+/**
+ * Whether the daemon's process is alive — asked only when its IPC call failed,
+ * which is exactly where "down" and "held by a task" must be told apart.
+ * Injectable so tests never signal real processes.
+ */
+export type DaemonAlive = (pid?: number) => boolean;
+
+/** The kept daemonInfo's pid, if the last good answer has one. */
+function keptDaemonPid(d: DaemonMemory | null): number | undefined {
+  const pid = d?.status?.daemon?.pid;
+  return typeof pid === "number" && pid > 0 ? pid : undefined;
+}
+
+/**
+ * The verdict when the daemon's IPC call did not answer. Busy, not down, only
+ * on both evidence legs: the process is alive AND its last lag sample is fresh
+ * (a dead or wedged-before-boot process has nothing recent to say). `heldMs`
+ * is the max loop delay of that sample — what held the loop when it was taken.
+ */
+export function daemonBusyVerdict(
+  d: DaemonMemory | null,
+  alive: DaemonAlive,
+  nowMs: number,
+  freshMs = DAEMON_LAG_FRESH_MS
+): { busy: boolean; heldMs: number | null } {
+  const lag = d?.loopLag ?? null;
+  if (!lag) return { busy: false, heldMs: null };
+  if (!alive(keptDaemonPid(d))) return { busy: false, heldMs: null };
+  if (!(lag.at > 0) || nowMs - lag.at > freshMs) return { busy: false, heldMs: null };
+  return { busy: true, heldMs: Math.max(0, lag.max) };
 }
 
 export interface MemoryDeps {
@@ -54,6 +93,16 @@ export interface MemoryDeps {
   runRecord?: (kind: RunKind) => RunProgressView | null;
   /** All lessons; defaults to the lesson files under the PAI home. */
   lessons?: () => Lesson[];
+  /** Whether a pid is a live process, consulted only when the daemon's IPC call failed; defaults to signal-0 on the kept daemon pid. Never signal real processes from tests. */
+  daemonAlive?: DaemonAlive;
+}
+
+/** The kept answer's daemon pid, else this machine's daemon as the service manager knows it. */
+function defaultDaemonAlive(): DaemonAlive {
+  return (pid) => {
+    const target = pid ?? resolveDaemonPid();
+    return target !== undefined && pidAlive(target);
+  };
 }
 
 /** Lessons card: a count per state and the newest candidates (what waits for review), with their age. */
@@ -321,6 +370,9 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     fail = { failures: lastGood.fails, since: lastGood.since, reason: "daemon not answering" };
   }
   const d = fresh ?? lastGood.d;
+  // IPC failed but the process lives and its lag sampler is current: the loop
+  // is held, not the daemon gone. The cockpit shows this instead of "down".
+  const busy = fail && !fresh ? daemonBusyVerdict(d, deps.daemonAlive ?? defaultDaemonAlive(), now) : null;
   const bf = d?.status?.index.bindingFailure ?? null;
   if (!fail && bf) fail = { failures: bf.failures, since: bf.since ?? now, reason: `binding check failed: ${bf.reason}` };
   if (!fail && d?.status?.index.error) fail = { failures: 1, since: now, reason: `binding check: ${d.status.index.error}` };
@@ -406,6 +458,11 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     failures: fail?.failures ?? 0,
     title: L.memoryTitle,
     daemon: fresh !== null,
+    // set when the IPC call failed but the process is alive and its last lag
+    // sample is recent: held, not down. `heldMs` = max loop delay of that sample.
+    ...(busy?.busy ? { daemonBusy: { heldMs: busy.heldMs } } : {}),
+    /** the live answer's p50/p99/max loop delay over the last minute (null when it does not answer). */
+    loopLag: fresh?.loopLag ?? null,
     orphans,
     level: stalled && level === "green" ? "red" : level,
     reason: fail ? (d === null ? fail.reason : `${fail.reason} since ${hhmmss(fail.since)}`)

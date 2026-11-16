@@ -34,7 +34,7 @@ import { readClaudeJson, writeClaudeJson, registerMcpScript } from "../../config
 import { daemonLogPath } from "../../runtime-paths.js";
 import { resolveFromModule } from "../../module-paths.js";
 import { serviceManagerAllowed } from "../../service-manager.js";
-import { formatStorageHealth, type StorageHealthStatus } from "./daemon-status.js";
+import { formatStorageHealth, loopLagLine, type StorageHealthStatus } from "./daemon-status.js";
 import {
   loadSessionKeepaliveState,
   sessionKeepaliveLedgerSummary,
@@ -201,6 +201,10 @@ async function cmdStatus(): Promise<number> {
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
     console.log(dim(`    Log:         ${DAEMON_LOG}`));
+    // the loop lag prints even when nothing else is wrong: it is the number
+    // that says "slow" where the cockpit had said "down"
+    const lag = loopLagLine((s as StorageHealthStatus).loopLag);
+    if (lag) console.log(lag.severity === "error" ? err(`    ${lag.text}`) : warn(`    ${lag.text}`));
     const quiet = readQuiet();
     if (quiet.on) console.log(warn(`    Quiet:       ${describeQuiet(quiet)}`));
 

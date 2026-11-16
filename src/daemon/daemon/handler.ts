@@ -32,6 +32,7 @@ import { triggerRegistryScan } from "../registry-scan-trigger.js";
 import { enqueue, getStats as getQueueStats } from "../../daemon/work-queue.js";
 import { notifyNewWork } from "../../daemon/work-queue-worker.js";
 import { getBackendOutage } from "../../storage/outage.js";
+import { loopLag } from "../event-loop-lag.js";
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -122,6 +123,10 @@ export async function handleRequest(
         // everything else in this payload is stalled — and the reason status
         // used to report "idle" for two days while nothing progressed.
         backendOutage: getBackendOutage(),
+        // p50/p99/max loop delay over the last minute (ms) plus when it was
+        // sampled. A large `max` with a live process means busy, not down —
+        // what the CLI prints and what lets the cockpit say "daemon busy".
+        loopLag: loopLag(),
       },
     });
     socket.end();
