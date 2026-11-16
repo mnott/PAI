@@ -201,7 +201,9 @@ Three tiers (session, orchestrator, workers) each hold an ordered list of models
 
 ### Local models
 
-`pai models` shows every local runtime with its models, memory and users, and starts or stops one. See [local models](concepts/local-models.md), [`pai models`](commands/models.md).
+`pai models` shows every local runtime with its models, memory and users, and starts or stops one. `pai models chat <model>` talks to a running local model directly in the terminal. See [local models](concepts/local-models.md), [`pai models`](commands/models.md).
+
+Apple's on-device model (Apple Intelligence, FoundationModels) is available as an opt-in provider `apple-fm` (`pai models start apple-fm`): free and private, 8k context, about 26 tokens/s. Good for single calls such as extraction, classification or flashcards; too small for a coding worker. See [apple-fm](local-models/apple-fm.md).
 
 ### Parallel runs, live
 
