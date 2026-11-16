@@ -143,6 +143,7 @@ Line 4 of the status line, prefixed üêù, summarises workers: provider head, `‚ñ
 | Action | CLI | Cockpit | MCP |
 |---|---|---|---|
 | Change a running worker's engine priority | `pai worker priority set ID high\|normal\|low` | worker row | `worker_priority` (`worker_run` takes `priority`) |
+| Freeze / continue ALL workers and the model server NOW (SIGSTOP/SIGCONT, nothing killed) | `pai freeze [--for 30m] [--status]`, `pai thaw` | none | `workers_freeze`, `workers_thaw` |
 | Park / release a worker's next engine request | `pai worker pause ID`, `pai worker resume ID` | worker row | `worker_pause`, `worker_resume` without text |
 | Merge a worker's branch (gates, dist rebuild) | `pai worker merge ID [--no-build]` | - | `worker_merge` |
 | Hold / release a provider | `pai worker providers hold\|release NAME` | - | `worker_providers` (`hold`, `release`) |

@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
 import { parseWorkerReport, verifyReportChanges, type WorkerReport } from "./report.js";
+import { activeNow } from "./freeze.js";
 import { loadStatus, reconcileStatuses, type WorkerStatus } from "./status.js";
 
 export interface WaitResult {
@@ -124,10 +125,11 @@ export async function waitWorkers(
     known.set(id, st);
     if (!TERMINAL.includes(st.state)) pending.add(id);
   }
-  const deadline = Date.now() + timeoutMs;
+  // the budget runs on the active clock: `pai freeze` time is not waited
+  const deadline = activeNow() + timeoutMs;
   const anyDone = () => opts.any === true && pending.size < ids.length;
-  while (pending.size > 0 && !anyDone() && Date.now() < deadline) {
-    await sleep(Math.min(intervalMs, Math.max(1, deadline - Date.now())));
+  while (pending.size > 0 && !anyDone() && activeNow() < deadline) {
+    await sleep(Math.min(intervalMs, Math.max(1, deadline - activeNow())));
     reconcileStatuses(logDir, new Date(), 0, opts.owns);
     for (const id of [...pending]) {
       const st = loadStatus(logDir, id);

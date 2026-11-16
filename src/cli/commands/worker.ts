@@ -29,6 +29,7 @@ import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } fro
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { checkPaneForWorker, closeEndedPanes, openFollowPane, paneMayClose, openPaneForWorker, resolveHostSession, workerEnded } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
+import { workerFreezeCommand } from "./freeze.js";
 import { setWorkerPaused } from "../../workers/engine-control.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
@@ -1393,6 +1394,7 @@ export const workerCommand: CommandDef = {
     goalCommand,
     rerouteCommand,
     pauseCommand,
+    workerFreezeCommand,
     handoffCommand,
     helpCommand,
     mergeCommand,

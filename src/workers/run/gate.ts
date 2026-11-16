@@ -4,6 +4,7 @@
  * existing import path keeps working.
  */
 
+import { freezeHold } from "../freeze.js";
 import { spawnOrigin } from "../pane-waiver.js";
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -687,6 +688,9 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
     // a hold queues new work; a benchmark-labelled run (the bench harness itself) passes it
     holdExempt: isBenchmarkLabel(a.label),
     holdOf: () => {
+      // `pai freeze`: nothing is admitted while the machine is frozen
+      const frozen = freezeHold();
+      if (frozen) return frozen;
       try {
         return (readWorkersCached().providers[target.providerName] ?? target.provider).hold?.reason;
       } catch {

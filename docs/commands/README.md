@@ -22,6 +22,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai doc`](doc.md) | Write the Markdown command reference |
 | [`pai end`](end.md) | Finish the current session |
 | [`pai find`](find.md) | Search your prompt history for sessions |
+| [`pai freeze`](freeze.md) | Stop all running workers and the local model server to free the CPU/GPU now |
 | [`pai git`](git.md) | Link commits to the session that wrote them |
 | [`pai handoff`](handoff.md) | Carry a session's work to a new one |
 | [`pai harness`](harness.md) | Sessions PAI can read from agent harnesses (Claude Code, Codex, ...) |
@@ -72,6 +73,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai task`](task.md) | Cross-session task list: list, add, dispatch, done |
 | [`pai tasks`](tasks.md) | Same as task |
 | [`pai tests`](tests.md) | Test governance: audit a repo's tests, prune them to the governed core |
+| [`pai thaw`](thaw.md) | Continue everything `pai freeze` stopped, exactly where it was |
 | [`pai topic`](topic.md) | Detect when a conversation moved to another project |
 | [`pai uhp`](uhp.md) | Serve PAI workers over the Unified Harness Protocol |
 | [`pai update`](update.md) | Update PAI (or another package) to the latest GitHub Release |
@@ -157,6 +159,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai doc` | Write the Markdown command reference |
 | `pai end` | Finish the current session |
 | `pai find` | Search your prompt history for sessions |
+| `pai freeze` | Stop all running workers and the local model server to free the CPU/GPU now |
 | `pai git` | Link commits to the session that wrote them |
 | `pai git hook` | Git hook entry points (called by git) |
 | `pai git hook post-commit` | Record the sessions that edited the last commit's files |
@@ -437,6 +440,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai tests` | Test governance: audit a repo's tests, prune them to the governed core |
 | `pai tests audit` | List test files with a proposed class and the file-count trend |
 | `pai tests prune` | Plan, or with --apply start a worker, that prunes the suite to the governed core |
+| `pai thaw` | Continue everything `pai freeze` stopped, exactly where it was |
 | `pai topic` | Detect when a conversation moved to another project |
 | `pai topic check` | Check whether a text belongs to a different project than the current one |
 | `pai uhp` | Serve PAI workers over the Unified Harness Protocol |
@@ -466,6 +470,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
 | `pai worker flaky` | Test files that failed in the merge gate's batch and passed alone |
 | `pai worker follow` | Watch a worker live, or all running workers |
+| `pai worker freeze` | Alias of `pai freeze` (--all) and `pai thaw` (--resume) |
 | `pai worker gc` | Archive leftover worker worktrees |
 | `pai worker goal` | Leave a goal note on a running worker |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |

@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { buildsDir, listBuildsSync, ordered, ticketKind, type BuildTicket } from "../builds/queue.js";
+import { activeNow } from "./freeze.js";
 import { loadStatus, loadStatuses, pidAlive, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
@@ -233,7 +234,7 @@ export const realDeps: WaitOnDeps = {
       return null;
     }
   },
-  now: () => Date.now(),
+  now: activeNow,
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   out: (l) => console.log(l),
   proc: realProc,

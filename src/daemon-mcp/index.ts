@@ -1899,6 +1899,42 @@ async function startShim(): Promise<void> {
   );
 
   server.tool(
+    "workers_freeze",
+    [
+      "Freeze ALL running local development work NOW to free the CPU/GPU, without killing anything (`pai freeze`):",
+      "SIGSTOP to every running worker's whole process tree (children first, an L1 last) and the local model server.",
+      "No new worker gets a slot while frozen; deadlines and wait budgets do not count the frozen time.",
+      "Continue with workers_thaw. Refused from inside a worker.",
+    ].join("\n"),
+    { for: z.string().optional().describe("Auto-thaw after this long, e.g. 30m or 2h (the daemon thaws).") },
+    async (args) => {
+      try {
+        if (process.env.PAI_WORKER === "1") return workerError(new Error("a worker cannot freeze its siblings"));
+        const { freezeAll, parseDuration, realFreezeDeps } = await import("../workers/freeze.js");
+        const r = freezeAll(workersLogDir(readWorkersSection().workers), "mcp", args.for ? parseDuration(args.for) : undefined, await realFreezeDeps());
+        return workerText(r.lines.join("\n"));
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "workers_thaw",
+    "Continue everything workers_freeze stopped, exactly where it was (`pai thaw`); idempotent. With status=true only reports what is frozen.",
+    { status: z.boolean().optional().describe("Only report the freeze state.") },
+    async (args) => {
+      try {
+        const { freezeStatusLines, realFreezeDeps, thawAll } = await import("../workers/freeze.js");
+        if (args.status) return workerText(freezeStatusLines().join("\n"));
+        return workerText(thawAll(workersLogDir(readWorkersSection().workers), await realFreezeDeps()).lines.join("\n"));
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
     "worker_resume",
     [
       "Continue a FINISHED worker with a follow-up message: claude --resume on the",
