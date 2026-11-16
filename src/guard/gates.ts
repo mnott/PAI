@@ -8,7 +8,7 @@
 
 import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ORCHESTRATOR_START_BLOCK } from "../workers/report.js";
+import { ORCHESTRATOR_START_BLOCK, QUEUED_CHILD_RULE } from "../workers/report.js";
 import { detectUnsafePlutil, plutilGuardMessage } from "../hooks/ts/lib/plutil-guard.js";
 import { decideWorkerGitGuard, workerGitGuardMessage } from "../hooks/ts/lib/worker-git-guard.js";
 import { mainSessionBashReason } from "../hooks/ts/lib/main-session-git-gate.js";
@@ -43,6 +43,8 @@ export interface GateSet {
   testGovernance?: boolean;
   /** Worker write-time check for literal credentials in test files. */
   credential?: boolean;
+  /** `pai worker kill <id>` by a worker: the state of <id> when it is that worker's own child, else undefined. A queued child may not be killed. */
+  ownChildState?: (id: string) => string | undefined;
   /** The worker guard (PAI_WORKER only): git/worktree context for its path, bench and config rules. */
   worker?: () => WorkerGuardContext;
 }
@@ -87,6 +89,11 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
     }
     // ponytail: one failed child unlocks takeover for all packages; per-package unlock if that proves too loose
     if (d?.decision === "block" && !g.planner.childFailed()) return deny(d.reason, "planner-lock");
+  }
+  if (g.ownChildState && isBash && c.env.PAI_WORKER === "1" && command) {
+    for (const m of command.matchAll(/(?:^|[;&|(]\s*)pai\s+worker\s+kill\s+(?:--?\S+\s+(?:"[^"]*"|'[^']*'|\S+)\s+)*?([A-Za-z0-9][\w.-]*)/g)) {
+      if (g.ownChildState(m[1]) === "queued") return deny(QUEUED_CHILD_RULE, "queued-child-kill");
+    }
   }
   if (g.credential) {
     const why = checkCredentialLiteral({ tool_name: c.tool, tool_input: c.input as never }, c.env);

@@ -31,3 +31,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/workers/report.test.ts | a | `--class orchestrate`/`plan` without the `--orchestrate` flag got the implementation-worker contract and implemented everything on its cloud model instead of starting L2 implementers (eval night 2026-11-16; planner opening + ORCHESTRATOR_START_BLOCK pinned) |
 | src/guard/gates.test.ts | b | L1 (class orchestrate/plan) edit lock until a child has failed: a planner that does the package itself is denied |
 | src/hooks/ts/lib/headless-gate.test.ts | b | worker headless guard: denies open, activating osascript, window-creating Swift probes and .app binaries (headless worker popped windows on the operator desktop, 2026-11-16) |
+| src/workers/reroute.test.ts | b | queued jobs wait for their slot (queuedMaxMin 0 = off) unless the operator gave priority; running stall escalation unchanged |
