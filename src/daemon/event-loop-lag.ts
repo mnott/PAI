@@ -6,10 +6,9 @@
  * although its process was alive (2026-11: local-idle ran 34 s of wall time —
  * all awaited subprocess — while the daemon stayed responsive; a task that
  * blocks the loop for seconds makes every IPC call time out). The lag is the
- * one number that tells them apart, so one histogram (node's
- * monitorEventLoopDelay) is sampled here: its max is read live by slow-task.ts
- * to attribute a block to the running task, and p50/p99/max over the last
- * minute are exposed in `status` and the cockpit.
+ * one number that tells them apart: this histogram's p50/p99/max over the last
+ * minute go into `status` and the cockpit, and slow-task.ts brackets each task
+ * with the same sampler's max to say WHICH task held it.
  */
 
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -32,14 +31,9 @@ let current: LoopLag | null = null;
 let timer: ReturnType<typeof setInterval> | undefined;
 let enabled = false;
 
-/** The loop delay's max since the last reset (ms) — slow-task.ts brackets a task with two of these reads; only meaningful once sampling is enabled. */
+/** The loop delay's max since the last reset (ms). */
 export function loopDelayMaxMs(): number {
   return Math.round(hist.max / 1e6);
-}
-
-/** Forget everything accumulated so far: the next read starts from an empty window. While sampling is off the histogram holds nothing, so a test that enables it itself calls this first. */
-export function resetLoopDelay(): void {
-  hist.reset();
 }
 
 function snapshot(at: number): LoopLag {
@@ -47,7 +41,7 @@ function snapshot(at: number): LoopLag {
   return { p50: p(0.5), p99: p(0.99), max: loopDelayMaxMs(), at };
 }
 
-/** The last rolled window's lag; null before startLoopLag (or after stop). */
+/** The last rolled window's lag; null before startLoopLag (or after its stop). */
 export function loopLag(): LoopLag | null {
   return current;
 }
@@ -55,8 +49,7 @@ export function loopLag(): LoopLag | null {
 /**
  * Start sampling: every windowMs (60 s default) the histogram is snapshotted
  * into loopLag() and reset, so the numbers describe the last minute, not the
- * process lifetime. The same histogram feeds loopDelayMaxMs(), which stays
- * live between rolls. Returns a stop function; call once per daemon boot.
+ * process lifetime. Returns a stop function; call once per daemon boot.
  */
 export function startLoopLag(windowMs = HIST_WINDOW_MS): () => void {
   if (!enabled) {
