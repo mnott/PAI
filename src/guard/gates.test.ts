@@ -123,3 +123,14 @@ describe("GNU sed relative-range denial on macOS", () => {
     expect(gnu("sed 's/a,+b/c/' f")).toBeNull(); // a substitution containing ",+" is not an address
   });
 });
+
+describe("git grep option order denial", () => {
+  const ctx: WorkerGuardContext = { cwd: "/w/tree", home: "/h", worktreeRoot: "/w/tree", inWorktree: false, mainCheckout: null, testScript: () => null };
+  const g = (command: string) => decideWorkerGate({ tool: "Bash", input: { command }, cwd: "/w/tree", env: { PAI_WORKER: "1" } }, { worker: () => ctx });
+  it("denies an option after the bare pattern, allows options before it and -e patterns", () => {
+    expect(g('git grep -n "export function parentInfo" -A 20 -- src/a.ts')?.action).toBe("deny");
+    expect(g('git grep -n -A 20 "export function parentInfo" -- src/a.ts')).toBeNull();
+    expect(g("git grep -n -e foo -A 3")).toBeNull(); // the pattern is an option argument: -A after it is fine
+    expect(g('git grep -n "x" -- src')).toBeNull();
+  });
+});
