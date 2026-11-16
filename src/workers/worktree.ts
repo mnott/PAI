@@ -1186,29 +1186,6 @@ function callerWorkerId(env: NodeJS.ProcessEnv): string | undefined {
 }
 
 /**
- * Is `dir` the same checkout as `other` (same toplevel, following symlinks)?
- */
-function sameCheckout(dir: string, other: string): boolean {
-  try {
-    return realpathOr(git(dir, ["rev-parse", "--show-toplevel"])) === realpathOr(git(other, ["rev-parse", "--show-toplevel"]));
-  } catch {
-    return false;
-  }
-}
-
-/** `st`'s tree is a worktree of the repository whose toplevel is `callerToplevel` (the caller's own repo). */
-function inCallerRepo(st: WorkerStatus, callerToplevel: string): boolean {
-  if (!st.worktreeDir || !existsSync(st.worktreeDir)) return false;
-  const common = commonDir(st.worktreeDir);
-  if (!common) return false;
-  try {
-    return realpathOr(git(common, ["rev-parse", "--show-toplevel"])) === realpathOr(callerToplevel);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * `pai worker merge <id>` called from inside a worker (PAI_WORKER=1): the child's
  * work lands on the CALLER's branch, never on main. A recorded cwd is the repo's
  * main checkout (`recordWorktree` maps a worktree cwd there), so merging by the
@@ -1229,10 +1206,31 @@ export function mergeTargetForCaller(logDir: string, id: string, st: WorkerStatu
         `so there is no branch to merge into; run it from L0 instead`
     );
   }
-  if (st.parent === callerId) return toplevel;
   // chain stages share one parent id and pool hosts inherit PAI_WORKER_ID, so
-  // the recorded parent alone proves nothing: the tree must hang in this repo too
-  if (inCallerRepo(st, toplevel)) return toplevel;
+  // the recorded parent alone proves nothing. The tree must be a descendant of
+  // the caller's own branch: an L1 spawns its children from its worktree HEAD,
+  // so their branches carry it; a foreign branch off main does not. (The
+  // caller's branch is checked out right here — cwd is the caller's worktree.)
+  // a child's worktree branches off its parent's HEAD, so its branch is a
+  // strict descendant of the caller's own tip; a foreign branch (off main)
+  // never is — even after the L1 merged it by hand, in which case re-merging
+  // it here would be a no-op anyway.
+  if (st.parent === callerId) return toplevel;
+  const callerBranch = git(process.cwd(), ["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (st.branch && callerBranch !== "HEAD") {
+    const base = st.worktreeBase ?? "";
+    try {
+      if (!base) throw new Error("no recorded base");
+      // the branch must be based on the caller's own tree: its snapshot-base is a
+      // descendant of (or equal to) the caller's HEAD, and the tip carries commits.
+      // `--git-dir` runs it from this checkout against the shared object store.
+      git(process.cwd(), ["--git-dir", "merge-base", "--is-ancestor", "HEAD", base]);
+      const ahead = parseInt(git(process.cwd(), ["--git-dir", "rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
+      if (ahead > 0) return toplevel;
+    } catch {
+      // base unreadable here: not this caller's child
+    }
+  }
   throw new Error(
     `worker ${id} is not a child of worker ${callerId}: refusing to merge it into the caller's branch. ` +
       `Only L0 merges foreign branches — run this from the operator session.`
@@ -1425,8 +1423,20 @@ export function mergeWorker(
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
   // a merge from inside a worker lands on the caller's own branch, never on main
+  const callerId = callerWorkerId(process.env);
   const target = opts.targetToplevel !== undefined ? opts.targetToplevel : mergeTargetForCaller(logDir, id, st, process.env);
-  if (target) repointChildStatus(logDir, st, target);
+  // a worker whose child's recorded cwd is not its own tree (the record names
+  // the repo's main checkout): land on the caller's toplevel, never on main.
+  // A foreign branch was refused above; this only re-points an already-agreed merge.
+  if (callerId && realpathOr(st.cwd) !== realpathOr(process.cwd())) {
+    try {
+      repointChildStatus(logDir, st, git(process.cwd(), ["rev-parse", "--show-toplevel"]));
+    } catch {
+      // not a git cwd: the recorded cwd keeps its meaning
+    }
+  } else if (target) {
+    repointChildStatus(logDir, st, target);
+  }
   if (st.escalatedTo && escalationState(logDir, st) === "running") {
     throw new Error(
       `worker ${id}: escalated to ${st.escalatedTo}, which is still running from branch ${st.branch}; ` +
