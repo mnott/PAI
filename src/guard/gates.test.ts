@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decidePreGates } from "./gates.js";
+import { decidePreGates, decideWorkerGate } from "./gates.js";
+import type { WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 
 const base = { PAI_WORKER: "1", PAI_WORKER_CLASS: "orchestrate", TMPDIR: "/var/folders/x/T" } as NodeJS.ProcessEnv;
 const run = (tool: string, input: unknown, env: NodeJS.ProcessEnv, failed = false) =>
@@ -77,5 +78,19 @@ describe("queued child kill", () => {
   });
   it("leaves non-worker callers alone", () => {
     expect(kill("pai worker kill q1", {})).toBeNull();
+  });
+});
+
+describe("GNU sed relative-range denial on macOS", () => {
+  const ctx: WorkerGuardContext = { cwd: "/w/tree", home: "/h", worktreeRoot: "/w/tree", inWorktree: false, mainCheckout: null, testScript: () => null };
+  const gnu = (command: string) => decideWorkerGate({ tool: "Bash", input: { command }, cwd: "/w/tree", env: { PAI_WORKER: "1" } }, { worker: () => ctx });
+  const darwin = process.platform === "darwin";
+  (darwin ? it : it.skip)("denies GNU `,+N` ranges, absolute ends and s/// bodies pass", () => {
+    expect(gnu('sed -n "18,+8p" f.ts')?.action).toBe("deny");
+    expect(gnu('sed -n "$(grep -n x f | cut -d: -f1),+8p" f.ts')?.action).toBe("deny");
+    expect(gnu("sed -n '18,+8p' f.ts")?.action).toBe("deny"); // unquoted and single-quoted scripts too
+    expect(gnu('sed -n "18,26p" f.ts')).toBeNull();
+    expect(gnu("sed -n 1,8p")).toBeNull();
+    expect(gnu("sed 's/a,+b/c/' f")).toBeNull(); // a substitution containing ",+" is not an address
   });
 });
