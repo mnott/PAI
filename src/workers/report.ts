@@ -116,6 +116,7 @@ function guardRulesBlock(scratch: string): string[] {
     "Background processes you start: `cmd & echo $! > \"$TMPDIR/x.pid\"`, stop them with",
     "`kill $(cat \"$TMPDIR/x.pid\")`; never `pkill`/`killall`/`kill` by name or pattern.",
     "Probe scripts import src/ via npx tsx; dist/ is bundled.",
+    "You run headless: never show anything on the operator's screen. No `open` of files, URLs or apps, no osascript that activates or displays, no GUI apps and no probe code that creates windows (NSApplication activation policy, NSWindow, makeKeyAndOrderFront, NSApp.run). Verify rendering offscreen (render to an image or PDF file and read it) instead.",
   ];
 }
 
