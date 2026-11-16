@@ -139,6 +139,19 @@ async function defaultKill(logDir: string, id: string, reason: string, by: strin
 /** Env the restart process carries: the old run's id and why it moved (read back by `rerunFromEnv`). */
 export const RERUN_OF_ENV = "PAI_RERUN_OF";
 export const RERUN_WHY_ENV = "PAI_RERUN_WHY";
+/** Env naming a file whose content is the old run's id, for a starter that cannot take custom env (`pai worker run --detach`). */
+export const RERUN_OF_FILE_ENV = "PAI_RERUN_OF_FILE";
+
+/** The old run's id from the file named in the env (a `--detach` starter carries it this way); no-op without it. */
+export function rerunOfFromFile(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const f = env[RERUN_OF_FILE_ENV];
+  if (!f) return undefined;
+  try {
+    return readFileSync(f, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Start `bin args` in its own session with output to `outPath`; it survives its parent. The daemon calls
@@ -250,9 +263,15 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
     } catch {
       /* a stale file is overwritten by the new run */
     }
+    // the old id as a file too: a starter that cannot take custom env (--detach) reads it (rerunOfFromFile)
+    try {
+      writeFileSync(join(logDir, "runs", `rerun-${s.id}.of`), s.id);
+    } catch {
+      /* without the file a detached reroute start still runs; its pane falls back to any live iTerm session */
+    }
     const pid = start(process.env.PAI_BIN || "pai", args, {
       cwd: st.cwd || process.cwd(),
-      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile },
+      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
       outPath: join(logDir, "runs", `reroute-${s.id}.out`),
     });
     const newId = await waitAnnouncedId(idFile, pid);
@@ -264,9 +283,13 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
   };
 }
 
-/** Make `run` the continuation of the run named in the env (ledger, fall-through links); no-op without it. */
+/**
+ * Make `run` the continuation of the run named in the env (ledger, fall-through links); no-op without it.
+ * The old id arrives in PAI_RERUN_OF (a reroute's own spawn) or in the file named by PAI_RERUN_OF_FILE
+ * (a `--detach` starter, which cannot carry custom env).
+ */
 export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.ProcessEnv = process.env): void {
-  const of = env[RERUN_OF_ENV];
+  const of = env[RERUN_OF_ENV] || rerunOfFromFile(env);
   if (!of) return;
   delete env[RERUN_OF_ENV]; // the run's own children must not read it as theirs
   const why = env[RERUN_WHY_ENV] ?? "rerouted";
@@ -275,6 +298,7 @@ export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.Proces
   run._route = { policy: "auto", reason: `rerouted (${why})`, local: false };
   run._fallThroughOf = of;
   run._priorIds = [of];
+  run._restartOf = of; // a daemon-side start has no terminal of its own: the pane anchors to the old run's
   if (old?.term) run._hostTerm = old.term;
   run.onWorkerStart = (id2) => {
     announceRerunId(id2, env); // the waiting reroute holds the old run until this line ran

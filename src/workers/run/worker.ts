@@ -46,7 +46,7 @@ import {
   routeClassOf,
 } from "./model.js";
 import { isBenchmarkLabel } from "../../daemon/battery-guard.js";
-import { releasePane } from "./pane-handles.js";
+import { releasePane, isPaiContinuation } from "./pane-handles.js";
 import {
   BatteryGuardRefusedError,
   LocalProviderRefusedError,
@@ -299,6 +299,9 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const routeWhy = routeReason ? `${target.providerName}/${model} (${routeReason})` : undefined;
   if (routeWhy && !opts.quiet) process.stderr.write(`pai worker: route ${routeWhy}\n`);
 
+  // a PAI-started continuation (reroute, fall-through, handoff, escalation): every engine opens its pane
+  // through the launcher like a normal start, never headless (see pane-handles.ts)
+  const restart = isPaiContinuation(opts);
   // tracked across every engine (including a quota reroute's recursive
   // runWorker call) so the exit hook below knows which status to check,
   // whatever opts.id/onWorkerStart the caller did or didn't pass
@@ -345,6 +348,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parsed,
         claudeArgs: opts.claudeArgs,
         systemWaiver: opts.systemWaiver,
+        restart,
         cwd: opts.cwd,
         specPath: opts.specPath,
         parent: parent ?? undefined,
@@ -370,6 +374,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parsed,
         claudeArgs: opts.claudeArgs,
         systemWaiver: opts.systemWaiver,
+        restart,
         cwd: opts.cwd,
         specPath: opts.specPath,
         parent: parent ?? undefined,
@@ -394,6 +399,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parsed,
         claudeArgs: opts.claudeArgs,
         systemWaiver: opts.systemWaiver,
+        restart,
         cwd: opts.cwd,
         specPath: opts.specPath,
         parent: parent ?? undefined,
@@ -418,6 +424,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parsed,
         claudeArgs: opts.claudeArgs,
         systemWaiver: opts.systemWaiver,
+        restart,
         noStagger: opts.noStagger,
         noQueue: opts.noQueue,
         queuePriority: opts.queuePriority,

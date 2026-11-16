@@ -35,7 +35,7 @@ import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
-import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker } from "../../workers/reroute.js";
+import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile } from "../../workers/reroute.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
 import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -275,6 +275,14 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
  */
 async function runDetached(ctx: RunContext): Promise<number> {
   if (flag(ctx, "print-cmd")) throw new CliError("--detach and --print-cmd do not go together", "pai worker run --print-cmd -p 'test'");
+  // a reroute's detached restart carries the old id as a file: the child reads it back through
+  // rerunOfFromFile (spawnSession gives the child its own env, so PAI_RERUN_OF cannot cross) and is then
+  // launched through the pane launcher like any start (2026-11-16: an unlaunched detached restart was
+  // stopped by the pane audit).
+  if (process.env[RERUN_OF_FILE_ENV]) {
+    const of = rerunOfFromFile();
+    if (of) process.env[RERUN_OF_ENV] = of;
+  }
   const argv = process.argv.slice(2);
   const args = argv.slice(argv.indexOf("run")).filter((a) => a !== "--detach" && a !== "--detach=true");
   const id = await startDetachedWorker(logDir(), args, { cwd: process.cwd(), timeoutMs: 600_000 }); // a queued run has no id until it gets its slot
