@@ -160,15 +160,15 @@ export interface FreezeDeps {
   note: (logDir: string, id: string, text: string) => void;
 }
 
-/** The live deps; async because the model-server lookup lives in the CLI module (loaded on demand). */
-export async function realFreezeDeps(): Promise<FreezeDeps> {
-  const { runningModelServers } = await import("./model-servers.js");
+/** The live deps. Nothing is read here: building them must cost nothing, so a caller that may not need them (the daemon tick's auto-thaw check) pays only for what it actually calls. `servers` loads the model-server lookup on first use — it lives in the CLI module. */
+export function realFreezeDeps(): FreezeDeps {
   return {
     procs: () => parseProcs(psTable("pid=,ppid=,lstart=,command=")),
     statuses: (d) => loadStatuses(d),
     // one entry per running model server: its listening pid, named by what it serves
     servers: async () => {
       try {
+        const { runningModelServers } = await import("./model-servers.js");
         return await runningModelServers();
       } catch {
         return [];
@@ -365,7 +365,7 @@ export function thawAll(logDir: string, d: FreezeDeps): ThawReport {
   return { lines, continued, skipped, wasFrozen: true };
 }
 
-/** Daemon tick: thaw when the marker's `until` has passed. Returns the report when it thawed. */
+/** Daemon tick: thaw when the marker's `until` has passed. Returns the report when it thawed. Cheap when nothing is due: one read of the marker, no deps touched — the heavy ones (the process table, the model-server probes) are only called once a thaw actually runs. */
 export function autoThawDue(logDir: string, d: FreezeDeps): ThawReport | null {
   const m = readFreeze();
   if (!m || m.until === undefined || d.now() < m.until) return null;

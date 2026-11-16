@@ -33,7 +33,7 @@ async function freezeRun(ctx: RunContext): Promise<number> {
     }
   }
   try {
-    const deps = await realFreezeDeps();
+    const deps = realFreezeDeps();
     const only = typeof ctx.opts.only === "string" ? ctx.opts.only.split(",").map((x) => x.trim()).filter(Boolean) : undefined;
     // --only never stalls every other worker's shared model server: it implies --workers-only unless --models says otherwise
     if (ctx.opts["workers-only"] === true || (only && ctx.opts.models !== true)) deps.servers = async () => [];
@@ -46,7 +46,7 @@ async function freezeRun(ctx: RunContext): Promise<number> {
 }
 
 async function thawRun(): Promise<number> {
-  const r = thawAll(logDir(), await realFreezeDeps());
+  const r = thawAll(logDir(), realFreezeDeps());
   console.log(r.lines.join("\n"));
   return 0;
 }

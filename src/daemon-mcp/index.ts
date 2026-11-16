@@ -1911,7 +1911,7 @@ async function startShim(): Promise<void> {
       try {
         if (process.env.PAI_WORKER === "1") return workerError(new Error("a worker cannot freeze its siblings"));
         const { freezeAll, parseDuration, realFreezeDeps } = await import("../workers/freeze.js");
-        const r = await freezeAll(workersLogDir(readWorkersSection().workers), "mcp", args.for ? parseDuration(args.for) : undefined, await realFreezeDeps());
+        const r = await freezeAll(workersLogDir(readWorkersSection().workers), "mcp", args.for ? parseDuration(args.for) : undefined, realFreezeDeps());
         return workerText(r.lines.join("\n"));
       } catch (e) {
         return workerError(e);
@@ -1927,7 +1927,7 @@ async function startShim(): Promise<void> {
       try {
         const { freezeStatusLines, realFreezeDeps, thawAll } = await import("../workers/freeze.js");
         if (args.status) return workerText(freezeStatusLines().join("\n"));
-        return workerText(thawAll(workersLogDir(readWorkersSection().workers), await realFreezeDeps()).lines.join("\n"));
+        return workerText(thawAll(workersLogDir(readWorkersSection().workers), realFreezeDeps()).lines.join("\n"));
       } catch (e) {
         return workerError(e);
       }
