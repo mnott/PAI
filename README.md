@@ -1,10 +1,19 @@
 # PAI Knowledge OS
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24274093.svg)](https://doi.org/10.5281/zenodo.24274093)
+
+> **Measured, not claimed.** The design choices in PAI come out of a series of lab reports, published with DOIs:
+> [PAI Reports](https://github.com/mnott/PAI-Reports) ([doi:10.5281/zenodo.24274093](https://doi.org/10.5281/zenodo.24274093)).
+> The latest, *Planner and Worker* ([doi:10.5281/zenodo.24274094](https://doi.org/10.5281/zenodo.24274094)), shows when a cloud
+> planner over a local coder pays off: a local model alone handles small changes for free; on larger multi-file work a
+> Sonnet planner over a local worker matches Sonnet alone at about a third less cloud cost. That is what
+> `pai worker mode speed|balanced|budget` switches between.
+
 ## Local AI used to be hard. Now it is a button.
 
 I have spent a long time on local AI. Getting a strong model to run on my own machine was the easy part; making it actually useful was not. Which server, which quantization, which port, how to keep it alive, how to send it only the work it can do, and how to fall back to the cloud when it cannot. Every piece worked on its own and none of them worked together.
 
-PAI is what came out of that, and I am giving it to the community. A MacBook can already run a serious model: on mine, [Strata](https://github.com/Niko1221/Strata) serves [Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) in its compact [Gyro-M](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF) quantization, and PAI turns that into a worker like any other. Start it from the cockpit, and PAI routes worker jobs to it automatically, shows its speed and cache live, and hands a job to the cloud only when it needs a wider context or deeper reasoning than the local model has. You stop thinking about local AI. It just takes its share of the work.
+PAI is what came out of that, and I am giving it to the community. A MacBook can already run a serious model: on mine, [Strata](https://github.com/Niko1221/Strata) serves [Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) in its [Gyro-L](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF) quantization, and PAI turns that into a worker like any other. Start it from the cockpit, and PAI routes worker jobs to it automatically, shows its speed and cache live, and hands a job to the cloud only when it needs a wider context or deeper reasoning than the local model has. You stop thinking about local AI. It just takes its share of the work.
 
 **An AI chat is one vendor, one model, one budget and no memory. PAI turns it into a team: it remembers, it routes every job to the right model, cloud or local, and it shows you all of it live.**
 
