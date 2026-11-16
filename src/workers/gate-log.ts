@@ -107,7 +107,18 @@ export function parseGateFailure(output: string, repo?: string): GateFailure {
       }
       return weak;
     };
-    assert = (/^\s*not ok\s/.test(lines[firstFail]) ? nearestBack() || forward() : forward() || nearestBack()).slice(0, 400);
+    // node:test YAML block after "not ok": "error: |-" then the message, or "error: 'msg'" inline
+    let tapErr = "";
+    if (/^\s*not ok\s/.test(lines[firstFail])) {
+      for (let i = firstFail + 1; i < Math.min(lines.length, firstFail + 40) && !tapErr; i++) {
+        const m = /^\s*error:\s*(.*)$/.exec(lines[i]);
+        if (!m) continue;
+        const inline = m[1].trim();
+        if (inline && !/^[|>][-+]?$/.test(inline)) tapErr = inline;
+        else for (let j = i + 1; j < Math.min(lines.length, i + 8); j++) if (lines[j].trim()) { tapErr = lines[j].trim(); break; }
+      }
+    }
+    assert = (tapErr ? tapErr : /^\s*not ok\s/.test(lines[firstFail]) ? nearestBack() || forward() : forward() || nearestBack()).slice(0, 400);
   }
   const hints: string[] = [];
   if (repo && staleDistHint(output, repo)) hints.push("dist/ is older than src/: run the build first");
@@ -116,7 +127,7 @@ export function parseGateFailure(output: string, repo?: string): GateFailure {
 
 /** True when the output names a file under the repo's dist/ and that dist/ is older than its src/. */
 export function staleDistHint(output: string, repo: string): boolean {
-  if (!output.includes(join(repo, "dist") + "/")) return false;
+  if (!/(^|[\s'"(/])dist\//m.test(output)) return false;
   try {
     const d = join(repo, "dist");
     const s = join(repo, "src");

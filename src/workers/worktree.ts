@@ -1544,8 +1544,9 @@ export function mergeWorker(
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
       const log = related.logPath ? `: full gate output: ${related.logPath}` : "";
+      const why = [...(related.assert ? [`assertion: ${related.assert}`] : []), ...(related.hints ?? [])].join("; ");
       throw new Error(
-        `related tests failed: ${files}${log}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
+        `related tests failed: ${files}${log}${why ? ` (${why})` : ""}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
       );
     }
   }
