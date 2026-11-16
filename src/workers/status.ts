@@ -587,6 +587,29 @@ export function loadStatusCached(logDir: string, id: string, now = Date.now()): 
 }
 
 /**
+ * The bytes on disk behind a cached entry: the same file, read fresh. A daemon sweep that is about to act
+ * on an id it found through the cache (the pane audit stopping a worker) re-reads through this first: the
+ * cached view can lag a write whose mtime and size land identical to what was parsed before, and the stale
+ * copy must never be the last word before a kill. Returns null when the file is gone or damaged.
+ */
+export function refreshCachedStatus(logDir: string, id: string): WorkerStatus | null {
+  const path = statusPath(logDir, id);
+  let fresh: WorkerStatus;
+  try {
+    fresh = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
+  } catch {
+    return null;
+  }
+  try {
+    const st = statSync(path);
+    statusCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, status: fresh, checked: Date.now() });
+  } catch {
+    /* the file vanished between read and stat: the fresh copy still stands for this call */
+  }
+  return fresh;
+}
+
+/**
  * Wait for a worker to record its own terminal state (the run's signal
  * handler writes killed/rc/secs). Returns that status, or null when it is
  * still live ("running" or "queued") after `timeoutMs` — the caller then

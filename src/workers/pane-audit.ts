@@ -22,7 +22,7 @@ import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { killTree } from "./kill-tree.js";
 import { appendStopEvent, requestKill } from "./endreason.js";
-import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
+import { loadStatusesCached, loadStatus, refreshCachedStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import type { Messenger } from "./run-events.js";
@@ -230,21 +230,31 @@ export async function auditTick(
   const closedBy = readPaneClosedBy(logDir);
   for (const v of verdicts) if (v.kind === "worker" && closedBy[v.id]) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "pane closed by the operator" });
   // re-read the status right before judging: a worker that ended since the listing was taken (its pane closes first) is no violation
+  // uncached bytes on disk: a kill must never rest on the cached view
   const running =
     deps.running ??
     ((wid: string) => {
-      const s = loadStatus(logDir, wid);
+      const s = refreshCachedStatus(logDir, wid);
       return !s || isLive(s, ownsPid);
     });
   // NO PANE for want of a registry entry, yet the worker's own recorded pane is in the listing: the entry was lost, the pane is not. Re-register, never kill.
   for (const v of verdicts) {
     if (v.kind !== "worker" || v.mark !== "NO PANE" || v.session) continue;
     const own = (deps.ownSession ?? ((wid) => ownPaneSession(logDir, wid)))(v.id);
-    if (!own || !tabs.has(norm(own))) continue;
-    const host = v.host ?? own;
-    saveEntry(logDir, { session: norm(own), worker: v.id, opened: now.toISOString().replace("T", " ").slice(0, 19), scope: scopeKey(host), host: v.host });
-    appendLedger(ledgerPath(logDir), "PANE-REREGISTERED", { id: v.id, session: norm(own) }, now);
-    Object.assign(v, { mark: "ok", session: norm(own), tab: tabs.get(norm(own)), why: "entry lost, pane alive: re-registered" });
+    // the worker's own recorded pane is in the listing: the entry was lost, the pane is not — re-register it
+    if (own && tabs.has(norm(own))) {
+      const host = v.host ?? own;
+      saveEntry(logDir, { session: norm(own), worker: v.id, opened: now.toISOString().replace("T", " ").slice(0, 19), scope: scopeKey(host), host: v.host });
+      appendLedger(ledgerPath(logDir), "PANE-REREGISTERED", { id: v.id, session: norm(own) }, now);
+      Object.assign(v, { mark: "ok", session: norm(own), tab: tabs.get(norm(own)), why: "entry lost, pane alive: re-registered" });
+      continue;
+    }
+    // no entry and no recorded session, yet the status says a pane was opened (or exec): the registry lost
+    // the entry while the worker's own proof stands — never stop on that, keep it marked until it is gone
+    const fresh = refreshCachedStatus(logDir, v.id);
+    if (fresh?.pane?.opened === true || fresh?.pane?.exec === true) {
+      Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "entry lost, status says the pane was opened: not judged" });
+    }
   }
   for (const v of verdicts) {
     if (v.kind !== "worker" || v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue;
@@ -276,8 +286,12 @@ export async function auditTick(
     }
     if (told[v.id] === v.mark) continue;
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
-    // a worker without its pane does not run on: it ends through the normal path, which salvages its work
-    if (v.kind === "worker" && v.mark === "NO PANE" && !v.session) await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, now);
+    // a worker without its pane does not run on: it ends through the normal path, which salvages its work.
+    // Only on the uncached bytes: a status that says its pane was opened is never stopped here.
+    if (v.kind === "worker" && v.mark === "NO PANE" && !v.session) {
+      const fresh = refreshCachedStatus(logDir, v.id);
+      if (!fresh?.pane?.opened && fresh?.pane?.exec !== true) await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, now);
+    }
   }
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
   return verdicts;
@@ -478,12 +492,18 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
       out.push({ id: r.id, kind: "orphan-child", action: "child killed" });
     }
   }
-  // a running worker nobody launched through a pane, and with no recorded reason to run without one
+  // a running worker nobody launched through a pane, and with no recorded reason to run without one.
+  // The list comes from the cached status view; nothing is stopped on it alone (2026-11-16: workers whose
+  // disk status said pane.exec true were killed because the cache still held their pre-pane first status).
   const told = readJson(join(logDir, "pane-audit-unlaunched.json"));
   const flagged: Record<string, string> = {};
   const registered = d.registered ?? ((id: string) => loadRegistry(logDir).some((e) => e.worker === id));
   for (const w of (d.workers ?? (() => runningWorkers(logDir)))()) {
     if (w.exec || w.exempt || nowMs - w.startedMs < panePolicy().startGraceMs || registered(w.id)) continue;
+    // safety net: re-read the status uncached — a worker whose bytes on disk say its pane was opened, or
+    // that recorded any reason to run without one, is never stopped as unlaunched
+    const fresh = refreshCachedStatus(logDir, w.id);
+    if (fresh && (fresh.pane?.opened === true || fresh.pane?.exec === true || (fresh.pane && fresh.pane.opened === false))) continue;
     flagged[w.id] = "1";
     if (!told[w.id]) {
       const why = "running without having been started through the pane launcher";
