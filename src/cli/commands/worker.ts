@@ -270,8 +270,8 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
 async function runDetached(ctx: RunContext): Promise<number> {
   if (flag(ctx, "print-cmd")) throw new CliError("--detach and --print-cmd do not go together", "pai worker run --print-cmd -p 'test'");
   const argv = process.argv.slice(2);
-  const args = argv.filter((a) => a !== "--detach" && a !== "--detach=true");
-  const id = await startDetachedWorker(logDir(), args, { cwd: process.cwd() });
+  const args = argv.slice(argv.indexOf("run")).filter((a) => a !== "--detach" && a !== "--detach=true");
+  const id = await startDetachedWorker(logDir(), args, { cwd: process.cwd(), timeoutMs: 600_000 }); // a queued run has no id until it gets its slot
   out(JSON.stringify({ id }));
   return 0;
 }

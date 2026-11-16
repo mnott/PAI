@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { reapOrphansOnce, type ProcRow, type ReaperDeps, type ReaperState } from "./reaper.js";
+import { REAP_TICK_MS, reapOrphansOnce, type ProcRow, type ReaperDeps, type ReaperState } from "./reaper.js";
 import { worktreesDir } from "./worktree.js";
 
 const row = (over: Partial<ProcRow>): ProcRow => ({ pid: 100, ppid: 1, cpu: 80, ageSecs: 600, command: "node /usr/local/bin/pai worker run --class implement", cwd: "", ...over });
@@ -20,6 +20,7 @@ function fakeLogDir(): string {
 
 function deps(rows: ProcRow[], logDir: string): ReaperDeps & { killed: number[] } {
   const killed: number[] = [];
+  let tick = 0;
   const load = (id: string): { parent?: string; state?: string } | null => {
     try {
       return JSON.parse(readFileSync(join(logDir, `${id}.status`), "utf8")) as { parent?: string; state?: string };
@@ -29,10 +30,9 @@ function deps(rows: ProcRow[], logDir: string): ReaperDeps & { killed: number[] 
   };
   return {
     killed,
-    snapshot: () => rows,
+    snapshot: () => rows.map((r) => ({ ...r, ageSecs: r.ageSecs + (tick * REAP_TICK_MS) / 1000 })), // ages grow with the clock: same process, same start
     // fixed clock: the two busy samples must sit REAP_TICK_MS apart (Date.now would be milliseconds apart)
-    let tick = 0;
-    ...{ get now() { return () => 1_700_000_000_000 + tick++; } },
+    now: () => 1_700_000_000_000 + tick++ * REAP_TICK_MS,
     kill: async (pid) => void killed.push(pid),
     log: () => {},
     owner: (_dir, path) => (path.startsWith(worktreesDir(logDir) + "/") ? path.slice(worktreesDir(logDir).length + 1).split("/")[0] : undefined),
