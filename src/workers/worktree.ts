@@ -20,6 +20,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileS
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
+import { currentWorkerId } from "./worker-id.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
@@ -913,7 +914,9 @@ function mergeSnapshotWorker(
   id: string,
   st: WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">>,
   noCommit = false,
-  verify?: string
+  verify?: string,
+  /** The caller worker's own checkout: the branch is merged into its HEAD there instead of patching a tree. */
+  targetTree?: string
 ): string {
   const snapshot = st.worktreeBase!;
   const branch = st.branch!;
@@ -933,6 +936,63 @@ function mergeSnapshotWorker(
   }
   const changedPaths = git(st.cwd, ["diff", "--name-only", snapshot, branch]).split("\n").filter(Boolean);
   assertNoNodeModules(st.cwd, snapshot, branch, id);
+  if (targetTree) {
+    // the caller is a worker: `git merge` moves committed history fine across a
+    // snapshot base, so land the branch on the caller's HEAD and clean up there.
+    const oldHead = git(targetTree, ["rev-parse", "HEAD"]);
+    let autoNote: string | null = null;
+    try {
+      git(targetTree, ["merge", "--no-ff", branch, "-m", `merge worker ${id} (${st.label})`]);
+    } catch (e) {
+      let files: string[] = [];
+      let inProgress = false;
+      try {
+        inProgress = existsSync(resolve(targetTree, git(targetTree, ["rev-parse", "--git-path", "MERGE_HEAD"])));
+        if (inProgress) files = git(targetTree, ["diff", "--name-only", "--diff-filter=U"]).split("\n").filter(Boolean);
+      } catch {
+        /* fall through to the generic message */
+      }
+      let autoErr: Error | null = null;
+      if (inProgress && files.length) {
+        try {
+          autoNote = autoResolveMerge(targetTree, files, mergeSettings());
+          if (autoNote !== null) git(targetTree, ["commit", "-q", "-m", `merge worker ${id} (${st.label}); auto-resolved: ${autoNote}`]);
+        } catch (err) {
+          autoErr = err as Error;
+          autoNote = null;
+        }
+      }
+      if (inProgress && autoNote === null) {
+        try { git(targetTree, ["merge", "--abort"]); } catch { /* already aborted */ }
+      }
+      const msg =
+        `worker ${id}: git refused the merge of ${branch} into the caller's branch in ${targetTree}` +
+        (files.length
+          ? ` — conflict in ${files.join(", ")}${autoErr ? ` (auto-resolution failed: ${autoErr.message.split("\n")[0].slice(0, 200)})` : ""}: merge main into the worker branch in its kept worktree (${worktreeDir}), resolve, then re-run pai worker merge ${id}`
+          : ` — ${(e as Error).message}. The worktree ${worktreeDir} was kept: resolve the problem, then re-run pai worker merge ${id}`);
+      throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
+    }
+    const gate = gateLines(
+      targetTree,
+      verify,
+      () => revertMerge(targetTree, oldHead),
+      () => null
+    );
+    if (existsSync(worktreeDir)) assertWorktreeClean(worktreeDir, id);
+    for (const l of salvageNotes(targetTree, worktreeDir, id)) console.log(l);
+    removeWorktree(targetTree, worktreeDir, true);
+    try {
+      git(targetTree, ["branch", "-d", branch]);
+    } catch {
+      // -d refuses anything not fully merged; keep the branch, say so
+    }
+    const s = { ...st, merged: true };
+    saveStatus(logDir, s);
+    return withGate(
+      gate,
+      `merged ${branch} into the caller's branch in ${targetTree} (worktree removed${autoNote ? `; auto-resolved conflicts: ${autoNote}` : ""})`
+    );
+  }
   assertNoSnapshotDrift(st.cwd, snapshot, changedPaths, id);
   const diff = execFileSync("git", ["-C", st.cwd, "diff", "--binary", snapshot, branch], {
     encoding: "buffer",
@@ -1120,6 +1180,113 @@ export class MergeConflictError extends Error {
   }
 }
 
+/** The worker this process runs inside (PAI_WORKER_ID / pool slot), when it is one. */
+function callerWorkerId(env: NodeJS.ProcessEnv): string | undefined {
+  return env.PAI_WORKER === "1" ? currentWorkerId(env) : undefined;
+}
+
+/**
+ * Is `dir` the same checkout as `other` (same toplevel, following symlinks)?
+ */
+function sameCheckout(dir: string, other: string): boolean {
+  try {
+    return realpathOr(git(dir, ["rev-parse", "--show-toplevel"])) === realpathOr(git(other, ["rev-parse", "--show-toplevel"]));
+  } catch {
+    return false;
+  }
+}
+
+/** `st`'s tree is a worktree of the repository whose toplevel is `callerToplevel` (the caller's own repo). */
+function inCallerRepo(st: WorkerStatus, callerToplevel: string): boolean {
+  if (!st.worktreeDir || !existsSync(st.worktreeDir)) return false;
+  const common = commonDir(st.worktreeDir);
+  if (!common) return false;
+  try {
+    return realpathOr(git(common, ["rev-parse", "--show-toplevel"])) === realpathOr(callerToplevel);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `pai worker merge <id>` called from inside a worker (PAI_WORKER=1): the child's
+ * work lands on the CALLER's branch, never on main. A recorded cwd is the repo's
+ * main checkout (`recordWorktree` maps a worktree cwd there), so merging by the
+ * record alone puts unreviewed L2 code on main before L0 reviews the L1 — proven
+ * live 2026-11-16. Returns the caller's own toplevel when this merge is its child's
+ * (status names it parent, or the child's tree hangs in the caller's repo); null
+ * outside a worker; throws for a non-child.
+ */
+export function mergeTargetForCaller(logDir: string, id: string, st: WorkerStatus, env: NodeJS.ProcessEnv, callerIdOverride?: string): string | null {
+  const callerId = callerIdOverride ?? callerWorkerId(env);
+  if (!callerId) return null;
+  let toplevel: string;
+  try {
+    toplevel = git(process.cwd(), ["rev-parse", "--show-toplevel"]);
+  } catch {
+    throw new Error(
+      `worker ${id}: this merge runs inside worker ${callerId} but the caller's cwd is not a git repository, ` +
+        `so there is no branch to merge into; run it from L0 instead`
+    );
+  }
+  if (st.parent === callerId) return toplevel;
+  // chain stages share one parent id and pool hosts inherit PAI_WORKER_ID, so
+  // the recorded parent alone proves nothing: the tree must hang in this repo too
+  if (inCallerRepo(st, toplevel)) return toplevel;
+  throw new Error(
+    `worker ${id} is not a child of worker ${callerId}: refusing to merge it into the caller's branch. ` +
+      `Only L0 merges foreign branches — run this from the operator session.`
+  );
+}
+
+/**
+ * The caller-target resolution for a CLI/MCP merge: the worker's status when it
+ * exists and has a tree; otherwise null (L0 keeps the recorded-cwd behaviour,
+ * and `mustHaveBranch` reports an unknown id). Throws for a non-child caller.
+ */
+export function callerMergeTarget(logDir: string, id: string): string | null {
+  const st = loadStatus(logDir, id);
+  if (!st || !ownedTree(st)) return null;
+  return mergeTargetForCaller(logDir, id, st, process.env);
+}
+
+/** The worktree that holds branch `branch` in `repo`'s repository, else null. */
+function worktreeHoldingBranch(repo: string, branch: string): string | null {
+  try {
+    let dir = "";
+    for (const l of git(repo, ["worktree", "list", "--porcelain"]).split("\n")) {
+      if (l.startsWith("worktree ")) dir = l.slice(9);
+      else if (l === `branch refs/heads/${branch}`) return dir || null;
+    }
+  } catch {
+    // repo unreadable
+  }
+  return null;
+}
+
+/**
+ * Re-point a child's status at the target tree before merging: `st.cwd` is where
+ * the merge lands, and salvage/removeWorktree act on `st.worktreeDir`. Without
+ * this a pooled child's cwd (the spawner's directory) or an already-removed tree
+ * would make the caller-targeted merge throw in mustHaveBranch. Best effort:
+ * the merge itself still verifies everything against git.
+ */
+function repointChildStatus(logDir: string, st: WorkerStatus, targetToplevel: string): void {
+  let changed = false;
+  if (realpathOr(st.cwd) !== realpathOr(targetToplevel)) {
+    st.cwd = targetToplevel;
+    changed = true;
+  }
+  if (st.worktreeDir && !existsSync(st.worktreeDir) && st.branch) {
+    const holder = worktreeHoldingBranch(targetToplevel, st.branch);
+    if (holder) {
+      st.worktreeDir = holder;
+      changed = true;
+    }
+  }
+  if (changed) saveStatus(logDir, st);
+}
+
 /**
  * A worker that detached HEAD in its worktree and committed leaves those
  * commits off its branch. When HEAD is detached and a strict descendant of the
@@ -1253,17 +1420,20 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
 export function mergeWorker(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null } = {}
+  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; targetToplevel?: string | null } = {}
 ): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
+  // a merge from inside a worker lands on the caller's own branch, never on main
+  const target = opts.targetToplevel !== undefined ? opts.targetToplevel : mergeTargetForCaller(logDir, id, st, process.env);
+  if (target) repointChildStatus(logDir, st, target);
   if (st.escalatedTo && escalationState(logDir, st) === "running") {
     throw new Error(
       `worker ${id}: escalated to ${st.escalatedTo}, which is still running from branch ${st.branch}; ` +
         `merging now would delete that branch under it. Merge ${st.escalatedTo} when it finishes.`
     );
   }
-  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit, opts.verify);
+  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit, opts.verify, target ?? undefined);
   const adopted = adoptDetachedHead(st.worktreeDir!, st.branch!);
   if (adopted) console.log(`worker ${id}: adopted detached HEAD ${adopted.slice(0, 7)} into ${st.branch}`);
   // salvage first: only a commit can carry uncommitted work through the merge
