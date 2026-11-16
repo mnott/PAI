@@ -10,7 +10,7 @@ import {
   resetForeignConfigNote,
 } from "./foreign-config-guard.js";
 import { fakeUrl } from "../utils/fake-secret.js";
-import { PostgresRegistryBackend } from "./registry-postgres.js";
+import { PostgresRegistryBackend, resetOrphanProbe } from "./registry-postgres.js";
 import { PostgresBackend } from "./postgres/backend.js";
 
 const LIVE = fakeUrl("postgresql", "u", "p", "localhost:5432/pai");
@@ -116,10 +116,11 @@ describe("foreign config on the live database", () => {
 });
 
 describe("countOrphanedChunks actionable probe", () => {
+  beforeEach(() => resetOrphanProbe());
   const backend = (rows: unknown[]) => {
     const query = vi.fn(async (sql: string) => ({ rows: /AS orphaned/.test(sql) ? rows : [] }));
     return Object.assign(Object.create(PostgresRegistryBackend.prototype), {
-      pool: { query },
+      pool: { query, connect: async () => ({ query, release: () => {} }) },
       backupTables: async () => ["projects_backup_1"],
     }) as PostgresRegistryBackend;
   };
@@ -133,7 +134,7 @@ describe("countOrphanedChunks actionable probe", () => {
   it("reports actionable=true when a backup table maps an orphan id to a current project", async () => {
     const query = vi.fn(async (sql: string) => ({ rows: /AS orphaned/.test(sql) ? [{ orphaned: "10", total: "100" }] : [{ "?column?": 1 }] }));
     const reg = Object.assign(Object.create(PostgresRegistryBackend.prototype), {
-      pool: { query },
+      pool: { query, connect: async () => ({ query, release: () => {} }) },
       backupTables: async () => ["projects_backup_1"],
     }) as PostgresRegistryBackend;
     expect((await reg.countOrphanedChunks(true)).actionable).toBe(true);
@@ -145,13 +146,56 @@ describe("countOrphanedChunks actionable probe", () => {
       throw new Error("boom");
     });
     const reg = Object.assign(Object.create(PostgresRegistryBackend.prototype), {
-      pool: { query },
+      pool: { query, connect: async () => ({ query, release: () => {} }) },
       backupTables: async () => ["projects_backup_1"],
     }) as PostgresRegistryBackend;
     expect(await reg.countOrphanedChunks(true)).toEqual({ orphaned: 5, total: 10, actionable: undefined });
     const clean = vi.fn(async () => ({ rows: [{ orphaned: "0", total: "10" }] }));
-    const quiet = Object.assign(Object.create(PostgresRegistryBackend.prototype), { pool: { query: clean }, backupTables: async () => [] }) as PostgresRegistryBackend;
+    const quiet = Object.assign(Object.create(PostgresRegistryBackend.prototype), { pool: { query: clean, connect: async () => ({ query: clean, release: () => {} }) }, backupTables: async () => [] }) as PostgresRegistryBackend;
     expect(await quiet.countOrphanedChunks(true)).toEqual({ orphaned: 0, total: 10, actionable: undefined });
     expect(clean).toHaveBeenCalledTimes(1);
+  });
+
+  const slowReg = (query: ReturnType<typeof vi.fn>) =>
+    Object.assign(Object.create(PostgresRegistryBackend.prototype), {
+      pool: { query, connect: async () => ({ query, release: () => {} }) },
+      backupTables: async () => [],
+    }) as PostgresRegistryBackend;
+
+  it("bounds the probe with SET LOCAL statement_timeout and backs off 24 h after a timeout", async () => {
+    const seen: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      seen.push(sql);
+      if (/AS orphaned/.test(sql)) return { rows: [{ orphaned: "5", total: "10" }] };
+      if (/pai_chunks c2|SELECT DISTINCT c.project_id/.test(sql) && /SELECT DISTINCT c\.project_id/.test(sql)) return { rows: [{ project_id: 9 }] };
+      if (/pai_chunks t/.test(sql)) throw Object.assign(new Error("canceling statement"), { code: "57014" });
+      return { rows: [] };
+    });
+    const reg = slowReg(query);
+    expect((await reg.countOrphanedChunks(true)).actionable).toBeUndefined();
+    expect(seen.some((q) => /SET LOCAL statement_timeout = '20s'/.test(q))).toBe(true);
+    expect(seen).toContain("ROLLBACK");
+    const probes = () => seen.filter((q) => /pai_chunks t/.test(q)).length;
+    expect(probes()).toBe(1);
+    await reg.countOrphanedChunks(true);
+    expect(probes()).toBe(1); // backed off, no second probe
+  });
+
+  it("is single-flight: a probe in progress is never joined by a second one", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let twins = 0;
+    const query = vi.fn(async (sql: string) => {
+      if (/AS orphaned/.test(sql)) return { rows: [{ orphaned: "5", total: "10" }] };
+      if (/pai_chunks t/.test(sql)) { twins++; await gate; return { rows: [] }; }
+      return { rows: [] };
+    });
+    const reg = slowReg(query);
+    const first = reg.countOrphanedChunks(true);
+    await new Promise((r) => setTimeout(r, 10));
+    await reg.countOrphanedChunks(true);
+    release();
+    expect((await first).actionable).toBe(false);
+    expect(twins).toBe(1);
   });
 });
