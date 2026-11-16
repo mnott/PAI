@@ -2,9 +2,10 @@
  * wait-on.ts — bounded wait for a detached job, the worker alternative to a
  * long blocking foreground call (which starves operator messages and
  * supervision). Recipe: `nohup sh -c 'CMD; echo $? > $TMPDIR/job.rc' > $TMPDIR/job.log 2>&1 & echo $! > $TMPDIR/job.pid`,
- * then `pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log` until exit 0.
+ * then `pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log --rc $TMPDIR/job.rc` until exit 0.
  *
- * Exit codes: 0 pid gone, 3 still running at --max, 2 pid never existed or not ours,
+ * Exit codes: 0 pid gone and its rc was 0 (with --rc / FILE.rc the job's own code is read; without one, a gone
+ * pid is an unknown end and exits 4 — never 1, which stays "the process failed" only when actually known), 3 still running at --max, 2 pid never existed or not ours,
  * 4 killed by the ceiling (--max-minutes) or the stall rule (--stall-minutes); a silent tree that is busy
  * (CPU time advancing, or an open loopback connection) is not stalled.
  * A `pai worker run` process (queued or running) is exempt from both: it has its own deadline; use `pai worker wait <id>`.
@@ -25,6 +26,7 @@ const POLL_MS = 2000;
 const HEARTBEAT_MS = 20_000;
 /** Slack between the first observation and a process start time (ps lstart has 1 s resolution). */
 const REUSE_SLACK_MS = 2000;
+/** Ceiling/stall kill, and a gone pid whose exit status is unknown (no --rc / FILE.rc): never 1. */
 export const WAIT_KILLED_EXIT = 4;
 export const MAX_MINUTES_DEFAULT = 30;
 export const STALL_MINUTES_DEFAULT = 5;
@@ -32,6 +34,8 @@ const KILL_GRACE_MS = 5000;
 
 export interface WaitOnOpts {
   pid: number;
+  /** The job's rc file (the recipe writes `echo $? > $TMPDIR/job.rc`): when the pid is gone, its content is this call's exit code. */
+  rcFile?: string;
   log?: string;
   maxSecs?: number;
   tail?: number;
@@ -65,6 +69,8 @@ export interface WaitOnDeps {
   tickets?: () => BuildTicket[];
   /** Live pids of `pid`'s process tree (default: `processTree`). */
   tree?: (pid: number) => number[];
+  /** Content of the rc file, null when absent (default: readFileSync). */
+  readFile?: (file: string) => string | null;
 }
 
 /** A tree holding a "waiting" build ticket (`pai build lock|run` behind another job) is queued, not hung. */
@@ -256,9 +262,20 @@ const readLines = (file: string | undefined): string[] => {
   return t === "" ? [] : t.replace(/\n$/, "").split("\n");
 };
 
-function rcOf(pid: number, log?: string): string | null {
+/** The job's exit code: `--rc FILE` verbatim first, else the log-derived `<log>.rc` / `<log base>.rc`. Null = unknown. */
+const readRc = (f: string): string | null => {
+  try {
+    return readFileSync(f, "utf8").trim();
+  } catch {
+    return null;
+  }
+};
+
+/** The job's exit code: `--rc FILE` verbatim first, else the log-derived `<log>.rc` / `<log base>.rc`. Null = unknown. */
+function rcOf(pid: number, log?: string, rcFile?: string, read: (file: string) => string | null = readRc): string | null {
+  if (rcFile) return read(rcFile);
   for (const f of [log && `${log}.rc`, log && log.replace(/\.[^./]+$/, ".rc")]) {
-    if (f && existsSync(f)) return readFileSync(f, "utf8").trim();
+    if (f && existsSync(f)) return read(f);
   }
   return null;
 }
@@ -278,11 +295,19 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
 
   let ranSince: number | null = null;
   const finish = (): number => {
-    const rc = rcOf(o.pid, o.log);
+    const rcRaw = rcOf(o.pid, o.log, o.rcFile, d.readFile ?? readRc);
     const after = ranSince !== null ? ` after ${fmtElapsed((d.now() - ranSince) / 1000)}` : "";
-    d.out(`pid ${o.pid} gone${after}${rc !== null ? `, exit code ${rc}` : ""}`);
+    if (rcRaw === null) {
+      // The end is known but the status is not: a worker reading exit 1 as "the job failed" must not be lied to.
+      d.out(`pid ${o.pid} gone${after}, exit status unknown (no rc file)`);
+      if (tail > 0) for (const l of readLines(o.log).slice(-tail)) d.out(l);
+      return WAIT_KILLED_EXIT;
+    }
+    const rc = Number(rcRaw);
+    const src = o.rcFile ? ` (from ${o.rcFile})` : "";
+    d.out(`pid ${o.pid} ended${after}, rc ${rcRaw}${src}`);
     if (tail > 0) for (const l of readLines(o.log).slice(-tail)) d.out(l);
-    return 0;
+    return Number.isInteger(rc) && rc >= 0 && rc <= 255 ? rc : WAIT_KILLED_EXIT;
   };
 
   if (!Number.isInteger(o.pid) || o.pid <= 0) {
@@ -297,7 +322,12 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
   if (first === "zombie") return finish();
   if (first === "gone") {
     // A job that finished between two wait-on calls leaves an rc or a log; neither means the pid never existed.
-    if (rcOf(o.pid, o.log) !== null || (o.log && existsSync(o.log))) return finish();
+    // With --rc FILE given, a missing FILE is the contract's "status unknown" exit 4, not "never existed".
+    if (o.rcFile && rcOf(o.pid, o.log, o.rcFile, d.readFile ?? readRc) === null) {
+      d.out(`pid ${o.pid} gone, exit status unknown (no rc file: ${o.rcFile})`);
+      return WAIT_KILLED_EXIT;
+    }
+    if (rcOf(o.pid, o.log, o.rcFile, d.readFile ?? readRc) !== null || (o.log && existsSync(o.log))) return finish();
     d.out(`wait-on: pid ${o.pid} does not exist`);
     return 2;
   }
@@ -392,10 +422,12 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
 /** The documented long-job recipe, quoted by the worker contract and every deny message. */
 export const WAIT_RECIPE =
   "`nohup sh -c 'CMD; echo $? > $TMPDIR/job.rc' > $TMPDIR/job.log 2>&1 & echo $! > $TMPDIR/job.pid`, then repeat " +
-  "`pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log` (each call returns within 2 min; do other work between calls) until it exits 0";
+  "`pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log --rc $TMPDIR/job.rc` (each call returns within 2 min; do other work between calls) until it exits 0 " +
+  "(it reads the job's rc file and exits with that code; exit 4 = the job ended but its status is unknown, never read it as a failure)";
 
 /** One line naming the bounded wait for each thing a worker can wait on; quoted by the contract and the tier-2 advice. */
 export const WAIT_VERBS =
   "Waiting never needs sleep; use the verb for what you wait on (each returns within 110 s by default, --max up to 590, exit 0 = ready, 3 = not yet, call again): " +
   "child workers `pai worker wait <id...> [--max 100]` (returns when ANY finishes, one status line per id; drop finished ids on the next call); " +
-  "a detached job `pai worker wait-on <pid> [--log f]`; a server `pai worker wait-url <url>`; files `pai worker wait-file <path...>`.";
+  "a detached job `pai worker wait-on <pid> [--log f] --rc $TMPDIR/job.rc` (exit 4 = ended, status unknown — not a failure); " +
+  "a server `pai worker wait-url <url>`; files `pai worker wait-file <path...>`.";
