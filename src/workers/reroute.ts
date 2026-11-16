@@ -10,7 +10,8 @@
  * The restart itself is the fall-through's: `rerunOn` (run/escalate.ts) starts the task on the target and links the
  * two runs (ledger, _fallThroughOf, fallThroughTo).
  *
- * Escalation policy (workers.escalate): queuedMaxMin, stallMaxMin, stallFailedCalls. A job whose
+ * Escalation policy (workers.escalate): queuedMaxMin, stallMaxMin, stallFailedCalls. A queued job is moved only
+ * when the operator gave it priority (status.now); queuedMaxMin 0 = after URGENT_QUEUED_MIN. A job whose
  * provider was pinned (an explicit per-run --provider or --local; the session profile is not a pin) is never escalated, a job is escalated once,
  * and only to the fallback (`where: cloud`).
  */
@@ -29,6 +30,9 @@ export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
 
 /** The effective policy: workers.escalate, read through the same loader as the rest of the escalation settings. */
 export const reroutePolicy = escalationPolicy;
+
+/** Minutes an urgent queued job waits before it moves when workers.escalate.queuedMaxMin is 0 (off). */
+export const URGENT_QUEUED_MIN = 2;
 
 const PINNED = /\((?:flag: --provider|local)\)$/;
 
@@ -52,7 +56,10 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
   if (s.state === "queued") {
     const since = s.capacity?.sinceMs ?? stampMs(s.started);
     const min = since === null || since === undefined ? 0 : (nowMs - since) / 60_000;
-    return min >= p.queuedMaxMin ? `queued ${Math.floor(min)}m` : null;
+    // a queued job waits for its slot unless the operator gave priority (now: /now window, --now, `pai worker priority <id> now`)
+    if (!s.now) return null;
+    const limit = p.queuedMaxMin > 0 ? p.queuedMaxMin : URGENT_QUEUED_MIN;
+    return min >= limit ? `queued ${Math.floor(min)}m (operator priority)` : null;
   }
   if (s.state !== "running") return null;
   if ((s.consecFails ?? 0) >= p.stallFailedCalls) return `${s.consecFails} failed tool calls in a row`;

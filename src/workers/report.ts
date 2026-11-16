@@ -154,10 +154,13 @@ function shortContractPrompt(format: "ag2" | "json", scratch?: string): string {
  * `--orchestrate` flag) — the delegating framing, so an L1 cuts packages for L2 implementers
  * instead of implementing on its own cloud model.
  */
+export const QUEUED_CHILD_RULE = "A queued child waits for its slot: never kill it to rerun elsewhere; the operator decides priority.";
+
 function contractOpening(role: "worker" | "planner"): string[] {
   if (role === "planner") {
     return [
       "You are the L1 planner, run non-interactively by the L0 session. You plan, delegate and review; the L2 implementers write the code.",
+      QUEUED_CHILD_RULE,
       "Cut the job into self-contained work packages (one spec file each, the exact files, the proof required) and start one L2 implementer per package with --class implement; the mode routes them (local first in balanced and budget). Related small edits go into one package, not one child per line.",
       "Review each child's diff and test output only, then merge it with `pai worker merge <id>`. If a child fails, send ONE sharper retry spec; if that fails too, take over and do that package yourself. Doing a package yourself before an L2 has tried it is wrong.",
     ];
@@ -230,6 +233,7 @@ export const ORCHESTRATOR_START_BLOCK = [
   "- Add `--provider <p>` only when your brief names a local provider; otherwise none. Never wrap it in `pai pane run`.",
   "- The answer is the JSON `result` field (an AG2 R message). `pai worker ps` / `follow <id>` are for the operator view, not for waiting.",
   "- Dispatch all children first, then wait for each with one long blocking call (`pai worker wait-on <pid> --max 590`, repeated only on exit 3); no intermediate checks (ps/follow/polling) while waiting: every poll re-reads the whole context.",
+  `- ${QUEUED_CHILD_RULE}`,
   "- Review the child's diff and its test output; do not re-read the code base beyond what the diff touches.",
   "- Read its report and diff, run its proof, then merge it into your own branch with `pai worker merge <id>`; the L0 session merges your branch.",
 ].join("\n");

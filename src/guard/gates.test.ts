@@ -30,3 +30,21 @@ describe("L1 planner lock", () => {
     expect(run("Edit", { file_path: "a.txt" }, { ...base, PAI_WORKER_ORCHESTRATOR: "1" })).toBeNull();
   });
 });
+
+describe("queued child kill", () => {
+  const states: Record<string, string> = { q1: "queued", r1: "running" };
+  const kill = (cmd: string, env: NodeJS.ProcessEnv = { PAI_WORKER: "1" }) =>
+    decidePreGates({ tool: "Bash", input: { command: cmd }, cwd: "/w/tree", env }, { ownChildState: (id) => states[id] });
+  it("denies killing a queued own child", () => {
+    const d = kill('pai worker kill q1 --reason "local queue saturated, rerun on cloud"');
+    expect(d?.action).toBe("deny");
+    expect(d?.message).toContain("A queued child waits for its slot");
+  });
+  it("allows killing a running own child and an unknown id", () => {
+    expect(kill("pai worker kill r1 --reason loops")).toBeNull();
+    expect(kill("pai worker kill zz")).toBeNull();
+  });
+  it("leaves non-worker callers alone", () => {
+    expect(kill("pai worker kill q1", {})).toBeNull();
+  });
+});

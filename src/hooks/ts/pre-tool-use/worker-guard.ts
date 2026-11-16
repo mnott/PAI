@@ -179,6 +179,17 @@ function failedChildOf(env: NodeJS.ProcessEnv): boolean {
   return false;
 }
 
+/** State of worker `childId` when its status names this worker as parent, else undefined. */
+function ownChildState(env: NodeJS.ProcessEnv, childId: string): string | undefined {
+  try {
+    const logDir = env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
+    const id = currentWorkerId(env, logDir);
+    if (!id || !/^[\w.-]+$/.test(childId)) return undefined;
+    const st = JSON.parse(readFileSync(join(logDir, `${childId}.status`), "utf8")) as { parent?: string; state?: string };
+    return st.parent === id ? st.state : undefined;
+  } catch { return undefined; }
+}
+
 async function main(): Promise<void> {
   let text = "";
   try {
@@ -197,7 +208,7 @@ async function main(): Promise<void> {
 
   markToolWaitOf(input);
   const cwd = input.cwd || process.cwd();
-  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true, planner: { childFailed: () => failedChildOf(process.env) } } });
+  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true, planner: { childFailed: () => failedChildOf(process.env) }, ownChildState: (x) => ownChildState(process.env, x) } });
   if (orch.action === "deny") {
     process.stdout.write(renderDecision({ decision: "deny", reason: orch.message! }) + "\n");
     return;
