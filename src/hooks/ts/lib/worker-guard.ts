@@ -76,19 +76,6 @@ interface Segment {
 const deny = (reason: string): GateDecision => ({ decision: "deny", reason });
 const ALLOW: GateDecision = { decision: "allow" };
 
-/** Blocking sleep via `node:worker_threads`' receiveMessageOnPort + a port nobody posts to (the documented trick); returns when the timeout fires. */
-const blockNap = (ms: number): void => {
-  const { receiveMessageOnPort, MessageChannel } = require("node:worker_threads") as typeof import("node:worker_threads");
-  const ch = new MessageChannel();
-  try {
-    receiveMessageOnPort(ch.port1); // nothing queued yet
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  } finally {
-    ch.port1.close();
-    ch.port2.close();
-  }
-};
-
 /**
  * Sit still while a preemption pause holds the worker, polling its status file, up to `maxMs` (the hook
  * process is killed past ~120 s, so callers pass one Bash timeout). True when it waited at all; false
@@ -96,9 +83,7 @@ const blockNap = (ms: number): void => {
  */
 export function waitWhilePreempted(logDir: string, wid: string, maxMs: number, pollMs = 250): boolean {
   if (maxMs <= 0 || !workerPaused(logDir, wid)) return false;
-  // sleepSync where the runtime has it (node >= 20.12); Bun blocks the event loop on Atomics.wait, so
-  // there a caller's own timer can never land during the wait — fall back to a blocking spawn instead
-  const nap = sleepSync ?? (isBun ? blockNap : () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollMs));
+  const nap = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   const t0 = Date.now();
   while (Date.now() - t0 < maxMs) {
     nap(pollMs);
