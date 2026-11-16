@@ -14,7 +14,7 @@ import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { parentInfo } from "../endreason.js";
 import { eventsPath, ledgerPath } from "../paths.js";
-import { type WorkerStatus, newWorkerId, saveStatus, nowStamp, markStartFailed, selfProcStart } from "../status.js";
+import { type WorkerStatus, newWorkerId, loadStatus, saveStatus, nowStamp, markStartFailed, selfProcStart } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";
 import { runImageCapability } from "../engines/image.js";
 import { resolveHostSession } from "../pane.js";
@@ -207,7 +207,7 @@ interface CliEngineRun {
 }
 
 async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineRun): Promise<number> {
-  const { config, logDir, target, model, label, parsed, systemWaiver } = a;
+  const { config, logDir, target, model, label, parsed, systemWaiver, restart } = a;
   if (!parsed.headless || parsed.prompt === null) {
     throw new Error(
       `provider "${target.providerName}" (engine ${spec.engine}) supports headless runs only: ` +
@@ -227,8 +227,9 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     }
   }
   const cwd = a.cwd ?? process.cwd();
-  const term = (await resolveHostSession()).term;
-  const paneVerified = await requireVisiblePane(logDir, config, wid, term, systemWaiver, false, ledgerPath(logDir));
+  // a continuation anchors its pane to the run it repeats when this process has no terminal of its own
+  const term = (restart && a.fallThroughOf ? loadStatus(logDir, a.fallThroughOf)?.term : undefined) || (await resolveHostSession()).term;
+  const paneVerified = await requireVisiblePane(logDir, config, wid, term, systemWaiver, false, ledgerPath(logDir), restart);
   const session = resolveSession(term);
   const spawnerSession = resolveSpawnerSession(logDir, cwd, process.env);
 

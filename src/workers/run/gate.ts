@@ -244,9 +244,9 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     }
     if (a.panePrepared) return;
     const paneT0 = Date.now();
-    const term = await runTerm(a.opts?._hostTerm);
+    const term = await runTerm(a.opts?._hostTerm || (a.restart && a.fallThroughOf ? loadStatus(a.logDir, a.fallThroughOf)?.term || undefined : undefined));
     const ledger = ledgerPath(a.logDir);
-    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger, !!a.opts?._fallThroughOf);
+    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger, a.restart);
     a.panePrepared = { verified };
     a.setupPaneMs = Date.now() - paneT0;
     const status = loadStatus(a.logDir, wid);
@@ -835,13 +835,14 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   const ledger = ledgerPath(a.logDir);
   const paneT0 = Date.now();
   a.paneOpening = (async () => {
-    const term = await runTerm(a.opts?._hostTerm);
+    // a daemon-side reroute carries no terminal of its own: anchor to the run it repeats
+    const term = await runTerm(a.opts?._hostTerm || (a.restart && a.fallThroughOf ? loadStatus(a.logDir, a.fallThroughOf)?.term || undefined : undefined));
     const hostSession = resolveSession(term);
     // recorded now, not after the queue: a worker that never leaves the queue is still rerouted to this terminal
     if (term) status.term = term;
     if (hostSession) status.session = hostSession;
     if (term || hostSession) saveStatus(a.logDir, status);
-    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger, !!a.opts?._fallThroughOf);
+    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger, a.restart);
     a.panePrepared = { verified };
     a.setupPaneMs = Date.now() - paneT0;
     if (verified) status.pane = { opened: true, exec: true };

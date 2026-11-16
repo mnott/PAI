@@ -25,6 +25,7 @@ import { appendStopEvent, requestKill } from "./endreason.js";
 import { loadStatusesCached, loadStatus, refreshCachedStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
+import { isPaiContinuation } from "./run/pane-handles.js";
 import type { Messenger } from "./run-events.js";
 import { panePolicy } from "./pane-policy.js";
 import { readPaneClosedBy } from "./pane-bar.js";
@@ -53,6 +54,15 @@ export interface AuditProc {
 /** A worker that ended, or whose pane closed, within this window is not judged: the pane closes itself before the final status lands. */
 
 /** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
+
+/**
+ * Whether the status records this run as a PAI-started continuation of an earlier one (reroute,
+ * fall-through, handoff, escalation): such a restart goes through the pane launcher like any normal start,
+ * and during the start grace while its pane opens it is never judged or stopped.
+ */
+export function isPaiContinuationStatus(s: { rerouted?: string; handoffNote?: string; label?: string; fallThroughOf?: string; escalatedFrom?: string[]; _priorIds?: string[]; priorIds?: string[] }): boolean {
+  return !!(s.rerouted || s.handoffNote || s.fallThroughOf) || isPaiContinuation({ _escalatedFrom: s.escalatedFrom, _priorIds: s._priorIds ?? s.priorIds, label: s.label });
+}
 
 export interface PaneVerdict {
   id: string;
@@ -112,6 +122,8 @@ export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
   for (const s of loadStatusesCached(logDir)) {
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
+    // a rerouted old run handed its task to the restart: it is not judged over a pane it no longer owns
+    if (s.rerouted && s.fallThroughTo) continue;
     procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), live: isLive(s, ownsPidCached), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
@@ -504,6 +516,9 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
     // that recorded any reason to run without one, is never stopped as unlaunched
     const fresh = refreshCachedStatus(logDir, w.id);
     if (fresh && (fresh.pane?.opened === true || fresh.pane?.exec === true || (fresh.pane && fresh.pane.opened === false))) continue;
+    // a PAI-started continuation (reroute, fall-through, handoff) within the start grace: its pane is being
+    // opened through the launcher right now — never stopped as unlaunched while that happens
+    if (fresh && isPaiContinuationStatus(fresh) && nowMs - w.startedMs < panePolicy().startGraceMs) continue;
     flagged[w.id] = "1";
     if (!told[w.id]) {
       const why = "running without having been started through the pane launcher";

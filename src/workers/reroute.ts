@@ -25,7 +25,7 @@ import { appendLedger } from "./ledger.js";
 import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
-import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
 import { markHandover } from "./run/follow-reroute.js";
 
 export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
@@ -74,6 +74,23 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
   const last = stampMs(s.progressAt) ?? stampMs(s.started);
   const min = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause) / 60_000;
   return min >= p.stallMaxMin ? `no edit or commit for ${Math.floor(min)}m` : null;
+}
+
+/** A finished fall-through still blocks another reroute of its origin this long. */
+export const FALLTHROUGH_RECENT_MS = 5 * 60_000;
+
+/**
+ * The run that already continues `origin`, read UNCACHED from the status files (a daemon restart or a stale cached
+ * view cannot hide it): queued/running, or finished within FALLTHROUGH_RECENT_MS. Null when there is none.
+ */
+export function liveFallThrough(logDir: string, origin: string, nowMs: number = Date.now()): string | null {
+  for (const s of loadStatuses(logDir)) {
+    if (s.fallThroughOf !== origin || s.id === origin) continue;
+    if (s.state === "queued" || s.state === "running") return s.id;
+    const t = stampMs(s.updated);
+    if (t !== null && nowMs - t < FALLTHROUGH_RECENT_MS) return s.id;
+  }
+  return null;
 }
 
 export interface RerouteTarget {
@@ -139,6 +156,19 @@ async function defaultKill(logDir: string, id: string, reason: string, by: strin
 /** Env the restart process carries: the old run's id and why it moved (read back by `rerunFromEnv`). */
 export const RERUN_OF_ENV = "PAI_RERUN_OF";
 export const RERUN_WHY_ENV = "PAI_RERUN_WHY";
+/** Env naming a file whose content is the old run's id, for a starter that cannot take custom env (`pai worker run --detach`). */
+export const RERUN_OF_FILE_ENV = "PAI_RERUN_OF_FILE";
+
+/** The old run's id from the file named in the env (a `--detach` starter carries it this way); no-op without it. */
+export function rerunOfFromFile(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const f = env[RERUN_OF_FILE_ENV];
+  if (!f) return undefined;
+  try {
+    return readFileSync(f, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Start `bin args` in its own session with output to `outPath`; it survives its parent. The daemon calls
@@ -250,9 +280,15 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
     } catch {
       /* a stale file is overwritten by the new run */
     }
+    // the old id as a file too: a starter that cannot take custom env (--detach) reads it (rerunOfFromFile)
+    try {
+      writeFileSync(join(logDir, "runs", `rerun-${s.id}.of`), s.id);
+    } catch {
+      /* without the file a detached reroute start still runs; its pane falls back to any live iTerm session */
+    }
     const pid = start(process.env.PAI_BIN || "pai", args, {
       cwd: st.cwd || process.cwd(),
-      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile },
+      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
       outPath: join(logDir, "runs", `reroute-${s.id}.out`),
     });
     const newId = await waitAnnouncedId(idFile, pid);
@@ -264,9 +300,13 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
   };
 }
 
-/** Make `run` the continuation of the run named in the env (ledger, fall-through links); no-op without it. */
+/**
+ * Make `run` the continuation of the run named in the env (ledger, fall-through links); no-op without it.
+ * The old id arrives in PAI_RERUN_OF (a reroute's own spawn) or in the file named by PAI_RERUN_OF_FILE
+ * (a `--detach` starter, which cannot carry custom env).
+ */
 export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.ProcessEnv = process.env): void {
-  const of = env[RERUN_OF_ENV];
+  const of = env[RERUN_OF_ENV] || rerunOfFromFile(env);
   if (!of) return;
   delete env[RERUN_OF_ENV]; // the run's own children must not read it as theirs
   const why = env[RERUN_WHY_ENV] ?? "rerouted";
@@ -275,6 +315,7 @@ export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.Proces
   run._route = { policy: "auto", reason: `rerouted (${why})`, local: false };
   run._fallThroughOf = of;
   run._priorIds = [of];
+  run._restartOf = of; // a daemon-side start has no terminal of its own: the pane anchors to the old run's
   if (old?.term) run._hostTerm = old.term;
   run.onWorkerStart = (id2) => {
     announceRerunId(id2, env); // the waiting reroute holds the old run until this line ran
@@ -303,6 +344,13 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const target = await (d.resolve ?? defaultResolve)(where);
   if (target.provider === old.provider) throw new Error(`worker ${id} already runs on ${old.provider}`);
   const text = taskText(old);
+  if (d.reason) {
+    // an automatic reroute: one per origin. The marker and the fall-through are read uncached (the caller's list may be stale).
+    const fresh = loadStatus(d.logDir, id);
+    if (fresh?.rerouted) throw new Error(`reroute skipped: ${id} already rerouted (${fresh.rerouted})`);
+    const cont = liveFallThrough(d.logDir, id);
+    if (cont) throw new Error(`reroute skipped: ${cont} already continues ${id}`);
+  }
   const by = d.by ?? "reroute";
   const reason = d.reason ?? `${by}: ${where}`;
   // the marker first: a second tick or command sees it and does not start another reroute. A queued run's own

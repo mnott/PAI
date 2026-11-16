@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, rmSync, statSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditLaunches, auditTick, type LaunchAuditDeps } from "./pane-audit.js";
+import { auditLaunches, auditTick, isPaiContinuationStatus, type LaunchAuditDeps } from "./pane-audit.js";
 import { loadStatusesCached, refreshCachedStatus, saveStatus } from "./status.js";
 
 // The 2026-11-16 incident: the daemon's cached status view still held a worker's pre-pane first status
@@ -90,6 +90,95 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
+  });
+
+  // 2026-11-16, second incident: a reroute started by PAI itself (reroute.ts defaultSpawn) restarted the task
+  // outside the pane launcher; the audit stopped it as "running without having been started through the pane
+  // launcher". A PAI-started continuation is now launched through the launcher like any normal start; during
+  // the start grace while its pane opens, the audit never stops it.
+  const reroutedStatus = (id: string, pid: number): string =>
+    JSON.stringify({ id, pid, runPid: pid, state: "running", started: startedStamp, updated: startedStamp, turns: 1, tools: 0, origin: "spawn", label: "the task (rerouted)", rerouted: "fakeB: stall", fallThroughOf: "20261116-195500-11111" });
+
+  it("a reroute restart within the start grace (pane still opening) is not stopped as unlaunched", async () => {
+    const logDir = makeLogDir();
+    const id = "20261116-231501-57594";
+    try {
+      writeFileSync(join(logDir, `${id}.status`), reroutedStatus(id, 57594));
+      loadStatusesCached(logDir);
+      const stopped: string[] = [];
+      const out = await auditWith(logDir, {
+        // the cached view from before its pane landed; no registry entry yet — the launcher is mid-open
+        workers: () => [{ id, startedMs: T0 - 10_000, exec: false, exempt: false }],
+        stop: async (wid) => void stopped.push(wid),
+      });
+      expect(stopped).toEqual([]);
+      expect(out.some((f) => f.kind === "unlaunched" && f.id === id)).toBe(false);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a continuation past the start grace with no pane anywhere is still stopped", async () => {
+    const logDir = makeLogDir();
+    const id = "20261116-231502-57595";
+    try {
+      writeFileSync(join(logDir, `${id}.status`), reroutedStatus(id, 57595));
+      loadStatusesCached(logDir);
+      const stopped: string[] = [];
+      const out = await auditWith(logDir, {
+        workers: () => [{ id, startedMs: T0 - 120_000, exec: false, exempt: false }], // past the start grace: its pane never came
+        stop: async (wid) => void stopped.push(wid),
+      });
+      expect(stopped).toEqual([id]);
+      expect(out.some((f) => f.kind === "unlaunched" && f.id === id)).toBe(true);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a reroute restart with its pane record is judged ok (the launcher opened it like a normal start)", async () => {
+    const logDir = makeLogDir();
+    const id = "20261116-231503-57596";
+    try {
+      writeFileSync(join(logDir, `${id}.status`), reroutedStatus(id, 57596));
+      loadStatusesCached(logDir);
+      const stopped: string[] = [];
+      // two rounds past the start grace (the pending file makes the second one confirm)
+      for (const now of [T0 + 120_000, T0 + 150_000]) {
+        await auditTick(
+          logDir,
+          { toSession: async () => true, toPailot: async () => true },
+          {
+            tabs: async () => new Map([["HOST", "w1:t1"], ["PANE", "w1:t1"]]),
+            procs: () => [{ id, kind: "worker", host: "HOST", startedMs: T0 - 60_000, live: true }],
+            registry: () => [{ session: "PANE", worker: id, opened: "2026-11-16 20:07:00", host: "HOST" }],
+            now: () => new Date(now),
+            stop: async (wid) => void stopped.push(wid),
+          }
+        );
+      }
+      expect(stopped).toEqual([]);
+      const { readAudit } = await import("./pane-audit.js");
+      const v = readAudit(logDir).find((x) => x.id === id);
+      expect(v?.mark).toBe("ok");
+      expect(v?.session).toBe("PANE");
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("isPaiContinuationStatus names the continuation kinds and nothing else", () => {
+    expect(isPaiContinuationStatus({ label: "x (rerouted)" })).toBe(true);
+    expect(isPaiContinuationStatus({ label: "x (fall-through)" })).toBe(true);
+    expect(isPaiContinuationStatus({ label: "x (handed off)" })).toBe(true);
+    expect(isPaiContinuationStatus({ rerouted: "cloud: queued 16m" })).toBe(true);
+    expect(isPaiContinuationStatus({ handoffNote: "handed off to anthropic as w2 at 45 min" })).toBe(true);
+    expect(isPaiContinuationStatus({ fallThroughOf: "w1" })).toBe(true);
+    expect(isPaiContinuationStatus({ priorIds: ["w1"] } as never)).toBe(true);
+    expect(isPaiContinuationStatus({ escalatedFrom: ["t2"] } as never)).toBe(true);
+    // a normal start is not a continuation
+    expect(isPaiContinuationStatus({ label: "fix the retry loop" })).toBe(false);
+    expect(isPaiContinuationStatus({})).toBe(false);
   });
 
   it("auditTick stops nobody whose uncached status says the pane was opened (NO PANE path)", async () => {

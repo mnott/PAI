@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { escalationReason, escalateOverdue, rerouteWorker, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
+import { defaultSpawn, escalationReason, escalateOverdue, rerouteWorker, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 let dir: string;
@@ -91,6 +91,31 @@ describe("rerouteWorker", () => {
     expect(st.rerouted).toBeUndefined(); // a later tick may try again
   });
 
+  // 2026-11-16: the restart defaultSpawn starts must reach the pane launcher like a normal `pai worker run`:
+  // the old id travels as PAI_RERUN_OF (and, for a starter that cannot take custom env, as PAI_RERUN_OF_FILE)
+  // so the new run is marked a PAI continuation (rerunFromEnv), anchors its pane to the old run's terminal and
+  // announces its id at once; an unlaunched restart would be stopped by the pane audit.
+  it("defaultSpawn carries the continuation env so the restart launches through the pane launcher", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running", term: "HOST-TERM" }));
+    const seen: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+    const fakeStart = ((bin: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; outPath: string }) => {
+      seen.push({ args, env: o.env });
+      // the restarted process announces its id on both channels the waiting reroute and --detach read
+      writeFileSync(o.env[RERUN_ID_FILE_ENV]!, "w2");
+      writeFileSync(o.env[ID_FILE_ENV]!, "w2");
+      return 4242;
+    }) as typeof import("./reroute.js").spawnSession;
+    await defaultSpawn(dir, fakeStart)({ id: "w1", why: "rerouted by escalation", provider: "fakeB", specFile: join(dir, "spec.txt") });
+    expect(seen.length).toBe(1);
+    const { env } = seen[0]!;
+    expect(env[RERUN_OF_ENV]).toBe("w1"); // the new run is the old one's continuation (rerunFromEnv)
+    expect(env[RERUN_ID_FILE_ENV]).toBeTruthy(); // the waiting reroute learns the id before it stops the old run
+    expect(env[ID_FILE_ENV]).toBe(env[RERUN_ID_FILE_ENV]); // a --detach starter announces on the same file
+    expect(env[RERUN_OF_FILE_ENV]).toBeTruthy(); // and carries the old id for that starter (rerunOfFromFile)
+    expect(readFileSync(env[RERUN_OF_FILE_ENV]!, "utf8")).toBe("w1");
+    expect(seen[0]!.args).toContain("run");
+  });
+
   it("escalateOverdue hands every overdue queued job over once", async () => {
     const now = Date.now();
     saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), now: true, capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs: now - 16 * 60_000 } }));
@@ -106,3 +131,27 @@ describe("rerouteWorker", () => {
     expect(loadStatus(dir, "w2")!.rerouted).toBeUndefined();
   });
 });
+
+describe("one live fall-through per origin", () => {
+  const run = async (stale: WorkerStatus[], spawned: string[]) =>
+    escalateOverdue(stale, { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now(), { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+  const origin = () => queued({ promptFile: join(dir, "spec.txt"), now: true, capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs: Date.now() - 16 * 60_000 } });
+
+  it("three ticks on a stale cached view produce one fall-through", async () => {
+    saveStatus(dir, origin());
+    const stale = [loadStatus(dir, "w1")!]; // never refreshed: no rerouted mark in it
+    const spawned: string[] = [];
+    for (let i = 0; i < 3; i++) await run(stale, spawned);
+    expect(spawned).toEqual(["w1"]);
+  });
+
+  it("after a restart a running fall-through blocks the reroute (marker lost too)", async () => {
+    saveStatus(dir, origin());
+    saveStatus(dir, queued({ id: "w9", state: "running", provider: "fakeB", fallThroughOf: "w1", updated: new Date().toISOString().replace("T", " ") }));
+    const spawned: string[] = [];
+    const done = await run([loadStatus(dir, "w1")!], spawned);
+    expect(spawned).toEqual([]);
+    expect(done).toEqual([]);
+  });
+});
+

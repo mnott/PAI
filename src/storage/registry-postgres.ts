@@ -91,6 +91,15 @@ function mapSession(row: Record<string, unknown>): Session {
   } as Session;
 }
 
+const ORPHAN_PROBE_TIMEOUT = "20s";
+/** The actionable probe runs at most once per daemon start, then once per 24 h, never two at once. */
+const ORPHAN_PROBE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const orphanProbe = { running: false, nextAt: 0, last: undefined as boolean | undefined };
+/** Test hook: forget probe state. */
+export function resetOrphanProbe(): void {
+  Object.assign(orphanProbe, { running: false, nextAt: 0, last: undefined });
+}
+
 export class PostgresRegistryBackend implements RegistryBackend {
   readonly backendType = "postgres" as const;
 
@@ -199,30 +208,46 @@ export class PostgresRegistryBackend implements RegistryBackend {
     );
   }
 
+  /** Mapped (a backup row names a current project) or one hash twin exists; one transaction, hard statement timeout. */
+  private async probeActionable(): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL statement_timeout = '${ORPHAN_PROBE_TIMEOUT}'`);
+      const ids = (await client.query(
+        `SELECT DISTINCT c.project_id FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)`
+      )).rows.map((x: { project_id: number }) => Number(x.project_id));
+      for (const t of await this.backupTables()) {
+        const m = await client.query(
+          `SELECT 1 FROM ${t} b JOIN projects p ON p.root_path = b.root_path WHERE b.id = ANY($1::int[]) LIMIT 1`,
+          [ids]
+        );
+        if (m.rows.length > 0) return true;
+      }
+      return await anyHashTwin(client);
+    } finally {
+      try { await client.query("ROLLBACK"); } catch { /* connection is released anyway */ }
+      client.release();
+    }
+  }
+
   async countOrphanedChunks(probe = false): Promise<OrphanCounts> {
     const r = await this.pool.query(
       `SELECT (SELECT COUNT(*) FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)) AS orphaned,
               (SELECT COUNT(*) FROM pai_chunks) AS total`
     );
     const orphaned = Number(r.rows[0].orphaned);
-    let actionable: boolean | undefined;
-    if (probe && orphaned > 0) {
-      // cheaply: mapped (a backup row names a current project) or one hash twin exists
+    let actionable: boolean | undefined = orphanProbe.last;
+    if (probe && orphaned > 0 && !orphanProbe.running && Date.now() >= orphanProbe.nextAt) {
+      orphanProbe.running = true;
+      orphanProbe.nextAt = Date.now() + ORPHAN_PROBE_INTERVAL_MS;
       try {
-        const ids = (await this.pool.query(
-          `SELECT DISTINCT c.project_id FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)`
-        )).rows.map((x: { project_id: number }) => Number(x.project_id));
-        let mapped = false;
-        for (const t of await this.backupTables()) {
-          const m = await this.pool.query(
-            `SELECT 1 FROM ${t} b JOIN projects p ON p.root_path = b.root_path WHERE b.id = ANY($1::int[]) LIMIT 1`,
-            [ids]
-          );
-          if (m.rows.length > 0) { mapped = true; break; }
-        }
-        actionable = mapped || (await anyHashTwin(this.pool));
-      } catch {
-        // the mapping cannot be probed: leave it unknown, the warning stays generic
+        actionable = orphanProbe.last = await this.probeActionable();
+      } catch (e) {
+        if ((e as { code?: string }).code === "57014") process.stderr.write("[pai-daemon] orphan probe skipped: too slow\n");
+        // otherwise the mapping cannot be probed: leave it unknown, the warning stays generic
+      } finally {
+        orphanProbe.running = false;
       }
     }
     return { orphaned, total: Number(r.rows[0].total), actionable };

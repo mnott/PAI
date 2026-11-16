@@ -103,6 +103,8 @@ export interface RunOptions {
   _emptyRetried?: boolean;
   /** Internal: this run is the planner's phase-1 worker, not a new orchestration. */
   _planner?: boolean;
+  /** Internal: this run restarts an earlier one (a daemon-side reroute); its pane anchors to that run's terminal. */
+  _restartOf?: string;
   /** --report json|ag2: which contract/parser the run uses (default: ag2, or PAI_WORKER_REPORT). */
   reportFormatFlag?: "json" | "ag2";
   /** --no-report-retry: skip the one bounded re-ask on an invalid AG2 final message. */
@@ -248,6 +250,8 @@ export interface ExecuteArgs {
   emptyRetried?: boolean;
   route?: RouteInfo;
   fallThroughOf?: string;
+  /** This run restarts an earlier one (reroute, fall-through, handoff, escalation): its pane goes through the launcher like a normal start. */
+  restart?: boolean;
   escalatedFrom?: string[];
   priorIds?: string[];
   printCmd?: boolean;
