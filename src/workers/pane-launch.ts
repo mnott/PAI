@@ -31,6 +31,8 @@ export interface LaunchOptions {
   open?: OpenOwnedOptions["open"];
   helloMs?: number;
   command?: string;
+  /** A PAI-started continuation of an earlier run (reroute, fall-through, handoff): the operator's hidden-run override does not carry onto it — it is launched through this launcher like any normal start. */
+  continuation?: boolean;
 }
 
 /** Why a launch ran without a pane, per run id (status.pane records it). */
@@ -42,7 +44,10 @@ export const noTerminalReasons = new Map<string, string>();
  */
 export async function launchPane(o: LaunchOptions): Promise<OwnedPane | null> {
   const env = o.env ?? process.env;
-  const allow = headlessAllowed(env);
+  // the hidden-run override is the operator's choice for a normal start; a PAI-started continuation (a
+  // reroute inherits this env from the daemon) always opens its pane through here (2026-11-16: an unpaned
+  // reroute restart was stopped by the pane audit as "started without the pane launcher")
+  const allow = o.continuation ? null : headlessAllowed(env);
   if (allow) {
     noTerminalReasons.set(o.id, `hidden run allowed: ${allow}`);
     return null;

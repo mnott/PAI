@@ -41,7 +41,8 @@ export async function requireVisiblePane(
   systemWaiver: SystemJob | undefined,
   dryRun: boolean,
   ledger: string,
-  restart = false
+  restart = false,
+  env: NodeJS.ProcessEnv = process.env
 ): Promise<boolean> {
   if (dryRun) return false;
   // the typed system waiver (daemon jobs) is the only per-start waiver; a caller's own "no pane" request does not exist any more
@@ -50,11 +51,17 @@ export async function requireVisiblePane(
     process.stderr.write(`[pai worker] pane waived for ${wid}: system job ${systemWaiver}\n`);
     return false;
   }
-  const waiver = paneWaiver(config);
-  if (waiver) {
-    appendLedger(ledger, "PANE-WAIVED", { id: wid, why: waiver });
-    process.stderr.write(`[pai worker] pane waived for ${wid}: ${waiver}\n`);
-    return false;
+  // a PAI-started continuation (reroute, fall-through, handoff, escalation) is launched through this same
+  // launcher like any `pai worker run` from a session: the operator's hidden-run override does not carry
+  // onto it (2026-11-16: a reroute restart inherited the env and ran unpaned, and the audit stopped it as
+  // "started without the pane launcher"). Only the typed system waiver still waives.
+  if (!restart) {
+    const waiver = paneWaiver(config, env);
+    if (waiver) {
+      appendLedger(ledger, "PANE-WAIVED", { id: wid, why: waiver });
+      process.stderr.write(`[pai worker] pane waived for ${wid}: ${waiver}\n`);
+      return false;
+    }
   }
   if (paneHandles.has(wid)) return true;
   const refuse = (reason: string): never => {
@@ -65,20 +72,39 @@ export async function requireVisiblePane(
   try {
     let pane: OwnedPane | null;
     try {
-      pane = await launchPane({ logDir, config, id: wid, kind: "worker", term });
+      pane = await launchPane({ logDir, config, id: wid, kind: "worker", term, env, continuation: restart });
     } catch (e) {
       if (!restart) throw e;
-      // the inherited session is gone (closed tab, iTerm restart): anchor to the operator's frontmost window, else run headless
+      // the inherited session is gone (closed tab, iTerm restart): anchor to the operator's frontmost window
       const err = (e instanceof Error ? e.message : String(e)).slice(0, 300);
       process.stderr.write(`[pai worker] ${wid}: restart pane failed (${err}); trying the frontmost iTerm window\n`);
       pane = null;
       try {
         const front = await frontmostItermSession();
-        if (front && front !== term) pane = await launchPane({ logDir, config, id: wid, kind: "worker", term: front });
+        if (front && front !== term) pane = await launchPane({ logDir, config, id: wid, kind: "worker", term: front, env, continuation: restart });
       } catch (e2) {
         noTerminalReasons.set(wid, `${err}; frontmost window: ${(e2 instanceof Error ? e2.message : String(e2)).slice(0, 200)}`);
       }
       if (!pane && !noTerminalReasons.has(wid)) noTerminalReasons.set(wid, err);
+      // a continuation without any terminal of its own (a daemon-side reroute): the audit would stop an
+      // unpaned run, so anchor to any live iTerm session — the restart keeps the task, not the terminal.
+      if (!pane) {
+        try {
+          const { listItermTabs } = await import("../pane-audit.js");
+          const tabs = await listItermTabs();
+          for (const s of tabs.keys()) {
+            if (s === term) continue;
+            try {
+              pane = await launchPane({ logDir, config, id: wid, kind: "worker", term: s, env, continuation: true });
+              break;
+            } catch {
+              /* this session cannot host it: the next one */
+            }
+          }
+        } catch {
+          /* iTerm unreadable: the headless waiver below is recorded, and the audit's continuation grace covers the start */
+        }
+      }
     }
     if (!pane) {
       const why = noTerminalReasons.get(wid) ?? "no terminal to open one in";
@@ -98,9 +124,18 @@ export async function requireVisiblePane(
 }
 
 /** Why this start may run without a pane (workers.panes.required false, or the operator's hidden-run override), else null. */
-export function paneWaiver(config: { panes?: { required: boolean } }): string | null {
+export function paneWaiver(config: { panes?: { required: boolean } }, env: NodeJS.ProcessEnv = process.env): string | null {
   if (config.panes?.required === false) return "workers.panes.required=false";
-  return headlessAllowed();
+  return headlessAllowed(env);
+}
+
+/**
+ * A PAI-started continuation of an earlier run: reroute, fall-through (the label carries it), handoff,
+ * escalation, empty retry, quota reroute. Such a restart is launched through the same pane launcher as any
+ * `pai worker run` from a session — its own visible pane, pane record registered — never headless.
+ */
+export function isPaiContinuation(opts: { _fallThroughOf?: string; _escalatedFrom?: string[]; _priorIds?: string[]; _reroutes?: number; _emptyRetried?: boolean; label?: string }): boolean {
+  return !!(opts._fallThroughOf || (opts._escalatedFrom?.length ?? 0) > 0 || (opts._priorIds?.length ?? 0) > 0 || (opts._reroutes ?? 0) > 0 || opts._emptyRetried || / \((rerouted|fall-through|handed off)\)$/.test(opts.label ?? ""));
 }
 
 /**

@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { escalationReason, escalateOverdue, rerouteWorker, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
+import { defaultSpawn, escalationReason, escalateOverdue, rerouteWorker, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 let dir: string;
@@ -89,6 +89,31 @@ describe("rerouteWorker", () => {
     const st = loadStatus(dir, "w1")!;
     expect(st.state).toBe("queued");
     expect(st.rerouted).toBeUndefined(); // a later tick may try again
+  });
+
+  // 2026-11-16: the restart defaultSpawn starts must reach the pane launcher like a normal `pai worker run`:
+  // the old id travels as PAI_RERUN_OF (and, for a starter that cannot take custom env, as PAI_RERUN_OF_FILE)
+  // so the new run is marked a PAI continuation (rerunFromEnv), anchors its pane to the old run's terminal and
+  // announces its id at once; an unlaunched restart would be stopped by the pane audit.
+  it("defaultSpawn carries the continuation env so the restart launches through the pane launcher", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running", term: "HOST-TERM" }));
+    const seen: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+    const fakeStart = ((bin: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; outPath: string }) => {
+      seen.push({ args, env: o.env });
+      // the restarted process announces its id on both channels the waiting reroute and --detach read
+      writeFileSync(o.env[RERUN_ID_FILE_ENV]!, "w2");
+      writeFileSync(o.env[ID_FILE_ENV]!, "w2");
+      return 4242;
+    }) as typeof import("./reroute.js").spawnSession;
+    await defaultSpawn(dir, fakeStart)({ id: "w1", why: "rerouted by escalation", provider: "fakeB", specFile: join(dir, "spec.txt") });
+    expect(seen.length).toBe(1);
+    const { env } = seen[0]!;
+    expect(env[RERUN_OF_ENV]).toBe("w1"); // the new run is the old one's continuation (rerunFromEnv)
+    expect(env[RERUN_ID_FILE_ENV]).toBeTruthy(); // the waiting reroute learns the id before it stops the old run
+    expect(env[ID_FILE_ENV]).toBe(env[RERUN_ID_FILE_ENV]); // a --detach starter announces on the same file
+    expect(env[RERUN_OF_FILE_ENV]).toBeTruthy(); // and carries the old id for that starter (rerunOfFromFile)
+    expect(readFileSync(env[RERUN_OF_FILE_ENV]!, "utf8")).toBe("w1");
+    expect(seen[0]!.args).toContain("run");
   });
 
   it("escalateOverdue hands every overdue queued job over once", async () => {

@@ -44,7 +44,7 @@ export function uhpReport(r: UhpResult, finalText: string, warnings: string[] = 
 }
 
 export async function executeUhpRun(a: UhpArgs): Promise<number> {
-  const { config, logDir, target, model, label, parsed, systemWaiver } = a;
+  const { config, logDir, target, model, label, parsed, systemWaiver, restart } = a;
   if (!parsed.headless || parsed.prompt === null) {
     throw new Error(
       `provider "${target.providerName}" (engine uhp) supports headless runs only: pass the task with -p '<prompt>'`
@@ -54,8 +54,9 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
   const harnessId = a.harnessId ?? provider.harnessId;
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
-  const term = (await resolveHostSession()).term;
-  const paneVerified = await requireVisiblePane(logDir, config, wid, term, systemWaiver, false, ledgerPath(logDir));
+  // a continuation anchors its pane to the run it repeats when this process has no terminal of its own
+  const term = (restart && a.fallThroughOf ? loadStatus(logDir, a.fallThroughOf)?.term : undefined) || (await resolveHostSession()).term;
+  const paneVerified = await requireVisiblePane(logDir, config, wid, term, systemWaiver, false, ledgerPath(logDir), restart);
   const session = resolveSession(term);
   const spawnerSession = resolveSpawnerSession(logDir, cwd, process.env);
   const old = a.resumeOf ? loadStatus(logDir, a.resumeOf) : null;
