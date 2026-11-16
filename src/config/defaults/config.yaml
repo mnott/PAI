@@ -467,6 +467,14 @@ models:
       stop: docker model unload
       ready: http://127.0.0.1:12434/engines/status
       note: idle loads a model on the first request
+    # Apple's on-device model (Apple Intelligence / FoundationModels) behind
+    # tools/apple-fm-bridge; opt-in only (--local apple-fm), never routed to.
+    # Build it once: cd tools/apple-fm-bridge && swift build -c release.
+    apple-fm:
+      start: tools/apple-fm-bridge/.build/release/apple-fm-bridge
+      stop: kill $(lsof -nP -iTCP:8037 -sTCP:LISTEN -t)
+      ready: http://127.0.0.1:8037/v1/models
+      note: Apple on-device model (FoundationModels, ~8k context); opt-in local provider
 # Worker panes (src/workers/pane*.ts; read through src/workers/pane-policy.ts).
 panes:
   # Smallest pane a worker may be placed in; guides which pane is split. A small pane is never a violation.
