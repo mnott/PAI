@@ -79,22 +79,22 @@ export function modelServerPorts(
 /** The running servers among `ports`: one per listening pid (or per answering port with no listener), named by the served id. */
 export async function detectModelServers(ports: ModelServerTarget[], deps: ModelServersDeps = realDeps): Promise<{ pid: number; label: string }[]> {
   const out = await Promise.all(
-    ports.map(async ({ port, models, fallback }): Promise<{ pid: number; label: string } | null> => {
+    ports.map(async ({ port, models, fallback }): Promise<{ pid: number; label: string }[]> => {
       const ids = await deps.servedIds(port);
-      if (!ids) return null; // nothing serves here: a configured model that is not running
-      const pids = [...new Set(deps.listeners(port))].sort((a, b) => a - b);
+      if (!ids) return []; // nothing serves here: a configured model that is not running
       const served = ids[0]?.toLowerCase();
       // several providers share one port (gyro-l, gyro-m on 8035): the running one is whose model the server reports, never the first configured
       const named = served ? Object.keys(models).find((n) => models[n].toLowerCase() === served || n.toLowerCase() === served) : undefined;
       const label = `${named ?? fallback ?? `port ${port}`}:${port}${ids[0] && !named ? ` serving ${ids[0]}` : ""}`;
-      if (pids.length) return { pid: pids[0], label };
+      const pids = [...new Set(deps.listeners(port))].sort((a, b) => a - b);
+      if (pids.length) return pids.map((pid) => ({ pid, label }));
       // answers HTTP but no listener was found (lsof missing, or another user's process): the probe still says it runs — a ps-signature pid is the best we have
       const { listServers } = await import("../cli/commands/worker-config.js");
       const live = listServers(readLocalConfig(workersYamlPath())).find((s) => s.port === port);
-      return live ? { pid: live.pid, label } : null;
+      return live ? [{ pid: live.pid, label }] : [];
     }),
   );
-  return out.filter((x): x is { pid: number; label: string } => x !== null);
+  return out.flat();
 }
 
 /** The running local model servers, named by what they serve — `pai freeze`'s model list. */
