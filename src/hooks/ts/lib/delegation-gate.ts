@@ -67,6 +67,8 @@ export const DELEGATION_BLOCK = [
   "- Routes by size: single small change -> `pai worker run --class implement` (direct L2); several related or one larger multi-file change -> `--class orchestrate` (L1 cuts work packages, starts the L2 implementers). Other classes are denied from L0.",
   "- Mode picks the models: `pai worker mode` shows it, `pai worker mode speed|balanced|budget` switches it (workers.yaml).",
   "- Start: write the spec with the Write tool, then `pai worker run --label \"<goal>\" -p \"$(cat <spec>)\" --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json`, from the project directory with run_in_background: true. The spec states root cause or requirement, exact target, proof required, and whether to commit. No inline prompts, no heredocs.",
+  "- No `--provider` unless the operator names one: workers follow the mode and the class map. The Agent tool is denied in this session; every worker, researcher or spotcheck is one `pai worker run`.",
+  "- `--tools` lists keep ToolSearch; web research adds WebSearch,WebFetch to --allowedTools.",
   "- Every worker runs behind a visible pane: --no-pane, PAI_WORKER_AUTOPANE, PAI_WORKER= are denied. The answer is the JSON `result` (an AG2 R message): review the diff and re-run the key measurement before believing it.",
   "- Visibility: `pai worker ps`, `follow <id>`, `replay <id>`, `goal <id> \"<text>\"`; wait with `pai worker wait|wait-on`, never sleep-poll.",
   "- Never search recursively from / or ~: name the directory.",
