@@ -5,13 +5,20 @@
 Continue everything `pai freeze` stopped, exactly where it was
 
 ```
-pai thaw
+pai thaw [options]
 ```
 
-SIGCONT to every recorded pid (model server first, then the workers, children before their L1), removes the marker and opens the slot gate. Every thawed worker gets a note that the operator paused it and nothing failed. Idempotent; a process that ended meanwhile is skipped and reported.
+SIGCONT to every recorded pid (model server first, then the workers, children before their L1), removes the marker and opens the slot gate. Every thawed worker gets a note that the operator paused it and nothing failed. Idempotent; a process that ended meanwhile is skipped and reported. `--session NAME` or `--only ID[,ID]` continues only those workers (a session's children follow their L1), keeps the rest frozen and rewrites the marker (the gate stays while anything is frozen); a frozen model server a thawed local worker uses is thawed too and reported in one line.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--session NAME` | string | — | Continue only this session's workers (and their children) |
+| `--only IDS` | string | — | Continue only these worker ids (comma list) |
 
 ```sh
 pai thaw
+pai thaw --session CaseLeaf
+pai thaw --only w-1,w-2
 ```
 
 See also: `pai freeze`

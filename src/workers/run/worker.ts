@@ -4,6 +4,8 @@
  * existing import path keeps working.
  */
 
+import { modelFrozen, realFreezeDeps, thawModelServers } from "../freeze.js";
+import { readUrgency } from "../urgency.js";
 import { setRunWorker } from "./worker-ref.js";
 import { mkdirSync } from "node:fs";
 import { parseRunnerArgs, shortText } from "../args.js";
@@ -140,6 +142,17 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // --local: PAI resolves the running local server itself (local-provider.ts);
   // the resolved name wins over --provider — a provider literally named
   // "local" is not the mechanism.
+  // priority passes a freeze (gate.ts); its local model server may be stopped: --local thaws it, a routed run takes the cloud
+  const urgentRun = opts.priority === "front" || !!readUrgency(process.env);
+  let frozenModelCloud = false;
+  if (urgentRun && modelFrozen()) {
+    if (opts.localFlag) {
+      const line = thawModelServers(logDir, await realFreezeDeps());
+      if (line && !opts.quiet) process.stderr.write(`pai worker: ${line}\n`);
+    } else {
+      frozenModelCloud = true;
+    }
+  }
   if (opts.localFlag) {
     try {
       const res = await resolveLocalProvider(config, logDir, { className: routeClassOf(opts), name: opts.localName });
@@ -199,7 +212,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     }
   }
   if (!route && !providerFlag && !capability && opts.className !== "plan" && parseRunnerArgs(opts.claudeArgs).headless) {
-    const routed = await routeRun(config, logDir, { ...opts, className: routeClassOf(opts) });
+    const routed = await routeRun(config, logDir, { ...opts, className: routeClassOf(opts), ...(frozenModelCloud ? { cloud: true } : {}) });
     if (routed) {
       route = routed.route;
       providerFlag = routed.providerFlag ?? undefined;

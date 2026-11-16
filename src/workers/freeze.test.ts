@@ -2,7 +2,7 @@ import { mkdtempSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, type FreezeDeps, type ProcRow } from "./freeze.js";
+import { activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, type FreezeDeps, type ProcRow } from "./freeze.js";
 import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
 import { detectSupervisionEvents } from "./supervision.js";
 import { TroubleWatcher } from "./worker-trouble.js";
@@ -318,6 +318,57 @@ describe("supervision stands down while frozen", () => {
     w.tick();
     await w.flush();
     expect(n).toBe(0); // paused (preempted): no stall notice at all
+  });
+});
+
+describe("exceptions", () => {
+  const saved = process.env.PAI_FREEZE_FILE;
+  let sent: string[];
+  const A = [st("L1", 100, { session: { id: "u", name: "CaseLeaf" }, provider: "gyro" }), st("L2", 200, { parent: "L1" }), st("X", 300, { session: { id: "v", name: "other" } })];
+  const rows: ProcRow[] = [row(1, 0, "launchd"), row(60, 1, "claude interactive"), row(100, 1, "pai worker run L1"), row(101, 100, "claude"), row(200, 1, "pai worker run L2"), row(201, 200, "claude"), row(300, 1, "pai worker run X"), row(301, 300, "claude"), row(400, 1, "model-server")];
+  const deps = (): FreezeDeps => ({
+    procs: () => rows,
+    statuses: () => A,
+    servers: async () => [{ pid: 400, label: "gyro:8080" }],
+    signal: (pid, sig) => void sent.push(`${sig}:${pid}`),
+    owns: () => true,
+    self: 60,
+    now: () => Date.now(),
+    note: () => undefined,
+  });
+  beforeEach(() => {
+    process.env.PAI_FREEZE_FILE = join(mkdtempSync(join(tmpdir(), "freeze-")), "freeze.json");
+    delete process.env.PAI_WORKER;
+    sent = [];
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.PAI_FREEZE_FILE;
+    else process.env.PAI_FREEZE_FILE = saved;
+  });
+
+  it("except-session plans exclude that session's tree (and its children and model server)", async () => {
+    await freezeAll("/nonexistent-log", "t", undefined, deps(), undefined, { session: "caseleaf" });
+    const stopped = sent.map((s) => Number(s.split(":")[1])).sort();
+    expect(stopped).toEqual([300, 301]);
+  });
+
+  it("partial thaw keeps the others in the marker and the gate", async () => {
+    await freezeAll("/nonexistent-log", "t", undefined, deps());
+    sent.length = 0;
+    const r = thawSome("/nonexistent-log", deps(), { session: "CaseLeaf" });
+    const conts = sent.map((s) => Number(s.split(":")[1])).sort();
+    expect(conts).toEqual([100, 101, 200, 201, 400]);
+    expect(r.lines.join("\n")).toMatch(/model gyro:8080 thawed too/);
+    expect(readFreeze()!.pids.map((e) => e.id)).toEqual(["X", "X"]);
+    expect(freezeHold()).toMatch(/frozen/);
+    thawSome("/nonexistent-log", deps(), { ids: ["X"] });
+    expect(freezeHold()).toBeUndefined();
+  });
+
+  it("--now passes the freeze gate", async () => {
+    await freezeAll("/nonexistent-log", "t", undefined, deps());
+    expect(freezeHold()).toMatch(/frozen/);
+    expect(freezeHold(true)).toBeUndefined();
   });
 });
 
