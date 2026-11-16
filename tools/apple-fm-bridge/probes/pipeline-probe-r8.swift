@@ -197,6 +197,9 @@ func contentOverlap(_ a: String, _ b: String) -> Double {
 let textMentionRe = try! NSRegularExpression(pattern: #"(der|dem|den|im|laut|des) (Text|Textes)\b|die Beschreibung|laut Beschreibung|im Abschnitt|dieser Abschnitt"#, options: .caseInsensitive)
 func mentionsText(_ s: String) -> Bool { textMentionRe.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil }
 func rx(_ p: String) -> NSRegularExpression { try! NSRegularExpression(pattern: p, options: .caseInsensitive) }
+func rxc(_ p: String) -> NSRegularExpression { try! NSRegularExpression(pattern: p) }
+/// share of the BACK content words (stemmed) that also occur in the front; needs >=4 back words
+func backCoveredByFront(_ f: String, _ b: String) -> Double { let sb = stems(b); return sb.count < 4 ? 0 : Double(sb.intersection(stems(f)).count) / Double(sb.count) }
 let hedgeRe = rx(#"\b(ebenfalls|auch|andere[nrsm]?|nicht direkt|nur in bestimmten|teilweise)\b"#)
 let negRe = rx(#"\b(nicht|kein\w*|nie|niemals|ohne|weder|statt|anstatt|sondern|gegenteil|gegensatz|unabhängig)\b"#)
 let demoRe = rx(#"\b(diese[rnms]?|solche[rnms]?|dies|dieses|daher|deshalb|dadurch)\b"#)
@@ -232,11 +235,11 @@ let notTermLower: Set<String> = ["das","dies","dieses","diese","dieser","dasselb
 /// words that are never a named term (past participles and verbs caught by loose pattern matches)
 let notTerm: Set<String> = ["abgekühlt","abgeregnet","abgetragen","abgelöst","angegeben","beschrieben","bezeichnet","benannt","entdeckt","eingemischt","erwärmt","geändert","genutzt","gemessen","gestört","getragen","gebracht","geworden","gezeigt","geführt","gehalten","haben","hat","kommt","ermöglicht","erreicht","entsteht","entstanden","gebildet","bildet","verursacht","verändert","verbessert","verbreitet","verschiebung","unsichtbar","abgegeben","aufgetreten","ausgebildet","existiert","gewählt","worden"]
 /// capitalised word run (a noun phrase): a capitalised head plus following lower-case words; abbreviations count as one token
-let capRunRe = rx(#"[A-ZÄÖÜ][\wäöüß-]*(?:\.[A-Z]\.)*(?:\s+[a-zäöüß][\wäöüß-]+){0,3}"#)
+let capRunRe = rxc(#"[A-ZÄÖÜ][\wäöüß-]*(?:\.[A-Z]\.)*(?:\s+[a-zäöüß][\wäöüß-]+){0,3}"#)
 /// an abbreviation term: 2-6 letters with dots (Ac lent, u. U., Föhn i. A.) — accepted as a term form
-let abbrevTermRe = rx(#"\b[A-Z]{2,6}(?:\.[A-Za-z]?\.?)+\s*[a-zäöüß]*"#)
+let abbrevTermRe = rxc(#"\b[A-Z]{2,6}(?:\.[A-Za-z]?\.?)+\s*[a-zäöüß]*"#)
 /// quoted terms count too: „X" or "X"
-let quotedTermRe = rx(#"(?:„|")[A-ZÄÖÜ][^"“”]{3,40}(?:“|")"#)
+let quotedTermRe = rxc(#"(?:„|")[A-ZÄÖÜ][^"“”]{3,40}(?:“|")"#)
 /// the term is the last capitalised run in the zone (up to the first comma/semicolon/colon or sentence end)
 func extractTerm(_ s: String, upTo endIdx: Int) -> String {
   let chars = Array(s)
@@ -288,7 +291,7 @@ func headWord(_ t: String) -> String? {
 /// place names found in the text as "in X": never a technical term (cities, regions)
 func placeNames(_ fullText: String) -> Set<String> {
   var s = Set<String>()
-  for m in rx(#"\bin\s+([A-ZÄÖÜ][\wäöüß]+(?:-[A-Za-zäöüß]+)?)"#).matches(in: fullText, range: NSRange(fullText.startIndex..., in: fullText)) {
+  for m in rxc(#"\bin\s+([A-ZÄÖÜ][\wäöüß]+(?:-[A-Za-zäöüß]+)?)"#).matches(in: fullText, range: NSRange(fullText.startIndex..., in: fullText)) {
     guard let r = Range(m.range(at: 1), in: fullText) else { continue }
     s.insert(String(fullText[r]).lowercased())
   }
@@ -297,13 +300,13 @@ func placeNames(_ fullText: String) -> Set<String> {
 let condRe = rx(#"\b(bei\w*|wenn|nach\w*|sobald|falls|sofern)\b"#)
 let histSentRe = rx(#"(\b(1[5-9]\d\d|20[0-2]\d)\b|wurde \w+ (beschrieben|erwähnt|entdeckt|eingeführt)|\b(?:nach|von|durch) [A-ZÄÖÜ][a-zäöüß]+ (beschrieben|entdeckt|benannt)|Geschichte|Historie|erstmals)"#)
 let stopLower: Set<String> = ["der","die","das","des","dem","den","ein","eine","einen","einem","einer","und","oder","aber","doch","denn","weil","wenn","als","wann","wie","wer","was","werde","werden","wurde","worden","sind","sein","ist","bist","sei","seien","war","waren","hat","hatte","hatten","habe","haben","kann","können","konnte","muss","müssen","musste","darf","soll","sollen","will","mag","bei","nach","aus","von","zu","zur","zum","im","am","an","auf","für","mit","ohne","um","durch","gegen","über","unter","vor","hinter","zwischen","in","innerhalb","außerhalb","dass","damit","dadurch","deshalb","daher","dann","auch","nur","schon","noch","bereits","etwa","circa","sehr","mehr","weniger","sowie","sowohl","bzw","etc","dh","zb","usw","andere","anderen","anderer","anderes","anderem","gleiche","gleicher","selbe","selber","solche","solcher","solches","dieser","diese","dieses","diesen","diesem","jener","jene","jenes","welcher","welche","welches","welchen","welchem","würde","würden","ließe","lässt","lassen","gab","gibt","wurden","beim","vom","ungefähr","knapp","rund","gut","viel","wenig","mehrere","alle","keine","kein","manche","folgende","folgendem","folgenden","nämlich","zwar","jedoch","allerdings","hingegen","dagegen","ebenso","ebenfalls","somit","folglich","also","spricht","sprechen","nennt","heißen","heißt","genannt","bezeichnet","bedeutet","beinhaltet","enthalten","enthält","dabei","danach","wobei","indem","indes","solange","sobald","nachdem","bevor","während","trotz","wegen","halber","zunächst","zudem","hinaus","etwa"]
-let sentenceStartCaps: Set<String> = ["Der","Die","Das","Ein","Eine","Kein","Keine","Manche","Mehrere","Alle","Wenn","Nach","Weil","Auch","Dabei","Dann","Hier","Dort","Zum","Zur","Am","Im","Auf","Von","Aus","Mit","Ohne","Vor","Über","Unter","Durch","Gegen","Zwischen","Bei","Ab","Bis","Seit","Dies","Diese","Dieser","Dieses","Welche","Welcher","Folgende","Folgender","Zwar","Jedoch","Dagegen","Ebenso","Somit","Also","Nur","Schon","Noch","Bereits","Etwa","Sehr","Mehr","Weniger","Gut","Viel","Wenig","Oft","Immer","Nie","Niemals","Ist","Sind","War","Waren","Hat","Hatte","Haben","Kann","Muss","Darf","Soll","Wird","Werden","Wurde","Demnach","Weitere","Speichert","Leitet","Beträgt","Da","Gerade","Pflanzen","Solche","Dieser"]
+let sentenceStartCaps: Set<String> = ["Der","Die","Das","Ein","Eine","Kein","Keine","Manche","Mehrere","Alle","Wenn","Nach","Weil","Auch","Dabei","Dann","Hier","Dort","Zum","Zur","Am","Im","Auf","Von","Aus","Mit","Ohne","Vor","Über","Unter","Durch","Gegen","Zwischen","Bei","Ab","Bis","Seit","Dies","Diese","Dieser","Dieses","Welche","Welcher","Folgende","Folgender","Zwar","Jedoch","Dagegen","Ebenso","Somit","Also","Nur","Schon","Noch","Bereits","Etwa","Sehr","Mehr","Weniger","Gut","Viel","Wenig","Oft","Immer","Nie","Niemals","Ist","Sind","War","Waren","Hat","Hatte","Haben","Kann","Muss","Darf","Soll","Wird","Werden","Wurde","Demnach","Heute","Hierbei","Daher","Deshalb","Damit","Dadurch","Außerdem","Zudem","Weitere","Speichert","Leitet","Beträgt","Da","Gerade","Pflanzen","Solche","Dieser"]
 /// German verbs in 3rd person (always lower case mid-sentence): never a technical term
 let verbRe = rx(#"^(?:ver|be|zer|ent|er|ab|an|auf|aus|bei|ein|mit|nach|vor|zu|zur|über|unter)[a-zäöüß-]{2,}(?:en|et|e|st|est)$"#)
 /// technical terms of a text: capitalised nouns/compounds (>=4 letters, not sentence-initial, not a verb) and numbers with units
 func techTerms(_ s: String) -> [String] {
   var out: [String] = []
-  for m in rx(#"\b[A-ZÄÖÜ][a-zäöüß]+(?:-[A-Za-zäöüß]+)*"#).matches(in: s, range: NSRange(s.startIndex..., in: s)) {
+  for m in rxc(#"\b[A-ZÄÖÜ][a-zäöüß]+(?:-[A-Za-zäöüß]+)*"#).matches(in: s, range: NSRange(s.startIndex..., in: s)) {
     guard let r = Range(m.range, in: s) else { continue }
     let t = String(s[r])
     // skip words at the start of a sentence (or after ". "): likely verbs/function words, not terms
@@ -587,7 +590,7 @@ struct FC { var sec: Sec; var fact: FactRec; var front: String; var back: String
             if norm(c.front).hasSuffix("…") || norm(c.front).hasSuffix("...") { flags.append("frontTruncated") }
             if norm(c.back).hasSuffix("…") || norm(c.back).hasSuffix("...") { flags.append("backTruncated") }
             // rule 6b: a front that contains the answer (>=60% content-word overlap with the back) is rejected
-            if !norm(c.front).isEmpty && !norm(c.back).isEmpty && contentOverlap(c.front, c.back) >= 0.6 { flags.append("frontContainsAnswer") }
+            if !norm(c.front).isEmpty && !norm(c.back).isEmpty && backCoveredByFront(c.front, c.back) >= 0.6 { flags.append("frontContainsAnswer") }
             // rule 5: termsLost on the restricted set only (capitalised non-initial nouns, numbers with units, the named term);
             // at most one lost term, and never the named term or a number-with-unit
             let tl = techTerms(fact.quote).filter { !norm(c.back).lowercased().contains($0) }
