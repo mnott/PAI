@@ -26,7 +26,7 @@ import { CONFIG_FILE, expandHome, homeRel, paiConfigFilePath, readMainConfigRaw,
 import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults, userWorkersYamlRaw } from "../config/shipped-defaults.js";
-import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
+import { contextWindowFromModelId, stripModelVariant, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { foldLegacyRoles, migrateClassPins, migrateClassRoutes, migrateLegacyChains, migrateToTiers, parseTiersValue, type TierDef } from "./route-lists.js";
 import {
   effectiveWorkersYamlData,
@@ -1943,6 +1943,152 @@ export function resolveModelCapability(p: WorkerProvider, capability: ModelCapab
 /** Runner behind a provider, defaulting to the Claude Code harness. */
 function providerEngine(p: WorkerProvider): WorkerEngine {
   return p.engine ?? "claude";
+}
+
+/** The built-in login's tier aliases double as --model values ("sonnet"): they serve their namesake family. */
+const NATIVE_FAMILY_CAPABILITIES: Record<string, ModelCapability> = { opus: "default", sonnet: "default", haiku: "fast" };
+
+/** Does a provider declare this model id — in its models table or a modelTiers pin? */
+function providerDeclaresModel(p: WorkerProvider, id: string): boolean {
+  return Object.values(p.models).includes(id) || (p.modelTiers?.[id] !== undefined);
+}
+
+/** The providers a model family names: the built-in anthropic login for opus/sonnet/haiku and any `claude-*` id; otherwise every provider whose own provider name is a word of the id ("glm-5.3-flash" → glm). */
+function familyProviderNames(cfg: { providers: Record<string, WorkerProvider> }, family: string): string[] {
+  if (family === ANTHROPIC_NATIVE) return [ANTHROPIC_NATIVE];
+  const words = family.split(/[^a-z0-9]+/).filter((w) => /[a-z]/.test(w));
+  const named = Object.keys(cfg.providers).filter((n) => n !== ANTHROPIC_NATIVE && words.includes(n));
+  return named.length ? named : [family];
+}
+
+/**
+ * The providers that serve a `--model` value: an exact id is the provider
+ * declaring it; a family word ("sonnet", "glm-5.3-flash") is the providers of
+ * that family whose table carries a model of the family — or, for the built-in
+ * login, its tier aliases (opus/sonnet/haiku are `--model` values themselves).
+ * The provider registry (workers.yaml's provider tables) is the source; only
+ * the three Claude tier names are a fallback. Pure: no pings, no state.
+ */
+export function modelProviders(
+  cfg: { providers: Record<string, WorkerProvider>; nativeModels?: WorkerProvider["models"] },
+  value: string
+): string[] {
+  const v = value.trim().toLowerCase();
+  if (!v || v === "default" || v === "fast") return [];
+  const ids = (p: WorkerProvider): string[] => Object.values(p.models).filter((m): m is string => typeof m === "string");
+  const exact: string[] = [];
+  const native = getProviderOrNative(cfg, ANTHROPIC_NATIVE);
+  if (native && ids(native).some((m) => m.toLowerCase() === v)) exact.push(ANTHROPIC_NATIVE);
+  for (const [name, p] of Object.entries(cfg.providers)) {
+    if (exact.includes(name)) continue;
+    if (providerDeclaresModel(p, value) || ids(p).some((m) => m.toLowerCase() === v)) exact.push(name);
+  }
+  if (exact.length) return exact;
+  // the family word of a model id is its first alphabetic word ("glm-5.3-flash" → "glm")
+  const family = NATIVE_FAMILY_CAPABILITIES[v] !== undefined || v.startsWith("claude-") ? ANTHROPIC_NATIVE : v.split(/[^a-z0-9]+/).find((p) => /^[a-z][a-z0-9]*$/.test(p));
+  if (!family) return [];
+  const out: string[] = [];
+  for (const name of familyProviderNames(cfg, family)) {
+    const p = getProviderOrNative(cfg, name);
+    if (!p || !p.enabled) continue;
+    if (name === ANTHROPIC_NATIVE) {
+      const cap = NATIVE_FAMILY_CAPABILITIES[v];
+      if (v.startsWith("claude-") || ids(p).some((m) => m.toLowerCase().includes(v)) || (cap !== undefined && p.models[cap] !== undefined)) out.push(name);
+      continue;
+    }
+    if (ids(p).some((m) => stripModelVariant(m).toLowerCase().startsWith(family) || m.toLowerCase().includes(v))) out.push(name);
+  }
+  return out;
+}
+
+/** One provider of this model, or null when none does. */
+export function modelProvider(
+  cfg: { providers: Record<string, WorkerProvider>; nativeModels?: WorkerProvider["models"] },
+  value: string
+): string | null {
+  return modelProviders(cfg, value)[0] ?? null;
+}
+
+/** A provider is remote when it has an endpoint off this machine (the built-in login included). */
+function isRemoteProvider(p: WorkerProvider): boolean {
+  return p.native ? true : !!p.baseUrl && !isLocalProvider(p.baseUrl);
+}
+
+/**
+ * The provider a `--model` value routes the run to. One provider serves it:
+ * that one, local or cloud. Several serve it: a remote (cloud) one — the
+ * policy still decides local vs cloud around it — else the first. Nothing
+ * serves it: null, and the caller refuses rather than dropping the model.
+ */
+export function routeProviderForModel(
+  cfg: { providers: Record<string, WorkerProvider>; nativeModels?: WorkerProvider["models"] },
+  value: string
+): string | null {
+  const names = modelProviders(cfg, value);
+  if (!names.length) return null;
+  if (names.length === 1) return names[0];
+  const remote = names.find((n) => isRemoteProvider(getProviderOrNative(cfg, n)!));
+  return remote ?? names[0];
+}
+
+/** Providers usable as the fix of a refused --model: configured, enabled, not loopback (local work goes through --local). */
+export function modelFixProviders(cfg: { providers: Record<string, WorkerProvider> }): string[] {
+  return [ANTHROPIC_NATIVE, ...Object.entries(cfg.providers).filter(([, p]) => p.enabled && isRemoteProvider(p)).map(([n]) => n)];
+}
+
+/**
+ * The provider a delegation's `where` stands for: "cloud" the session's cloud
+ * provider, "local" the resolved local one, a provider name itself. Pure —
+ * takes the resolved names; resolveTarget (target.ts) supplies them.
+ */
+export function whereProvider(
+  cfg: { providers: Record<string, WorkerProvider>; nativeModels?: WorkerProvider["models"] },
+  where: string,
+  opts: { cloud: string; local?: string | null }
+): string {
+  const w = where.trim();
+  if (w === "cloud") return opts.cloud;
+  if (w === "local") {
+    if (!opts.local) throw new WorkersConfigError(`where "local": no local model server is running — run this on the cloud (--where cloud) or start a local server`);
+    return opts.local;
+  }
+  const p = getProviderOrNative(cfg, w);
+  if (!p) throw new WorkersConfigError(`no worker provider named "${w}" — configured: ${Object.keys(cfg.providers).join(", ") || "(none)"}, or cloud / local`);
+  if (!p.enabled && isLocalProvider(p.baseUrl)) throw new WorkersConfigError(`provider "${w}" is a local server and is disabled — use --local (it picks the running local model), or enable it with: pai worker providers enable ${w}`);
+  return w;
+}
+
+/**
+ * The provider a run goes to for a named model, after `where`/`--local`: the
+ * where-provider must serve the model too, else an error naming the fix. null
+ * = nothing named (routing stands). Pure: takes the resolved names.
+ */
+export function pinProviderForModel(
+  cfg: { providers: Record<string, WorkerProvider>; nativeModels?: WorkerProvider["models"] },
+  opts: { where?: string; local?: boolean; cloud: string; localName?: string | null; modelFlag?: string }
+): string | null {
+  if (!opts.modelFlag || opts.modelFlag === "default" || opts.modelFlag === "fast") return null;
+  if (opts.where) {
+    const p = whereProvider(cfg, opts.where, { cloud: opts.cloud, local: opts.localName });
+    const servers = modelProviders(cfg, opts.modelFlag);
+    if (servers.includes(p)) return p;
+    throw new WorkersConfigError(
+      `--model ${opts.modelFlag}: provider "${p}" (${opts.where}) cannot serve it — it goes to ${
+        servers.length ? servers.join(" or ") : "no configured provider"
+      }. Drop --where ${opts.where}, or run on one of: ${modelFixProviders(cfg).join(", ")}`
+    );
+  }
+  if (opts.local) {
+    if (!opts.localName) return null;
+    const servers = modelProviders(cfg, opts.modelFlag);
+    if (servers.includes(opts.localName)) return opts.localName;
+    throw new WorkersConfigError(
+      `--model ${opts.modelFlag}: the local provider "${opts.localName}" cannot serve it — it goes to ${
+        servers.length ? servers.join(" or ") : "no configured provider"
+      }. Drop --local, or run on one of: ${modelFixProviders(cfg).join(", ")}`
+    );
+  }
+  return null;
 }
 
 /** Does this provider name a model for the capability ("default" always counts)? */

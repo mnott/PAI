@@ -1,9 +1,45 @@
-import { describe, it, expect } from "vitest";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import { decideDelegationGate, latestOperatorPromptFromJsonl, L0_ROUTE_REASON, MODEL_OVERRIDE_REASON, PANE_REASON, SEARCH_ROOT_REASON, DELEGATION_BLOCK } from "./delegation-gate.js";
 
 const L0 = {} as NodeJS.ProcessEnv;
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
 const d = (c: string, e = L0, p?: string) => decideDelegationGate(c, e, p);
+
+// the provider registry the family rule reads: the gate resolves workers.yaml
+// under PAI_HOME (the test home), so a fixture is written there — the live
+// file is never touched or read
+const REGISTRY = [
+  "providers:",
+  "  anthropic:",
+  "    builtin: true",
+  "    models:",
+  "      default: sonnet",
+  "      fast: haiku",
+  "  glm:",
+  "    enabled: true",
+  "    url: https://api.z.ai/api/anthropic",
+  "    models:",
+  "      default: glm-5.3[1m]",
+  "      fast: glm-5.3-flash",
+  "  gyro-l:",
+  "    enabled: true",
+  "    url: http://127.0.0.1:8081/v1",
+  "    models:",
+  "      default: qwen3.8-flash-next-gyro-l",
+  "tiers: []",
+  "",
+].join("\n");
+const paiHome = join(homedir(), ".pai");
+beforeAll(() => {
+  mkdirSync(paiHome, { recursive: true });
+  writeFileSync(join(paiHome, "workers.yaml"), REGISTRY, "utf8");
+});
+afterAll(() => {
+  rmSync(join(paiHome, "workers.yaml"), { force: true });
+});
 
 describe("L0 routes", () => {
   for (const cls of ["implement", "simple", "orchestrate", "plan"]) {
@@ -44,6 +80,14 @@ describe("model override rule", () => {
   it("leaves a run without --model/--provider unchanged", () => expect(d("pai worker run --class orchestrate -p x", L0, "fix the bug").decision).toBe("allow"));
   it('"claude" in a prompt does not authorise claude-opus-5-5', () => expect(d(c, L0, "use claude for this").decision).toBe("deny"));
   it("denies on resume too", () => expect(d("pai worker resume abc --model claude-opus-5-5")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON }));
+  // a model family the operator names implies its provider (2026-11-16: "build it on sonnet" denied --provider anthropic)
+  it(`allows --provider anthropic with prompt "build it on sonnet"`, () => expect(d("pai worker run --class implement --provider anthropic -p x", L0, "build it on sonnet").decision).toBe("allow"));
+  it(`allows --model sonnet with prompt "build it on sonnet"`, () => expect(d("pai worker run --class implement --model sonnet -p x", L0, "build it on sonnet").decision).toBe("allow"));
+  it(`denies both with prompt "fix the bug"`, () => {
+    expect(d("pai worker run --class implement --provider anthropic -p x", L0, "fix the bug")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON });
+    expect(d("pai worker run --class implement --model sonnet -p x", L0, "fix the bug")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON });
+  });
+  it(`allows --provider glm with prompt naming a glm model ("use glm-5.3-flash")`, () => expect(d("pai worker run --class implement --provider glm -p x", L0, "use glm-5.3-flash").decision).toBe("allow"));
 });
 
 describe("transcript tail extractor", () => {

@@ -185,6 +185,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
     run: {
       harnessFlag: str(o.harness),
       providerFlag: str(o.provider),
+      whereFlag: str(o.where),
       localFlag: o.local === true || typeof o.local === "string" ? true : undefined,
       localName: typeof o.local === "string" ? o.local : undefined,
       urgent: o.urgent === true ? true : undefined,
@@ -254,6 +255,10 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
   if (t.provider) target.providerFlag = t.provider;
+  // --where a provider name is the operator's own words for where to run: it
+  // reaches the engine as --provider too, so a --model that provider cannot
+  // serve is refused there (pinProviderForModel), never silently dropped.
+  if (where && where !== "local" && where !== "cloud" && !target.providerFlag) target.providerFlag = where;
   // "default" / "fast" are aliases, never a raw model id
   target.modelFlag = model === "default" || model === "fast" ? t.model : (t.model ?? target.modelFlag);
   if (plan.kind === "run") {

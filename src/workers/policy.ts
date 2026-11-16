@@ -21,6 +21,9 @@ import {
   WorkersConfigError,
   getProviderOrNative,
   isLocalProvider,
+  modelFixProviders,
+  modelProviders,
+  routeProviderForModel,
   type WorkersConfig,
 } from "./config.js";
 import { isBenchmarkLabel } from "../daemon/battery-guard.js";
@@ -184,6 +187,8 @@ export interface RouteFlags {
   urgent?: boolean;
   localOk?: boolean;
   cloud?: boolean;
+  /** --model value: a model id/alias routes to the provider that serves it. */
+  modelFlag?: string;
 }
 
 /**
@@ -221,14 +226,80 @@ async function listRoute(
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
   const policyMode = readPolicy(logDir)?.mode;
   const isLocal = (name: string) => isLocalProvider(config.providers[name]?.baseUrl ?? "");
+  const deriveMode = (entries: string[]): PolicyMode => {
+    if (!entries.some((e) => !isLocal(entryProvider(e)))) return "local-only";
+    return policyMode ?? (isLocal(entryProvider(entries[0])) ? "prefer-local" : "prefer-cloud");
+  };
+  const res = (reason: string, local: string | null, mode?: PolicyMode) => ({
+    providerFlag: local,
+    route: { policy: mode ?? deriveMode(list), reason, local: local !== null },
+  });
+  // --model routes the run to a provider that serves it, never silently dropped:
+  // none does -> an error naming the fix; only remote ones serve it -> they are
+  // the list; only local ones serve it -> they are kept even for urgent/--cloud
+  // (the model was named, the cloud cannot serve it).
+  const named = flags.modelFlag && flags.modelFlag !== "default" && flags.modelFlag !== "fast" ? flags.modelFlag : undefined;
+  if (named) {
+    const servers = modelProviders(config, named);
+    if (!servers.length) {
+      throw new WorkersConfigError(
+        `--model ${named}: no configured provider serves it — run on one of: ${modelFixProviders(config).join(", ")}, or drop --model`
+      );
+    }
+    const remote = servers.filter((n) => !isLocal(n));
+    if (remote.length) {
+      // a named model only the cloud serves: never pin it local. The route
+      // line names the model and resolveTarget walks the class list (a
+      // same-named policy mode is kept, else prefer-cloud). A remote provider
+      // outside the class list is pinned instead — its turn to serve must not
+      // depend on a cloud entry that qualifies for other reasons.
+      if (!remote.some((n) => n !== ANTHROPIC_NATIVE)) {
+        if (!list.some((e) => !isLocal(entryProvider(e)))) return null;
+        return res(`--model ${named}: route: cloud`, null, policyMode && policyMode !== "local-only" ? policyMode : "prefer-cloud");
+      }
+      const walk = await walkList(config, logDir, remote, flags, deps, (reason, local) =>
+        res(local ? reason : `--model ${named}: ${reason}`, local)
+      );
+      // a walk that ends unrouted has no policy file and nothing running: the
+      // serving providers are this run's list, resolveTarget walks it too —
+      // record the cloud route (never a local pin for a model only cloud serves).
+      if (!walk) return res(`--model ${named}: route: cloud`, null, policyMode && policyMode !== "local-only" ? policyMode : "prefer-cloud");
+      // every serving provider is out of rotation (cooldown, quota, budget):
+      // the model was named, so never drop it onto another one — a cloud entry
+      // of the class list still stands to serve it, else refuse.
+      if (walk.route.local === false) return walk;
+      if (list.some((e) => !isLocal(entryProvider(e)))) return null;
+      throw new WorkersConfigError(`--model ${named}: its providers are all out of rotation — pai worker providers`);
+    }
+    if (!flags.urgent && !flags.cloud) list = servers;
+    else {
+      // --urgent/--cloud asks for the cloud, but only local providers serve
+      // the named model: a cloud entry of the class list stands, else refuse.
+      if (list.some((e) => !isLocal(entryProvider(e)))) return res(`--model ${named}: no local provider serves it`, null, "prefer-cloud");
+      throw new WorkersConfigError(
+        `--model ${named} with --${flags.urgent ? "urgent" : "cloud"}: only a local provider serves it (${servers.join(", ")}) — drop the flag, or run on one of: ${modelFixProviders(config).join(", ")}`
+      );
+    }
+  }
+  return walkList(config, logDir, list, flags, deps, res);
+}
+
+/** The plain walk of a route list: local entries serve when their server runs, cloud entries when they qualify. */
+async function walkList(
+  config: WorkersConfig,
+  logDir: string,
+  list: string[],
+  flags: RouteFlags,
+  deps: { ping?: (url: string, models?: string[]) => Promise<boolean>; battery?: () => boolean; instances?: () => LocalInstance[] },
+  res: (reason: string, local: string | null, mode?: PolicyMode) => { providerFlag: string | null; route: RouteInfo }
+): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
+  const policyMode = readPolicy(logDir)?.mode;
+  const isLocal = (name: string) => isLocalProvider(config.providers[name]?.baseUrl ?? "");
   const entries = expandSelectors(config, logDir, list, deps.instances);
   const hasCloud = entries.some((n) => !isLocal(n));
-  const mode: PolicyMode = !hasCloud ? "local-only" : (policyMode ?? (isLocal(entries[0]) ? "prefer-local" : "prefer-cloud"));
-  const res = (reason: string, local: string | null) => ({
-    providerFlag: local,
-    route: { policy: mode, reason, local: local !== null },
-  });
-  if (!entries.some(isLocal)) return policyMode ? res("route: no local model", null) : null;
+  // a list of cloud entries only (a --model's serving providers): without a
+  // policy file resolveTarget walks it itself, with one the reason is recorded
+  if (!entries.some(isLocal)) return policyMode ? res("route: cloud", null) : null;
   const skipLocal =
     (flags.urgent ? "urgent" : "") ||
     (flags.cloud ? "--cloud" : "") ||
@@ -270,6 +341,17 @@ export async function routeRun(
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
   const list = classRoute(config.tiers ?? [], flags.className ?? "implement");
   if (list.length) return listRoute(config, logDir, list, flags, deps);
+  // no routing list: a named --model still routes to the provider that serves it
+  if (flags.modelFlag && flags.modelFlag !== "default" && flags.modelFlag !== "fast") {
+    const pinned = routeProviderForModel(config, flags.modelFlag);
+    if (!pinned) {
+      throw new WorkersConfigError(
+        `--model ${flags.modelFlag}: no configured provider serves it — run on one of: ${modelFixProviders(config).join(", ")}, or drop --model`
+      );
+    }
+    const local = isLocalProvider(getProviderOrNative(config, pinned)?.baseUrl ?? "");
+    return { providerFlag: local ? pinned : null, route: { policy: "prefer-local", reason: `--model ${flags.modelFlag}`, local } };
+  }
   const policy = readPolicy(logDir);
   if (!policy) return null;
   const mode = policy.mode;

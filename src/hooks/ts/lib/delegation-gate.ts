@@ -11,9 +11,12 @@
  *      named that model or provider in their latest prompt (the guard reads it from the transcript).
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { openSync, readSync, closeSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { contentToText } from "./transcript-text.js";
 import { dropHeredocBodies } from "./heredoc.js";
+import { paiHomePath } from "../../../config/pai-home.js";
 
 export interface DelegationDecision { decision: "allow" | "deny"; reason?: string }
 
@@ -39,14 +42,15 @@ function shellWords(text: string): string[] {
   return words;
 }
 
-/** Values of --model / --provider in the command (`--model X`, `--model=X`, quoted). */
-function modelOverrides(sc: string): string[] {
-  const out: string[] = [];
+/** Values of --model / --provider in the command (`--model X`, `--model=X`, quoted), each tagged with its flag. */
+function modelOverrides(sc: string): Array<{ flag: "model" | "provider"; value: string }> {
+  const out: Array<{ flag: "model" | "provider"; value: string }> = [];
   const w = shellWords(sc);
   for (let i = 0; i < w.length; i++) {
-    const m = /^(?:--model|--provider)=(.+)$/.exec(w[i]);
-    if (m) { out.push(m[1]); continue; }
-    if (/^--(?:model|provider)$/.test(w[i]) && i + 1 < w.length && !w[i + 1].startsWith("-")) out.push(w[i + 1]);
+    const m = /^--(model|provider)=(.+)$/.exec(w[i]);
+    if (m) { out.push({ flag: m[1] as "model" | "provider", value: m[2] }); continue; }
+    const f = /^--(model|provider)$/.exec(w[i]);
+    if (f && i + 1 < w.length && !w[i + 1].startsWith("-")) out.push({ flag: f[1] as "model" | "provider", value: w[i + 1] });
   }
   return out;
 }
@@ -64,7 +68,87 @@ export function operatorNamesValue(prompt: string | undefined, value: string): b
   const words = new Set(prompt.toLowerCase().match(/[a-z0-9.]+/g) ?? []);
   if (words.has(value.toLowerCase())) return true;
   const parts = value.toLowerCase().split(/[\s/\-._:]+/).filter((p) => /[a-z]/.test(p) && p.length >= 3 && !GENERIC_MODEL_PARTS.has(p));
-  return parts.length > 0 && parts.every((p) => words.has(p));
+  if (parts.length > 0 && parts.every((p) => words.has(p))) return true;
+  // a model family the operator names implies its provider: "build it on
+  // sonnet" authorises --provider anthropic. The table is the provider
+  // registry (workers.yaml's providers.<name>.models); only the three Claude
+  // tier names are a fallback for a gate that cannot read the config.
+  const p = value.toLowerCase();
+  if (!words.has(p)) {
+    // an exact model id names its provider outright: "use glm-5.3-flash"
+    // authorises --provider glm
+    const fam = p.split(/[^a-z0-9]+/).find((w) => /^[a-z][a-z0-9]*$/.test(w));
+    return !!fam && words.has(fam) && familiesOf(p).includes(fam);
+  }
+  // the operator named the provider itself, or a family it serves ("build it
+  // on sonnet" -> --provider anthropic); "claude" and friends carry no signal
+  if (GENERIC_MODEL_PARTS.has(p)) return false;
+  const fams = providerFamilies(p);
+  return fams.length > 0 && fams.some((f) => words.has(f));
+}
+
+/** The shipped fallback for a gate that cannot read the config: the built-in login answers to its name and its tiers answer to theirs. */
+const FALLBACK_FAMILIES = new Set(["anthropic", "opus", "sonnet", "haiku"]);
+
+/** The model families provider serves: its own name when the registry lists a model of that family for it, else the fallback table. */
+function familiesOf(providerOrId: string): string[] {
+  const fam = providerOrId.split(/[^a-z0-9]+/).find((w) => /^[a-z][a-z0-9]*$/.test(w));
+  if (fam && registryFamilies().has(fam)) return [fam];
+  return FALLBACK_FAMILIES.has(providerOrId) ? [...FALLBACK_FAMILIES] : [];
+}
+
+/** The families provider serves by name: its own name when the registry lists a model of that family for it, else the fallback table. */
+function providerFamilies(provider: string): string[] {
+  if (registryFamilies().has(provider)) return [provider];
+  return provider === "anthropic" ? [...FALLBACK_FAMILIES] : [];
+}
+
+/** The workers.yaml the gate reads its provider registry from: PAI_WORKERS_YAML, else the PAI_HOME copy (read-only here; no migration notices from a hook). */
+function registryPath(): string {
+  const override = process.env.PAI_WORKERS_YAML;
+  if (override) return override;
+  const path = paiHomePath("workers.yaml");
+  return existsSync(path) ? path : "";
+}
+
+/** The provider registry as a family set: every model id of every provider's models table contributes its first alphabetic word ("glm-5.3-flash" → glm; the built-in anthropic's "sonnet"/"haiku" → themselves). Cached per file+mtime; an unreadable one is the empty set (the fallback stands). */
+let familiesCache: { path: string; mtimeMs: number; set: Set<string> } | null = null;
+function registryFamilies(): Set<string> {
+  const path = registryPath();
+  if (!path) return new Set();
+  try {
+    const mtimeMs = statSync(path).mtimeMs;
+    if (familiesCache?.path === path && familiesCache.mtimeMs === mtimeMs) return familiesCache.set;
+    const raw = readFileSync(path, "utf8");
+    const set = new Set<string>();
+    let inProviders = false;
+    let current: string | null = null;
+    let inModels = false;
+    for (const ln of raw.split("\n")) {
+      if (/^[^\s#]/.test(ln)) {
+        inProviders = /^providers:\s*$/.test(ln);
+        current = null;
+        inModels = false;
+        continue;
+      }
+      if (!inProviders) continue;
+      const p = /^ {2}([A-Za-z0-9_-]+):\s*(#.*)?$/.exec(ln);
+      if (p) { current = p[1]!.toLowerCase(); inModels = false; continue; }
+      if (!current) continue;
+      if (/^ {4}models:\s*$/.test(ln)) { inModels = true; continue; }
+      if (/^ {4}\S/.test(ln)) inModels = false;
+      if (!inModels) continue;
+      const e = /^ {6}([a-z][a-z0-9-]*):\s*["']?([\w.\-[\]]+)/.exec(ln);
+      if (!e) continue;
+      const fam = e[2]!.toLowerCase().split(/[^a-z0-9]+/).find((w) => /^[a-z][a-z0-9]*$/.test(w));
+      if (fam) set.add(fam);
+    }
+    familiesCache = { path, mtimeMs, set };
+    return set;
+  } catch {
+    // no readable registry: the fallback table alone
+    return new Set();
+  }
 }
 
 /** Last genuine operator prompt in a transcript's tail JSONL (plain text user entries only). */
@@ -162,7 +246,9 @@ export function decideDelegationGate(command: string, env: NodeJS.ProcessEnv, op
   }
   if (workerCmd) {
     const overrides = modelOverrides(sc);
-    if (overrides.some((v) => !operatorNamesValue(operatorPrompt, v))) {
+    // --where names where to run; the delegation rule covers it like --provider
+    const whereValues = [...sc.matchAll(/--where(?:=|\s+)["']?([^\s"';|&)]+)/g)].map((m) => m[1]!);
+    if (overrides.some((o) => !operatorNamesValue(operatorPrompt, o.value)) || whereValues.some((v) => !operatorNamesValue(operatorPrompt, v))) {
       return { decision: "deny", reason: MODEL_OVERRIDE_REASON };
     }
   }
