@@ -17,11 +17,23 @@
  *
  * Never stopped: this process and its ancestors, the daemon, router, AIBroker,
  * pool hosts, docker. Only worker pids, their descendants and model servers.
+ *
+ * TEST MODE — `pai freeze` proving itself must never touch the live machine. A
+ * marker alone is not isolation: discovery still read the real config, the real
+ * log dir and the real process table, and froze a live model server twice. So when
+ * PAI_FREEZE_FILE points anywhere but the default location everything else must be
+ * named too: PAI_FREEZE_LOGDIR (required — worker discovery reads only that dir)
+ * and PAI_FREEZE_SERVERS (`pid[:label]`, comma list — with nothing listed, model
+ * discovery returns nothing). No real-config fallback in test mode. The ancestry
+ * check applies outside test mode; a PAI_WORKER=1 process is refused in every mode.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
+// lazy inside freezeLogDir()/realPpidRows() only: building deps must stay free of config reads and `ps`
 import { psTable } from "./ps-table.js";
+import { readWorkersSection } from "./config.js";
+import { workersLogDir } from "./paths.js";
 import { loadStatuses, ownsPid, setWorkerNote, statusPids, type WorkerStatus } from "./status.js";
 import { appendLedger as ledgerLine } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
@@ -63,6 +75,91 @@ interface Acct {
 /** PAI_FREEZE_FILE moves the marker (and its accounts beside it): isolated proofs and tests never touch the real one. */
 export const freezePath = (): string => process.env.PAI_FREEZE_FILE ?? paiHomePath("state", "freeze.json");
 const acctPath = (): string => (process.env.PAI_FREEZE_FILE ? `${process.env.PAI_FREEZE_FILE}.acct` : paiHomePath("state", "freeze-acct.json"));
+
+/**
+ * Test mode: PAI_FREEZE_FILE set to something other than the default marker.
+ * Then nothing about the live machine is reachable — worker discovery reads only
+ * PAI_FREEZE_LOGDIR (required), model discovery only PAI_FREEZE_SERVERS (an empty
+ * list means no servers). Reading is always safe; a freeze in test mode stops at
+ * most what these two names point at.
+ */
+export function freezeTestMode(): boolean {
+  const f = process.env.PAI_FREEZE_FILE;
+  return !!f && f !== paiHomePath("state", "freeze.json");
+}
+
+/** Test mode's log dir (PAI_FREEZE_LOGDIR), or undefined when unset/blank. */
+export function freezeTestLogDir(): string | undefined {
+  const d = process.env.PAI_FREEZE_LOGDIR?.trim();
+  return d ? d : undefined;
+}
+
+/** PAI_FREEZE_SERVERS (`pid[:label]`, comma list) parsed; entries without a usable pid are dropped. */
+export function parseFreezeServers(v: string | undefined): { pid: number; label: string }[] {
+  if (!v?.trim()) return [];
+  const out: { pid: number; label: string }[] = [];
+  for (const part of v.split(",")) {
+    const t = part.trim();
+    if (!t) continue;
+    const i = t.indexOf(":");
+    const head = i < 0 ? t : t.slice(0, i);
+    const pid = Number(head);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    out.push({ pid, label: (i < 0 ? "" : t.slice(i + 1).trim()) || `test:${pid}` });
+  }
+  return out;
+}
+
+/** The worker log dir `pai freeze`/`pai thaw` operate on: PAI_FREEZE_LOGDIR in test mode (missing = refuse), the real config otherwise. */
+export function freezeLogDir(): string {
+  if (!freezeTestMode()) return workersLogDir(readWorkersSection().workers);
+  const d = freezeTestLogDir();
+  if (!d) throw new Error("test mode (PAI_FREEZE_FILE points away from the default marker): set PAI_FREEZE_LOGDIR to an isolated log dir — worker discovery must not read the real one");
+  return d;
+}
+
+/** The processes whose ppid chain a freeze walks for its ancestry check. */
+export interface PpidRow {
+  pid: number;
+  ppid: number;
+}
+
+/** Every live pid and its parent, from `ps`. */
+export function realPpidRows(): PpidRow[] {
+  const out: PpidRow[] = [];
+  for (const line of psTable("pid=,ppid=").split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (m) out.push({ pid: Number(m[1]), ppid: Number(m[2]) });
+  }
+  return out;
+}
+
+/**
+ * Defence in depth: a worker cannot freeze even when PAI_WORKER was stripped from its
+ * env (`env -u PAI_WORKER`) — some ancestor is still the running worker process, per
+ * the status files' own pids. Test mode is exempt: there nothing real is reachable.
+ */
+export function workerAncestryBlocked(rows: PpidRow[], statuses: WorkerStatus[], self: number): { id: string; pid: number } | null {
+  const by = new Map<number, number>();
+  for (const r of rows) if (!by.has(r.pid)) by.set(r.pid, r.ppid);
+  const workerPids = new Map<number, string>();
+  for (const s of statuses) for (const p of statusPids(s)) if (!workerPids.has(p)) workerPids.set(p, s.id);
+  const seen = new Set<number>();
+  for (let p = self; p > 1 && !seen.has(p); p = by.get(p) ?? 0) {
+    seen.add(p);
+    const id = workerPids.get(p);
+    if (id) return { id, pid: p };
+  }
+  return null;
+}
+
+/** Why this process may not freeze, or undefined when it may. Test mode is exempt only for the ancestry (the real status dir and ps are not what isolation is about there); the env guard stands in every mode — a worker could still stop the machine its ancestor worker runs on. */
+export function freezeWorkerGuard(statuses: WorkerStatus[], rows: PpidRow[] = realPpidRows(), self: number = process.pid): string | undefined {
+  if (process.env.PAI_WORKER === "1") return "a worker cannot freeze its siblings (PAI_WORKER=1)";
+  if (freezeTestMode()) return undefined;
+  const hit = workerAncestryBlocked(rows, statuses, self);
+  return hit ? `a worker cannot freeze its siblings: this process runs inside the running worker ${hit.id} (pid ${hit.pid})` : undefined;
+}
 
 function writeJson(path: string, v: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -246,8 +343,10 @@ export function realFreezeDeps(): FreezeDeps {
   return {
     procs: () => parseProcs(psTable("pid=,ppid=,lstart=,command=")),
     statuses: (d) => loadStatuses(d),
-    // one entry per running model server: its listening pid, named by what it serves
+    // one entry per running model server: its listening pid, named by what it serves.
+    // Test mode: only PAI_FREEZE_SERVERS — the real config and lsof are never read.
     servers: async () => {
+      if (freezeTestMode()) return parseFreezeServers(process.env.PAI_FREEZE_SERVERS);
       try {
         const { runningModelServers } = await import("./model-servers.js");
         return await runningModelServers();
@@ -368,7 +467,14 @@ export interface Except {
 const serverOf = (label: string, s: WorkerStatus): boolean => !!s.provider && (label === s.provider || label.startsWith(`${s.provider}:`));
 
 export async function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[], except?: Except): Promise<FreezeReport> {
+  // defence in depth: the env var AND the process ancestry (a worker with PAI_WORKER cleared is still a worker).
+  // Both reads are the guard's own, never d.statuses/d.procs — an injected deps must not be what decides.
+  // The status read runs first (pure file reads) so the `ps` only happens outside test mode, where the ancestry matters.
   if (process.env.PAI_WORKER === "1") throw new Error("a worker cannot freeze its siblings (PAI_WORKER=1)");
+  if (!freezeTestMode()) {
+    const hit = workerAncestryBlocked(realPpidRows(), loadStatuses(freezeLogDir()), d.self);
+    if (hit) throw new Error(`a worker cannot freeze its siblings: this process runs inside the running worker ${hit.id} (pid ${hit.pid})`);
+  }
   const existing = readFreeze();
   if (existing) throw new Error(`already frozen since ${new Date(existing.since).toISOString()} by ${existing.by}; \`pai thaw\` first`);
   const all = d.statuses(logDir);

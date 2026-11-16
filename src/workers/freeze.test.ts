@@ -1,8 +1,9 @@
 import { mkdtempSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, type FreezeDeps, type ProcRow } from "./freeze.js";
+import { activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, workerAncestryBlocked, freezeWorkerGuard, freezeLogDir, freezeTestMode, parseFreezeServers, realFreezeDeps, type FreezeDeps, type ProcRow } from "./freeze.js";
+import { paiHomePath } from "../config/pai-home.js";
 import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
 import { detectSupervisionEvents } from "./supervision.js";
 import { TroubleWatcher } from "./worker-trouble.js";
@@ -97,6 +98,12 @@ describe("model server detection", () => {
   });
 });
 
+// every freeze/thaw test below runs in TEST MODE (PAI_FREEZE_FILE away from the default marker): these describe blocks clear the other two test-mode vars so a leak can never point discovery at the real machine.
+const clearTestEnv = (): void => {
+  delete process.env.PAI_FREEZE_LOGDIR;
+  delete process.env.PAI_FREEZE_SERVERS;
+};
+
 describe("freeze / thaw", () => {
   const saved = { file: process.env.PAI_FREEZE_FILE, w: process.env.PAI_WORKER };
   let sent: string[];
@@ -115,6 +122,7 @@ describe("freeze / thaw", () => {
   beforeEach(() => {
     process.env.PAI_FREEZE_FILE = join(mkdtempSync(join(tmpdir(), "freeze-")), "freeze.json");
     delete process.env.PAI_WORKER;
+    clearTestEnv();
     sent = [];
     dead = new Set();
     now = Date.now();
@@ -124,6 +132,7 @@ describe("freeze / thaw", () => {
     else process.env.PAI_FREEZE_FILE = saved.file;
     if (saved.w === undefined) delete process.env.PAI_WORKER;
     else process.env.PAI_WORKER = saved.w;
+    clearTestEnv();
   });
 
   it("refuses inside a worker", async () => {
@@ -182,6 +191,7 @@ describe("supervision stands down while frozen", () => {
   beforeEach(() => {
     process.env.PAI_FREEZE_FILE = join(mkdtempSync(join(tmpdir(), "freeze-sup-")), "freeze.json");
     delete process.env.PAI_WORKER;
+    clearTestEnv();
     now = Date.now();
   });
   afterEach(() => {
@@ -189,6 +199,7 @@ describe("supervision stands down while frozen", () => {
     else process.env.PAI_FREEZE_FILE = saved.file;
     if (saved.w === undefined) delete process.env.PAI_WORKER;
     else process.env.PAI_WORKER = saved.w;
+    clearTestEnv();
   });
 
   const marker = (since: number, ids: string[]): void => {
@@ -339,11 +350,13 @@ describe("exceptions", () => {
   beforeEach(() => {
     process.env.PAI_FREEZE_FILE = join(mkdtempSync(join(tmpdir(), "freeze-")), "freeze.json");
     delete process.env.PAI_WORKER;
+    clearTestEnv();
     sent = [];
   });
   afterEach(() => {
     if (saved === undefined) delete process.env.PAI_FREEZE_FILE;
     else process.env.PAI_FREEZE_FILE = saved;
+    clearTestEnv();
   });
 
   it("except-session plans exclude that session's tree (and its children and model server)", async () => {
@@ -369,6 +382,80 @@ describe("exceptions", () => {
     await freezeAll("/nonexistent-log", "t", undefined, deps());
     expect(freezeHold()).toMatch(/frozen/);
     expect(freezeHold(true)).toBeUndefined();
+  });
+});
+
+// twice a proof froze the operator's LIVE model server with an isolated marker: the marker was
+// isolated, discovery was not. Test mode is all-or-nothing — see workers/freeze.ts.
+describe("test-mode isolation", () => {
+  const saved = { file: process.env.PAI_FREEZE_FILE, w: process.env.PAI_WORKER, logdir: process.env.PAI_FREEZE_LOGDIR, servers: process.env.PAI_FREEZE_SERVERS };
+  let sent: string[];
+  let dir: string;
+  // a worker tree (id L1) and a model server in the isolated world only
+  const rows: ProcRow[] = [row(1, 0, "launchd"), row(50, 1, "pai daemon"), row(900, 1, "claude interactive"), row(100, 1, "pai worker run L1"), row(101, 100, "claude"), row(777, 1, "model-server")];
+  const deps = (): FreezeDeps => ({
+    procs: () => rows,
+    statuses: (d) => (d === dir ? [st("L1", 100)] : (() => { throw new Error(`worker discovery read the real log dir ${d}`); })()),
+    servers: async () => (await realFreezeDeps().servers()),
+    signal: (pid, sig) => void sent.push(`${sig}:${pid}`),
+    owns: () => true,
+    self: 900,
+    now: () => Date.now(),
+    note: () => undefined,
+  });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "freeze-iso-"));
+    process.env.PAI_FREEZE_FILE = join(dir, "freeze.json"); // test mode: not the default marker
+    delete process.env.PAI_WORKER;
+    delete process.env.PAI_FREEZE_LOGDIR;
+    delete process.env.PAI_FREEZE_SERVERS;
+    sent = [];
+  });
+  afterEach(() => {
+    for (const [k, v] of [["PAI_FREEZE_FILE", saved.file], ["PAI_WORKER", saved.w], ["PAI_FREEZE_LOGDIR", saved.logdir], ["PAI_FREEZE_SERVERS", saved.servers]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("is on only when the marker leaves the default location", () => {
+    expect(freezeTestMode()).toBe(true);
+    process.env.PAI_FREEZE_FILE = paiHomePath("state", "freeze.json");
+    expect(freezeTestMode()).toBe(false); // the real marker: production mode (never touched here)
+  });
+
+  it("test mode without PAI_FREEZE_LOGDIR refuses — no real-config fallback", () => {
+    expect(() => freezeLogDir()).toThrow(/PAI_FREEZE_LOGDIR/); // the CLI's log dir: refuse, never the real config
+    expect(existsSync(process.env.PAI_FREEZE_FILE!)).toBe(false); // refused before any marker or signal
+  });
+
+  it("test mode never lists real servers: PAI_FREEZE_SERVERS is the whole list", async () => {
+    expect(await realFreezeDeps().servers()).toEqual([]); // nothing listed: no config, no lsof, no probe
+    process.env.PAI_FREEZE_SERVERS = "777:test-gyro, junk";
+    expect(parseFreezeServers(process.env.PAI_FREEZE_SERVERS)).toEqual([{ pid: 777, label: "test-gyro" }]);
+    process.env.PAI_FREEZE_LOGDIR = dir; // the isolation is all-or-nothing: with both set the freeze runs fully inside them
+    const r = await freezeAll(freezeLogDir(), "t", undefined, deps());
+    expect(r.marker.pids.map((e) => e.pid)).toEqual([100, 101, 777]); // the isolated tree + the listed pid, nothing else
+    expect(sent).toContain("SIGSTOP:777");
+  });
+
+  it("workerAncestryBlocked: a worker anywhere in the chain is a refusal", () => {
+    const pp = [{ pid: 1, ppid: 0 }, { pid: 100, ppid: 1 }, { pid: 101, ppid: 100 }, { pid: 202, ppid: 101 }];
+    expect(workerAncestryBlocked(pp, [st("L1", 100)], 202)).toEqual({ id: "L1", pid: 100 }); // the worker's runner three steps up
+    expect(workerAncestryBlocked(pp, [st("L1", 100)], 900)).toBeNull(); // an unrelated chain may freeze
+    expect(workerAncestryBlocked(pp, [], 202)).toBeNull(); // no status files: nothing claims these pids
+  });
+
+  it("test mode keeps the PAI_WORKER env guard (a worker could still stop its own machine)", async () => {
+    process.env.PAI_WORKER = "1"; // test mode is on, and this is a worker: refused before anything is read or written
+    await expect(freezeAll(dir, "t", undefined, deps())).rejects.toThrow(/cannot freeze/);
+    expect(sent).toEqual([]);
+  });
+
+  it("outside test mode the guard takes the real log dir and the real ancestry (never a freeze)", () => {
+    process.env.PAI_FREEZE_FILE = paiHomePath("state", "freeze.json"); // production mode — nothing below freezes anything
+    expect(freezeLogDir()).not.toBe(dir); // the real config's log dir, not the isolated one: no fallback runs backwards either
+    expect(freezeWorkerGuard([])).toBeUndefined(); // statuses injected (none here), ancestry read from the real ps: this test process hangs under launchd, no worker among its ancestors on this machine
   });
 });
 
