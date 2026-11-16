@@ -15,7 +15,7 @@ import { readUrgencyFor } from "./urgency.js";
 import { setWorkerPaused, setWorkerPriority } from "./engine-control.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { isLive, loadStatuses, loadStatus, saveStatus, slotLent, type WorkerStatus } from "./status.js";
+import { isLive, ownsPidCached, loadStatuses, loadLiveStatusesCached, loadStatus, saveStatus, slotLent, type WorkerStatus } from "./status.js";
 
 /** Slots free on `provider`: its cap minus every live running worker that holds one — including a preempted one whose pause has ended. A released preemption goes back through the capacity gate's queue like any other run, never over the cap (a slot its victim held during the pause may already have gone to another run). Unlimited when uncapped. */
 function roomOn(statuses: WorkerStatus[], provider: string): number {
@@ -190,7 +190,10 @@ export function applyPriority(logDir: string, id: string, level: PriorityLevel, 
  * Preemption always gives back what it took. Returns every id whose pause ended this sweep.
  */
 export function resumeOrphaned(logDir: string, now = Date.now(), roomFn: RoomFn = roomOn): string[] {
-  const all = loadStatuses(logDir);
+  // the daemon's sweep runs every 30 s over thousands of historical files: only live entries are ever of interest here (a paused worker is running), so the cached live load skips every terminal file's stat, and with nothing paused there is nothing to release — return before touching anything else.
+  // The scan is cached, the actions are not: sweepOne re-reads each candidate's fresh file (loadStatus) before it releases a pause, and its pool comes from the same live-only view (a terminal entry is never in it), so no stale copy can act on its own.
+  const all = loadLiveStatusesCached(logDir);
+  if (!all.some((s) => s.paused && s.pausedBy)) return [];
   const released: string[] = [];
   const room = new Map<string, number>();
   for (const s of all) {
@@ -217,8 +220,12 @@ function windowOpenFor(s: WorkerStatus, until: number, now: number): boolean {
  */
 export function endExpiredWindowNow(logDir: string, now = Date.now(), roomFn: RoomFn = roomOn): string[] {
   const done: string[] = [];
-  for (const s of loadStatuses(logDir)) {
-    if (!s.now || !s.nowFrom || !isLive(s) || windowOpenFor(s, s.nowFrom.until, now)) continue;
+  // the daemon's sweep runs every 30 s over thousands of historical files: only live entries are ever of interest here (isLive below refuses a terminal one), so the cached live load skips every terminal file's stat, and with no window-tied "now" run live there is nothing to end.
+  // The scan is cached, the actions are not: every release path re-reads the fresh file (cur?.now) first, so nothing acts on a stale view. ownsPidCached keeps isLive to one ps per running candidate at most.
+  const all = loadLiveStatusesCached(logDir);
+  if (!all.some((s) => s.now && s.nowFrom)) return [];
+  for (const s of all) {
+    if (!s.now || !s.nowFrom || !isLive(s, ownsPidCached) || windowOpenFor(s, s.nowFrom.until, now)) continue;
     const cur = loadStatus(logDir, s.id);
     if (!cur?.now || !cur.nowFrom) continue;
     cur.priority = cur.nowFrom.prev;
