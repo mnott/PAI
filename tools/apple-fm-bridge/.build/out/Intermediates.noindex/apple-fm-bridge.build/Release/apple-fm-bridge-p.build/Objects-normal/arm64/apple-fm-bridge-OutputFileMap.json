@@ -1,0 +1,16 @@
+{
+  "" : {
+    "const-values" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/apple-fm-bridge-primary.swiftconstvalues",
+    "dependencies" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/apple-fm-bridge-primary.d",
+    "diagnostics" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/apple-fm-bridge-primary.dia",
+    "emit-module-dependencies" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/apple-fm-bridge-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/apple-fm-bridge-primary-emit-module.dia",
+    "pch" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/apple-fm-bridge-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/apple-fm-bridge-primary.swiftdeps"
+  },
+  "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/Sources/apple-fm-bridge/main.swift" : {
+    "index-unit-output-path" : "/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/main.o",
+    "llvm-bc" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/main.bc",
+    "object" : "/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Intermediates.noindex/apple-fm-bridge.build/Release/apple-fm-bridge-p.build/Objects-normal/arm64/main.o"
+  }
+}

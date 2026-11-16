@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/i052341/.pai/logs/workers/worktrees/20261116-161537-65971/tools/apple-fm-bridge/.build/out/Products/Release/apple-fm-bridge'
+relocations:     []
+...
