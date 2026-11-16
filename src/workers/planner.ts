@@ -29,7 +29,7 @@ import { loadStatus, newWorkerId } from "./status.js";
 import { parseRunnerArgs, shortText } from "./args.js";
 import { swapPromptArg } from "./chain.js";
 import { runWorker, printResult, type RunOptions, type StreamEvent } from "./run.js";
-import { git, MergeConflictError, mergeWorker, RelatedTestsFailedError } from "./worktree.js";
+import { git, mergeTargetForCaller, MergeConflictError, mergeWorker, RelatedTestsFailedError } from "./worktree.js";
 import type { WorkerReport } from "./report.js";
 
 /** Where a planner run's plan file lives: <logDir>/plans/<planner id>.json. */
@@ -260,7 +260,10 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
       const st = loadStatus(logDir, r.id);
       if (!st?.branch) continue; // ran in place, or no worktree: nothing to merge
       try {
-        mergeWorker(logDir, r.id);
+        // the planner IS the caller: the child lands on the planner's own
+        // branch (the L1 case). An L0-launched plan has no worker id of its
+        // own and no PAI_WORKER env, so it keeps the recorded-cwd behaviour.
+        mergeWorker(logDir, r.id, { targetToplevel: process.env.PAI_WORKER === "1" ? mergeTargetForCaller(logDir, r.id, st, process.env, plannerId) : null });
         merged.push(r.id);
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) {
