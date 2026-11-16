@@ -28,6 +28,7 @@ import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
 import { acquireTestSlotSync, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
+import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -976,7 +977,10 @@ function mergeSnapshotWorker(
       targetTree,
       verify,
       () => revertMerge(targetTree, oldHead),
-      () => null
+      () => null,
+      () => null,
+      () => null,
+      { logDir, id }
     );
     if (existsSync(worktreeDir)) assertWorktreeClean(worktreeDir, id);
     for (const l of salvageNotes(targetTree, worktreeDir, id)) console.log(l);
@@ -1033,7 +1037,9 @@ function mergeSnapshotWorker(
     verify,
     revert,
     () => scanDiffForStub(git(st.cwd, ["diff", "-U0", "--no-color", snapshot, branch, "--", "src/"])),
-    () => testLossOver(st.cwd, snapshot, branch)
+    () => testLossOver(st.cwd, snapshot, branch),
+    () => null,
+    { logDir, id }
   );
   if (noCommit) return withGate(gate, noCommitNextSteps(id, branch, worktreeDir, changedPaths));
   for (const l of salvageNotes(st.cwd, worktreeDir, id)) console.log(l);
@@ -1514,26 +1520,32 @@ export function mergeWorker(
     st.cwd,
     opts.verify,
     () => revertMerge(st.cwd, oldHead),
-    () => null
+    () => null,
+    () => null,
+    () => null,
+    { logDir, id }
   );
   let related: RelatedResult | null = null;
   let mergeCommit = "";
   if (opts.verifyTests !== false) {
     const cfg = opts.merge ?? mergeSettings();
     mergeCommit = git(st.cwd, ["rev-parse", "HEAD"]);
-    related = runRelatedTests(st.cwd, oldHead, { ...cfg }, git);
+    related = runRelatedTests(st.cwd, oldHead, { ...cfg }, git, undefined, undefined, logDir, id);
     appendLedger(ledgerPath(logDir), "WORKER-MERGE-TESTS", {
       id,
       status: related.status,
       result: related.line.replace(/\s+/g, " ").slice(0, 300),
+      ...(related.failing.length ? { failingTests: related.failing.join(",").slice(0, 400) } : {}),
+      ...(related.logPath ? { gateLog: related.logPath } : {}),
       ...(related.flakyLogs?.length ? { flakyLog: related.flakyLogs.join(",") } : {}),
     });
     if (related.output) void growthAlarm(logDir, st.cwd, related.output);
     // "failed" already survived the serial re-run (flaky-under-load is its own status): revert like the other gates
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
+      const log = related.logPath ? `: full gate output: ${related.logPath}` : "";
       throw new Error(
-        `related tests failed: ${files}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
+        `related tests failed: ${files}${log}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
       );
     }
   }
@@ -1728,7 +1740,9 @@ function gateLines(
   verify: string | undefined, revert: () => string,
   findStub: () => string | null,
   findTestLoss: () => string | null = () => null,
-  findDuplicates: () => string | null = () => null
+  findDuplicates: () => string | null = () => null,
+  /** Worker log dir + id: a failed verify keeps its full output at <logDir>/<id>.merge-gate-<ts>.log. */
+  keep?: { logDir: string; id: string }
 ): string {
   const lines: string[] = [];
   if (verify) {
@@ -1739,12 +1753,39 @@ function gateLines(
     const lease = holdsTestSlot() ? null : acquireTestSlotSync();
     if (lease) env[SLOT_HELD_ENV] = "1";
     let status: number | null;
+    let out: string | null = null;
     try {
-      status = process.env.PAI_GATE_EVENTS === "1" ? runGateTimed(cwd, verify, env) : spawnSync("sh", ["-c", verify], { cwd, env, stdio: "inherit" }).status;
+      if (process.env.PAI_GATE_EVENTS === "1") {
+        status = runGateTimed(cwd, verify, env);
+      } else if (keep) {
+        // capture the output so a failure can name the failing tests and keep the full log
+        const r = spawnSync("sh", ["-c", verify], { cwd, env, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+        status = r.status;
+        out = `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? `\n${r.error.message}` : ""}`;
+        if (status !== 0) process.stdout.write(out); // the operator still sees it live
+      } else {
+        status = spawnSync("sh", ["-c", verify], { cwd, env, stdio: "inherit" }).status;
+      }
     } finally {
       lease?.release();
     }
-    if (status !== 0) throw new Error(`verify failed (exit ${status ?? 1}): reverted ${revert()}; the worker branch is kept`);
+    if (status !== 0) {
+      // the ledger's 300-char summary once left a session three blind fix rounds with no test name and no assertion
+      let detail = "";
+      if (keep && out !== null) {
+        const f = parseGateFailure(out, cwd);
+        const logPath = saveMergeGateLog(keep.logDir, keep.id, out);
+        if (logPath) appendLedger(ledgerPath(keep.logDir), "WORKER-MERGE-VERIFY", { id: keep.id, status: "failed", gateLog: logPath, ...(f.names.length ? { failingTests: f.names.join(",").slice(0, 400) } : {}) });
+        const named = latestMergeGateLog(keep.logDir, keep.id);
+        detail = [
+          `  full gate output: ${named ?? "(log could not be written)"}`,
+          ...f.names.map((n) => `  failing: ${n}`),
+          ...(f.assert ? [`  assertion: ${f.assert}`] : []),
+          ...f.hints.map((h) => `  hint: ${h}`),
+        ].join("\n");
+      }
+      throw new Error(`verify failed (exit ${status ?? 1})${detail ? `\n${detail}` : ""}: reverted ${revert()}; the worker branch is kept`);
+    }
     lines.push(`verify passed: ${verify}`);
   }
   const hit = findStub();
@@ -1875,6 +1916,16 @@ export function stubScan(cwd: string, oldHead: string): string {
     testLossOver(cwd, oldHead, "HEAD"),
     () => findNewDuplicates(cwd)
   );
+}
+
+/** The --verify command after a merge outside mergeWorker (the plan runner): `keep` names the worker whose gate failed. */
+export function runVerifyGated(
+  cwd: string,
+  cmd: string,
+  oldHead: string,
+  keep?: { logDir: string; id: string }
+): string {
+  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null, () => null, () => null, keep);
 }
 
 /**
