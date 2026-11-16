@@ -7,7 +7,7 @@
 import { setRunWorker } from "./worker-ref.js";
 import { mkdirSync } from "node:fs";
 import { parseRunnerArgs, shortText } from "../args.js";
-import { assertProviderRunnable, getProviderOrNative, readWorkersSection } from "../config.js";
+import { ANTHROPIC_NATIVE, assertProviderRunnable, getProviderOrNative, isLocalProvider, pinProviderForModel, readWorkersSection } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
 import { LOCAL_MECHANISM_LINE, NoLocalServerError, isLocalCandidate, resolveLocalProvider, tierProviderNames } from "../local-provider.js";
 import { workersLogDir } from "../paths.js";
@@ -162,6 +162,25 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       providerFlag = first[0];
       providerWhy = "local";
       if (!opts.quiet) process.stderr.write(`pai worker: local provider ${first[0]} (dry run: no local server up)\n`);
+    }
+  }
+  // A named --model pins the provider that serves it when one was already
+  // named: --where local + a model only the cloud serves is an error naming
+  // the fix, never a silent drop (the policy below routes a bare --model).
+  if (!providerFlag && !capability) {
+    const pinned = pinProviderForModel(config, {
+      where: opts.whereFlag,
+      local: opts.localFlag,
+      cloud: (() => {
+        const a = getProviderOrNative(config, config.active ?? ANTHROPIC_NATIVE);
+        return a && a.baseUrl && isLocalProvider(a.baseUrl) ? ANTHROPIC_NATIVE : (config.active ?? ANTHROPIC_NATIVE);
+      })(),
+      localName: providerWhy === "local" ? providerFlag : null,
+      modelFlag: opts.modelFlag,
+    });
+    if (pinned) {
+      providerFlag = pinned;
+      providerWhy = `--model ${opts.modelFlag}`;
     }
   }
   // The session's profile (workers, budget fallback) comes before routing; an explicit provider/--local skipped it above.
