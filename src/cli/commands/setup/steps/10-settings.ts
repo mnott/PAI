@@ -29,6 +29,8 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     // already exist. Rate-limited internally; safe on high-frequency events.
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
     { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/security-validator.mjs" },
+    // Delegation rules: L0 routes, worker pane rule, no recursive search from / or ~.
+    { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/delegation-guard.mjs" },
     // Test governance for every session: a new test file is one-time (.pai-scratch/
     // only) unless promoted in tests/KEPT.md. Bash coverage rides security-validator.
     { hookType: "PreToolUse", matcher: "Write|Edit|MultiEdit", command: "${ADAPTER_DIR}/Hooks/test-file-governance.mjs" },

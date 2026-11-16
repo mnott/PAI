@@ -34,6 +34,7 @@ import { SKILLS_DIR } from '../lib/pai-paths.js';
 import { isProbeSession } from '../lib/project-utils.js';
 import { stripFrontmatter } from '../lib/frontmatter.js';
 import { readHookInput } from '../lib/read-stdin.js';
+import { DELEGATION_BLOCK } from '../lib/delegation-gate.js';
 import { WAITER_NOTICE, deliverWaitingMail } from '../lib/session-mailbox.js';
 
 /** Waiter instruction plus any mail already waiting; same for fresh and resumed sessions. */
@@ -118,6 +119,8 @@ ${stripFrontmatter(coreContent)}
         `[model] → counts against the model, stop the run if it loops; [unknown] → inspect. Details: \`pai worker errors\`.\n` +
         `</system-reminder>`
     );
+
+    console.log(`<system-reminder>\n${DELEGATION_BLOCK}\n</system-reminder>`);
 
     await mailboxStart();
     console.error('CORE context injected into session');
