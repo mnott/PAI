@@ -59,14 +59,18 @@ describe("planFreeze", () => {
 describe("model server detection", () => {
   // gyro-l and gyro-m share port 8035 (only one runs at a time); the engine child 36558 hangs under the listener 36270
   const PORTS = modelServerPorts(
-    { "gyro-l": { baseUrl: "http://127.0.0.1:8035/v1" }, "gyro-m": { baseUrl: "http://127.0.0.1:8035/v1" }, cloud: { baseUrl: "https://api.example.com/v1" } },
-    [{ port: 8035, provider: "gyro-l" }],
+    {
+      "gyro-l": { baseUrl: "http://127.0.0.1:8035/v1", models: { default: "gyro-l" } },
+      "gyro-m": { baseUrl: "http://127.0.0.1:8035/v1", models: { default: "gyro-m" } },
+      cloud: { baseUrl: "https://api.example.com/v1", models: { default: "opus" } },
+    },
+    [{ port: 8035, provider: "gyro-l", served: "gyro-l" }],
   );
   const probe = (deps: Partial<ModelServersDeps>): Promise<{ pid: number; label: string }[]> =>
     detectModelServers(PORTS, { listeners: () => [], servedIds: async () => null, ...deps });
 
   it("shares one port between configs into one target; a remote provider is no target", () => {
-    expect(PORTS).toEqual([{ port: 8035, names: ["gyro-l", "gyro-m"] }]);
+    expect(PORTS).toEqual([{ port: 8035, models: { "gyro-l": "gyro-l", "gyro-m": "gyro-m" }, fallback: "gyro-l" }]);
   });
   it("two configs on one port with one listener -> one entry, named by the served id", async () => {
     const found = await probe({ listeners: (p) => (p === 8035 ? [36270] : []), servedIds: async () => ["gyro-l"] });
@@ -82,6 +86,10 @@ describe("model server detection", () => {
   });
   it("a configured port with nothing serving is not running", async () => {
     expect(await probe({ listeners: () => [1], servedIds: async (p) => (p === 8035 ? null : []) })).toEqual([]);
+  });
+  it("one entry per listening pid when a port has several", async () => {
+    const found = await probe({ listeners: () => [36270, 41], servedIds: async () => ["gyro-l"] });
+    expect(found).toEqual([{ pid: 41, label: "gyro-l:8035" }, { pid: 36270, label: "gyro-l:8035" }]);
   });
 });
 

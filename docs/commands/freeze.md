@@ -8,19 +8,21 @@ Stop all running workers and the local model server to free the CPU/GPU now
 pai freeze [options]
 ```
 
-SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s). Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker.
+SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s) — one entry per server, found by its listening port and named by the model it serves there. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--for DURATION` | string | — | Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works |
 | `--workers-only` | flag | — | Leave the local model server running (freeze the worker trees only) |
-| `--only IDS` | string | — | Freeze only these worker ids (comma list) |
+| `--only IDS` | string | — | Freeze only these worker ids (comma list); implies --workers-only — the shared model server keeps running for every other worker (add --models to freeze it too) |
+| `--models` | flag | — | With --only: also freeze the local model server(s) (off by default; a plain `pai freeze` always takes them) |
 | `--status` | flag | — | Show since when, by whom and what is frozen |
 | `--resume` | flag | — | Same as `pai thaw` |
 
 ```sh
 pai freeze
 pai freeze --for 30m
+pai freeze --only w-1234
 pai freeze --status
 pai thaw
 ```

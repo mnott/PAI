@@ -16,8 +16,10 @@ import { workersYamlPath } from "./workers-config.js";
 
 export interface ModelServerTarget {
   port: number;
-  /** Config names of every provider/tier whose url or base port is this port (first = the tier's own provider). */
-  names: string[];
+  /** Provider name → its default model id, for every loopback provider on this port. */
+  models: Record<string, string>;
+  /** Fallback label when the served id matches no provider (the tier's own provider, else "port N"). */
+  fallback: string;
 }
 
 export interface ModelServersDeps {
@@ -36,17 +38,17 @@ function realListeners(port: number): number[] {
 
 const realDeps: ModelServersDeps = { listeners: realListeners, servedIds: (p) => fetchServedModels(p) };
 
-/** Every port a loopback provider or a local tier claims, with the config names that share it. */
+/** Every port a loopback provider or a local tier claims, with the provider→model configs that share it. */
 export function modelServerPorts(
-  providers: Record<string, { baseUrl?: string }>,
-  tiers: Pick<LocalTier, "port" | "provider">[],
+  providers: Record<string, { baseUrl?: string; models?: { default?: string } }>,
+  tiers: Pick<LocalTier, "port" | "provider" | "served">[],
 ): ModelServerTarget[] {
-  const byPort = new Map<number, string[]>();
-  const add = (port: number, name: string): void => {
-    if (!port) return;
-    const names = byPort.get(port) ?? [];
-    if (!names.includes(name)) names.push(name);
-    byPort.set(port, names);
+  const byPort = new Map<number, ModelServerTarget>();
+  const at = (port: number): ModelServerTarget => {
+    if (!port) throw new Error("no port");
+    const t = byPort.get(port) ?? { port, models: {}, fallback: "" };
+    byPort.set(port, t);
+    return t;
   };
   for (const [name, p] of Object.entries(providers)) {
     if (!p.baseUrl || !isLocalProvider(p.baseUrl)) continue;
@@ -56,22 +58,35 @@ export function modelServerPorts(
     } catch {
       /* unparseable url: not a local server */
     }
-    add(port, name);
+    if (!port) continue;
+    at(port).models[name] = p.models?.default ?? name;
   }
-  for (const t of tiers) add(t.port, t.provider || `port ${t.port}`);
-  return [...byPort.entries()].map(([port, names]) => ({ port, names }));
+  // the tier's own provider names a port no provider claims (a script engine with no provider entry)
+  for (const t of tiers) {
+    let p: ModelServerTarget;
+    try {
+      p = at(t.port);
+    } catch {
+      continue;
+    }
+    if (!p.fallback) p.fallback = t.provider || `port ${t.port}`;
+    // a tier names the model its server answers with, even when no provider entry carries this port
+    if (t.served && !Object.values(p.models).some((m) => m.toLowerCase() === t.served.toLowerCase())) p.models[t.served] = t.served;
+  }
+  return [...byPort.values()];
 }
 
 /** The running servers among `ports`: one per listening pid (or per answering port with no listener), named by the served id. */
 export async function detectModelServers(ports: ModelServerTarget[], deps: ModelServersDeps = realDeps): Promise<{ pid: number; label: string }[]> {
   const out = await Promise.all(
-    ports.map(async ({ port, names }): Promise<{ pid: number; label: string } | null> => {
+    ports.map(async ({ port, models, fallback }): Promise<{ pid: number; label: string } | null> => {
       const ids = await deps.servedIds(port);
       if (!ids) return null; // nothing serves here: a configured model that is not running
       const pids = [...new Set(deps.listeners(port))].sort((a, b) => a - b);
       const served = ids[0]?.toLowerCase();
-      const named = served ? names.find((n) => n.toLowerCase() === served) : undefined;
-      const label = `${named ?? names[0] ?? `port ${port}`}:${port}${ids[0] && ids[0] !== named ? ` serving ${ids[0]}` : ""}`;
+      // several providers share one port (gyro-l, gyro-m on 8035): the running one is whose model the server reports, never the first configured
+      const named = served ? Object.keys(models).find((n) => models[n].toLowerCase() === served || n.toLowerCase() === served) : undefined;
+      const label = `${named ?? fallback ?? `port ${port}`}:${port}${ids[0] && !named ? ` serving ${ids[0]}` : ""}`;
       if (pids.length) return { pid: pids[0], label };
       // answers HTTP but no listener was found (lsof missing, or another user's process): the probe still says it runs — a ps-signature pid is the best we have
       const { listServers } = await import("../cli/commands/worker-config.js");
