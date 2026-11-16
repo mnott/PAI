@@ -420,6 +420,9 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     }
     throw e;
   }
+  // Every writer goes through here, so this is the one place a write can make the in-process cached view
+  // agree with the bytes it just put on disk — whatever the file's clock granularity did.
+  invalidateStatusCache(logDir, status.id);
 }
 
 /**
@@ -465,13 +468,42 @@ export function loadStatuses(logDir: string): WorkerStatus[] {
   return out;
 }
 
-const statusCache = new Map<string, { mtimeMs: number; size: number; status: WorkerStatus | null; checked: number }>();
+interface StatusCacheEntry {
+  /** Nanosecond mtime/ctime + inode: the entry's identity on disk. Whole-ms mtime and size alone miss a rewrite that lands in the same clock tick with the same byte count (the 2026-11-16 pane-audit incident); ctime catches an in-place write that leaves both untouched, and ino catches a replacement whose new inode carries the old file's whole-microsecond mtime. */
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  ino: number;
+  status: WorkerStatus | null;
+  checked: number;
+}
+
+const statusCache = new Map<string, StatusCacheEntry>();
 /** A cached terminal status is trusted this long without a stat: a finished worker's file no longer changes. */
 export const TERMINAL_RECHECK_MS = 5 * 60_000;
 
+/** The cache identity of a status file: ns-precision times plus inode, from one bigint stat. */
+function statusFileIdentity(path: string): { mtimeNs: bigint; ctimeNs: bigint; ino: number } {
+  const st = statSync(path, { bigint: true });
+  return { mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs, ino: Number(st.ino) };
+}
+
+/** Whether a cache entry still describes the bytes on disk (ns times + inode unchanged). */
+function statusEntryFresh(hit: StatusCacheEntry, id: { mtimeNs: bigint; ctimeNs: bigint; ino: number }): boolean {
+  return hit.mtimeNs === id.mtimeNs && hit.ctimeNs === id.ctimeNs && hit.ino === id.ino;
+}
+
 /**
- * loadStatuses for the daemon's periodic tasks: a status file is parsed again only when its mtime or size
- * changed, so a tick over thousands of historical workers costs one readdir and one stat each, not a parse.
+ * Drop this path's cached parse, so the next cached read re-parses from disk. A writer calls it right after
+ * its rename: within one process a stale entry would otherwise hide the write from every cached reader
+ * (the capacity gate, the reaper, supervision) until an external event changes the file's identity.
+ */
+export function invalidateStatusCache(logDir: string, id: string): void {
+  statusCache.delete(statusPath(logDir, id));
+}
+
+/**
+ * loadStatuses for the daemon's periodic tasks: a status file is parsed again only when its ns mtime/ctime or
+ * inode changed, so a tick over thousands of historical workers costs one readdir and one stat each, not a parse.
  * The returned objects are shared with the cache: read-only.
  */
 export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStatus[] {
@@ -492,15 +524,15 @@ export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStat
           continue;
         }
       }
-      const st = statSync(path);
-      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+      const id = statusFileIdentity(path);
+      if (!hit || !statusEntryFresh(hit, id)) {
         let status: WorkerStatus | null = null;
         try {
           status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
         } catch {
           // a half-written or damaged status file is not worth a crash
         }
-        hit = { mtimeMs: st.mtimeMs, size: st.size, status, checked: now };
+        hit = { ...id, status, checked: now };
         statusCache.set(path, hit);
       }
       hit.checked = now;
@@ -527,15 +559,15 @@ export function loadLiveStatusesCached(logDir: string, now = Date.now()): Worker
     const hit = statusCache.get(path);
     if (hit?.status && isTerminal(hit.status.state)) continue; // trusted terminal: no stat, not wanted anyway
     try {
-      const st = statSync(path);
-      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+      const id = statusFileIdentity(path);
+      if (!hit || !statusEntryFresh(hit, id)) {
         let status: WorkerStatus | null = null;
         try {
           status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
         } catch {
           // a half-written or damaged status file is not worth a crash
         }
-        statusCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, status, checked: now });
+        statusCache.set(path, { ...id, status, checked: now });
       } else hit.checked = now;
       const cur = statusCache.get(path)?.status;
       if (cur && !isTerminal(cur.state)) out.push(cur);
@@ -557,29 +589,29 @@ export function loadStatus(logDir: string, id: string): WorkerStatus | null {
 }
 
 /**
- * loadStatus for the daemon's periodic tasks: one stat, and a parse only when mtime or size changed (a
- * terminal file is not even statted inside its recheck window). The returned object is shared with the
- * cache — read-only. Kill paths and writers keep the uncached loadStatus: they must see the bytes on disk.
+ * loadStatus for the daemon's periodic tasks: one stat, and a parse only when the file's ns times or inode
+ * changed (a terminal file is not even statted inside its recheck window). The returned object is shared with
+ * the cache — read-only. Kill paths and writers keep the uncached loadStatus: they must see the bytes on disk.
  */
 export function loadStatusCached(logDir: string, id: string, now = Date.now()): WorkerStatus | null {
   const path = statusPath(logDir, id);
   let hit = statusCache.get(path);
   if (hit?.status && isTerminal(hit.status.state) && now - hit.checked < TERMINAL_RECHECK_MS) return hit.status;
-  let st: ReturnType<typeof statSync>;
+  let identity: { mtimeNs: bigint; ctimeNs: bigint; ino: number };
   try {
-    st = statSync(path);
+    identity = statusFileIdentity(path);
   } catch {
     statusCache.delete(path);
     return null;
   }
-  if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+  if (!hit || !statusEntryFresh(hit, identity)) {
     let status: WorkerStatus | null = null;
     try {
       status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
     } catch {
       // a half-written or damaged status file is not worth a crash
     }
-    hit = { mtimeMs: st.mtimeMs, size: st.size, status, checked: now };
+    hit = { ...identity, status, checked: now };
     statusCache.set(path, hit);
   }
   hit.checked = now;
@@ -601,8 +633,7 @@ export function refreshCachedStatus(logDir: string, id: string): WorkerStatus | 
     return null;
   }
   try {
-    const st = statSync(path);
-    statusCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, status: fresh, checked: Date.now() });
+    statusCache.set(path, { ...statusFileIdentity(path), status: fresh, checked: Date.now() });
   } catch {
     /* the file vanished between read and stat: the fresh copy still stands for this call */
   }

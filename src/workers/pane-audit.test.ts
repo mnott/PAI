@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync, utimesSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditLaunches, auditTick, isPaiContinuationStatus, type LaunchAuditDeps } from "./pane-audit.js";
-import { loadStatusesCached, refreshCachedStatus } from "./status.js";
+import { loadStatusesCached, refreshCachedStatus, saveStatus } from "./status.js";
 
 // The 2026-11-16 incident: the daemon's cached status view still held a worker's pre-pane first status
 // (no pane field), while the bytes on disk said pane.exec true — and the audit stopped the worker as
@@ -209,26 +209,47 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
     }
   });
 
-  it("refreshCachedStatus returns the bytes on disk behind a stale cached entry", () => {
+  it("a rewrite stamped to the old whole-ms mtime (same size): the ns+ctime+ino key re-parses", () => {
     const logDir = makeLogDir();
     const id = "20261116-200608-91792";
     try {
       const withPane = statusJson(id, 91792, { opened: true, exec: true });
-      // same size as the pane record's copy: the cache's stat cannot tell the two apart
+      // same size as the pane record's copy: an mtimeMs+size key cannot tell the two apart
       const paneless = `{"x":"${" ".repeat(withPane.length - '{"x":""}'.length)}"}`;
       expect(paneless.length).toBe(withPane.length);
-      // apfs stores ns and statSync rounds them up; utimesSync writes whole ms (the .999 below is that rounding).
-      // warm the cache on a file stamped at a whole ms, so its recorded mtimeMs is stable across stats.
+      // what a coarse-granularity clock does to an atomic rewrite: both copies land in one whole-ms tick,
+      // and the final mtime is stamped back to that tick. The ns mtime still differs (APFS stores ns) and
+      // the rename bumps ctimeNs, so the fixed key re-parses where the old one kept the stale copy.
       const path = join(logDir, `${id}.status`);
       writeFileSync(path, withPane);
       utimesSync(path, new Date(1794855968000), new Date(1794855968000));
-      loadStatusesCached(logDir); // warm: the cache now holds the exec-true copy and its mtime/size
-      // a rewrite to the same size, mtime restored after (a rename can carry both over): the stat-only cache never re-parses.
+      loadStatusesCached(logDir); // warm: the cache holds the exec-true copy and its identity
       writeFileSync(path, paneless);
       utimesSync(path, new Date(1794855968000), new Date(1794855968000));
-      expect(loadStatusesCached(logDir).find((s) => s.id === id)?.pane).toEqual({ opened: true, exec: true }); // the stale cached view stands (its copy is gone from disk)
-      expect(refreshCachedStatus(logDir, id)?.pane).toBeUndefined(); // the fresh bytes win
-      expect(loadStatusesCached(logDir).find((s) => s.id === id)?.pane).toBeUndefined(); // and the cache now agrees with disk
+      expect(loadStatusesCached(logDir).find((s) => s.id === id)?.pane).toBeUndefined(); // the fresh bytes win
+      expect(refreshCachedStatus(logDir, id)?.pane).toBeUndefined(); // and so does a direct re-read
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("saveStatus invalidates the cache: two writes of equal size in the same millisecond — the second is seen", () => {
+    const logDir = makeLogDir();
+    const id = "20261116-202608-55117";
+    try {
+      // saveStatus renames atomically; on a coarse-granularity filesystem both writes share one mtime tick.
+      // Stamp the file back to that tick after each write: an mtimeMs+size key would keep the first parse,
+      // and with it every cached reader's stale view (the capacity gate, the reaper, supervision).
+      const path = join(logDir, `${id}.status`);
+      const stamp = new Date(1794859549000);
+      const base = { id, label: "cache-key", pid: 55117, state: "running" as const, started: "2026-11-16 20:26:08", updated: "2026-11-16 20:26:08", cwd: logDir, term: "", provider: "x", model: "m", turns: 0, tools: 0, last: "", rc: null, secs: null };
+      saveStatus(logDir, { ...base, last: "first" });
+      utimesSync(path, stamp, stamp);
+      loadStatusesCached(logDir); // warm the cache with the first write
+      expect(loadStatusesCached(logDir).find((s) => s.id === id)?.last).toBe("first");
+      saveStatus(logDir, { ...base, last: "second" }); // same byte count (both labels are 5 chars), same tick
+      utimesSync(path, stamp, stamp);
+      expect(loadStatusesCached(logDir).find((s) => s.id === id)?.last).toBe("second"); // the writer invalidated its entry
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
