@@ -15,6 +15,9 @@ describe("L0 routes", () => {
   }
   it("exempts a worker", () => expect(d("pai worker run --class research -p x", W).decision).toBe("allow"));
   it("ignores other pai commands", () => expect(d("pai worker ps").decision).toBe("allow"));
+  for (const c of ["pai worker run --help", "pai worker run -h", "cd /x && pai worker run --help"]) {
+    it(`allows ${c} from L0`, () => expect(d(c).decision).toBe("allow"));
+  }
 });
 
 describe("pane rule", () => {

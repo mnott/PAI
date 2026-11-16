@@ -35,8 +35,8 @@ export interface GateSet {
   bash?: { localAnswer: () => string };
   /** Orchestrator worker (PAI_WORKER_ORCHESTRATOR=1): Bash may not write code in place. */
   orchestrator?: boolean;
-  /** L1 lock (PAI_WORKER_CLASS orchestrate/plan without --orchestrate): edits denied until one child worker has failed. */
-  planner?: { childFailed: () => boolean };
+  /** L1 lock (PAI_WORKER_CLASS orchestrate/plan without --orchestrate): edits denied until one child worker has failed. `worktreeRoot` is the cwd's git toplevel — the Bash lock denies only resolved targets inside it. */
+  planner?: { childFailed: () => boolean; worktreeRoot?: () => string | null };
   /** Edit routing: code edits in a git work tree are delegated. The path facts are looked up by the caller. */
   edit?: { isExemptPrefix: (abs: string) => boolean; isGitWorkTree: (abs: string) => boolean };
   /** Test governance: a new test file is one-time and lives in .pai-scratch/ unless promoted in tests/KEPT.md. */
@@ -83,7 +83,7 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
     const ti = c.input as { file_path?: unknown; notebook_path?: unknown; command?: unknown } | undefined;
     const target = ti?.file_path ?? ti?.notebook_path;
     let d: ReturnType<typeof decidePlannerLockEdit> | null = null;
-    if (isBash && typeof ti?.command === "string") d = decidePlannerLockBash(ti.command, c.env.TMPDIR);
+    if (isBash && typeof ti?.command === "string") d = decidePlannerLockBash(ti.command, c.env.TMPDIR, resolve(c.cwd), g.planner.worktreeRoot?.() ?? undefined);
     else if ((c.tool === "Edit" || c.tool === "Write" || c.tool === "NotebookEdit" || c.tool === "MultiEdit") && typeof target === "string" && target) {
       d = decidePlannerLockEdit(resolve(c.cwd, target), resolve(c.cwd), c.env.TMPDIR);
     }
