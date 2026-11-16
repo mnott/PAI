@@ -44,6 +44,12 @@ describe("L1 planner lock", () => {
     expect(w("echo x > ../outside.txt")).not.toBe("deny");
     expect(w(`cd ${s} && echo x > out.json`)).not.toBe("deny");
   });
+  it("resolves ../ targets without moving the effective dir", () => {
+    const g = { planner: { childFailed: () => false, worktreeRoot: () => "/w/tree" } };
+    const w = (command: string) => decidePreGates({ tool: "Bash", input: { command }, cwd: "/w/tree", env: base }, g)?.action;
+    expect(w("echo a > ../outside.txt")).not.toBe("deny");
+    expect(w("echo a > ../outside.txt; echo b > inside.txt")).toBe("deny");
+  });
   it("lifts after a failed child", () => {
     expect(run("Edit", { file_path: "a.txt" }, base, true)).toBeNull();
     expect(run("Bash", { command: "echo x >> NOTES.txt" }, base, true)).toBeNull();

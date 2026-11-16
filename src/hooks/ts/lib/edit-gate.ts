@@ -299,11 +299,13 @@ export function decidePlannerLockBash(rawCommand: string, tmpdir?: string, cwd?:
   };
   const joinRel = (rel: string): string => {
     let r = rel.replace(/\/+$/, "");
+    // resolve against a local copy: `../` peels the base without moving the effective dir (only a real `cd` changes it)
+    let base = dir;
     while (r.startsWith("../")) {
       r = r.slice(3);
-      dir = dir.slice(0, Math.max(dir.lastIndexOf("/"), 1));
+      base = base.slice(0, Math.max(base.lastIndexOf("/"), 1));
     }
-    return r ? `${dir}/${r}` : dir;
+    return r ? `${base}/${r}` : base;
   };
   /** Abs where a target lands; null when it cannot be resolved (unknown: the text rule decides). */
   const resolveTarget = (raw: string): string | null => {
