@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
-import { alive, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, slotLent, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, reconcileStatuses, slotLent, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig, QueuePriority };
 
@@ -582,7 +582,15 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   if (o.disabled || !cfg.enabled || ((o.cap === undefined || o.cap <= 0) && held === undefined)) return null;
   const { logDir, self } = o;
   let cap: number = o.cap === undefined || o.cap <= 0 ? Number.MAX_SAFE_INTEGER : o.cap;
-  const load = o.load ?? ((dir: string) => (reconcileStatuses(dir, new Date(), 0), loadStatuses(dir)));
+  // The poll loader is cheap by design: a cached read (a parse only when a status file's mtime or size
+  // changed) and pid ownership trusted for a minute. The old path ran reconcileStatuses + a full
+  // loadStatuses on every backoff tick — with thousands of history files that is thousands of reads
+  // plus `ps` spawns per poll (a waiter burned 50-80% CPU for its whole queue time, and the daemon's
+  // reaper read that lifetime average as an orphan signal and killed healthy queued runs). Reconciling
+  // stays every other reader's job (`pai worker ps`, wait.ts, viewer.ts, the daemon): a dead holder is
+  // dropped from the queue by liveEntries' pid check, so a grant never waits on reconcile — and one
+  // pass per poll (not per status) bounds the `ps` cost when ownership entries go stale.
+  const load = o.load ?? ((dir: string) => (reconcileStatuses(dir, new Date(), 0, ownsPidCached), loadStatusesCached(dir)));
   const now = o.now ?? Date.now;
   const isAlive = o.isAlive ?? alive;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -603,7 +611,8 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const check = () => {
     const loaded = load(logDir);
     const queue = liveQueue(logDir, queueKey, isAlive, loaded, now(), cfg.agingMs);
-    const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
+    // cached for the same reason as `load`: one blocking `ps` per worker at most once a minute, not per poll
+    const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPidCached;
     // a worker paused by a --now run is queued behind the now runs: it frees its slot for them (the urgent
     // waiter ignores it) but stays reserved against everyone else, so the freed slot never goes to a normal waiter
     const urgentSelf = o.priority === "front" || madeUrgent;
