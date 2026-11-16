@@ -124,6 +124,40 @@ describe("GNU sed relative-range denial on macOS", () => {
   });
 });
 
+describe("ANTHROPIC_API_KEY is never set on a process (workers and L0)", () => {
+  const g = (command: string, env: NodeJS.ProcessEnv = {}) =>
+    decidePreGates({ tool: "Bash", input: { command }, cwd: "/w/tree", env }, {})?.action ?? null;
+  it("denies every way of setting it", () => {
+    expect(g("ANTHROPIC_API_KEY=x claude -p hi")).toBe("deny");
+    expect(g('ANTHROPIC_BASE_URL=http://127.0.0.1:8037 ANTHROPIC_API_KEY=x claude --model apple-fm -p "hi"')).toBe("deny");
+    expect(g('export ANTHROPIC_API_KEY="sk-leak"')).toBe("deny");
+    expect(g("export -n ANTHROPIC_API_KEY=x")).toBe("deny");
+    expect(g("env ANTHROPIC_API_KEY=x claude -p hi")).toBe("deny");
+    expect(g("env -iS 'ANTHROPIC_API_KEY=x claude' -p hi")).toBe("deny");
+    expect(g("launchctl setenv ANTHROPIC_API_KEY x")).toBe("deny");
+    expect(g('launchctl setenv "ANTHROPIC_API_KEY" x')).toBe("deny");
+    expect(g("ls; ANTHROPIC_API_KEY=x claude -p hi")).toBe("deny"); // a later segment still denies
+    expect(g("echo done && ANTHROPIC_API_KEY= claude")).toBe("deny"); // an empty value is still a set
+    expect(g('sh -c "ANTHROPIC_API_KEY=$KEY claude -p hi"')).toBe("deny"); // inside a quoted shell payload
+    expect(g("PAI_WORKER=1 ANTHROPIC_API_KEY=x claude")).toBe("deny"); // after other assignments
+    expect(g("/usr/bin/env ANTHROPIC_API_KEY=x claude")).toBe("deny"); // a pathed env is still env
+  });
+  it("leaves unset, env -u and reads alone", () => {
+    expect(g("unset ANTHROPIC_API_KEY")).toBeNull();
+    expect(g("env -u ANTHROPIC_API_KEY claude -p hi")).toBeNull();
+    expect(g("env -i -u ANTHROPIC_API_KEY claude -p hi")).toBeNull(); // combined and separate -u flags
+    expect(g("grep -rn ANTHROPIC_API_KEY src/ --include=*.ts")).toBeNull();
+    expect(g('echo ${ANTHROPIC_API_KEY:+"set"}')).toBeNull();
+    expect(g("echo $ANTHROPIC_API_KEY")).toBeNull();
+    expect(g('printf "%s" "never set ANTHROPIC_API_KEY on a process"')).toBeNull(); // prose about the rule is text
+    expect(g("git commit -m 'guard denies setting ANTHROPIC_API_KEY'")).toBeNull();
+  });
+  it("applies to workers and L0 alike", () => {
+    expect(g("ANTHROPIC_API_KEY=x claude", { PAI_WORKER: "1" })).toBe("deny");
+    expect(g("ANTHROPIC_API_KEY=x claude", {})).toBe("deny");
+  });
+});
+
 describe("git grep option order denial", () => {
   const ctx: WorkerGuardContext = { cwd: "/w/tree", home: "/h", worktreeRoot: "/w/tree", inWorktree: false, mainCheckout: null, testScript: () => null };
   const g = (command: string) => decideWorkerGate({ tool: "Bash", input: { command }, cwd: "/w/tree", env: { PAI_WORKER: "1" } }, { worker: () => ctx });

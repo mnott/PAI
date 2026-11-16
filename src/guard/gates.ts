@@ -15,6 +15,7 @@ import { mainSessionBashReason } from "../hooks/ts/lib/main-session-git-gate.js"
 import { buildGateReason } from "../hooks/ts/lib/build-gate.js";
 import { memoryBashRules } from "../hooks/ts/lib/memory-bash-gate.js";
 import { modelServerReason } from "../hooks/ts/lib/model-server-guard.js";
+import { apiKeySetMatch, API_KEY_SET_REASON } from "../hooks/ts/lib/api-key-gate.js";
 import { headlessReason } from "../hooks/ts/lib/headless-gate.js";
 import { backgroundReason } from "../hooks/ts/lib/background-gate.js";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
@@ -125,6 +126,11 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
   if (g.plutil && command) {
     const p = detectUnsafePlutil(command);
     if (p.blocked) return deny(plutilGuardMessage(p.verb || "this verb"), "plutil-guard", { category: "plutil_guard", pattern: p.invocation });
+  }
+  // operator rule: no command may set ANTHROPIC_API_KEY on a process (workers and L0 alike)
+  if (command) {
+    const k = apiKeySetMatch(command);
+    if (k) return deny(API_KEY_SET_REASON, "api-key-set", { category: "api_key_set", pattern: k });
   }
   if (g.workerGit && command && c.env.PAI_WORKER === "1") {
     const cwd = resolve(c.cwd);
