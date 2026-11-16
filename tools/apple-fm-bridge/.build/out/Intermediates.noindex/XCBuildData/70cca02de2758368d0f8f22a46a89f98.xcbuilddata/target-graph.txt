@@ -1,4 +1,0 @@
-Target dependency graph (2 targets)
-Target 'AllExcludingTests' in project 'Aggregate'
-➜ Explicit dependency on target 'apple-fm-bridge-product' in project 'apple-fm-bridge'
-Target 'apple-fm-bridge-product' in project 'apple-fm-bridge' (no dependencies)

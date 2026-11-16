@@ -159,6 +159,7 @@ func guardContext(_ req: FMRequest) async throws -> Int {
   n += try await model.tokenCount(for: req.entries)
   let ctx = model.contextSize
   let want = min(req.maxTokens ?? 1024, 2048)
+  FileHandle.standardError.write(Data("apple-fm-bridge: prompt \(n) tokens of \(ctx), tools \(req.tools.count), max_tokens \(req.maxTokens ?? -1)\n".utf8))
   if n + 64 > ctx {
     throw RequestError(status: 400, type: "invalid_request_error",
       message: "request exceeds the apple-fm context limit: prompt is \(n) tokens, model context is \(ctx) tokens (FoundationModels SystemLanguageModel). Shorten the conversation.")

@@ -29,3 +29,25 @@ swift build -c release          # needs macOS 27 SDK + Swift 6.4 toolchain
 ```
 
 MIT licensed; Foundation + Network only, no dependencies.
+
+## Use
+
+```sh
+pai models start apple-fm                 # starts the bridge on 127.0.0.1:8037
+pai worker run --class simple --local apple-fm -p "..."
+pai models stop apple-fm
+```
+
+The provider is opt-in: it sits in no routing tier and is used only when named.
+The start command in `config.yaml` assumes a checkout at `~/dev/ai/PAI`; override
+`models.runtimes.apple-fm.start` in your own config otherwise. A daemon/router
+started before the provider was registered must be restarted to route `apple-fm`.
+
+## Measured limits (M-series Mac, macOS 27.3)
+
+- Context 8192 tokens; oversize requests get a 400 naming the limit.
+- About 26 tokens/s decode, about 1.2 s to first token on a short prompt.
+- Claude Code's worker prompt (system + six tool definitions + task) is about
+  5.8k-6.2k tokens before any tool result, so only 2-3 turns fit. In a live run the
+  model answered with a hallucinated tool call instead of the answer: usable for
+  single-shot questions (no tools), not for a worker loop.
