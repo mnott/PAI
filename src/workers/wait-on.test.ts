@@ -93,9 +93,9 @@ describe("waitOn --rc and the unknown end", () => {
   });
 
   it("the contract text names --rc and says exit 4 = ended, status unknown", () => {
-    expect(WAIT_RECIPE).toContain("--rc $TMPDIR/job.rc");
-    expect(/exit 4 = .*status is unknown/.test(WAIT_RECIPE)).toBe(true);
-    expect(WAIT_VERBS).toContain("--rc $TMPDIR/job.rc");
+    expect(WAIT_RECIPE).toContain("--log $TMPDIR/job.log --rc $TMPDIR/job.rc");
+    expect(/exit 4 = ended, status unknown/.test(WAIT_RECIPE)).toBe(true);
+    expect(WAIT_VERBS).toContain("wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log --rc $TMPDIR/job.rc");
     expect(WAIT_VERBS).toContain("exit 4 = ended, status unknown");
   });
 });
