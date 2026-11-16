@@ -1100,11 +1100,12 @@ const waitOnCommand: CommandDef = {
   name: "wait-on",
   summary: "Wait for a background job to finish",
   description:
-    "Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone. Exit 3: still running, call again. Exit 2: it never existed. Exit 4: killed by the ceiling or stall rule (its whole process tree gets SIGTERM, SIGKILL after 5 s; likely a hang or infinite loop). A `pai worker run` target still queued behind its provider cap is not stall-killed (the queue prints a heartbeat at least every 60 s), and the ceiling counts from when it left the queue. A tree waiting in the build-lock queue (`pai build lock|run` behind another job) is likewise not stall-killed.\n" +
-    "Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid, then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until it exits 0.",
+    "Waits at most --max seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically) for a process id. Exit 0: it is gone and its rc was 0 — with --rc FILE (or an auto-discovered FILE.rc) the wait ends with the job's own exit code. Exit 3: still running, call again. Exit 2: it never existed. Exit 4: killed by the ceiling or stall rule (its whole process tree gets SIGTERM, SIGKILL after 5 s; likely a hang or infinite loop), or the pid ended with an unknown status (no rc file) — exit 4 is never read as \"the job failed\"; 1 means the job failed only when its rc says so. A `pai worker run` target still queued behind its provider cap is not stall-killed (the queue prints a heartbeat at least every 60 s), and the ceiling counts from when it left the queue. A tree waiting in the build-lock queue (`pai build lock|run` behind another job) is likewise not stall-killed.\n" +
+    "Recipe: nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid, then repeat `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log --rc /tmp/job.rc` until it exits 0.",
   args: [{ name: "PID", required: true, summary: "Process id of the job" }],
   options: [
     { name: "log", type: "string", value: "FILE", summary: "Log file whose last lines are printed on return; FILE.rc holds the exit code" },
+    { name: "rc", type: "string", value: "FILE", summary: "The job's rc file (the recipe writes `echo $? > $TMPDIR/job.rc`): when the pid is gone, exit with that code; missing file = exit 4, status unknown" },
     { name: "max", type: "number", value: "SECS", summary: "Longest wait in seconds (default 110, limit 590; over ~110 s needs the Bash tool timeout raised, which the PAI hook does automatically)" },
     { name: "tail", type: "number", value: "N", summary: "Log lines printed on return (default 20)" },
     { name: "max-minutes", type: "number", value: "N", summary: "Hard ceiling on the process's age (default 30; a queued worker run counts from leaving the queue): still alive then = kill its process tree, exit 4" },
@@ -1124,7 +1125,7 @@ const waitOnCommand: CommandDef = {
         });
       }
       return await waitOn(
-        { pid: Number(ctx.args.PID), log: str(ctx.opts.log), maxSecs: num(ctx.opts.max), tail: num(ctx.opts.tail), maxMinutes: num(ctx.opts["max-minutes"]), stallMinutes: num(ctx.opts["stall-minutes"]) },
+        { pid: Number(ctx.args.PID), log: str(ctx.opts.log), rcFile: str(ctx.opts.rc), maxSecs: num(ctx.opts.max), tail: num(ctx.opts.tail), maxMinutes: num(ctx.opts["max-minutes"]), stallMinutes: num(ctx.opts["stall-minutes"]) },
         { ...waitOnDeps, mark, queue: statusQueue(logDir()) }
       );
     }),
