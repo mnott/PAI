@@ -213,7 +213,9 @@ Something needs the whole machine for a while (a build, a render, a call with sc
 
 - `pai freeze --for 30m` thaws by itself after the time.
 - `pai freeze --status` shows since when, by whom and what is frozen.
-- `pai freeze --workers-only` leaves the local model running; `--only ID,...` freezes chosen workers.
+- `pai freeze --workers-only` leaves the local model running; `--only ID,...` freezes chosen workers (and leaves the shared model running).
+- Keep one project going: `pai freeze --except-session CaseLeaf` freezes everything else; during a freeze, `pai thaw --session CaseLeaf` (or `--only ID`) continues just that session's workers while the rest stays frozen.
+- Priority passes a freeze: a run started with `--now` (or inside a `/now` window) is not held; if the local model is frozen it takes its cloud route.
 - From any Claude session, say "freeze the workers" / "thaw" (PAI tools `workers_freeze`, `workers_thaw`).
 - Your interactive sessions, the router, the daemon, AIBroker and Docker are never frozen, so chat with cloud models keeps working. A worker cannot freeze its siblings.
 
