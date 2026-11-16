@@ -19,7 +19,7 @@ import { backgroundReason } from "../hooks/ts/lib/background-gate.js";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
 import { raiseWaitTimeout } from "../hooks/ts/lib/wait-timeout.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
-import { decideEditGate, decideOrchestratorBash, decideOrchestratorEdit } from "../hooks/ts/lib/edit-gate.js";
+import { decideEditGate, decideOrchestratorBash, decideOrchestratorEdit, decidePlannerLockBash, decidePlannerLockEdit } from "../hooks/ts/lib/edit-gate.js";
 import { decideTestGovernance } from "../hooks/ts/lib/test-governance.js";
 import { checkCredentialLiteral } from "../hooks/ts/lib/credential-guard.js";
 import { dropDataHeredocBodies } from "../hooks/ts/lib/heredoc.js";
@@ -34,6 +34,8 @@ export interface GateSet {
   bash?: { localAnswer: () => string };
   /** Orchestrator worker (PAI_WORKER_ORCHESTRATOR=1): Bash may not write code in place. */
   orchestrator?: boolean;
+  /** L1 lock (PAI_WORKER_CLASS orchestrate/plan without --orchestrate): edits denied until one child worker has failed. */
+  planner?: { childFailed: () => boolean };
   /** Edit routing: code edits in a git work tree are delegated. The path facts are looked up by the caller. */
   edit?: { isExemptPrefix: (abs: string) => boolean; isGitWorkTree: (abs: string) => boolean };
   /** Test governance: a new test file is one-time and lives in .pai-scratch/ unless promoted in tests/KEPT.md. */
@@ -73,6 +75,17 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
         return deny(ORCHESTRATOR_START_BLOCK, "orchestrator-run-help");
       }
     }
+  }
+  if (g.planner && c.env.PAI_WORKER === "1" && c.env.PAI_WORKER_ORCHESTRATOR !== "1" && (c.env.PAI_WORKER_CLASS === "orchestrate" || c.env.PAI_WORKER_CLASS === "plan")) {
+    const ti = c.input as { file_path?: unknown; notebook_path?: unknown; command?: unknown } | undefined;
+    const target = ti?.file_path ?? ti?.notebook_path;
+    let d: ReturnType<typeof decidePlannerLockEdit> | null = null;
+    if (isBash && typeof ti?.command === "string") d = decidePlannerLockBash(ti.command, c.env.TMPDIR);
+    else if ((c.tool === "Edit" || c.tool === "Write" || c.tool === "NotebookEdit" || c.tool === "MultiEdit") && typeof target === "string" && target) {
+      d = decidePlannerLockEdit(resolve(c.cwd, target), resolve(c.cwd), c.env.TMPDIR);
+    }
+    // ponytail: one failed child unlocks takeover for all packages; per-package unlock if that proves too loose
+    if (d?.decision === "block" && !g.planner.childFailed()) return deny(d.reason, "planner-lock");
   }
   if (g.credential) {
     const why = checkCredentialLiteral({ tool_name: c.tool, tool_input: c.input as never }, c.env);
