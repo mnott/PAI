@@ -227,7 +227,9 @@ func paraOf(_ sp: Sec, quote: String, fallback: String) -> (Int, Bool) {
 }
 /// sentences split at [.!?] + whitespace; "bzw.", "z. B." etc. are protected by the ∯ marker set in cleanSection
 func splitSentences(_ s: String) -> [String] {
-  s.replacingOccurrences(of: #"(?<=[.!?∯])\s+"#, with: "\n", options: .regularExpression).components(separatedBy: "\n")
+  // run 11: abbreviation dots are protected HERE (the old lookbehind included ∯ and split "sog. Rückseitenwetter")
+  abbrProtect(s).replacingOccurrences(of: #"(?<=[.!?])\s+"#, with: "\n", options: .regularExpression).components(separatedBy: "\n")
+    .map { $0.replacingOccurrences(of: "∯", with: ".") }
 }
 func stems(_ s: String) -> Set<String> { Set(words(s).map { String($0.prefix(5)) }) }
 /// canonical form for the verbatim check: German quote marks and dashes unified, dots normalised, whitespace collapsed
@@ -302,7 +304,7 @@ func abbrProtect(_ s: String) -> String { var r = s; for d in abbrList { r = r.r
 // prepositions), so it captures the noun before "genannt" ("Totluft") and not a clause or "Luft"
 // run 11: the "sog." cue matches its ∯-protected form at word boundaries ("dem sog∯ Rückseitenwetter"); run 10's
 // "sog[∯.]" was unanchored and ate letters inside words (…sogenannte -> matched "sog"), which broke the ¶74 zone
-let namedTermRe = rx(#"(spricht man von|sogenannte[rns]?|\bsog[∯.]|nennt man|(?:so |es )?heißt(?:en)?\b|bezeichnet (?:man|er) (als|zu)|(?:wird|werden)\s(?:[a-zäöüß]+\s){1,4}[A-ZÄÖÜ][\wäöüß-]+\s+genannt)"#)
+let namedTermRe = rx(#"(spricht man von|sogenannte[rns]?|\bsog(?:∯|\.)|nennt man|(?:so |es )?heißt(?:en)?\b|bezeichnet (?:man|er) (als|zu)|(?:wird|werden)\s(?:[a-zäöüß]+\s){1,4}[A-ZÄÖÜ][\wäöüß-]+\s+genannt)"#)
 /// "X sind (ein sichtbares) Anzeichen/Merkmal/Zeichen für Y" — indicator cue; the term is X (before the cue), Y is kept in the sentence
 let anzeichenRe = rx(#"\b(?:sind|ist|sei|waren)\b[^∯.]{0,40}?(?:ein[e]?)?\s*(?:sichtbares?|deutliches?|typisches?|unmittelbares?|wichtiges?)?\s*(Anzeichen|Anzeichen für|Merkmal[e]?|Kennzeichen|Zeichen|Hinweis[e]?)\s*(?:für|darauf)?"#)
 /// condition cue: "überall dort, wo …", "wenn … trifft/auftrifft" — a condition statement, mandatory at the cap
@@ -356,20 +358,26 @@ func dictAdjNoun(_ t: String) -> String {
   let ws = t.split(separator: " ").map(String.init)
   guard ws.count == 2, has(adjCapPairRe, t) else { return t }
   let a = ws[0]
-  for suf in ["ender","erer","ester","er"] where a.hasSuffix(suf) && a.count - suf.count >= 3 {
-    return a.dropLast(suf.count) + "e" + " " + ws[1]
+  // strong ending -er/-es/-em/-en -> weak -e ("pulsierender" -> "pulsierende", "stabiler" -> "stabile")
+  for suf in ["er","es","em","en"] where a.hasSuffix(suf) && a.count - suf.count >= 3 {
+    return String(a.dropLast()) + " " + ws[1]
   }
   return t
 }
 func extractAfter(_ s: String, after upper: String.Index) -> String {
   let zone = String(s[upper...])
+  // run 11: a leading "adjective + Noun" is captured whole and dictionary-formatted ("von pulsierender Thermik")
+  if let m = rxc(#"^[\s„"]*([a-zäöüß]+(?:en|em|er|es|e))\s+([A-ZÄÖÜ][\wäöüß-]+)"#).firstMatch(in: zone, range: NSRange(zone.startIndex..., in: zone)),
+     let a = Range(m.range(at: 1), in: zone), let n = Range(m.range(at: 2), in: zone), !prepLower.contains(String(zone[a]).lowercased()), !stopLower.contains(String(zone[a]).lowercased()) {
+    return dictAdjNoun(String(zone[a]) + " " + String(zone[n]))
+  }
   guard let m = capRunRe.firstMatch(in: zone, range: NSRange(zone.startIndex..., in: zone)), let r = Range(m.range, in: zone) else { return "" }
   var t = norm(String(zone[r]))
   if let c = t.firstIndex(where: { $0 == "," || $0 == ";" }) { t = String(t[t.startIndex..<c]) }
   let ws = t.split(separator: " ")
   guard let h = ws.first else { return "" }
-  let headClean = h.allSatisfy { $0.isUppercase || $0 == "-" || $0 == "." }
-  if !headClean && !(ws.count == 2 && has(adjCapPairRe, t)) { return "" }   // adjective/participle start: not a term here
+  let headClean = h.first.map { $0.isUppercase } ?? false
+  if !headClean { return "" }   // run 11: capRunRe heads always start upper-case; run 10 required ALL upper-case and dropped every noun
   let trimmed = ws.count > 3 ? ws.prefix(3).joined(separator: " ") : t
   // a 2-word capture with an adjective head is dictionary-formatted ("pulsierender Thermik" -> "pulsierende Thermik");
   // a participle head keeps its wording (adjCapPairRe only admits true adjective endings, not "schießend")
@@ -402,7 +410,7 @@ func junkTerm(_ t: String) -> (Bool, String)? {
   // HEAD is a generic noun or an article/function word is junk even with more words behind it ("Ablösung tritt",
   // "‚der Deutsche") — the junk filter must run AFTER capture, not only on bare single words
   let wsj = tt.split(separator: " ").map { $0.lowercased() }
-  if wsj.contains("föhn") || wsj.contains("thermik") { return (true, "topic-word") }
+  if wsj.count == 1 && (wsj[0] == "föhn" || wsj[0] == "thermik") { return (true, "topic-word") }
   if wsj.count > 1 && (genericNouns.contains(wsj[0]) || stopLower.contains(wsj[0])) { return (true, "generic-head") }
   return nil
 }
@@ -584,7 +592,8 @@ func namedTermSentences(_ text: String, places: Set<String>) -> [(term: String, 
   // sentence-initial words of this paragraph: a single-word capture that opens its own sentence is the topic, not
   // the named term (run 8's "Heute"); an indicator cue heading the sentence is the exception (Cumuluswolken)
   var initials = Set<String>()
-  for sent in splitSentences(text) { if let m = rxc("[A-ZÄÖÜ][\\wäöüß-]*").firstMatch(in: sent, range: NSRange(sent.startIndex..., in: sent)), let rg = Range(m.range, in: sent) { initials.insert(String(sent[rg])) } }
+  let ptext = abbrProtect(text)   // run 11: split the PROTECTED text — "sog. Rückseitenwetter" must stay one sentence
+  for sent in splitSentences(ptext) { if let m = rxc("^\\s*[A-ZÄÖÜ][\\wäöüß-]*").firstMatch(in: sent, range: NSRange(sent.startIndex..., in: sent)), let rg = Range(m.range, in: sent) { initials.insert(norm(String(sent[rg]))) } }
   func okTerm(_ t: String, initialOk: Bool = false) -> (Bool, String, String) { looksLikeTerm(t, sentInitials: initials, places: places, initialOk: initialOk) }
   /// first candidate that passes acceptance; "" if none
   func pick(_ cands: [String], initialOk: Bool = false) -> String {
@@ -597,8 +606,8 @@ func namedTermSentences(_ text: String, places: Set<String>) -> [(term: String, 
     let cut = zone.lastIndex(where: { ",;:".contains($0) })
     return cut.map { String(zone[zone.index(after: $0)...]) } ?? zone
   }
-  for raw in splitSentences(text) {
-    let s0 = raw.trimmingCharacters(in: .whitespaces)
+  for raw in splitSentences(ptext) {
+    let s0 = raw.replacingOccurrences(of: "∯", with: ".").trimmingCharacters(in: .whitespaces)
     if s0.isEmpty { continue }
     let s = abbrProtect(s0)
     var hitsHere: [(cue: String, term: String)] = []   // run 11: all cue hits of this sentence (no cap)
@@ -831,19 +840,21 @@ func runSelftest(sectionsDir: String?) -> Int32 {
   }
   let places: Set<String> = []
   func termsOf(_ sent: String) -> [String] { namedTermSentences(sent, places: places).filter { $0.accepted }.map { $0.term } }
+  func dump(_ sent: String) -> String { namedTermSentences(sent, places: places).map { "[\($0.cue)|\($0.term)|\($0.reason)]" }.joined() }
   // ¶8 "spricht man von Blauthermik" — no one-hit-per-sentence cap: the SAME sentence keeps Cumulus AND Blauthermik
   let p8 = "Cumuluswolken sind somit ein sichtbares Anzeichen für Thermik. Ist die Luft zu trocken, so dass keine Wolkenbildung eintritt, spricht man von Blauthermik – der Himmel bleibt wolkenlos und blau."
-  check("para8-Blauthermik", termsOf(p8).contains("Blauthermik"), "terms: \(termsOf(p8))")
+  check("para8-Blauthermik", termsOf(p8).contains("Blauthermik"), "terms: \(dump(p8))")
   // ¶10 "spricht man von pulsierender Thermik" — ADJ+NOUN captured and dictionary-formatted
   let p10 = "Bei diesen wiederkehrenden Aufwinden an gleicher Stelle spricht man von pulsierender Thermik."
-  check("para10-pulsierendeThermik", termsOf(p10) == ["pulsierende Thermik"], "terms: \(termsOf(p10))")
+  check("para10-pulsierendeThermik", termsOf(p10) == ["pulsierende Thermik"], "terms: \(dump(p10))")
   // ¶19 the three parenthesised classes, one hit each (no cap, no rename-a-noun-phrase requirement)
   let p19 = "Da sich Luft beim Aufsteigen bis zum Erreichen des Kondensationsniveaus konstant mit 1 °C je 100 m abkühlt, würde bei einem Gradienten unter 1 °C aufsteigende Luft bald kälter werden als die umgebende Luft (stabile Schichtung). Bei einem Gradienten von 1 °C (indifferente Schichtung) bleibt die Temperaturdifferenz mit zunehmender Höhe gleich und führt zu mittelmäßiger bis guter Thermik bei gleich bleibenden Steigwerten. Beträgt der Gradient über 1 °C (labile Schichtung), nimmt die Temperaturdifferenz mit der Höhe entsprechend zu – ebenso die Steigwerte und Thermikstärke."
   let t19 = termsOf(p19)
   check("para19-Schichtungen", ["stabile Schichtung","indifferente Schichtung","labile Schichtung"].allSatisfy { t19.contains($0) }, "terms: \(t19)")
   // ¶20 "sog." must match (the abbreviation protection must not eat the cue)
+  say("dbg: " + dump("Das ist dem sog. Rückseitenwetter.") + " / " + dump("Das ist dem sogenannten Rückseitenwetter."))
   let p20 = "Sie tritt ein, wenn kühlere Luftmassen in höheren Luftschichten von einer anderen Stelle herbeigeführt werden wie z. B. nach dem Durchgang einer Kaltfront, dem sog. Rückseitenwetter."
-  check("para20-Rueckseitenwetter", termsOf(p20).contains("Rückseitenwetter"), "terms: \(termsOf(p20))")
+  check("para20-Rueckseitenwetter", termsOf(p20).contains("Rückseitenwetter"), "terms: \(dump(p20))")
   // ¶62 Totluft (worked before — regression guard)
   let p62 = "Diese Luft wird daher auch Totluft genannt."
   check("para62-Totluft", termsOf(p62).contains("Totluft"), "terms: \(termsOf(p62))")
@@ -852,7 +863,7 @@ func runSelftest(sectionsDir: String?) -> Int32 {
   check("para65-condition", namedTermSentences(p65, places: places).contains { $0.reason == "condition-fact" }, "hits: \(namedTermSentences(p65, places: places))")
   // ¶74 "der sogenannte Albföhn" — sog. cue on a fragment must yield the term (run 10 gave '')
   let p74 = "der sogenannte Albföhn der Schwäbischen Alb bei Südostwinden, der das Segelfliegen am Albtrauf ermöglicht"
-  check("para74-Albfoehn", termsOf(p74).contains("Albföhn"), "terms: \(termsOf(p74))")
+  check("para74-Albfoehn", termsOf(p74).contains("Albföhn"), "terms: \(dump(p74))")
   // junk filter AFTER capture: Föhn / Umgebung / "Ablösung tritt" / generic words / years never become accepted terms
   let pj = "Der Föhn ist ein Wind in der Umgebung des Gebirges. Die Ablösung tritt dabei auf."
   let tj = termsOf(pj)
