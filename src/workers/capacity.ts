@@ -231,7 +231,12 @@ function liveEntries(logDir: string, provider: string, isAlive: (pid: number) =>
     if (!e) continue;
     // an empty or unparsable ticket is unknown, not dead: keep it, leave it out of the order
     if (!Number.isInteger(e.pid) || e.pid <= 0) continue;
-    if (isAlive(e.pid)) out.push(e);
+    if (isAlive(e.pid)) {
+      // the operator's level (`pai worker priority`) lives in the status file, the durable copy: it outranks the ticket, which a restart or rebuild writes from the run's start options
+      const lvl = loadStatus(logDir, id)?.priority as string | undefined;
+      if (lvl && (QUEUE_PRIORITIES as readonly string[]).includes(lvl)) e.priority = lvl as QueuePriority;
+      out.push(e);
+    }
     else rmSync(join(dir, id), { force: true });
   }
   const group = (e: QueueEntry) => (e.front ? 0 : 1);

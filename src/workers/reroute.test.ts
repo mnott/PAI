@@ -69,6 +69,22 @@ describe("rerouteWorker", () => {
     expect(loadStatus(dir, "w1")!.rerouted).toBe("fakeB: reroute");
   });
 
+  // 2026-11-17: the restart announced only at its real start, but the queue-announce flag was set anyway, so no
+  // start announced it: the reroute reported "did not start" and never stopped the origin. The reroute must stop
+  // a queued and a running origin once its restart announced.
+  it.each(["queued", "running"] as const)("a %s origin is stopped once the restart announced", async (state) => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state }));
+    const killed: string[] = [];
+    const r = await rerouteWorker("w1", "cloud", {
+      logDir: dir,
+      resolve: async () => ({ provider: "fakeB", description: "fake fakeB" }),
+      kill: async (id) => { killed.push(id); return []; },
+      spawn: (_s: SpawnSpec) => undefined, // resolves = the restart announced its id
+    });
+    expect(killed).toEqual(["w1"]);
+    expect(r.was).toBe(state);
+  });
+
   it("a restart that cannot start leaves the old run queued and unmarked (no silent drop)", async () => {
     saveStatus(dir, queued({ promptFile: join(dir, "spec.txt") }));
     let killed = false;

@@ -421,8 +421,6 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       });
     } else {
       const execArgs: ExecuteArgs = {
-        // gateStart owns this run's announce (at the queue); foldRun/tryPoolRun see this and skip theirs
-        announced: true,
         config,
         logDir,
         target,
