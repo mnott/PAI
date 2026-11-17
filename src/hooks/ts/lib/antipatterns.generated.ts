@@ -148,8 +148,11 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "level": "low",
     "blind_spots": [
       "paths written without a ./ or ../ prefix",
-      "paths described in prose (\"under cwd\")",
-      "tokens inside fenced code blocks are checked like the rest"
+      "paths described in prose (\"under cwd\")"
+    ],
+    "falsepositives": [
+      "a path inside a backtick span, a quoted example command or a line introduced as a test input (\"deny …\", \"allow …\", \"e.g.\", \"for example\") is an example, not a required path — masked (2026-11-17 reroute refused over ./mytool inside `allow \\`lldb --batch -o \"image list\" ./mytool\\``)",
+      "a reroute/escalation restart is never refused by this check — the origin already started with the same spec, so at most it warns"
     ],
     "tests": {
       "match": [
@@ -157,7 +160,9 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       ],
       "no_match": [
         "Read /abs/path/file.md and src/index.ts.",
-        "Look at ./zz-*/ and ../<name>/ and ../$DIR/x."
+        "Look at ./zz-*/ and ../<name>/ and ../$DIR/x.",
+        "allow `lldb --batch -o \"image list\" ./mytool`",
+        "e.g. ./does-not-exist is only an illustration"
       ]
     },
     "provenance": {
