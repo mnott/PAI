@@ -2655,7 +2655,7 @@ export function archiveEmptyResult(logDir: string, st: WorkerStatus): boolean {
 }
 
 /** Bytes under `dir` (du -sk), 0 when unreadable. */
-function dirBytes(dir: string): number {
+export function dirBytes(dir: string): number {
   const r = spawnSync("du", ["-sk", dir], { encoding: "utf8" });
   return (parseInt(String(r.stdout).split("\t")[0] ?? "", 10) || 0) * 1024;
 }
@@ -3066,7 +3066,8 @@ export function gcWorktrees(
   now = Date.now(),
   report = false,
   maxGb?: number,
-  foreignRepo?: string
+  foreignRepo?: string,
+  only?: ReadonlySet<string>
 ): GcEntry[] {
   const cutoff = now - olderThanHours * 3_600_000;
   const out: GcEntry[] = [];
@@ -3074,6 +3075,8 @@ export function gcWorktrees(
   const statuses = loadStatuses(logDir);
   const owned = new Set(statuses.map((s) => ownedTree(s)?.dir).filter((d): d is string => !!d).map((d) => resolve(d)));
   const archive = (id: string, dir: string, branch: string, st: WorkerStatus | null): void => {
+    // `pai clean --apply`: exactly the trees its dry run listed, nothing else
+    if (only && !only.has(id)) return;
     const target = `refs/pai-archive/${id}`;
     if (!isRealWorktree(dir)) return void out.push({ id, skipped: "not a worktree" });
     const why = gcKeepReason(logDir, id, dir, dryRun);
@@ -3147,7 +3150,7 @@ export function gcWorktrees(
       continue;
     }
     if (end > cutoff) continue;
-    archiveSlotBranch(logDir, st, tree, dryRun, report, out);
+    if (!only) archiveSlotBranch(logDir, st, tree, dryRun, report, out);
   }
 
   if (existsSync(root)) {
@@ -3169,7 +3172,7 @@ export function gcWorktrees(
   const protect = new Set(statuses.filter((s) => isLive(s) && s.branch).map((s) => s.branch!));
   const repos = new Set(statuses.map((s) => s.cwd).filter((c) => existsSync(c)));
   if (foreignRepo) repos.add(foreignRepo);
-  gcOrphanBranches(logDir, repos, protect, dryRun, out);
+  if (!only) gcOrphanBranches(logDir, repos, protect, dryRun, out);
   // a tree kept by the landed check that the age rule then archived is not "kept"
   const archivedIds = new Set(out.slice(mark).filter((e) => e.archive).map((e) => e.id));
   for (let i = mark - 1; i >= 0; i--) if (out[i]!.skipped?.startsWith("kept:") && archivedIds.has(out[i]!.id)) out.splice(i, 1);

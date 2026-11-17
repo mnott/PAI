@@ -32,6 +32,9 @@ import {
 } from "./queue.js";
 import { jobPaths, reapJob, type ReapOptions } from "./reap.js";
 import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
+import { recordBuildDirs } from "../workers/clean.js";
+import { workersLogDir } from "../workers/paths.js";
+import { readWorkersSection } from "../workers/config.js";
 
 export interface RunBuildOptions {
   dir: string;
@@ -168,6 +171,12 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   o.spawnWatcher?.(o.dir, ticket.id);
 
   const paths = jobPaths(o.command, cwd, env);
+  // a worker's DerivedData-style dir outside the tree: noted so `pai clean` knows it is PAI's
+  try {
+    recordBuildDirs(workersLogDir(readWorkersSection().workers), env.PAI_WORKER_ID, o.command, env);
+  } catch {
+    /* best effort */
+  }
   let startedAt = 0;
   let aborted: NodeJS.Signals | null = null;
   let child: ChildProcess | null = null;
