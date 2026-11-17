@@ -660,7 +660,9 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
 async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, aborted: () => boolean): Promise<void> {
   const { logDir, target, config } = a;
   const saved = status.last;
-  const tier = queuePriorityOf(a.queuePriority, status, config);
+  // a level already on the status file (`pai worker priority`, set while queued) outlives the start options
+  const kept = loadStatus(logDir, wid)?.priority;
+  const tier: QueuePriority = kept === "high" || kept === "normal" || kept === "low" ? kept : queuePriorityOf(a.queuePriority, status, config);
   // the same level orders this run's requests at a serial local engine (the router reads it from the status file)
   if (!status.priority) {
     status.priority = tier;
