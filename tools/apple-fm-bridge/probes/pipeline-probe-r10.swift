@@ -546,7 +546,7 @@ func namedTermSentences(_ p: Para, places: Set<String>) -> [(term: String, sent:
         // genannt" that zone is "Diese Luft " and it grabs "Luft"; when the cue itself contains "wird/werden" the term
         // sits INSIDE the span, directly before "genannt" ("Totluft")
         // match against the RAW span (pat is lowercased for the branch tests; "Totluft" only survives there)
-        let rawSpan = String(s[r.range])
+        let rawSpan = String(s[r])
         let cueCap = rxc("([A-ZÄÖÜ][\\wäöüß-]+)\\s+genannt$").firstMatch(in: rawSpan, range: NSRange(rawSpan.startIndex..., in: rawSpan)).flatMap { m2 -> String? in
           Range(m2.range(at: 1), in: rawSpan).map { norm(String(rawSpan[$0])) }
         } ?? ""
