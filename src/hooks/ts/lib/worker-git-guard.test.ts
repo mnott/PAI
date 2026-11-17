@@ -193,6 +193,17 @@ describe("worktree escape", () => {
     expect(deny("git -C /elsewhere branch newbranch")).toBe(true);
     expect(deny("cd /main && git tag -d v1 --list")).toBe(true);
   });
+  it("allows a fresh clone into scratch, blocks clones into existing content", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "wgg-clone-"));
+    writeFileSync(join(tmp, "f"), "x");
+    expect(deny("cd /tmp/x && git clone --depth 1 https://github.com/o/r pngx")).toBe(false);
+    expect(deny('git clone https://github.com/o/r "$TMPDIR/r"')).toBe(false);
+    expect(deny(`git clone https://github.com/o/r ${tmp}`)).toBe(true);
+    expect(deny(`git clone https://github.com/o/r ${join(process.cwd(), "wgg-new")}`)).toBe(true);
+    expect(deny("cd /Users/x/dev/PAI && git clone https://github.com/o/r pngx")).toBe(true);
+    expect(deny("git clone --separate-git-dir /main/.git https://github.com/o/r /tmp/r")).toBe(true);
+    expect(deny("cd /tmp/x && git -C /main commit -m x")).toBe(true);
+  });
   it("blocks relative and env/flag retargeting", () => {
     expect(deny("git -C ../../main commit -am x")).toBe(true);
     expect(deny("cd ../../main && git commit -am x")).toBe(true);

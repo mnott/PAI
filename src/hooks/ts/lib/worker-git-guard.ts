@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { capContent } from "./rules/cap.js";
 
@@ -211,6 +211,64 @@ function treeOfGitDir(dir: string): string {
   return dir.endsWith("/.git") ? dir.slice(0, -5) : dir;
 }
 
+const CLONE_VALUE_OPTS = new Set([
+  "-b", "--branch", "--depth", "-o", "--origin", "-c", "--config", "--reference", "--reference-if-able",
+  "--template", "-j", "--jobs", "--filter", "--shallow-since", "--shallow-exclude", "-u", "--upload-pack",
+  "--server-option", "--bundle-uri", "--ref-format",
+]);
+
+/** Roots a fresh clone may land in besides the worker's own worktree. */
+function scratchRoots(): string[] {
+  const roots = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
+  const tmp = process.env.TMPDIR?.replace(/\/$/, "");
+  if (tmp) roots.push(tmp);
+  return roots;
+}
+
+/**
+ * `git clone <url> [dest]` writes no existing repository when dest (or the
+ * repo basename) is new or an empty dir, lies in the worker's worktree or a
+ * scratch root, and is not inside another existing git work tree.
+ */
+function cloneDestOf(rest: string[], here: string, vars: Record<string, string>): string | null {
+  const g = rest.indexOf("git");
+  if (g < 0 || rest[g + 1] !== "clone") return null;
+  const pos: string[] = [];
+  for (let k = g + 2; k < rest.length; k++) {
+    const t = rest[k];
+    if (/^[<>]|^\d*>/.test(t)) continue;
+    if (t === "--separate-git-dir" || t.startsWith("--separate-git-dir=")) return UNKNOWN_DIR;
+    if (CLONE_VALUE_OPTS.has(t)) k++;
+    else if (!t.startsWith("-")) pos.push(t);
+  }
+  if (pos.length < 1 || pos.length > 2) return null;
+  const name = pos[1] ?? pos[0].replace(/[/\\]+$/, "").replace(/\.git$/, "").split(/[/:\\]/).pop() ?? "";
+  if (!name || name === "." || name === "..") return null;
+  return resolveDir(here, pos[1] ?? name, vars);
+}
+
+function freshCloneAllowed(rest: string[], here: string, vars: Record<string, string>, own: string): boolean {
+  const dest = cloneDestOf(rest, here, vars);
+  if (!dest || dest === UNKNOWN_DIR) return false;
+  const inRoot = (d: string, r: string) => isInsideWorktree(d, r);
+  const okRoot = (d: string) => inRoot(d, own) || scratchRoots().some((r) => inRoot(d, r));
+  if (!okRoot(dest)) return false;
+  if (existsSync(dest)) {
+    try {
+      if (!statSync(dest).isDirectory() || readdirSync(dest).length > 0) return false;
+    } catch {
+      return false;
+    }
+  }
+  for (let d = dest; ; d = resolve(d, "..")) {
+    if (d !== dest || existsSync(dest)) {
+      if (existsSync(join(d, ".git"))) return okRoot(d);
+    }
+    if (resolve(d, "..") === d) break;
+  }
+  return true;
+}
+
 /**
  * A worker inside its own worktree that points a git write at a directory
  * elsewhere (typically the operator's main checkout named in its spec)
@@ -250,8 +308,11 @@ function worktreeEscape(command: string, cwd: string, worktreesRoot: string): bo
       continue;
     }
     if (!segmentWritesGit(segment, rest)) continue;
-    const targets = [here];
     const eff = { ...env, ...segEnv };
+    if (!eff.GIT_DIR && !eff.GIT_WORK_TREE && freshCloneAllowed(rest, here, vars, own)) continue;
+    const targets = [here];
+    const cloneDest = cloneDestOf(rest, here, vars);
+    if (cloneDest) targets.push(cloneDest);
     if (eff.GIT_DIR) targets.push(treeOfGitDir(resolveDir(here, eff.GIT_DIR, vars)));
     if (eff.GIT_WORK_TREE) targets.push(resolveDir(here, eff.GIT_WORK_TREE, vars));
     let dir = here;
