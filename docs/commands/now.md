@@ -8,7 +8,7 @@ Urgency window: this session's workers run with now (front + preempt local)
 pai now [command] [options]
 ```
 
-The operator's explicit instrumentation for urgency (the `/now` token in a prompt is the same switch). While a window is open, every worker this session starts runs with --now — ahead at the local engine, preempting the other local workers — and with where=local when it was opened with local. Workers already running when it opens are made urgent. `pai worker run --now` and `pai worker priority <id> now` are the per-worker forms. Workers never open a window themselves.
+The operator's explicit instrumentation for urgency (the `/now` token in a prompt is the same switch). While a window is open, every worker this session starts runs with --now — ahead at the local engine, preempting the other local workers — and with where=local when it was opened with local. Workers already running when it opens are made urgent. `pai worker run --now` and `pai worker priority <id> now` are the per-worker forms. Workers never open a window themselves. Urgent workers never pause each other: a worker started from inside an urgent worker's tree inherits now, so it can use the slots its paused victims freed (it never pauses its ancestor), and making a worker that a preemption paused now resumes it (an operator pause stays).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -103,5 +103,3 @@ pai now clear chat-7
 
 Run `pai help <command>` to read any of these in the terminal.
 
-
-Urgent workers never pause each other, which gives two rules. A worker started from inside an urgent worker's tree (the urgent run's own children) inherits `now`, so it can use the slots its paused victims freed instead of queuing behind them (the parent waits on it); it never pauses its ancestor. Making a worker that a preemption has paused `now` (`pai worker priority <id> now`) resumes it (ledger `WORKER-RESUME who=priority-now`); a pause the operator set stays, and a sweep never hands a victim to itself.
