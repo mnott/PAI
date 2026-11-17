@@ -82,6 +82,7 @@ Appended to every headless worker's system prompt:
   `simple`);
 - it owns its children's results: waits for them, verifies, folds them into its
   report; ending the parent's turn kills any child still running.
+- workers never launch a GUI `.app`, not even under a debugger (`lldb`, `gdb`) or launcher; the headless gate denies it.
 
 Nesting is bounded by `workers.tree.maxDepth` (2) and `workers.tree.maxChildren`
 (4). A worker passes a question up with `pai worker handoff`, or asks a stronger
