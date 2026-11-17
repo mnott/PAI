@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { assertWorkerEnded, mergeWorker, ownedTree, worktreePath, WorkerRunningError } from "./worktree.js";
 
@@ -39,14 +39,17 @@ function fixture(): { repo: string; logDir: string } {
 }
 
 /** A worker with a committed branch and its worktree, written the way recordWorktree leaves it. */
-function makeWorker(repo: string, logDir: string, id: string): void {
+function makeWorker(repo: string, logDir: string, id: string, o: { from?: string; file?: string; extra?: Record<string, string> } = {}): void {
   const dir = worktreePath(logDir, id);
   const branch = `worker/${id}`;
-  const base = git(repo, ["rev-parse", "HEAD"]);
+  const base = git(repo, ["rev-parse", o.from ?? "HEAD"]);
   mkdirSync(join(logDir, "worktrees"), { recursive: true });
   git(repo, ["worktree", "add", "-q", "-B", branch, dir, base]);
-  writeFileSync(join(dir, "w.txt"), "worker work\n");
-  git(dir, ["add", "w.txt"]);
+  for (const [f, c] of Object.entries({ [o.file ?? "w.txt"]: "worker work\n", ...o.extra })) {
+    mkdirSync(dirname(join(dir, f)), { recursive: true });
+    writeFileSync(join(dir, f), c);
+  }
+  git(dir, ["add", "-A"]);
   git(dir, ["commit", "-qm", "worker commit"]);
   const st: WorkerStatus = {
     id,
@@ -132,5 +135,40 @@ describe("merge refuses a running worker", () => {
     makeWorker(repo, logDir, id);
     saveStatus(logDir, { ...loadStatus(logDir, id)!, state: "running", pid: DEAD_PID });
     expect(() => assertWorkerEnded(logDir, id)).not.toThrow();
+  });
+});
+
+describe("merge gate traps", () => {
+  it("regenerates docs/commands when a branch changes a command definition without them", () => {
+    const { repo, logDir } = fixture();
+    // the tree's own generator: docs/commands/x.md is a pure function of src/cli/def.txt
+    writeFileSync(join(repo, "def.txt"), "v1\n");
+    mkdirSync(join(repo, "scripts"));
+    writeFileSync(
+      join(repo, "scripts", "regen-docs.ts"),
+      'const fs = require("node:fs"); fs.mkdirSync("docs/commands", { recursive: true }); fs.writeFileSync("docs/commands/x.md", "doc of " + fs.readFileSync("src/cli/def.txt", "utf8"));\n'
+    );
+    mkdirSync(join(repo, "src", "cli"), { recursive: true });
+    writeFileSync(join(repo, "src", "cli", "def.txt"), "v1\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-qm", "defs"]);
+    makeWorker(repo, logDir, "docs-drift", { file: "src/cli/def.txt", extra: { "src/cli/def.txt": "v2\n" } });
+    mergeWorker(logDir, "docs-drift", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(readFileSync(join(repo, "docs", "commands", "x.md"), "utf8")).toBe("doc of v2\n");
+    expect(git(repo, ["status", "--porcelain"])).toBe("");
+    expect(git(repo, ["log", "-1", "--format=%B"])).toContain("docs: regenerate command docs");
+  });
+
+  it("a failed gate then a fix on a resume branch lands the whole original change", () => {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "first", { file: "first.txt" });
+    expect(() => mergeWorker(logDir, "first", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).toThrow(/verify failed/);
+    expect(existsSync(join(repo, "first.txt"))).toBe(false); // reverted on main
+    // resume: a new worker branch on top of the kept one
+    makeWorker(repo, logDir, "second", { from: "worker/first", file: "second.txt" });
+    mergeWorker(logDir, "second", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(existsSync(join(repo, "first.txt"))).toBe(true);
+    expect(existsSync(join(repo, "second.txt"))).toBe(true);
+    expect(git(repo, ["log", "--format=%s"])).toContain("fix: reapply first (first) after a failed merge gate");
   });
 });

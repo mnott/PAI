@@ -52,6 +52,7 @@ function ag2ReportBlock(proofNote = false): string[] {
     "Form: each key once, on one line. Many files: c=a.ts what | b.ts what. Many checks: t=Tsc+ Unit+ (Name+ tokens, no spaces or comments inside; detail goes in z).",
     "No u=/out=, no w=none (R has no such keys); a missing proof or an r not + needs y=, so say so instead of r=+.",
     "y= one line why when r is not +.",
+    "Touched src/cli/commands (help text)? Also run `npx tsx scripts/regen-docs.ts` (or `npx vitest run src/cli/docs-sync.test.ts`) and commit docs/commands.",
     "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",
     ...(proofNote ? ["p= is the command exactly as you ran it; a result may follow after →, e.g. p=npx tsc --noEmit → exit 0; p is the command you ran and its output (typecheck, probe, live run)"] : []),
     "Example:",

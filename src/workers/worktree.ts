@@ -14,6 +14,7 @@
  * place; `--no-worktree` opts out, `--worktree` forces one on.
  */
 
+import { createRequire } from "node:module";
 import { removeScratch } from "./scratch.js";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -1536,7 +1537,7 @@ export function mergeWorker(
     ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
     : { committed: [], skipped: [] };
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
-  const reapply = incoming <= 0 ? findRevertedMerge(st.cwd, st.branch!) : null;
+  const reapply = findRevertedMerge(st.cwd, st.branch!);
   if (incoming <= 0 && !reapply) {
     throw new Error(
       `worker ${id}: branch ${st.branch} has no commits to merge. ` +
@@ -1552,13 +1553,15 @@ export function mergeWorker(
   assertNoDirtyOverlap(st.cwd, incomingPaths, id, st.branch!);
   if (opts.noCommit) return applyNoCommit(st.cwd, id, st.branch!, st.worktreeDir!, mergeBase, incomingPaths);
   // static scans on the branch's own changes, before anything is committed: a failure leaves HEAD untouched
-  const [scanFrom, scanTo] = reapply ? [`${reapply.merge}^1`, reapply.merge] : [mergeBase, st.branch!];
+  const [scanFrom, scanTo] = reapply && incoming <= 0 ? [`${reapply.merge}^1`, reapply.merge] : [mergeBase, st.branch!];
   assertStaticScans(st.cwd, scanFrom, scanTo);
   const oldHead = git(st.cwd, ["rev-parse", "HEAD"]);
   let autoNote: string | null = null;
   try {
+    // a branch whose earlier merge a failed gate reverted: bring that change back first, inside this gated merge
     if (reapply) git(st.cwd, ["revert", "--no-edit", reapply.revert]);
-    else git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
+    if (reapply) git(st.cwd, ["commit", "--amend", "-q", "-m", `fix: reapply ${git(st.cwd, ["log", "-1", "--format=%s", reapply.merge]).replace(/^merge worker (\S+) \((.*?)\).*$/, "$2 ($1)")} after a failed merge gate`]);
+    if (incoming > 0) git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   } catch (e) {
     let files: string[] = [];
     let inProgress = false;
@@ -1594,6 +1597,7 @@ export function mergeWorker(
     throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
     }
   }
+  regenCommandDocs(st.cwd, oldHead);
   const verifyLine = gateLines(
     st.cwd,
     opts.verify,
@@ -1793,16 +1797,48 @@ export function assertStaticScans(cwd: string, from: string, to: string): void {
 function findRevertedMerge(cwd: string, branch: string): { merge: string; revert: string } | null {
   try {
     const tip = git(cwd, ["rev-parse", branch]);
-    const merge = git(cwd, ["rev-list", "--merges", "--parents", "HEAD"])
-      .split("\n")
-      .map((l) => l.split(" "))
-      .find((p) => p[2] === tip)?.[0];
-    if (!merge) return null;
-    const revert = git(cwd, ["log", "--format=%H", "-n", "1", `--grep=This reverts commit ${merge}`, `${merge}..HEAD`]);
-    return revert ? { merge, revert } : null;
+    const log = git(cwd, ["log", "--format=%H%x00%B%x01", "--grep=This reverts commit", "HEAD"]).split("\x01");
+    const reverted = new Set<string>();
+    const reverts: { revert: string; target: string }[] = [];
+    for (const rec of log) {
+      const [h, body = ""] = rec.trim().split("\0");
+      const m = /This reverts commit ([0-9a-f]{40})/.exec(body);
+      if (h && m) {
+        reverts.push({ revert: h, target: m[1] });
+        reverted.add(m[1]);
+      }
+    }
+    // newest first; a revert that was itself reverted is a change already back on main
+    for (const { revert, target } of reverts) {
+      if (reverted.has(revert)) continue;
+      const parents = git(cwd, ["rev-list", "--parents", "-n", "1", target]).split(" ");
+      if (parents.length < 3 || !/^merge worker /.test(git(cwd, ["log", "-1", "--format=%s", target]))) continue;
+      // the branch carries the reverted merge's own commits (a resume branch builds on them)
+      if (parents[2] === tip || spawnSync("git", ["-C", cwd, "merge-base", "--is-ancestor", parents[2], tip]).status === 0) return { merge: target, revert };
+    }
+    return null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Regenerate docs/commands from the merged tree's command definitions when the merge touched src/cli,
+ * and fold any change into the merge commit, so the full-suite docs-sync test never fails on drift.
+ */
+function regenCommandDocs(cwd: string, oldHead: string): void {
+  const script = join(cwd, "scripts", "regen-docs.ts");
+  if (!existsSync(script)) return;
+  if (!git(cwd, ["diff", "--name-only", oldHead, "HEAD", "--", "src/cli"])) return;
+  const r = spawnSync(process.execPath, ["--require", createRequire(import.meta.url).resolve("tsx/cjs"), script], { cwd, encoding: "utf8" });
+  if (r.status !== 0) {
+    console.error(`docs regeneration failed (${(r.stderr || r.stdout || "").trim().split("\n").pop()}); continuing without it`);
+    return;
+  }
+  git(cwd, ["add", "-A", "docs/commands"]);
+  if (!git(cwd, ["diff", "--cached", "--name-only"])) return;
+  const msg = git(cwd, ["log", "-1", "--format=%B"]);
+  git(cwd, ["commit", "--amend", "-q", "-m", `${msg}\n\ndocs: regenerate command docs`]);
 }
 
 const withGate = (gate: string, msg: string): string => (gate ? `${gate}\n${msg}` : msg);
@@ -1943,8 +1979,11 @@ export function runVerify(cwd: string, cmd: string, oldHead: string): string {
 /** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */
 function revertMerge(cwd: string, oldHead: string): string {
   const head = git(cwd, ["rev-parse", "HEAD"]);
-  const isMergeCommit = git(cwd, ["rev-list", "--parents", "-n", "1", "HEAD"]).split(" ").length > 2;
-  git(cwd, isMergeCommit ? ["revert", "-m", "1", "--no-edit", head] : ["revert", "--no-edit", `${oldHead}..HEAD`]);
+  // everything the gated merge put on this branch (a reapply plus the merge), newest first
+  for (const c of git(cwd, ["rev-list", "--first-parent", `${oldHead}..HEAD`]).split("\n").filter(Boolean)) {
+    const merge = git(cwd, ["rev-list", "--parents", "-n", "1", c]).split(" ").length > 2;
+    git(cwd, merge ? ["revert", "-m", "1", "--no-edit", c] : ["revert", "--no-edit", c]);
+  }
   return head;
 }
 
