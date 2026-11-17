@@ -23,7 +23,7 @@ Run a build command under the machine-wide build queue
 pai build run [options]
 ```
 
-Waits for a free build slot (builds.slots, default 1; FIFO across every session and worker on this computer), then runs the command at low CPU priority with its output logged. The whole process tree is killed when this command or its caller dies. The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked. Jobs with the same --key (default: derived from a door script + its last argument, or xcodebuild -scheme) run one at a time so one target keeps one warm build tree; different keys overlap up to the slot limit. The command gets PAI_BUILD_JOBS (max(2, cores / slots)) to pass as -jobs. Simulator/device test runs use --kind test: their own pool (builds.testSlots, default 2), and the simulators the job booted are shut down when it ends.
+Waits for a free build slot (builds.slots, default 1; FIFO across every session and worker on this computer), then runs the command at low CPU priority with its output logged. The whole process tree is killed when this command or its caller dies. The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked. Jobs with the same --key (default: derived from a door script + its last argument, or xcodebuild -scheme) run one at a time so one target keeps one warm build tree; different keys overlap up to the slot limit. The command gets PAI_BUILD_JOBS (max(2, cores / slots)) to pass as -jobs. Simulator/device test runs use --kind test: their own pool (builds.testSlots, default 2), and the simulators the job booted are shut down when it ends. No pane opens by default: the build log (<PAI home>/logs/builds/<id>.log) and this command's own output are where the build is seen. --pane opts in to a visible pane (never inside a worker or an enclosing pane run).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -31,6 +31,7 @@ Waits for a free build slot (builds.slots, default 1; FIFO across every session 
 | `--label TEXT` | string | — | Name shown in the queue (default: the command) |
 | `--key NAME` | string | — | Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. myapp-mac |
 | `--kind build|test` | string | — | Slot pool: build (default) or test for simulator/device test runs |
+| `--pane` | flag | — | Show the whole queue wait + build in a visible pane (opt-in; default off — the log is where it is seen; never inside a worker) |
 
 ```sh
 pai build run -- xcodebuild -scheme App build
@@ -48,7 +49,7 @@ Same lock as `run`, for a project's door script to call
 pai build lock [options]
 ```
 
-A door script (registered in .pai/builds.yaml) wraps its real command in this: `pai build lock -- xcodebuild ...`. Same queue and lock as `pai build run`. Inside a `pai build run` it just runs the command, so doors can be nested without deadlock.
+A door script (registered in .pai/builds.yaml) wraps its real command in this: `pai build lock -- xcodebuild ...`. Same queue and lock as `pai build run`. Inside a `pai build run` it just runs the command, so doors can be nested without deadlock. No pane opens by default — from a worker or anywhere else the build log and the caller's own output are where it is seen; --pane opts in (never inside a worker).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -56,6 +57,7 @@ A door script (registered in .pai/builds.yaml) wraps its real command in this: `
 | `--label TEXT` | string | — | Name shown in the queue (default: the command) |
 | `--key NAME` | string | — | Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. myapp-mac |
 | `--kind build|test` | string | — | Slot pool: build (default) or test for simulator/device test runs |
+| `--pane` | flag | — | Show the whole queue wait + build in a visible pane (opt-in; default off — the log is where it is seen; never inside a worker) |
 
 ```sh
 pai build lock -- xcodebuild -scheme App test

@@ -7,8 +7,9 @@ import { spawn } from "node:child_process";
 import { renderBuildQueue, buildNext, buildsDir, listBuilds, releaseBuild } from "../../builds/queue.js";
 import { slotsFor, poolSlots } from "../../builds/config.js";
 import { beginBuildWait, endBuildWait } from "../../workers/active-time.js";
-import { workersLogDir } from "../../workers/paths.js";
+import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
+import { appendLedger } from "../../workers/ledger.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor, hookEventFindings } from "../../builds/doctor.js";
 import { isCi } from "../../utils/ci.js";
@@ -42,12 +43,36 @@ function workerWaitSink(): ((waiting: boolean) => void) | undefined {
   return (waiting) => (waiting ? beginBuildWait(logDir, id) : endBuildWait(logDir, id));
 }
 
-async function gate(ctx: RunContext): Promise<number> {
+const gate: CommandDef["run"] = (ctx) => gateImpl(ctx);
+
+/** Test seams for the pane decision of `build run|lock` (tests inject launch and read the env; production leaves them unset). */
+export interface BuildGateDeps {
+  env?: NodeJS.ProcessEnv;
+  /** Opens the pane and runs the build in it (default: runCommandInPane); a test records the call instead. */
+  openPane?: (command: string[], label: string) => Promise<number>;
+}
+
+async function gateImpl(ctx: RunContext, deps: BuildGateDeps = {}): Promise<number> {
   if (!ctx.rest.length) throw new CliError("no command given", "pai build run -- <command...>");
-  // from a session, the whole queue wait + build shows in a pane; a worker or an enclosing pane run already has one
-  if (!inVisiblePane() && !process.env.PAI_BUILD_TICKET) {
+  const env = deps.env ?? process.env;
+  // A pane is opt-in (--pane): the operator reads builds in the build log and their own output, not in a
+  // pane cluttering the tab. Inside a worker or an enclosing pane run never one; inside `pai build run`
+  // (PAI_BUILD_TICKET) a nested door never re-opens one.
+  const wantsPane = ctx.opts.pane === true && !inVisiblePane(env) && !env.PAI_BUILD_TICKET && !env.PAI_WORKER_ID;
+  if (wantsPane) {
     const label = typeof ctx.opts.label === "string" ? ctx.opts.label : `build ${ctx.rest.slice(0, 2).join(" ")}`;
-    return runCommandInPane([process.execPath, ...process.execArgv, process.argv[1] ?? "pai", ...process.argv.slice(2)], label);
+    // --pane is carried onto the pane's own call so a wrapper re-entry keeps the choice (and a nested door cannot open a second pane)
+    const argv = [process.execPath, ...process.execArgv, process.argv[1] ?? "pai", "--pane", ...process.argv.slice(2)];
+    return (deps.openPane ?? ((c, l) => runCommandInPane(c, l)))(argv, label);
+  }
+  if (ctx.opts.pane === true && !wantsPane) {
+    // --pane honoured where a pane is possible; ledgered where it is not, so the no-pane decision is visible
+    try {
+      const logDir = workersLogDir(readWorkersSection().workers);
+      appendLedger(ledgerPath(logDir), "BUILD-PANE-SKIPPED", { why: env.PAI_WORKER_ID ? "inside a worker" : inVisiblePane(env) ? "already in a pane" : "inside pai build run" });
+    } catch {
+      /* the ledger never stops a build */
+    }
   }
   const kind = ctx.opts.kind === undefined ? "build" : ctx.opts.kind;
   if (kind !== "build" && kind !== "test") throw new CliError(`unknown kind "${String(kind)}"`, "pai build run --kind build|test -- <command...>");
@@ -72,12 +97,14 @@ const runCmd: CommandDef = {
     "Waits for a free build slot (builds.slots, default 1; FIFO across every session and worker on this computer), then runs the command at low CPU priority with its output logged. The whole process tree is killed when this command or its caller dies. " +
     "The command gets PAI_BUILD_MODE=delta (default) or full (--full); project build scripts read it to build incrementally. The gate does not decide how to build deltas. Use --full only for a release or when asked. " +
     "Jobs with the same --key (default: derived from a door script + its last argument, or xcodebuild -scheme) run one at a time so one target keeps one warm build tree; different keys overlap up to the slot limit. The command gets PAI_BUILD_JOBS (max(2, cores / slots)) to pass as -jobs. " +
-    "Simulator/device test runs use --kind test: their own pool (builds.testSlots, default 2), and the simulators the job booted are shut down when it ends.",
+    "Simulator/device test runs use --kind test: their own pool (builds.testSlots, default 2), and the simulators the job booted are shut down when it ends. " +
+    "No pane opens by default: the build log (<PAI home>/logs/builds/<id>.log) and this command's own output are where the build is seen. --pane opts in to a visible pane (never inside a worker or an enclosing pane run).",
   options: [
     { name: "full", type: "boolean", summary: "Full build (PAI_BUILD_MODE=full): releases only, or when asked" },
     { name: "label", type: "string", value: "TEXT", summary: "Name shown in the queue (default: the command)" },
     { name: "key", type: "string", value: "NAME", summary: "Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. myapp-mac" },
     { name: "kind", type: "string", value: "build|test", summary: "Slot pool: build (default) or test for simulator/device test runs" },
+    { name: "pane", type: "boolean", summary: "Show the whole queue wait + build in a visible pane (opt-in; default off — the log is where it is seen; never inside a worker)" },
   ],
   passthrough: true,
   examples: ["pai build run -- xcodebuild -scheme App build", "pai build run --kind test -- xcodebuild -scheme App test", "pai build run --full --label release -- tools/build.sh"],
@@ -89,7 +116,7 @@ const lockCmd: CommandDef = {
   name: "lock",
   summary: "Same lock as `run`, for a project's door script to call",
   description:
-    "A door script (registered in .pai/builds.yaml) wraps its real command in this: `pai build lock -- xcodebuild ...`. Same queue and lock as `pai build run`. Inside a `pai build run` it just runs the command, so doors can be nested without deadlock.",
+    "A door script (registered in .pai/builds.yaml) wraps its real command in this: `pai build lock -- xcodebuild ...`. Same queue and lock as `pai build run`. Inside a `pai build run` it just runs the command, so doors can be nested without deadlock. No pane opens by default — from a worker or anywhere else the build log and the caller's own output are where it is seen; --pane opts in (never inside a worker).",
   options: runCmd.options,
   passthrough: true,
   examples: ["pai build lock -- xcodebuild -scheme App test"],

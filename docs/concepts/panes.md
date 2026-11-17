@@ -87,6 +87,16 @@ A guard in interactive sessions denies a Bash call with `run_in_background: true
 unless the command starts with `pai pane run`, `pai worker run`, `pai plan run`,
 `pai build run` or `pai build lock`. Foreground calls are unaffected.
 
+## Builds and panes
+
+`pai build run` / `pai build lock` open no pane by default: the build log and the
+caller's own output are where the build is seen (the operator reads them, not a
+pane cluttering the tab). `--pane` opts in to a visible pane for the whole queue
+wait + build; inside a worker or an enclosing pane run never one. And a pane that
+cannot open or whose wrapper does not connect never stops the command: it runs
+directly, output to the same log and to the caller, exit code its own (the
+"nothing runs unseen" rule stays for worker runs).
+
 ## Managing panes
 
 ```

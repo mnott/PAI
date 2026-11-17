@@ -55,7 +55,7 @@ import { listRecords } from "./pane-exec.js";
 import { itermUuid, scopeKey } from "./scope.js";
 import { psTable, psTableOrNull } from "./ps-table.js";
 import { escapePaneTitle, paneTitle } from "./pane-title.js";
-import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV } from "./pane-exec.js";
+import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV, quoteArg } from "./pane-exec.js";
 import { panePolicy } from "./pane-policy.js";
 
 export const PROFILE_NAME = "pai-worker";
@@ -997,10 +997,8 @@ export function followCommand(wid?: string): string {
   return args.map(quoteArg).join(" ");
 }
 
-/** One command-line argument, single-quoted only when it holds characters outside the safe set. */
-export function quoteArg(s: string): string {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
-}
+/** One command-line argument, single-quoted only when it holds characters outside the safe set (re-exported from pane-exec.ts: one rule for every pane command line). */
+export { quoteArg } from "./pane-exec.js";
 
 /** Absolute path of the running pai CLI; falls back to PATH lookup at spawn. */
 function absoluteCliPath(): string {

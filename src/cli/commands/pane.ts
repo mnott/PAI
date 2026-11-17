@@ -82,10 +82,12 @@ const execCmd: CommandDef = {
   description:
     "The command of every pane PAI opens for a process it starts (a worker, a plan runner, `pai pane run`). It connects to the starting `pai` process, which sends the real command; the wrapper runs it as its child, shows its output in the pane, writes <PAI home>/state/pane-exec/<id>.exit (exit code + end time) and exits when the child exits, so the pane closes with the process. If the starting process goes away, the child is killed. Not for direct use.",
   args: [{ name: "ID", required: true, summary: "Run id the starting process listens for" }],
+  options: [{ name: "sock", type: "string", value: "PATH", summary: "Internal: the caller's socket path (the pane's command line carries it; the wrapper never recomputes one from its own env)" }],
   examples: ["pai pane exec pane-20260101-0000-ab12"],
   seeAlso: ["pai pane run"],
   run: async (ctx: RunContext) =>
     runPaneExec(String(ctx.args.ID), {
+      sock: typeof ctx.opts.sock === "string" ? ctx.opts.sock : undefined,
       setTitle: (t) => writePaneTitle(t, process.env),
       closePane: async () => {
         // registry entry and iTerm session by run id; the session by its own id when the registry has none

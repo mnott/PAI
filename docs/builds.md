@@ -5,13 +5,14 @@ Heavy builds and simulator test runs used to run in parallel from several sessio
 ## Running a build
 
 ```
-pai build run [--full] [--label L] [--kind build|test] -- <command...>
+pai build run [--full] [--label L] [--kind build|test] [--pane] -- <command...>
 ```
 
 - One lock for the whole machine. `builds.slots` in the main PAI config sets how many builds run at once (default 1). Waiting builds start FIFO.
 - Simulator/device test runs are a separate pool: `builds.testSlots` (default 2), taken with `--kind test`. Compiling and testing no longer wait on each other; tests wait only for other tests. `PAI_BUILD_SLOTS` / `PAI_TEST_SLOTS` override the config for one process.
 - While waiting it prints a heartbeat every 30 s: `build queued: position 2, behind <label> from <session>, waiting 3m`.
 - The child runs at low CPU priority (`taskpolicy -b` on macOS, `nice -n 10` elsewhere), in its own process group, with the output teed to `<PAI home>/logs/builds/<id>.log`.
+- No pane opens by default: the build log and the caller's own output are where the build is seen (a session's `pai build run` prints every queue heartbeat there). `--pane` opts in to a visible pane for the whole wait + build; inside a worker or an enclosing pane run never one. If a pane cannot open or its wrapper does not connect, the build still runs directly — with its own exit code — and one line says so.
 - The whole tree dies with the caller: SIGTERM/SIGINT/SIGHUP kill the group, a reparented caller (shell gone) is detected within a second, and a detached watcher kills the tree if the gate itself is SIGKILLed. Any later queue read also prunes tickets of dead gates and kills their trees.
 - A worker that is killed (`pai worker kill`, SIGTERM of its run) or loop-stopped releases its builds and its build tree is killed.
 - Compilers Xcode's build service started for a job (swift-frontend, clang, ld, ... — not in the gate's process group, reparented to launchd) are reaped when the job ends, normally, killed or caller died: processes whose command line names the job's cwd or derived data path and no other running job's path get SIGTERM, SIGKILL after 5 s (`BUILD-REAP` line). The daemon also sweeps every 60 s for ppid-1 compilers older than 2 min that match no running job.
