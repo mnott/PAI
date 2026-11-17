@@ -342,6 +342,21 @@ export function parseToolCallText(text: string, schemas: ToolSchemas, rules: rea
 // ---------------------------------------------------------------------------
 // SSE and JSON wiring
 
+/** Text the client sees in place of a tool call whose arguments were cut off (output limit) or are not JSON. */
+export const cutOffNote = (tool: string): string =>
+  `[The ${tool} call was cut off before its arguments were complete (output limit reached). Nothing was executed. Write large files in several smaller parts.]`;
+
+/** True when a tool call's assembled arguments are not a complete JSON value (an empty string means no arguments). */
+export function argsInvalid(json: string): boolean {
+  if (!json) return false;
+  try {
+    JSON.parse(json);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export type ToolArgsFix = (info: { tool: string; rules: string[] }) => void;
 
 export function repairJson(json: string, tool: string, schemas: ToolSchemas, rules: () => readonly Rule[], onFix: ToolArgsFix): string {
@@ -389,7 +404,9 @@ export function repairJsonReplyArgs(text: string, schemas: ToolSchemas, rules: (
 export class ToolArgsSse extends Transform {
   private buf = "";
   private readonly dec = new StringDecoder("utf8");
-  private readonly calls = new Map<number, { name: string; json: string }>();
+  private readonly calls = new Map<number, { name: string; json: string; start: string }>();
+  private keptTools = 0;
+  private droppedTools = 0;
 
   constructor(
     private readonly schemas: ToolSchemas,
@@ -401,7 +418,7 @@ export class ToolArgsSse extends Transform {
 
   /** Output for one complete SSE message (without its blank-line separator); null drops it. */
   private message(msg: string): string | null {
-    if (!msg.includes('"tool_use"') && !this.calls.size) return msg;
+    if (!msg.includes('"tool_use"') && !this.calls.size && !msg.includes('"message_delta"')) return msg;
     const line = msg.split("\n").find((l) => l.startsWith("data:"));
     if (!line) return msg;
     try {
@@ -414,8 +431,13 @@ export class ToolArgsSse extends Transform {
       const idx = ev.index as number;
       if (ev.type === "content_block_start" && ev.content_block?.type === "tool_use" && typeof ev.content_block.name === "string") {
         const init = ev.content_block.input && Object.keys(ev.content_block.input as object).length ? JSON.stringify(ev.content_block.input) : "";
-        this.calls.set(idx, { name: ev.content_block.name, json: init });
-        return msg;
+        // the start is held with the arguments: a call that turns out cut off is replaced, not announced
+        this.calls.set(idx, { name: ev.content_block.name, json: init, start: msg });
+        return null;
+      }
+      if (ev.type === "message_delta" && this.droppedTools && !this.keptTools && (ev as { delta?: { stop_reason?: unknown } }).delta?.stop_reason === "tool_use") {
+        (ev as { delta: { stop_reason: string } }).delta.stop_reason = "end_turn";
+        return msg.split("\n").map((l) => (l.startsWith("data:") ? `data: ${JSON.stringify(ev)}` : l)).join("\n");
       }
       const call = this.calls.get(idx);
       if (!call) return msg;
@@ -425,10 +447,18 @@ export class ToolArgsSse extends Transform {
       }
       if (ev.type === "content_block_stop") {
         this.calls.delete(idx);
-        if (!call.json) return msg;
+        if (argsInvalid(call.json)) {
+          // cut off mid-arguments (max_tokens): never forward half a JSON value, say so as text
+          this.droppedTools++;
+          const start = { type: "content_block_start", index: idx, content_block: { type: "text", text: "" } };
+          const delta = { type: "content_block_delta", index: idx, delta: { type: "text_delta", text: cutOffNote(call.name) } };
+          return `event: content_block_start\ndata: ${JSON.stringify(start)}\n\nevent: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n${msg}`;
+        }
+        this.keptTools++;
+        if (!call.json) return `${call.start}\n\n${msg}`;
         const json = repairJson(call.json, call.name, this.schemas, this.rules, this.onFix);
         const delta = { type: "content_block_delta", index: idx, delta: { type: "input_json_delta", partial_json: json } };
-        return `event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n${msg}`;
+        return `${call.start}\n\n` + `event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n${msg}`;
       }
     } catch {
       /* not JSON: pass through */

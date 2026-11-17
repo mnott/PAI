@@ -6,7 +6,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { parseToolCallText, repairJson, type ToolArgsFix, type ToolSchemas } from "../tool-args.js";
+import { argsInvalid, cutOffNote, parseToolCallText, repairJson, type ToolArgsFix, type ToolSchemas } from "../tool-args.js";
 import type { Rule } from "../tool-call-rules.js";
 import { hasMalformedToolCall } from "../../workers/malformed-toolcall.js";
 import { GuardToolSse, parseBody, SseMessages, sseData, toolSchemaOf, withData, type GuardStreamCtx, type WireAdapter, type WireConverted } from "./types.js";
@@ -102,6 +102,14 @@ class ChatToolArgsSse extends SseMessages {
     this.calls.delete(ci);
     const fixed = new Map<number, string>();
     let hit = false;
+    const cut = [...calls.values()].find((h) => argsInvalid(h.json));
+    if (cut) {
+      // cut off mid-arguments (finish_reason length): no half-JSON tool call, a text note instead
+      const note = { ...tpl, choices: [{ index: ci, delta: { content: cutOffNote(cut.name) }, finish_reason: null }] };
+      const fin = sseData(msg);
+      const last = fin ? withData(msg, { ...fin.json, choices: [{ ...fin.json.choices[0], finish_reason: fin.json.choices[0].finish_reason === "tool_calls" ? "stop" : fin.json.choices[0].finish_reason }] }) : msg;
+      return `data: ${JSON.stringify(note)}\n\n` + last + sep;
+    }
     for (const [i, h] of calls) {
       const after = repairJson(h.json, h.name, this.schemas, this.rules, this.onFix);
       fixed.set(i, after);
