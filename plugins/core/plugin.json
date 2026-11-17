@@ -2,6 +2,6 @@
   "name": "pai-core",
   "displayName": "PAI Core",
   "description": "Core memory engine, session management, and project registry",
-  "version": "1.2.39",
+  "version": "1.2.40",
   "hooks": "./hooks/hooks.json"
 }
