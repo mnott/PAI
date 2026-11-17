@@ -1559,7 +1559,15 @@ export function mergeWorker(
   let autoNote: string | null = null;
   try {
     // a branch whose earlier merge a failed gate reverted: bring that change back first, inside this gated merge
-    if (reapply) git(st.cwd, ["revert", "--no-edit", reapply.revert]);
+    if (reapply) {
+      try {
+        git(st.cwd, ["revert", "--no-edit", reapply.revert]);
+      } catch (re) {
+        spawnSync("git", ["-C", st.cwd, "revert", "--abort"]);
+        spawnSync("git", ["-C", st.cwd, "reset", "-q", "--hard", oldHead]);
+        throw new Error(`could not re-apply the reverted merge ${reapply.merge.slice(0, 8)} (revert ${reapply.revert.slice(0, 8)}): ${(re as Error).message}; main is unchanged`);
+      }
+    }
     if (reapply) git(st.cwd, ["commit", "--amend", "-q", "-m", `fix: reapply ${git(st.cwd, ["log", "-1", "--format=%s", reapply.merge]).replace(/^merge worker (\S+) \((.*?)\).*$/, "$2 ($1)")} after a failed merge gate`]);
     if (incoming > 0) git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   } catch (e) {
@@ -1797,6 +1805,7 @@ export function assertStaticScans(cwd: string, from: string, to: string): void {
 function findRevertedMerge(cwd: string, branch: string): { merge: string; revert: string } | null {
   try {
     const tip = git(cwd, ["rev-parse", branch]);
+    const base = git(cwd, ["merge-base", "HEAD", branch]);
     const log = git(cwd, ["log", "--format=%H%x00%B%x01", "--grep=This reverts commit", "HEAD"]).split("\x01");
     const reverted = new Set<string>();
     const reverts: { revert: string; target: string }[] = [];
@@ -1811,6 +1820,11 @@ function findRevertedMerge(cwd: string, branch: string): { merge: string; revert
     // newest first; a revert that was itself reverted is a change already back on main
     for (const { revert, target } of reverts) {
       if (reverted.has(revert)) continue;
+      // the branch forked after the revert: it never carried the change main dropped
+      if (spawnSync("git", ["-C", cwd, "merge-base", "--is-ancestor", revert, base]).status === 0) continue;
+      // main already carries the change again (a hand reapply with an amended message): reversing the revert no longer applies
+      const diff = spawnSync("git", ["-C", cwd, "diff", "--binary", `${revert}^`, revert], { encoding: "utf8", maxBuffer: 1 << 28 }).stdout;
+      if (spawnSync("git", ["-C", cwd, "apply", "--check", "-R", "--index"], { input: diff, encoding: "utf8" }).status !== 0) continue;
       const parents = git(cwd, ["rev-list", "--parents", "-n", "1", target]).split(" ");
       if (parents.length < 3 || !/^merge worker /.test(git(cwd, ["log", "-1", "--format=%s", target]))) continue;
       // the branch carries the reverted merge's own commits (a resume branch builds on them)

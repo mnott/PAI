@@ -171,4 +171,34 @@ describe("merge gate traps", () => {
     expect(existsSync(join(repo, "second.txt"))).toBe(true);
     expect(git(repo, ["log", "--format=%s"])).toContain("fix: reapply first (first) after a failed merge gate");
   });
+
+  /** first merged then reverted by a failed gate; returns the revert commit */
+  function revertedFirst(repo: string, logDir: string): string {
+    makeWorker(repo, logDir, "first", { file: "first.txt" });
+    expect(() => mergeWorker(logDir, "first", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).toThrow(/verify failed/);
+    return git(repo, ["rev-parse", "HEAD"]);
+  }
+
+  it("a branch forked after the revert merges normally, with no reapply", () => {
+    const { repo, logDir } = fixture();
+    revertedFirst(repo, logDir);
+    makeWorker(repo, logDir, "later", { file: "later.txt" });
+    mergeWorker(logDir, "later", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(existsSync(join(repo, "later.txt"))).toBe(true);
+    expect(existsSync(join(repo, "first.txt"))).toBe(false);
+    expect(git(repo, ["log", "--format=%s"])).not.toContain("reapply");
+  });
+
+  it("main that already reapplied by hand (amended subject, no revert line) gets no second reapply", () => {
+    const { repo, logDir } = fixture();
+    const r = revertedFirst(repo, logDir);
+    makeWorker(repo, logDir, "second", { from: "worker/first", file: "second.txt" });
+    git(repo, ["revert", "--no-edit", r]);
+    git(repo, ["commit", "--amend", "-qm", "fix: reapply first by hand"]);
+    const before = git(repo, ["rev-list", "--count", "HEAD"]);
+    mergeWorker(logDir, "second", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe(String(Number(before) + 2)); // second's commit + merge only
+    expect(git(repo, ["log", "--format=%s"]).split("\n").filter((l) => l.startsWith("fix: reapply first (first)"))).toHaveLength(0);
+    expect(existsSync(join(repo, "first.txt"))).toBe(true);
+  });
 });
