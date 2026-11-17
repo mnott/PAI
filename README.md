@@ -135,6 +135,10 @@ pai help <command>  # full help for one command
 
 `pai pause` saves your place before you leave a session and `pai end` finishes it.
 
+## Cleaning up disk
+
+Workers leave worktrees, transcripts, supervision markers and build dirs behind. `pai clean` lists them (category, size, age, owner, matching rule; `--json` for scripts) and changes nothing; `pai clean --apply` acts on exactly that list. Worktrees go through `pai worker gc` (commits kept under `refs/pai-archive`), files of workers finished more than 14 days ago move into `logs/workers/archive/YYYY-MM`, and anything a live worker owns, a symlink or a git repo with unpushed work is refused with the reason. Global developer caches (`~/.npm`, `~/Library/Caches`, DerivedData of ordinary projects) are not PAI's: use [plonge](https://github.com/mattt/plonge) for those.
+
 ## Acknowledgments
 
 Inspired by Daniel Miessler's Personal AI Infrastructure, claude-mem, Cognee and PageIndex. Full credit and links: [docs/README.md](docs/README.md#acknowledgments).

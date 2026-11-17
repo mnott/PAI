@@ -14,6 +14,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai bench`](bench.md) | Local-model quality check: run the eval sets and real tasks, print the comparison table |
 | [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, release, doctor, npm-auth, mirror-sync |
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
+| [`pai clean`](clean.md) | Clean up what PAI leaves on disk (dry run unless --apply) |
 | [`pai clear-names`](clear-names.md) | Wipe the stored tab names (recovery) |
 | [`pai cockpit`](cockpit.md) | The router's web cockpit: layout export |
 | [`pai config`](config.md) | PAI settings: show, read, change |
@@ -126,6 +127,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai build run` | Run a build command under the machine-wide build queue |
 | `pai build watch` | Internal: kill a build tree when its gate process dies |
 | `pai cd` | Print a project's directory (the shell wrapper changes into it) |
+| `pai clean` | Clean up what PAI leaves on disk (dry run unless --apply) |
 | `pai clear-names` | Wipe the stored tab names (recovery) |
 | `pai cockpit` | The router's web cockpit: layout export |
 | `pai cockpit layout` | The cockpit's default window layout |
