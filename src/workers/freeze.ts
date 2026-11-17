@@ -4,11 +4,13 @@
  * later. Nothing is killed.
  *
  * The marker ~/.pai/state/freeze.json {since, by, until?, pids:[…]} records what
- * was stopped. While it exists: the capacity gate admits no new run (freezeHold),
+ * was stopped. While a global one exists: the capacity gate admits no new run (freezeHold),
  * the daemon's supervision/reaper/pane sweeps stand down, and the time counts as
  * blocked time for deadlines (frozenMsFor) and for the wait verbs (activeNow).
  * On thaw the per-worker frozen minutes are added to ~/.pai/state/freeze-acct.json
  * and every thawed worker gets an orchestrator note.
+ *
+ * A partial freeze (--only/--except) records scope "workers": isFrozen()/freezeHold() ignore it, supervision skips just the frozen ids (frozenSince). `--only` ids that are not running write no marker.
  *
  * Order: workers deepest first (an L2 before its L1, so no L1 ever runs next to a
  * frozen child), then the model server. Thaw: model server, then workers deepest
@@ -65,6 +67,8 @@ export interface FreezeMarker {
   by: string;
   until?: number;
   pids: FrozenEntry[];
+  /** "workers" = a partial freeze (--only / --except): only the listed workers stand still, everyone else is gated and supervised normally. Absent or "all" = machine-wide. */
+  scope?: "all" | "workers";
 }
 
 interface Acct {
@@ -186,7 +190,12 @@ export function readFreeze(): FreezeMarker | null {
   }
 }
 
-export const isFrozen = (): boolean => existsSync(freezePath()) && readFreeze() !== null;
+/** A machine-wide freeze is in progress. A partial one (scope "workers") is not: the global consumers (gate, supervision sweeps, reaper) carry on and skip the frozen workers per id (frozenSince). */
+export const isFrozen = (): boolean => {
+  if (!existsSync(freezePath())) return false;
+  const m = readFreeze();
+  return m !== null && m.scope !== "workers";
+};
 
 function readAcct(): Acct {
   try {
@@ -390,7 +399,7 @@ function ancestors(rows: ProcRow[], pid: number): Set<number> {
 export interface FreezeReport {
   lines: string[];
   total: number;
-  marker: FreezeMarker;
+  marker: FreezeMarker | null;
 }
 
 /** What to stop: worker trees deepest first, then model servers. Pure given its inputs. */
@@ -499,10 +508,14 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
       return false;
     }
   };
+  if (only && live.length === 0) {
+    return { lines: [`nothing to freeze: ${only.join(", ")} ${only.length === 1 ? "is" : "are"} not running`], total: 0, marker: null };
+  }
   const since = d.now();
   const stopped: FrozenEntry[] = [];
   // the marker exists before the first signal: the gate and the daemon already stand down
-  const marker: FreezeMarker = { since, by, ...(forMs ? { until: since + forMs } : {}), pids: stopped };
+  const partial = !!only || !!(except && (except.ids?.length || except.session));
+  const marker: FreezeMarker = { since, by, ...(partial ? { scope: "workers" as const } : {}), ...(forMs ? { until: since + forMs } : {}), pids: stopped };
   writeJson(freezePath(), marker);
   const wanted = new Set<number>();
   const stopPass = async (): Promise<void> => {
