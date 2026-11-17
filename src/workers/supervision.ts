@@ -75,7 +75,7 @@ import {
 } from "./tool-errors.js";
 import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
 import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
-import { escalateOverdue, escalationMessage } from "./reroute.js";
+import { endContinuedOrigins, escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
 import { activeMsOf, frozenSince } from "./freeze.js";
 
@@ -574,6 +574,8 @@ export interface TickResult {
 export async function runSupervisionTick(logDir: string, opts: TickOptions = {}): Promise<TickResult> {
   const now = opts.now ?? new Date();
   const statuses = opts.statuses ?? loadStatusesCached(logDir);
+  // a queued origin whose fall-through finished clean is ended as continued before anything judges it: out of the provider queue, never rerouted again (reroute.ts). A failed fall-through ends nothing — after its recent window one more reroute may run, as before.
+  endContinuedOrigins(statuses, logDir, now.getTime());
   const statePath = supervisionStatePath(logDir);
   const loaded = loadSupervisionState(statePath);
   let state = loaded.state;

@@ -16,7 +16,7 @@ import { alive, loadStatus, loadStatusCached, type WorkerStatus } from "../../wo
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { sweepRuns } from "../../workers/run-events.js";
 import { panePolicy } from "../../workers/pane-policy.js";
-import { endExpiredWindowNow, resumeOrphaned } from "../../workers/preempt.js";
+import { abortStuckPreemptions, endExpiredWindowNow, resumeOrphaned } from "../../workers/preempt.js";
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
@@ -699,8 +699,8 @@ export function startWorkerSupervisor(): void {
     if (isFrozen()) return;
     void timedTask("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
     void timedTask("pane-close-finished", () => closeFinishedPanes(dir)).catch(() => undefined);
-    // workers paused by a --now run that is gone (killed, crashed) go on again
-    void timedTask("preempt-sweep", async () => { endExpiredWindowNow(dir); resumeOrphaned(dir); }).catch(() => undefined);
+    // workers paused by a --now run that is gone (killed, crashed) go on again; a --now run still queued 60 s after pausing them never took their slots — the watchdog gives them back (PREEMPT-ABORT) so the queue cannot deadlock
+    void timedTask("preempt-sweep", async () => { endExpiredWindowNow(dir); abortStuckPreemptions(dir); resumeOrphaned(dir); }).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
 

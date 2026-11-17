@@ -620,8 +620,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     const queue = liveQueue(logDir, queueKey, isAlive, loaded, now(), cfg.agingMs);
     // cached for the same reason as `load`: one blocking `ps` per worker at most once a minute, not per poll
     const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPidCached;
-    // a worker paused by a --now run is queued behind the now runs: it frees its slot for them (the urgent
-    // waiter ignores it) but stays reserved against everyone else, so the freed slot never goes to a normal waiter
+    // A worker paused by a --now run frees its slot for the now runs' group only: an urgent waiter ignores
+    // such a victim, any other run still counts it as holding, so the freed slot never goes to a normal
+    // waiter. While the preemptor stays queued and never starts, the watchdog ends the pause again after
+    // PREEMPT_ABORT_MS (preempt.ts) — victims are never held for a preemptor that stays queued indefinitely.
     const urgentSelf = o.priority === "front" || madeUrgent;
     const holders = loaded.filter(
       (s) => s.id !== self.id && holds(s) && s.state === "running" && !slotLent(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),

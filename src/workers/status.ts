@@ -201,6 +201,8 @@ export interface WorkerStatus {
   className?: string;
   /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
   rerouted?: string;
+  /** Set when a queued origin was ended because its fall-through finished the work (reroute.ts endOriginContinued): the id that did it. */
+  continuedBy?: string;
   /** Hook/permission denials the run hit (capped list, see denials.ts) and their true total. */
   denials?: Denial[];
   denialCount?: number;
