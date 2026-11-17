@@ -489,7 +489,7 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   if (cmd === "sed" && process.platform === "darwin") {
     const i = args.indexOf("-i");
     const next = i >= 0 ? args[i + 1] : undefined;
-    if (next !== undefined && next !== "" && (isFlag(next) || /^[sy]([/|#,]|$)/.test(next))) return deny(SED_INPLACE_REASON);
+    if (next !== undefined && next !== "" && (isFlag(next) || /^[sy]$/.test(next) || /^[a-zA-Z][/|#,]/.test(next) || /^[\d$/\\]/.test(next) || /[;\s/{]/.test(next))) return deny(SED_INPLACE_REASON);
     // BSD sed rejects every GNU `,+N` range (`sed -n "18,+8p" f`): it fails with `invalid command code ,`, every time
     if (sedOperands(args).some(hasGnuSedRange)) return deny(GNU_SED_RANGE_REASON);
   }
