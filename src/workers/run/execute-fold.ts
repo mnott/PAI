@@ -159,7 +159,13 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   };
   saveStatus(logDir, status);
   if (adopted && a.resumeOf) markResumed(logDir, a.resumeOf, wid);
-  a.onWorkerStart?.(wid);
+  // the claude path announced its id at the queue (gateStart, execArgs.announced): on that path this id
+  // already reached the caller and must not fire twice; an ungated run (interactive) has no announce yet
+  // and fires here at its real start.
+  if (!a.announced) {
+    a.announced = true;
+    a.onWorkerStart?.(wid);
+  }
   const ledger = ledgerPath(logDir);
   appendLedger(ledger, "WORKER-START", {
     id: wid,

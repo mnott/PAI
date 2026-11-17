@@ -285,8 +285,15 @@ async function runDetached(ctx: RunContext): Promise<number> {
   }
   const argv = process.argv.slice(2);
   const args = argv.slice(argv.indexOf("run")).filter((a) => a !== "--detach" && a !== "--detach=true");
-  const id = await startDetachedWorker(logDir(), args, { cwd: process.cwd(), timeoutMs: 600_000 }); // a queued run has no id until it gets its slot
-  out(JSON.stringify({ id }));
+  // the child announces its id as soon as the id and its status are recorded (gateStart), before the
+  // capacity gate waits for a slot: this returns in seconds whether the run starts or queues at the
+  // provider's cap (2026-11-17: a capped provider held --detach past 60s and the coordinator retried,
+  // queueing the same package three times). `state` is what the status says at return.
+  const dir = logDir();
+  const id = await startDetachedWorker(dir, args, { cwd: process.cwd(), timeoutMs: 60_000 });
+  const st = loadStatus(dir, id);
+  const state: "queued" | "running" = st?.state === "queued" ? "queued" : "running";
+  out(JSON.stringify({ id, state }));
   return 0;
 }
 
@@ -342,11 +349,11 @@ const runCommand: CommandDef = {
     { name: "no-report-retry", type: "boolean", summary: "Do not ask once more when the final report is malformed" },
     { name: "orchestrate", type: "boolean", summary: "This worker plans and reviews; code edits are denied and go to local units" },
     { name: "no-merge", type: "boolean", summary: "--class orchestrate: do not wait for or join other orchestrate requests for the same repo (workers.orchestrate.mergeWindowSec)" },
-    { name: "detach", type: "boolean", summary: "Start in its own process group and return at once: prints {\"id\": \"<worker id>\"} as soon as the id exists and exits 0 without waiting; wait for it with `pai worker wait <id> --max 590` (the sanctioned way to start several children in parallel)" },
+    { name: "detach", type: "boolean", summary: "Start in its own process group and return at once: prints {\"id\": \"<worker id>\", \"state\": \"queued\"|\"running\"} as soon as the run is recorded (a run waiting for a slot returns queued), and exits 0 without waiting; wait for it with `pai worker wait <id> --max 590` (the sanctioned way to start several children in parallel)" },
   ],
   examples: [
     "pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'",
-    "pai worker run --detach --class implement --spec /tmp/a.txt   (prints {\"id\": ...}, then `pai worker wait <ids...> --max 590`)",
+    "pai worker run --detach --class implement --spec /tmp/a.txt   (prints {\"id\": ..., \"state\": \"queued\"|\"running\"} at once, then `pai worker wait <ids...> --max 590`)",
     "pai worker run --provider glm --spec /tmp/task.txt",
     "pai worker run --local -p 'Summarize the changelog'",
     "pai worker run --where cloud --model fast --now -p 'Say hi'",
@@ -362,12 +369,18 @@ const runCommand: CommandDef = {
       await applyTarget(ctx, plan);
       if (plan.kind === "run" && (await mergeOrchestrateRequests(plan.run, !flag(ctx, "no-merge")))) return 0;
       if (plan.kind === "run") rerunFromEnv(plan.run, logDir());
-      // a detached starter (startDetachedWorker) learns the id from here
+      // a detached starter (startDetachedWorker) learns the id from here; gateStart fires this at the
+      // queue and foldRun/tryPoolRun at the start, so it must be once per id (a duplicate would re-fire
+      // rerunFromEnv's hand-over and any outer wrapper's per-start link)
       if (plan.kind === "run") {
         const prev = plan.run.onWorkerStart;
+        let announcedId: string | undefined;
         plan.run.onWorkerStart = (id) => {
-          announceId(id);
-          announceRerunId(id); // a waiting reroute holds the old run until this line ran
+          if (announcedId !== id) {
+            announcedId = id;
+            announceId(id);
+            announceRerunId(id); // a waiting reroute holds the old run until this line ran
+          }
           prev?.(id);
         };
       } else {

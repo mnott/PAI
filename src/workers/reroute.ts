@@ -183,10 +183,10 @@ export function spawnSession(bin: string, args: string[], o: { cwd: string; env:
   return child.pid ?? 0;
 }
 
-/** Env naming a file the `pai worker run|resume` process writes its worker (or chain) id to the moment it exists. */
+/** Env naming a file the `pai worker run|resume` process writes its worker (or chain) id to the moment it exists and its status is recorded — a gated run announces before waiting for a slot, so a queued run answers `--detach` too. */
 export const ID_FILE_ENV = "PAI_WORKER_ID_FILE";
 
-/** Called by the CLI run/resume verbs: record the id for the detached starter (no-op without the env). */
+/** Called by the CLI run/resume verbs: record the id for the detached starter (no-op without the env). The run verb calls it once per id (gateStart fires at the queue, foldRun/tryPoolRun at the start). */
 export function announceId(id: string, env: NodeJS.ProcessEnv = process.env): void {
   const f = env[ID_FILE_ENV];
   if (f) writeFileSync(f, id);
@@ -195,7 +195,12 @@ export function announceId(id: string, env: NodeJS.ProcessEnv = process.env): vo
 /** Env naming a file `rerunFromEnv` writes the new run's id to at once: defaultSpawn waits on it before the old run is stopped. */
 export const RERUN_ID_FILE_ENV = "PAI_RERUN_ID_FILE";
 
-/** Called by the CLI run verb for a restart (no-op without the env): record this run's id for the waiting reroute. */
+/**
+ * Called by the CLI run verb for a restart (no-op without the env): record this run's id for the waiting reroute.
+ * A restart announces here only at its real start — rerunFromEnv wires this to onWorkerStart, and gateStart's
+ * queue announce skips it when PAI_RERUN_ID_FILE is set: a reroute keeps holding the old (queued) run until the
+ * new provider really started, so a restart that queues at the target's cap never gets its predecessor killed.
+ */
 export function announceRerunId(id: string, env: NodeJS.ProcessEnv = process.env): void {
   const f = env[RERUN_ID_FILE_ENV];
   if (f) writeFileSync(f, id);

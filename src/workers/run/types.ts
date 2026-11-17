@@ -220,6 +220,8 @@ export interface FinaliseArgs {
 export interface ExecuteArgs {
   /** capacity + stagger gates already passed (set by gateStart) */
   gated?: boolean;
+  /** onWorkerStart already fired for this run's id: gateStart announces at the queue (a --detach starter returns while queued), so foldRun/tryPoolRun must not announce it again. An ungated interactive run has foldRun clear it and announce at the real start. */
+  announced?: boolean;
   /** ms spent queued for a slot (set by gateStart); the deadline already moved by it. */
   queueWaitedMs?: number;
   config: ReturnType<typeof readWorkersSection>["workers"];
