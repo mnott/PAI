@@ -1,0 +1,179 @@
+/** `pai code ...`: the code graph of a repository (symbols, references, blast radius). */
+
+import { OPT, CliError, type CommandDef, type OptDef, type RunContext } from "../define.js";
+import { getStorageBackend } from "../../storage/factory.js";
+import * as cg from "../../codegraph/api.js";
+
+const root: OptDef = { name: "root", type: "string", value: "DIR", summary: "Repository root (default: the repo around the current directory)" };
+const json: OptDef = { ...OPT.json, summary: "Output raw JSON" };
+const limit: OptDef = { name: "limit", type: "number", value: "N", default: 20, summary: "Maximum results" };
+
+function rootOf(ctx: RunContext): string {
+  return cg.resolveRoot((ctx.opts.root as string | undefined) ?? process.cwd());
+}
+
+function words(ctx: RunContext, key: string): string {
+  const v = ctx.args[key];
+  const s = Array.isArray(v) ? v.join(" ") : (v ?? "");
+  if (!s.trim()) throw new CliError(`Missing ${key.toLowerCase()}`, "Run: pai code --help");
+  return s;
+}
+
+function num(v: unknown): number | undefined {
+  return v === undefined || v === "" ? undefined : Number(v);
+}
+
+function sym(h: cg.SymbolHit): string {
+  return `${h.kind} ${h.qualifiedName}  ${h.file}:${h.startLine}`;
+}
+
+function ref(h: cg.RefHit): string {
+  return `${h.file}:${h.line}  ${h.kind} ${h.symbol ? h.symbol.qualifiedName : h.name}`;
+}
+
+function print(ctx: RunContext, data: unknown, lines: string[]): void {
+  console.log(ctx.opts.json === true ? JSON.stringify(data, null, 2) : lines.length ? lines.join("\n") : "No results.");
+}
+
+export const codeCommand: CommandDef = {
+  name: "code",
+  summary: "Map a repository: symbols, callers and blast radius",
+  description:
+    "The code graph indexes a repository's definitions and references into PAI's own database (Postgres, or SQLite as fallback). " +
+    "It reads TypeScript/TSX, JavaScript, Swift and Python; other files get a file row only. " +
+    "The index is reconciled with the repo whenever you query it; nothing runs in the background.",
+  examples: ["pai code index", "pai code explore how does the router pick a provider", "pai code callers resolveRoot"],
+  seeAlso: ["pai memory search", "pai kg"],
+  subcommands: [
+    {
+      name: "index",
+      summary: "Index a repository",
+      description: "Scans the files git tracks (up to 1 MB each, skipping node_modules, dist, build and vendor) and stores their symbols and references. Only changed files are re-read unless you pass --force.",
+      args: [{ name: "ROOT", summary: "Repository root (default: the repo around the current directory)" }],
+      options: [{ name: "force", type: "boolean", default: false, summary: "Re-read every file" }, root, json],
+      examples: ["pai code index", "pai code index ~/dev/my-repo --force"],
+      seeAlso: ["pai code status"],
+      run: async (ctx) => {
+        const r = cg.resolveRoot((ctx.args.ROOT as string | undefined) ?? (ctx.opts.root as string | undefined) ?? process.cwd());
+        const s = await cg.indexRepo(await getStorageBackend(), r, { force: ctx.opts.force === true });
+        print(ctx, s, [
+          `root      ${s.root}`,
+          `backend   ${s.backend}`,
+          `files     ${s.files}`,
+          `symbols   ${s.symbols}`,
+          `refs      ${s.refs}`,
+          `resolved  ${s.resolvedRefs}`,
+          `changed   ${s.changed}`,
+          `deleted   ${s.deleted}`,
+          `time      ${s.ms} ms`,
+        ]);
+      },
+    },
+    {
+      name: "explore",
+      summary: "Answer a question about the code in one call",
+      description: "Finds the definitions that match your question or symbol names and prints their source, callers and blast radius within a token budget. Indexes the repo first if needed.",
+      args: [{ name: "QUERY", summary: "A question or symbol names", required: true, variadic: true }],
+      options: [
+        root,
+        { name: "budget", type: "number", value: "TOKENS", default: 4000, summary: "Output budget in tokens" },
+        { name: "depth", type: "number", value: "N", summary: "How far to follow calls" },
+        json,
+      ],
+      examples: ["pai code explore ensureFresh", "pai code explore where are sessions routed --budget 8000"],
+      seeAlso: ["pai code search", "pai code impact"],
+      run: async (ctx) => {
+        const backend = await getStorageBackend();
+        const r = rootOf(ctx);
+        await cg.ensureFresh(backend, r);
+        const res = await cg.explore(backend, r, words(ctx, "QUERY"), { budgetTokens: num(ctx.opts.budget), depth: num(ctx.opts.depth) });
+        console.log(ctx.opts.json === true ? JSON.stringify(res, null, 2) : res.text);
+      },
+    },
+    {
+      name: "search",
+      summary: "Find symbols by name",
+      description: "Lists definitions whose name matches the query.",
+      args: [{ name: "QUERY", summary: "Part of a symbol name", required: true, variadic: true }],
+      options: [root, limit, json],
+      examples: ["pai code search tunnel", "pai code search Storage --limit 5 --json"],
+      seeAlso: ["pai code explore"],
+      run: async (ctx) => {
+        const backend = await getStorageBackend();
+        const r = rootOf(ctx);
+        await cg.ensureFresh(backend, r);
+        const hits = await cg.searchSymbols(backend, r, words(ctx, "QUERY"), num(ctx.opts.limit));
+        print(ctx, hits, hits.map(sym));
+      },
+    },
+    {
+      name: "callers",
+      summary: "Who calls or uses a symbol",
+      description: "Lists the places that reference the named symbol.",
+      args: [{ name: "NAME", summary: "Symbol name", required: true }],
+      options: [root, limit, json],
+      examples: ["pai code callers resolveRoot", "pai code callers indexRepo --json"],
+      seeAlso: ["pai code callees", "pai code impact"],
+      run: async (ctx) => {
+        const backend = await getStorageBackend();
+        const r = rootOf(ctx);
+        await cg.ensureFresh(backend, r);
+        const hits = await cg.callers(backend, r, ctx.args.NAME as string, num(ctx.opts.limit));
+        print(ctx, hits, hits.map(ref));
+      },
+    },
+    {
+      name: "callees",
+      summary: "What a symbol calls or uses",
+      description: "Lists the references made from inside the named symbol.",
+      args: [{ name: "NAME", summary: "Symbol name", required: true }],
+      options: [root, limit, json],
+      examples: ["pai code callees explore", "pai code callees explore --json"],
+      seeAlso: ["pai code callers"],
+      run: async (ctx) => {
+        const backend = await getStorageBackend();
+        const r = rootOf(ctx);
+        await cg.ensureFresh(backend, r);
+        const hits = await cg.callees(backend, r, ctx.args.NAME as string, num(ctx.opts.limit));
+        print(ctx, hits, hits.map(ref));
+      },
+    },
+    {
+      name: "impact",
+      summary: "What a change to a symbol could break",
+      description: "Follows callers outward to the given depth and lists the affected files and symbols.",
+      args: [{ name: "NAME", summary: "Symbol name", required: true }],
+      options: [root, { name: "depth", type: "number", value: "N", default: 2, summary: "How many caller levels to follow" }, json],
+      examples: ["pai code impact resolveRoot", "pai code impact resolveRoot --depth 3"],
+      seeAlso: ["pai code callers"],
+      run: async (ctx) => {
+        const backend = await getStorageBackend();
+        const r = rootOf(ctx);
+        await cg.ensureFresh(backend, r);
+        const res = await cg.impact(backend, r, ctx.args.NAME as string, num(ctx.opts.depth));
+        print(ctx, res, [`${res.files.length} files, ${res.symbols.length} symbols`, ...res.files.map((f) => `  ${f}`), ...res.symbols.map((s) => `  ${sym(s)}`)]);
+      },
+    },
+    {
+      name: "status",
+      summary: "Show what is indexed for a repository",
+      description: "Prints the counts, languages and last index time. Does not index anything.",
+      options: [root, json],
+      examples: ["pai code status", "pai code status --json"],
+      seeAlso: ["pai code index"],
+      run: async (ctx) => {
+        const s = await cg.status(await getStorageBackend(), rootOf(ctx));
+        print(ctx, s, [
+          `root      ${s.root}`,
+          `backend   ${s.backend}`,
+          `indexed   ${s.indexed ? "yes" : "no"}`,
+          `files     ${s.files}`,
+          `symbols   ${s.symbols}`,
+          `refs      ${s.refs} (${s.resolvedRefs} resolved)`,
+          `languages ${Object.entries(s.byLanguage).map(([k, v]) => `${k} ${v}`).join(", ") || "-"}`,
+          `last run  ${s.lastIndexedAt ?? "never"}`,
+        ]);
+      },
+    },
+  ],
+};
