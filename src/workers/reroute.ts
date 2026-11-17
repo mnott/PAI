@@ -383,8 +383,8 @@ export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.Proces
 }
 
 /** Where the task text of `s` lives: its --spec file or the copy the run kept. */
-export function taskText(logDir: string, s: WorkerStatus): string {
-  const file = [s.promptFile, s.spec, join(logDir, `${s.id}.prompt`)].find((f): f is string => !!f && f !== "-" && existsSync(f));
+function taskText(s: WorkerStatus): string {
+  const file = [s.promptFile, s.spec].find((f): f is string => !!f && f !== "-" && existsSync(f));
   if (!file) throw new Error(`worker ${s.id} kept no copy of its task (started before reroute support, or from stdin) — nothing to start elsewhere`);
   return readFileSync(file, "utf8");
 }
@@ -400,7 +400,7 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   if (old.state !== "queued" && old.state !== "running") throw new Error(`worker ${id} is ${old.state}; only a queued or running worker can be rerouted`);
   const target = await (d.resolve ?? defaultResolve)(where);
   if (target.provider === old.provider) throw new Error(`worker ${id} already runs on ${old.provider}`);
-  const text = taskText(d.logDir, old);
+  const text = taskText(old);
   if (d.reason) {
     // an automatic reroute: one per origin. The marker and the fall-through are read uncached (the caller's list may be stale).
     const fresh = loadStatus(d.logDir, id);

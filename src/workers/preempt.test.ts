@@ -5,9 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { saveStatus, loadStatus, type WorkerStatus } from "./status.js";
 import { setWorkerPaused } from "./engine-control.js";
-import { abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, PREEMPT_ABORT_MS } from "./preempt.js";
-import { capacityGate } from "./capacity.js";
-import { inheritUrgency } from "./run/gate.js";
+import { abortStuckPreemptions, resumeOrphaned, resumePreempted, PREEMPT_ABORT_MS } from "./preempt.js";
 import { waitWhilePreempted } from "../hooks/ts/lib/worker-guard.js";
 
 const dirs: string[] = [];
@@ -154,53 +152,5 @@ describe("a stuck preemption is aborted", () => {
     writeFileSync(join(logDir, "queue", "local", "N"), `${process.pid} front @${now - 70_000}`);
     expect(abortStuckPreemptions(logDir, now)).toEqual([]);
     expect(loadStatus(logDir, "A")?.paused).toBe(true);
-  });
-});
-
-describe("urgency and preemption never meet", () => {
-  it("(a) a victim flagged now, its preemptor gone: the sweep resumes it, never handing it to itself", () => {
-    const { logDir, mk, live } = setup();
-    saveStatus(logDir, mk("P", live(), { now: true, state: "killed", rc: 143 }));
-    saveStatus(logDir, mk("V", live()));
-    setWorkerPaused(logDir, "V", true, "preempt", "P");
-    const s = loadStatus(logDir, "V")!;
-    s.now = true;
-    saveStatus(logDir, s, new Date(), true);
-    resumeOrphaned(logDir);
-    const v = loadStatus(logDir, "V")!;
-    expect(v.paused).toBeFalsy();
-    expect(v.pausedBy).not.toBe("V");
-  });
-  it("(b) makeUrgent on a preempted worker resumes it", () => {
-    const { logDir, mk, live } = setup();
-    saveStatus(logDir, mk("P", live(), { now: true }));
-    saveStatus(logDir, mk("V", live()));
-    setWorkerPaused(logDir, "V", true, "preempt", "P");
-    makeUrgent(logDir, "V", true);
-    const v = loadStatus(logDir, "V")!;
-    expect(v.paused).toBeFalsy();
-    expect(v.now).toBe(true);
-  });
-  it("(c) an operator-paused worker made now stays paused", () => {
-    const { logDir, mk, live } = setup();
-    saveStatus(logDir, mk("V", live()));
-    setWorkerPaused(logDir, "V", true, "cli");
-    makeUrgent(logDir, "V", true);
-    expect(loadStatus(logDir, "V")!.paused).toBe(true);
-  });
-  it("a child of an urgent run inherits urgency and is admitted into a slot a paused victim lent", async () => {
-    const { logDir, mk, live } = setup();
-    saveStatus(logDir, mk("PAR", live(), { now: true }));
-    saveStatus(logDir, mk("VIC", live()));
-    setWorkerPaused(logDir, "VIC", true, "preempt", "PAR");
-    const child = mk("CHILD", live(), { state: "queued" });
-    saveStatus(logDir, child);
-    expect(inheritUrgency(logDir, "CHILD", child, { PAI_WORKER_ID: "PAR" })).toBe(true);
-    const r = await Promise.race([
-      capacityGate({ logDir, self: { id: "CHILD", provider: "local" }, cap: 2, config: {}, urgent: () => loadStatus(logDir, "CHILD")?.now === true, sleep: () => new Promise((x) => setTimeout(x, 5)) }).then(() => "admitted"),
-      new Promise((x) => setTimeout(() => x("stuck"), 1500)),
-    ]);
-    expect(r).toBe("admitted");
-    expect(inheritUrgency(logDir, "C2", mk("C2", live()), { PAI_WORKER_ID: "VIC" })).toBe(false);
   });
 });

@@ -81,7 +81,7 @@ export function createOperatorServer(
 export function appendToQueuedSpec(logDir: string, id: string, text: string): string {
   const status = loadStatus(logDir, id);
   if (!status) throw new Error(`no worker named "${id}"`);
-  const file = [status.promptFile, status.spec, join(logDir, `${status.id}.prompt`)].find((f): f is string => !!f && f !== "-" && existsSync(f));
+  const file = [status.promptFile, status.spec].find((f): f is string => !!f && f !== "-" && existsSync(f));
   if (!file) throw new Error(`worker ${id} kept no copy of its task (started from stdin, or before prompt copies) — nothing to append to`);
   const hhmm = new Date().toTimeString().slice(0, 5);
   appendFileSync(file, `\n\n--- added before start (${hhmm}) ---\n${text}\n`, "utf8");

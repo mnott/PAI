@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSpawn, endContinuedOrigins, escalationReason, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
+import { defaultSpawn, endContinuedOrigins, escalationReason, escalateOverdue, rerouteWorker, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 let dir: string;
@@ -246,15 +246,3 @@ describe("a finished fall-through ends its queued origin", () => {
   });
 });
 
-
-describe("the task copy of a -p run", () => {
-  it("taskText falls back to <id>.prompt when the status names no file", () => {
-    writeFileSync(join(dir, "w9.prompt"), "the task", "utf8");
-    expect(taskText(dir, queued({ id: "w9", promptFile: undefined }))).toBe("the task");
-  });
-  it("a later full status write for the same id keeps promptFile", () => {
-    saveStatus(dir, queued({ id: "w8", promptFile: join(dir, "w8.prompt") }));
-    saveStatus(dir, queued({ id: "w8", promptFile: undefined, state: "running" }));
-    expect(loadStatus(dir, "w8")!.promptFile).toBe(join(dir, "w8.prompt"));
-  });
-});

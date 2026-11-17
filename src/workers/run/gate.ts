@@ -31,7 +31,6 @@ import {
   markStartFailed,
   nowStamp,
   selfProcStart,
-  isLive,
 } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";
 import { paneHandles } from "./pane-handles.js";
@@ -658,22 +657,6 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
   }
 }
 
-/**
- * A run started from inside an urgent worker's tree (its PAI_WORKER_ID) is urgent too: the parent waits on it, and a
- * slot an urgent run freed (a paused victim's) is lent to urgent runs only. The ancestor is never paused: preemptLocal skips urgent runs.
- */
-export function inheritUrgency(logDir: string, wid: string, status: WorkerStatus, env: NodeJS.ProcessEnv): boolean {
-  if (status.now) return false;
-  const parentId = env.PAI_WORKER_ID;
-  const parent = parentId && parentId !== wid ? loadStatus(logDir, parentId) : undefined;
-  if (!parent?.now || !isLive(parent)) return false;
-  if (parent.nowFrom) status.nowFrom = { until: parent.nowFrom.until, prev: status.priority ?? "normal" };
-  status.now = true;
-  status.priority = "high";
-  saveStatus(logDir, status);
-  return true;
-}
-
 async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, aborted: () => boolean): Promise<void> {
   const { logDir, target, config } = a;
   const saved = status.last;
@@ -695,7 +678,6 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
     status.priority = "high";
     saveStatus(logDir, status);
   }
-  inheritUrgency(logDir, wid, status, process.env);
   const gate: CapacityOpts = {
     logDir,
     self: { id: wid, provider: target.providerName },
