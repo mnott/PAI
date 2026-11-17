@@ -54,6 +54,54 @@ describe("nodeOnTypeScriptReason", () => {
   it("should allow node -e with no src import", () => {
     expect(nodeOnTypeScriptReason("node -e \"require('fs')\"")).toBeNull();
   });
+
+  // Regression: worker 20261117-022500-23088 (AIBroker) denied 2026-11-17T01:25:38Z for its own test-runner form.
+  const aibrokerTestScript = "tsx --experimental-test-module-mocks --import ./test/home-guard.ts --test test/*.test.ts";
+  it("allows the full reproduced AIBroker command (with the repo's tsx test script)", () => {
+    const denied = `git stash push -q -m w1 -- src/transport/sync-facade.ts; npx tsx --import ./test/home-guard.ts --test test/sync-facade-refresh.test.ts 2>&1 | grep -E "^# (pass|fail)|RangeError" | head -3; git stash pop -q; git diff --stat | tail -1
+npm run build 2>&1 | tail -2; npx tsc --noEmit && echo tscok; npm test 2>&1 | grep -E "^# (tests|pass|fail)"
+AIBROKER_TRANSPORT=tmux node --import ./test/home-guard.ts --test dist/../test/sync-facade-refresh.test.ts >/dev/null 2>&1; ls dist/transport/sync-facade.js`;
+    expect(nodeOnTypeScriptReason(denied, aibrokerTestScript)).toBeNull();
+  });
+
+  it("allows npx tsx with --experimental-test-module-mocks and .ts args", () => {
+    expect(nodeOnTypeScriptReason("npx tsx --experimental-test-module-mocks --import ./test/home-guard.ts --test test/a.test.ts")).toBeNull();
+  });
+
+  it("denies node --test on a .ts file without a tsx loader", () => {
+    expect(nodeOnTypeScriptReason("node --test test/a.test.ts")).toBe("node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.");
+  });
+
+  it("allows every tsx invocation form with --test and .ts args", () => {
+    for (const c of [
+      "tsx src/app.ts",
+      "node --import tsx --test test/a.test.ts",
+      "node --loader tsx test/a.test.ts",
+      "node --import=tsx test/a.test.ts",
+      "node -r tsx/cjs test/a.test.ts",
+      "node --import tsx --import ./test/home-guard.ts --test test/a.test.ts",
+    ]) expect(nodeOnTypeScriptReason(c)).toBeNull();
+  });
+
+  it("allows the npx tsx segment alone (its .ts flag values are preload scripts)", () => {
+    expect(nodeOnTypeScriptReason("npx tsx --import ./test/home-guard.ts --test test/sync-facade-refresh.test.ts")).toBeNull();
+  });
+
+  it("denies a bare node --import <script>.ts run without the repo's tsx test script", () => {
+    expect(nodeOnTypeScriptReason("AIBROKER_TRANSPORT=tmux node --import ./test/home-guard.ts --test dist/../test/sync-facade-refresh.test.ts >/dev/null 2>&1")).toBe("node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.");
+  });
+
+  it("allows that same node segment when the repo's test script runs tsx", () => {
+    expect(nodeOnTypeScriptReason("AIBROKER_TRANSPORT=tmux node --import ./test/home-guard.ts --test dist/../test/sync-facade-refresh.test.ts >/dev/null 2>&1", aibrokerTestScript)).toBeNull();
+  });
+
+  it("denies plain node on .ts even when the repo's test script runs tsx", () => {
+    expect(nodeOnTypeScriptReason("node src/app.ts", aibrokerTestScript)).toBe("node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`.");
+  });
+
+  it("allows git stash push with .ts pathspecs in any command", () => {
+    expect(nodeOnTypeScriptReason("git stash push -q -m w1 -- src/transport/sync-facade.ts")).toBeNull();
+  });
 });
 
 describe("tscFileArgReason", () => {

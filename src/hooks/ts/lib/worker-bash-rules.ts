@@ -74,58 +74,130 @@ function rebase(p: string, dir: string): string {
 }
 
 
+/** node flags that take a separate value word: the next word is the flag's argument, not a file. */
+const NODE_VALUE_FLAGS = new Set(["--import", "--experimental-loader", "--loader", "-r", "--require", "-c", "--conditions", "--env-file", "--permissions"]);
+
+/** True when `w` names the tsx loader: bare `tsx`, an alias like `tsx/esm`, or a path into a tsx package. */
+function isTsxName(w: string): boolean {
+  return w === "tsx" || w.startsWith("tsx/") || /(^|\/)tsx(\/|$)/.test(w);
+}
+
+/** True when the command word is tsx, or node carrying a tsx loader flag (--import tsx / --loader=tsx / -r tsx). */
+function runsTsx(cmd: string, rest: string[]): boolean {
+  if (cmd === "tsx") return true;
+  if (cmd !== "node") return false;
+  for (let j = 0; j < rest.length; j++) {
+    const w = rest[j];
+    if (w === "--import" || w === "--loader" || w === "-r" || w === "--experimental-loader") {
+      if (j + 1 < rest.length && isTsxName(rest[j + 1])) return true;
+      continue;
+    }
+    if (w.startsWith("--import=") || w.startsWith("--loader=")) {
+      const v = w.slice(w.indexOf("=") + 1);
+      if (isTsxName(v) || /(^|\/)tsx(\.|$)/.test(v)) return true;
+    }
+  }
+  return false;
+}
+
+/** Commands that never load a source file themselves: chains around a test runner in a tsx-test repo. */
+const INERT_COMMANDS = new Set(["grep", "egrep", "fgrep", "rg", "head", "tail", "cat", "sort", "uniq", "wc", "cut", "tr", "ls", "echo", "printf", "true", "false", "test", "[", "[[", "sed", "awk"]);
+/** Package managers and build tools: run their own code, never a worker's .ts file (inert in a tsx-test repo). */
+const TOOL_COMMANDS = new Set(["npm", "npx", "pnpm", "yarn", "bun", "node_modules/.bin/tsc", "./node_modules/.bin/tsc"]);
+
+/** True when the segment is inert in a tsx-test repo: a shell utility, a package manager or build tool (`npm run build`, `npx tsc --noEmit`), or a git pathspec command. Plain node segments are NOT inert here — only the runner form (--test with a preload script) gets the exemption below; `node x.ts` stays denied. */
+function isInertSegment(cmd: string, rest: string[]): boolean {
+  return INERT_COMMANDS.has(cmd) || TOOL_COMMANDS.has(cmd) || cmd === "env" || isGitPathspecCommand(cmd, rest);
+}
+
+/** True when a plain-node segment matches the repo's tsx test script (`tsx --import ./test/home-guard.ts --test …`): `node --import ./test/home-guard.ts --test x.test.ts` is that runner under env/var prefixes. */
+function matchesTestScriptRunner(rest: string[], testScript: string): boolean {
+  if (!rest.includes("--test")) return false;
+  const scriptFlags = new Set(testScript.split(/\s+/).filter((w) => w.startsWith("-") && !w.includes("=")));
+  for (const f of rest) {
+    if (f === "--test") continue;
+    if (!f.startsWith("-")) break; // flags end at the first positional
+    const base = f.split("=")[0];
+    if (base === "--import" || base === "--loader" || base === "-r" || base === "--experimental-loader") {
+      if (!scriptFlags.has(base)) return false;
+      break; // its .ts value is the preload script: the form matches
+    }
+    if (!scriptFlags.has(base)) return false;
+  }
+  return true;
+}
+
+/** True when the segment runs a git command whose operands are pathspecs, not source files: `git stash` (push/pop/… with .ts paths), `git add`/`rm`/`mv`/`checkout`/`restore`/`diff`. */
+function isGitPathspecCommand(cmd: string, rest: string[]): boolean {
+  if (cmd !== "git") return false;
+  let j = 0;
+  while (j < rest.length && rest[j].startsWith("-")) {
+    if ((rest[j] === "-C" || rest[j] === "-c") && j + 1 < rest.length) j += 2;
+    else j += 1;
+  }
+  const sub = rest[j];
+  return sub === "stash" || sub === "add" || sub === "rm" || sub === "mv" || sub === "checkout" || sub === "restore" || sub === "diff";
+}
+
 /** Returns exactly "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`." when any segment (after prefix strip) is:
- * - `node` (not `tsx`, not `npx tsx`) whose positional (non-flag) first argument ends in `.ts` or `.tsx` or `.mts`;
- * - `node --test` (flag --test present) with any argument ending in `.ts`;
+ * - `node` without a tsx loader whose positional argument ends in `.ts`/`.tsx`/`.mts` (`node --test x.ts` included);
  * - `node -e <code>` or `node --eval <code>` or `node -p <code>` where the code string contains `require(` or `import(` or `from "` / `from '` of a path that contains `src/` and ends in `.js` or `.ts` (regex like /(?:require|import)\s*\(?\s*['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/ or `from ['"][^'"]*src/[^'"]*\.(?:js|ts)['"]`).
  * Note parseCommand already removes quotes, so the -e code arrives as one word.
  * Must NOT trigger for: `node scripts/build-hooks.mjs`, `node dist/x.js`, `npx tsx foo.ts`, `node -e "console.log(1)"`, `node --version`.
+ * tsx loads TypeScript, so every tsx form passes in any segment: bare `tsx x.ts`, `npx tsx … --test x.test.ts`, `node --import tsx …`, `node --loader tsx …`. The AIBroker test-runner form denied 2026-11-17 (`git stash push -q -m w1 -- src/x.ts; npx tsx --import ./test/home-guard.ts --test x.test.ts …`) passes on both counts: the `npx tsx` segment already skipped its `.ts` flag values (a preload script is not a plain-node file argument), and git operands ending in `.ts` are pathspecs (`git stash`/`add`/`diff` …).
+ * A package's own test runner is allowed too: when the tree's package.json `scripts.test` runs tsx (AIBroker's `tsx --import ./test/home-guard.ts --test …`) — pass it as `testScript` — a command whose every segment is inert, a tsx run or a plain node run passes; its third line `node --import ./test/home-guard.ts --test x.test.ts` would otherwise read as plain node on TypeScript.
  */
-export function nodeOnTypeScriptReason(command: string): string | null {
+export function nodeOnTypeScriptReason(command: string, testScript?: string | null): string | null {
   const segments = parseCommand(command);
+  // the project runs its own tests through tsx: any segment that is inert or runs tsx/node is that runner
+  const repoRunsTsx = !!testScript && /\btsx\b/.test(testScript);
   for (const segment of segments) {
     const words = segment.words;
     if (words.length === 0) continue;
 
-    let i = commandStart(words, [...WRAPPERS, "npx"]);
-
+    let i = commandStart(words, [...WRAPPERS, "npx", "pnpm", "bun"]);
+    if (i >= words.length) continue;
+    // reach the command word past npx/pnpm-exec flags (`npx --no-install tsc`)
+    if (words[i] === "npx" || (words[i] === "pnpm" && words[i + 1] === "exec")) {
+      let j = i + 1;
+      while (j < words.length && words[j].startsWith("-")) j++;
+      if (j < words.length) i = j;
+    }
     if (i >= words.length) continue;
 
     const cmd = words[i];
-    if (cmd === "node") {
-      // Check if this is `npx tsx` or `tsx`
-      if (i > 0 && words[i - 1] === "npx" && words[i + 1] === "tsx") {
+    const rest = words.slice(i + 1);
+    // tsx runs TypeScript: bare tsx, or node carrying a tsx loader (--import tsx / --loader=tsx / -r tsx)
+    if (runsTsx(cmd, rest)) continue;
+    // git operands ending in .ts are pathspecs, not source to load (`git stash push -m w1 -- src/x.ts`)
+    if (isGitPathspecCommand(cmd, rest)) continue;
+    // a tsx-running repo's own test command chains package managers, build tools and shell utilities around its runner: those segments never load the worker's .ts
+    if (repoRunsTsx && isInertSegment(cmd, rest)) continue;
+
+    if (cmd !== "node") continue;
+
+    // node -e, node --eval, node -p with code that requires/imports src files
+    if (rest[0] === "-e" || rest[0] === "--eval" || rest[0] === "-p") {
+      const code = rest[1];
+      if (code && (/(?:require|import)\s*\(\s*['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code) || /from\s+['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code))) {
+        return NODE_ON_TS_REASON;
+      }
+      continue;
+    }
+
+    // positional arguments: walk the flags, skipping each value-taking flag's own argument. The old scan treated `--import ./x.ts` as a plain .ts file argument and denied tsx-preloaded node runs (observed 2026-11-17, worker 20261117-022500-23088).
+    for (let j = 0; j < rest.length; j++) {
+      const w = rest[j];
+      if (w === "--") break; // after -- node passes the rest to the script, not itself: nothing left that node loads as .ts here
+      if (w.startsWith("-")) {
+        const base = w.split("=")[0];
+        if (!w.includes("=") && NODE_VALUE_FLAGS.has(base)) j++; // value is the next word, not a file arg
         continue;
       }
-
-      // Check for `node --test` with .ts argument
-      if (words[i + 1] === "--test") {
-        const args = words.slice(i + 2);
-        for (const arg of args) {
-          if (arg.endsWith(".ts") && !arg.endsWith(".mjs")) {
-            return NODE_ON_TS_REASON;
-          }
-        }
-        continue;
-      }
-
-      // Check for node -e, node --eval, node -p with code that requires/import src files
-      if (words[i + 1] === "-e" || words[i + 1] === "--eval" || words[i + 1] === "-p") {
-        const code = words[i + 2];
-        if (code && (/(?:require|import)\s*\(\s*['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code) || /from\s+['"][^'"]*src\/[^'"]*\.(?:js|ts)['"]/.test(code))) {
-          return NODE_ON_TS_REASON;
-        }
-        continue;
-      }
-
-      // Check for node with .ts/.tsx/.mts file argument
-      const args = words.slice(i + 1);
-      for (const arg of args) {
-        if (arg.endsWith(".ts") || arg.endsWith(".tsx") || arg.endsWith(".mts")) {
-          // Skip cases that are allowed
-          if (arg.endsWith(".mjs") || arg.endsWith(".js")) continue;
-          return NODE_ON_TS_REASON;
-        }
+      if (/\.(ts|tsx|mts)$/.test(w)) {
+        // in a tsx-test repo this node segment may be the package's own runner form (`node --import ./test/home-guard.ts --test x.test.ts`); `node x.ts` matches no test script and stays denied
+        if (repoRunsTsx && testScript && matchesTestScriptRunner(rest, testScript)) break;
+        return NODE_ON_TS_REASON;
       }
     }
   }
