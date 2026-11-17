@@ -103,3 +103,5 @@ pai now clear chat-7
 
 Run `pai help <command>` to read any of these in the terminal.
 
+
+Urgent workers never pause each other, which gives two rules. A worker started from inside an urgent worker's tree (the urgent run's own children) inherits `now`, so it can use the slots its paused victims freed instead of queuing behind them (the parent waits on it); it never pauses its ancestor. Making a worker that a preemption has paused `now` (`pai worker priority <id> now`) resumes it (ledger `WORKER-RESUME who=priority-now`); a pause the operator set stays, and a sweep never hands a victim to itself.
