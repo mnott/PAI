@@ -300,8 +300,12 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
     }
     qline.show(q);
   };
+  // NOT unref'd: a worker's `pai build lock` re-runs itself as the pane command and its pane waits here
+  // while the caller sits in the provider-slot queue; an unref'd timer lets the wrapper's event loop go
+  // empty before the connect resolve ever fires, so it exits silently with no exit file and the caller
+  // reads "its wrapper did not connect" (2026-11-16/17: every failure carried reason "no caller", i.e.
+  // the wrapper was alive at hello but gone by the caller's 20 s check — exactly this window)
   const queuedWatch = setInterval(() => drawQueued(), d.queuedPollMs ?? 2000);
-  queuedWatch.unref();
   drawQueued();
 
   const sock = await connect(d.sock ?? sockPath(id), d.connectMs ?? panePolicy().connectMs);
@@ -647,9 +651,11 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   } catch (e) {
     return fail(e instanceof Error ? e : new Error(String(e)));
   }
+  // the hello timer stays ref'd: while it runs this caller has live work (the pane's wrapper may still
+  // come up), and a ref'd timer is what keeps an idle caller awake to read the connection
   const s = await Promise.race([
     connected,
-    new Promise<null>((r) => setTimeout(() => r(null), o.helloMs ?? panePolicy().helloWaitMs).unref()),
+    new Promise<null>((r) => setTimeout(() => r(null), o.helloMs ?? panePolicy().helloWaitMs)),
   ]);
   if (!s) return fail(new Error(`pane opened (${where}) but its wrapper did not connect`));
   rmQuiet(sockPath(o.id));
@@ -710,10 +716,13 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   });
   s.on("close", lost);
   s.on("error", () => undefined);
+  // ref'd, not unref'd: the caller parks in the provider-slot queue between hello and start with no other
+  // live work; an unref'd watcher lets the loop go empty, node exits, the socket closes, the wrapper's
+  // connect resolve never fires — "its wrapper did not connect" (2026-11-16/17: every failure carried the
+  // wrapper's exit reason "no caller", i.e. the wrapper was alive at hello and gone by the caller's check)
   const watch = setInterval(() => {
     if (wrapper && !pidAlive(wrapper)) lost();
   }, 1000);
-  watch.unref();
   const pane: OwnedPane = {
     id: o.id,
     where,

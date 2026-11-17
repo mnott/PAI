@@ -45,7 +45,7 @@ See also: `pai worker ps`, `pai worker follow`, `pai build run`
 Internal: the wrapper a pane runs; owns the process started in it
 
 ```
-pai pane exec ID
+pai pane exec ID [options]
 ```
 
 The command of every pane PAI opens for a process it starts (a worker, a plan runner, `pai pane run`). It connects to the starting `pai` process, which sends the real command; the wrapper runs it as its child, shows its output in the pane, writes <PAI home>/state/pane-exec/<id>.exit (exit code + end time) and exits when the child exits, so the pane closes with the process. If the starting process goes away, the child is killed. Not for direct use.
@@ -53,6 +53,10 @@ The command of every pane PAI opens for a process it starts (a worker, a plan ru
 | Argument | Required | Description |
 |---|---|---|
 | `ID` | yes | Run id the starting process listens for |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--sock PATH` | string | — | Internal: the caller's socket path (the pane's command line carries it; the wrapper never recomputes one from its own env) |
 
 ```sh
 pai pane exec pane-20260101-0000-ab12
