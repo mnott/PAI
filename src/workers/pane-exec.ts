@@ -22,7 +22,7 @@ import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { paiHomePath } from "../config/pai-home.js";
@@ -40,15 +40,46 @@ export const exitFilePath = (id: string): string => join(paneExecDir(), `${id}.e
 export const recordPath = (id: string): string => join(paneExecDir(), `${id}.json`);
 /** The caller's queue file beside the launch record: what the pane shows while the run waits for a provider slot. */
 export const queuedPath = (id: string): string => queuedFilePath(paneExecDir(), id);
-/** Unix socket path; the home path is hashed into /tmp when it would exceed the sockaddr limit. */
-export function sockPath(id: string): string {
-  const p = join(paneExecDir(), `${id}.sock`);
-  return p.length < 100 ? p : join(tmpdir(), `pai-pe-${createHash("sha1").update(p).digest("hex").slice(0, 12)}.sock`);
+/** The socket path for a run id in an arbitrary env (tests); production callers use sockPath(id), which reads process.env. */
+export function sockPathIn(env: NodeJS.ProcessEnv, id: string): string {
+  const home = env.PAI_HOME || join(env.HOME || homedir(), ".pai");
+  const p = join(home, "state", "pane-exec", `${id}.sock`);
+  if (p.length < 100) return p;
+  // hashed into the SYSTEM temp dir: tmpdir() honours TMPDIR, and a worker's TMPDIR is its long per-run
+  // scratch dir — hashing there names a path the pane's wrapper (login env, no caller TMPDIR) cannot recompute
+  let sysTmp = "/tmp";
+  try {
+    const saved = env.TMPDIR;
+    delete env.TMPDIR;
+    sysTmp = tmpdir();
+    if (saved !== undefined) env.TMPDIR = saved;
+  } catch {
+    /* /tmp */
+  }
+  return join(sysTmp, `pai-pe-${createHash("sha1").update(p).digest("hex").slice(0, 12)}.sock`);
 }
 
-/** The pane's command line: one exec-able line, no shell syntax (see followCommand). */
-export function paneExecCommand(id: string, node = process.execPath, cli = process.argv[1] ?? "pai"): string {
-  return `${node} ${cli.endsWith("pai") || cli.endsWith(".mjs") || cli.endsWith(".js") ? cli : "pai"} pane exec ${id}`;
+/**
+ * Unix socket path. A long PAI-home path is hashed into the SYSTEM temp dir, never into this process's
+ * TMPDIR: a worker's TMPDIR is its per-run scratch (scratch.ts), and if the hash landed there the pane's
+ * wrapper — which starts with the login env and cannot know the caller's TMPDIR — would compute a
+ * different path and never connect (2026-11-17: every `pai build lock` from a worker failed "its wrapper
+ * did not connect"). The absolute path travels to the wrapper in its command line (paneExecCommand), so
+ * caller and wrapper agree on one path whatever either env holds.
+ */
+export function sockPath(id: string): string {
+  return sockPathIn(process.env, id);
+}
+
+/** One command-line argument, single-quoted only when it holds characters outside the safe set (pane.ts's rule; kept here so pane-exec stays importable without pane.ts). */
+export function quoteArg(s: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The pane's command line: one exec-able line, no shell syntax (see followCommand). The socket path travels in it (--sock): the pane starts with the login env, not the caller's, so the wrapper must never recompute it. */
+export function paneExecCommand(id: string, node = process.execPath, cli = process.argv[1] ?? "pai", sock = sockPath(id)): string {
+  const prog = `${node} ${cli.endsWith("pai") || cli.endsWith(".mjs") || cli.endsWith(".js") ? cli : "pai"}`;
+  return `${prog} pane exec ${id} --sock ${quoteArg(sock)}`;
 }
 
 export interface ExitRecord {
@@ -198,6 +229,8 @@ export interface ExecDeps {
   queuedDir?: string;
   /** How often the wrapper re-reads the queue file while it waits for the start frame. */
   queuedPollMs?: number;
+  /** The caller's socket path (the pane's command line passes `--sock`); default: recomputed from this env — only a same-env fallback, never rely on it across a pane boundary. */
+  sock?: string;
 }
 
 /** Longest the wrapper waits for its pane to be closed before it ends anyway. */
@@ -271,7 +304,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   queuedWatch.unref();
   drawQueued();
 
-  const sock = await connect(sockPath(id), d.connectMs ?? panePolicy().connectMs);
+  const sock = await connect(d.sock ?? sockPath(id), d.connectMs ?? panePolicy().connectMs);
   if (!sock) {
     clearInterval(queuedWatch);
     drawQueued(true); // the pane waited on a queue that will never start: clear the line

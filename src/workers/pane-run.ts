@@ -162,7 +162,8 @@ export interface PaneRunOptions {
   logDir: string;
   /**
    * Opens the pane that owns the run `id` (the launcher). null: no pane (no terminal, or already inside one),
-   * the command runs directly. A rejection fails the run: the command does not run unseen.
+   * the command runs directly. A rejection is not a failure: the pane did not come up, so the command runs
+   * directly too — output to the same log and the caller's streams, exit code the command's own.
    */
   launch: (id: string) => Promise<OwnedPane | null>;
   env?: NodeJS.ProcessEnv;
@@ -203,11 +204,13 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
   try {
     pane = await o.launch(id);
   } catch (e) {
+    // a pane that will not open or connect never stops the command: it runs directly, output to the same
+    // log and to the caller (2026-11-17: a wrapper that never connected failed `pai build lock` unseen).
+    // The "a run does not start unseen" rule is for worker runs; a pane-run command is not refused here.
     const why = e instanceof Error ? e.message : String(e);
-    err(`[pai pane] ${id}: pane could not be opened (${why}); the command did not run`);
-    appendFileSync(logFile, `[not run: ${why}]\n`, "utf8");
-    writePaneRunStatus(o.logDir, { ...status, state: "failed", exit: 1 });
-    return 1;
+    err(`[pai pane] ${id}: pane did not connect (${why}); running directly`);
+    appendFileSync(logFile, `[pane did not connect: ${why}; running directly]\n`, "utf8");
+    pane = null;
   }
   err(`[pai pane] ${id}: ${pane ? pane.where : "no pane (no terminal or already in one); running directly"}`);
 
