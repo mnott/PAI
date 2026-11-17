@@ -1872,6 +1872,126 @@ export function isTestPath(file: string): boolean {
   return /\.(test|spec)\./.test(file) || /(^|\/)(__tests__|tests?)\//.test(file);
 }
 
+/** A `…`-quoted span on the added line, outside string literals and comments; an odd count means the last backtick opened a span running to end of line. Backticks after a line comment are code (template literals), not doc prose. */
+function inBacktickSpan(content: string, matchStart: number): boolean {
+  let str = ""; // the open " ' literal, if any
+  let open = -1; // the unclosed doc backtick, if any
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (str) {
+      if (c === "\\") i++;
+      else if (c === str) str = "";
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      str = c;
+      continue;
+    }
+    // a line comment before the next backtick opens: the rest of the line is code context, not doc prose
+    if (c === "/" && content[i + 1] === "/") break;
+    if (c === "`") {
+      if (open === -1) open = i;
+      else {
+        if (matchStart >= open && matchStart <= i) return true;
+        open = -1;
+      }
+      continue;
+    }
+    if (c === "/" && content[i + 1] === "*") {
+      const end = content.indexOf("*/", i + 2);
+      if (matchStart >= i && (end === -1 || matchStart <= end)) return true;
+      if (end !== -1) i = end + 1;
+      else break;
+    }
+  }
+  // a TODO placeholder inside a line comment is the stub itself, whatever template literals sit before it
+  if (lineCommentStart(content) !== -1 && matchStart >= lineCommentStart(content)! && /^TODO: implement\b/.test(content.slice(matchStart))) return false;
+  return open !== -1 && matchStart >= open;
+}
+
+/** A // comment on the added line, outside string literals and backtick spans. */
+function inLineComment(content: string, matchStart: number): boolean {
+  let str = ""; // the open " ' ` literal, if any
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (str) {
+      if (c === "\\") i++;
+      else if (c === str) str = "";
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      str = c;
+      continue;
+    }
+    if (c === "/" && content[i + 1] === "/") return matchStart >= i; // a line comment runs to end of line
+  }
+  return false;
+}
+
+/** The first `//` on the added line, outside string literals and backtick spans. */
+function lineCommentStart(content: string): number {
+  let str = ""; // the open " ' literal, if any
+  let bt = false; // inside a `…` doc span (backticks toggle; an odd count leaves it open to end of line)
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (str) {
+      if (c === "\\") i++;
+      else if (c === str) str = "";
+      continue;
+    }
+    if (bt && c === "`") {
+      bt = false;
+      continue;
+    }
+    if (!bt && c === "`") {
+      bt = true;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      str = c;
+      continue;
+    }
+    if (c === "/" && content[i + 1] === "/") return i;
+  }
+  return -1;
+}
+
+/**
+ * A string literal on the added line that quotes two or more of the stub patterns: help text and docs
+ * describing the scan list them together (the merge command's own help line once failed the scan it
+ * describes). The quote chars themselves count as part of the quoted text, so a pattern whose closing
+ * quote is escaped (`\"not implemented`) still reads as quoted. Real code holds one stub per line.
+ */
+function quotesStubPatterns(content: string): boolean {
+  let literals = "";
+  for (const q of ['"', "'", "`"]) {
+    let i = content.indexOf(q);
+    while (i !== -1) {
+      const end = content.indexOf(q, i + 1);
+      literals += content.slice(i, end === -1 ? content.length : end + 1); // unterminated: to end of line
+      i = end === -1 ? -1 : content.indexOf(q, end + 1);
+    }
+  }
+  // the three patterns as plain substrings, so a "//" inside a quoted pattern is not mistaken for a comment
+  const quoted = ["TODO: implement", "TODO: Implement", "Promise.resolve(0)", 'throw new Error("not implemented', "throw new Error('not implemented"].filter((p) => literals.includes(p)).length;
+  return quoted >= 2;
+}
+
+/** An added diff line the scan flags: matches STUB_PATTERN outside backticks and multi-pattern documentation strings. */
+export function stubHitLine(content: string): boolean {
+  const m = STUB_PATTERN.exec(content);
+  if (!m) return false;
+  // the TODO placeholder is "TODO: implement" (lowercase i): a match opening its own line comment
+  // ("// TODO: implement", "code; // TODO: implement") IS that stub. The comment opens at or one space
+  // after "//", and only whitespace or a template literal precedes it ("f(`x`); // TODO: implement"), so
+  // a trailing "// TODO: implement later" on a code line (or any mention deeper in a comment, e.g. inside
+  // backticks) does not read as a placeholder; a capital-I "TODO: Implement" never does either.
+  const cIdx = lineCommentStart(content);
+  const todoPlaceholder = /^TODO: implement$/.test(m[0]) && cIdx !== -1 && (m.index === cIdx + 2 || m.index === cIdx + 3) && (/^[\s*/]*$/.test(content.slice(0, cIdx)) || /^[^\r\n`]*`[^`\r\n]*`[^\r\n]*$/.test(content.slice(0, cIdx)));
+  if (todoPlaceholder) return true; // a TODO placeholder is the stub itself, whatever template literals sit before it on the line
+  return !(inBacktickSpan(content, m.index) || inLineComment(content, m.index) || quotesStubPatterns(content));
+}
+
 export function scanDiffForStub(diff: string): string | null {
   let file = "";
   let line = 0;
@@ -1879,7 +1999,7 @@ export function scanDiffForStub(diff: string): string | null {
     if (l.startsWith("+++ ")) file = l.slice(4).replace(/^b\//, "");
     else if (l.startsWith("@@")) line = parseInt(/\+(\d+)/.exec(l)?.[1] ?? "0", 10);
     else if (l.startsWith("+")) {
-      if (!isTestPath(file) && STUB_PATTERN.test(l)) return `${file}:${line}`;
+      if (!isTestPath(file) && stubHitLine(l.slice(1))) return `${file}:${line}`;
       line++;
     }
   }
