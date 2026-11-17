@@ -332,7 +332,7 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
         for (const c of named(node)) {
           const t: string = c.type;
           if (t === "extends_clause") { const v = c.childForFieldName("value"); if (v) refs.push({ fromSymbolIndex, toName: v.text.split("<")[0], kind: "extends", line }); }
-          else if (t === "implements_clause") for (const x of named(c)) if (x.text) refs.push({ fromSymbolIndex, toName: x.text.split("<")[0], kind: "implements", line });
+          else if (t === "implements_clause") { for (const x of named(c)) if (x.text) refs.push({ fromSymbolIndex, toName: x.text.split("<")[0], kind: "implements", line }); }
           else if (t === "identifier") refs.push({ fromSymbolIndex, toName: c.text, kind: "extends", line });
         }
       } else if (node.type === "import_statement") {
