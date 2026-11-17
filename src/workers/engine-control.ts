@@ -59,9 +59,14 @@ export function setWorkerPriority(logDir: string, id: string, level: EnginePrior
 export function setWorkerPaused(logDir: string, id: string, paused: boolean, who = "cli", preemptedBy?: string, now = Date.now()): boolean {
   const status = load(logDir, id);
   if (!!status.paused === paused) {
-    // an operator pausing a preempted worker takes it over: the --now run's end no longer resumes it
+    // an operator pausing a preempted worker takes it over: the --now run's end no longer resumes it.
+    // The preemption window closes into pausedMs here (the resume branch below is the other closer): a
+    // takeover keeps `paused`, so without this the open pausedAt would be closed once at the operator
+    // resume and count the whole preempt-then-operator span twice.
     if (paused && !preemptedBy && status.pausedBy) {
       delete status.pausedBy;
+      if (status.pausedAt !== undefined) status.pausedMs = (status.pausedMs ?? 0) + Math.max(0, now - status.pausedAt);
+      delete status.pausedAt;
       saveStatus(logDir, status, new Date(now), true);
       appendLedger(ledgerPath(logDir), PAUSE_EVENT, { who, id, priority: status.priority ?? "normal" });
     }

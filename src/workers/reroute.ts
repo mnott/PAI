@@ -19,6 +19,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { queueDir } from "./capacity.js";
 import { escalationPolicy } from "./config.js";
 import { activeMsOf, frozenSince } from "./freeze.js";
 import { appendLedger } from "./ledger.js";
@@ -79,18 +80,69 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
 /** A finished fall-through still blocks another reroute of its origin this long. */
 export const FALLTHROUGH_RECENT_MS = 5 * 60_000;
 
-/**
- * The run that already continues `origin`, read UNCACHED from the status files (a daemon restart or a stale cached
- * view cannot hide it): queued/running, or finished within FALLTHROUGH_RECENT_MS. Null when there is none.
- */
-export function liveFallThrough(logDir: string, origin: string, nowMs: number = Date.now()): string | null {
-  for (const s of loadStatuses(logDir)) {
+/** The run that already continues `origin` among these statuses: queued/running, or finished within FALLTHROUGH_RECENT_MS of `nowMs`. Null when there is none. */
+function recentFallThrough(all: WorkerStatus[], origin: string, nowMs: number): string | null {
+  for (const s of all) {
     if (s.fallThroughOf !== origin || s.id === origin) continue;
     if (s.state === "queued" || s.state === "running") return s.id;
     const t = stampMs(s.updated);
     if (t !== null && nowMs - t < FALLTHROUGH_RECENT_MS) return s.id;
   }
   return null;
+}
+
+/**
+ * The run that already continues `origin`, read UNCACHED from the status files (a daemon restart or a stale cached
+ * view cannot hide it): queued/running, or finished within FALLTHROUGH_RECENT_MS. Null when there is none.
+ */
+export function liveFallThrough(logDir: string, origin: string, nowMs: number = Date.now()): string | null {
+  return recentFallThrough(loadStatuses(logDir), origin, nowMs);
+}
+
+/**
+ * End a queued origin whose fall-through finished successfully (rc 0): the work is done, the origin's place in
+ * line and its slot claim are moot. It leaves the provider queue (its ticket is removed; its waiting process —
+ * if any still follows the restart — ends through the existing follow path), goes terminal "killed" rc 143 with
+ * `continuedBy` naming the run that did the work, and a WORKER-CONTINUED ledger line says so. The follower's
+ * result (and `pai worker wait`) resolves on this terminal state; the reroute guard never reroutes it again —
+ * neither the `rerouted` marker nor a fresh fall-through of it stands in the way. A failed fall-through ends
+ * nothing: after its recent window the origin may be rerouted once more, as before (2026-11-17: one origin
+ * rerouted four times because each successful fall-through left it queued). Returns the origin's id when it ended.
+ */
+export function endOriginContinued(logDir: string, originId: string, by: string, nowMs: number = Date.now()): string | null {
+  const st = loadStatus(logDir, originId);
+  if (!st || st.state !== "queued") return null;
+  rmSync(join(queueDir(logDir, st.provider), originId), { force: true });
+  delete st.capacity;
+  st.continuedBy = by;
+  st.state = "killed";
+  st.rc = 143;
+  st.last = `continued by ${by}`;
+  saveStatus(logDir, st, new Date(nowMs), true);
+  appendLedger(ledgerPath(logDir), "WORKER-CONTINUED", { id: originId, by });
+  return originId;
+}
+
+/**
+ * Supervision pass (daemon tick): a queued origin whose fall-through finished clean (done, rc 0) is ended as
+ * continued — out of the provider queue, never rerouted again. A fall-through that failed leaves the origin
+ * queued (its recent window blocks another reroute; after it one more reroute may run). Returns every origin ended.
+ */
+export function endContinuedOrigins(statuses: WorkerStatus[], logDir: string, nowMs: number = Date.now()): string[] {
+  const done: string[] = [];
+  // one fresh read per pass (loadStatuses): the cached view must not end an origin on stale numbers.
+  const all = loadStatuses(logDir);
+  const byId = new Map(all.map((s) => [s.id, s]));
+  for (const s of statuses) {
+    if (s.state !== "queued" || !s.fallThroughTo) continue;
+    // a recent fall-through still stands (live, or finished only moments ago): its caller's follow path ends the origin itself
+    if (recentFallThrough(all, s.id, nowMs)) continue;
+    const ft = byId.get(s.fallThroughTo);
+    if (!ft || ft.state !== "done" || (ft.rc ?? 0) !== 0) continue;
+    const ended = endOriginContinued(logDir, s.id, ft.id, nowMs);
+    if (ended) done.push(ended);
+  }
+  return done;
 }
 
 export interface RerouteTarget {

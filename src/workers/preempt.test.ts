@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { saveStatus, loadStatus, type WorkerStatus } from "./status.js";
 import { setWorkerPaused } from "./engine-control.js";
-import { resumeOrphaned, resumePreempted } from "./preempt.js";
+import { abortStuckPreemptions, resumeOrphaned, resumePreempted, PREEMPT_ABORT_MS } from "./preempt.js";
 import { waitWhilePreempted } from "../hooks/ts/lib/worker-guard.js";
 
 const dirs: string[] = [];
@@ -70,5 +70,87 @@ describe("a preemption pause ends when the preemptor ends", () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(550);
     setWorkerPaused(logDir, "A", false, "cli");
     expect(waitWhilePreempted(logDir, "A", 600, 50)).toBe(false);
+  });
+});
+
+// 2026-11-17: three gyro-l workers sat "paused (preempted by …)" for 30 min while their preemptor stayed
+// queued at position 2 of 8 — paused victims still counted against the cap for every other waiter, and the
+// preemptor waited for a slot only their release would open. A preemption now frees slots for its own
+// preemptor alone, and a watchdog gives them back (PREEMPT-ABORT) when it never takes them.
+describe("a stuck preemption is aborted", () => {
+  // the watchdog reads no config (its rule is "still queued past the window, victims still paused"), so these
+  // tests never re-point PAI_CONFIG_FILE/PAI_WORKERS_YAML — a shared ~/.pai would be rewritten by them.
+  const ledgerText = (dir: string): string => {
+    try {
+      return readdirSync(dir).filter((f) => f.includes("ledger")).map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
+    } catch {
+      return "";
+    }
+  };
+
+  it("the watchdog resumes the victims of a preemptor still queued past the window and logs PREEMPT-ABORT", () => {
+    const { logDir, mk, live } = setup();
+    const now = Date.now();
+    // three running victims paused by N; N queued at the gate ever since it paused them (its ticket carries the wait start)
+    mkdirSync(join(logDir, "queue", "local"), { recursive: true });
+    saveStatus(logDir, mk("A", live(), { paused: true, pausedBy: "N", pausedAt: now - 70_000 }));
+    saveStatus(logDir, mk("B", live(), { paused: true, pausedBy: "N", pausedAt: now - 70_000 }));
+    saveStatus(logDir, mk("C", live(), { paused: true, pausedBy: "N", pausedAt: now - 70_000 }));
+    saveStatus(logDir, mk("N", live(), { now: true, state: "queued" }));
+    writeFileSync(join(logDir, "queue", "local", "N"), `${process.pid} front @${now - 70_000}`);
+    expect(PREEMPT_ABORT_MS).toBe(60_000);
+    expect(abortStuckPreemptions(logDir, now)).toEqual(["A", "B", "C"]);
+    for (const id of ["A", "B", "C"]) {
+      const s = loadStatus(logDir, id)!;
+      expect(s.paused).toBeFalsy();
+      expect(s.state).toBe("running"); // back in its own slot: the loan to N is revoked
+      expect(s.pausedMs ?? 0).toBeGreaterThanOrEqual(69_000); // the pause time is closed, not lost
+    }
+    expect(loadStatus(logDir, "N")?.state).toBe("queued"); // N keeps its place at the gate's head
+    expect(existsSync(join(logDir, "queue", "local", "N"))).toBe(true); // its ticket survives the abort
+    expect(ledgerText(logDir)).toContain("PREEMPT-ABORT");
+  });
+
+  it("a preemptor queued under the window keeps its victims; after an abort a second pass does nothing", () => {
+    const { logDir, mk, live } = setup();
+    const now = Date.now();
+    mkdirSync(join(logDir, "queue", "local"), { recursive: true });
+    saveStatus(logDir, mk("A", live(), { paused: true, pausedBy: "N", pausedAt: now - 10_000 }));
+    saveStatus(logDir, mk("N", live(), { now: true, state: "queued" }));
+    writeFileSync(join(logDir, "queue", "local", "N"), `${process.pid} front @${now - 10_000}`);
+    expect(abortStuckPreemptions(logDir, now)).toEqual([]);
+    expect(loadStatus(logDir, "A")?.paused).toBe(true);
+    // the same run past the window: aborted once, then a quiet pass (nothing paused left)
+    expect(abortStuckPreemptions(logDir, now + 70_000)).toEqual(["A"]);
+    expect(abortStuckPreemptions(logDir, now + 80_000)).toEqual([]);
+    expect(loadStatus(logDir, "A")?.paused).toBeFalsy();
+  });
+
+  it("a preemptor that started is not stuck: its victims wait for its end (the normal resume path)", () => {
+    const { logDir, mk, live } = setup();
+    const now = Date.now();
+    mkdirSync(join(logDir, "queue", "local"), { recursive: true });
+    saveStatus(logDir, mk("A", live(), { paused: true, pausedBy: "N", pausedAt: now - 70_000 }));
+    writeFileSync(join(logDir, "queue", "local", "N"), `${process.pid} front @${now - 70_000}`); // a stale ticket of a run that was admitted since
+    saveStatus(logDir, mk("N", live(), { now: true, state: "running" })); // admitted at last: the pause stands until N ends
+    expect(abortStuckPreemptions(logDir, now)).toEqual([]);
+    expect(loadStatus(logDir, "A")?.paused).toBe(true);
+    expect(resumePreempted(logDir, "N", now)).toEqual(["A"]); // N's end releases it into its own slot
+  });
+
+  it("an operator takeover survives the watchdog", () => {
+    const { logDir, mk, live } = setup();
+    const now = Date.now();
+    mkdirSync(join(logDir, "queue", "local"), { recursive: true });
+    saveStatus(logDir, mk("A", live(), { paused: true, pausedBy: "N", pausedAt: now - 70_000 }));
+    setWorkerPaused(logDir, "A", true, "cli"); // the operator takes it over: pausedBy cleared, window closed
+    const a = loadStatus(logDir, "A")!;
+    expect(a.pausedBy).toBeUndefined();
+    expect(a.pausedAt).toBeUndefined(); // no double count at resume
+    expect(a.pausedMs ?? 0).toBeGreaterThanOrEqual(69_000);
+    saveStatus(logDir, mk("N", live(), { now: true, state: "queued" }));
+    writeFileSync(join(logDir, "queue", "local", "N"), `${process.pid} front @${now - 70_000}`);
+    expect(abortStuckPreemptions(logDir, now)).toEqual([]);
+    expect(loadStatus(logDir, "A")?.paused).toBe(true);
   });
 });
