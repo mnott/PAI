@@ -63,8 +63,6 @@ export interface WorkerStatus {
   notePending?: string[];
   /** When the last pending notes reached the worker (nowStamp). */
   noteDeliveredAt?: string;
-  /** Every goal given to this run, in order (text + time); `note` keeps only the last. Continuations carry them (note-delivery.ts). */
-  goals?: { text: string; at: string }[];
   cwd: string;
   /** iTerm session id of the launching terminal ("" outside iTerm). */
   term: string;
@@ -390,7 +388,6 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (onDisk.note !== undefined) status.note = onDisk.note;
     if (onDisk.notePending !== undefined) status.notePending = onDisk.notePending;
     if (onDisk.noteDeliveredAt !== undefined) status.noteDeliveredAt = onDisk.noteDeliveredAt;
-    if (onDisk.goals !== undefined) status.goals = onDisk.goals;
     // Written by `pai worker priority|pause|resume` (another process); the runner's copy only seeds the priority.
     if (onDisk.priority !== undefined) status.priority = onDisk.priority;
     if (onDisk.paused !== undefined) status.paused = onDisk.paused;
@@ -460,7 +457,6 @@ export function setWorkerNote(logDir: string, id: string, note: string): WorkerS
   if (!status) throw new Error(`no worker named "${id}"`);
   status.note = note;
   status.notePending = [...(status.notePending ?? []), note];
-  status.goals = [...(status.goals ?? []), { text: note, at: nowStamp() }];
   saveStatus(logDir, status, new Date(), true);
   return status;
 }

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSpawn, endContinuedOrigins, escalationReason, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
-import { carryGoals } from "./note-delivery.js";
 
 let dir: string;
 beforeEach(() => {
@@ -277,47 +276,5 @@ describe("a rerouted run's end reaches its owning session", () => {
     await runSupervisionTick(dir, opts);
     await runSupervisionTick(dir, opts);
     expect(pushed).toEqual(["r2"]);
-  });
-});
-
-describe("operator goals travel to continuations", () => {
-  const H = "Operator goals given to the previous run (apply them, in order):";
-  const goals = (id: string, texts: string[], extra: Partial<WorkerStatus> = {}, pending: string[] = []): void => {
-    saveStatus(dir, queued({ id, state: "done", goals: texts.map((text, i) => ({ text, at: `12:0${i}` })), note: texts[texts.length - 1], notePending: pending, ...extra }));
-  };
-  const promptOf = (args: string[]): string => args[args.length - 1] ?? "";
-
-  it("an escalated continuation (_priorIds) gets every goal in order, pending ones included, once", () => {
-    goals("A", ["one", "two", "three"], {}, ["three"]);
-    const args = carryGoals(dir, ["-p", "the task"], ["A"]);
-    expect(promptOf(args)).toBe(`the task\n\n${H}\n1. [12:00] one\n2. [12:01] two\n3. [12:02] three`);
-    expect(loadStatus(dir, "A")?.notePending).toEqual([]); // not delivered a second time
-  });
-  it("a rerouted continuation (rerunFromEnv) gets the origin's goals", async () => {
-    const { rerunFromEnv } = await import("./reroute.js");
-    goals("w1", ["use the cache"]);
-    const run = { claudeArgs: ["-p", "task"] } as never as import("./run/types.js").RunOptions;
-    rerunFromEnv(run, dir, { [RERUN_OF_ENV]: "w1" });
-    expect(run._priorIds).toEqual(["w1"]);
-    expect(promptOf(carryGoals(dir, run.claudeArgs, run._priorIds))).toContain(`${H}\n1. [12:00] use the cache`);
-  });
-  it("a fall-through continuation gets the goals of the run it repeats", () => {
-    goals("L", ["only cloud-safe code"]);
-    expect(promptOf(carryGoals(dir, ["-p", "task"], ["L"]))).toContain("only cloud-safe code");
-  });
-  it("a two-step chain keeps both runs' goals (and no duplicated section)", () => {
-    goals("A", ["a1"]);
-    goals("B", ["b1", "b2"], { fallThroughOf: "A" });
-    const forC = carryGoals(dir, ["-p", "task"], ["B"]);
-    expect(promptOf(forC)).toBe(`task\n\n${H}\n1. [12:00] a1\n2. [12:00] b1\n3. [12:01] b2`);
-    goals("C", ["c1"], { fallThroughOf: "B" });
-    const forD = promptOf(carryGoals(dir, ["-p", promptOf(forC)], ["C"]));
-    expect(forD.split(H).length).toBe(2);
-    expect(forD).toContain("c1");
-    expect(forD).toContain("a1");
-  });
-  it("no goals: the prompt is untouched", () => {
-    saveStatus(dir, queued({ id: "N", state: "done" }));
-    expect(carryGoals(dir, ["-p", "task"], ["N"])).toEqual(["-p", "task"]);
   });
 });

@@ -59,7 +59,6 @@ import {
 } from "./gate.js";
 import { executeImageRun, executeRun, executeCodexRun, executeOpencodeRun } from "./execute.js";
 import { executeUhpRun } from "./execute-uhp.js";
-import { carryGoals } from "../note-delivery.js";
 import { applyModeToConfig } from "../mode.js";
 import { parseHarnessFlag, resolveHarnessProvider } from "../uhp.js";
 
@@ -89,8 +88,6 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   }
   const logDir = workersLogDir(config);
   mkdirSync(logDir, { recursive: true });
-  // a continuation (escalation, fall-through, reroute) carries the operator goals of the runs it continues
-  opts = { ...opts, claudeArgs: carryGoals(logDir, opts.claudeArgs, opts._priorIds) };
   try {
     const gc = gcWorktreesThrottled(logDir, 60, Date.now(), { olderThanHours: config.gcOlderThanHours, maxGb: config.worktreesMaxGb })?.filter((r) => r.archive);
     if (gc?.length) process.stderr.write(`pai worker: archived ${gc.length} leftover worktree(s) (pai worker gc)\n`);
