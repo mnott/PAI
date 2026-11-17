@@ -441,9 +441,14 @@ describe("test-mode isolation", () => {
 
   it("workerAncestryBlocked: a worker anywhere in the chain is a refusal", () => {
     const pp = [{ pid: 1, ppid: 0 }, { pid: 100, ppid: 1 }, { pid: 101, ppid: 100 }, { pid: 202, ppid: 101 }];
-    expect(workerAncestryBlocked(pp, [st("L1", 100)], 202)).toEqual({ id: "L1", pid: 100 }); // the worker's runner three steps up
-    expect(workerAncestryBlocked(pp, [st("L1", 100)], 900)).toBeNull(); // an unrelated chain may freeze
-    expect(workerAncestryBlocked(pp, [], 202)).toBeNull(); // no status files: nothing claims these pids
+    const owns = () => true;
+    expect(workerAncestryBlocked(pp, [st("L1", 100)], 202, owns)).toEqual({ id: "L1", pid: 100 }); // the worker's runner three steps up
+    expect(workerAncestryBlocked(pp, [st("L1", 100)], 900, owns)).toBeNull(); // an unrelated chain may freeze
+    expect(workerAncestryBlocked(pp, [], 202, owns)).toBeNull(); // no status files: nothing claims these pids
+    expect(workerAncestryBlocked(pp, [st("D1", 999, { state: "done", parentPid: 100 })], 202, owns)).toBeNull(); // finished worker whose parent is an ancestor
+    expect(workerAncestryBlocked(pp, [st("D2", 100, { state: "done" })], 202, owns)).toBeNull(); // finished worker, recycled pid
+    expect(workerAncestryBlocked(pp, [st("L2", 999, { parentPid: 100 })], 202, owns)).toBeNull(); // live worker's parent is not the worker
+    expect(workerAncestryBlocked(pp, [st("L3", 100)], 202, () => false)).toBeNull(); // pid no longer owned by the status
   });
 
   it("test mode keeps the PAI_WORKER env guard (a worker could still stop its own machine)", async () => {

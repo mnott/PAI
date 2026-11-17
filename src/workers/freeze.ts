@@ -34,7 +34,7 @@ import { paiHomePath } from "../config/pai-home.js";
 import { psTable } from "./ps-table.js";
 import { readWorkersSection } from "./config.js";
 import { workersLogDir } from "./paths.js";
-import { loadStatuses, ownsPid, setWorkerNote, statusPids, type WorkerStatus } from "./status.js";
+import { isLive, loadStatuses, ownsPid, type OwnerFields, setWorkerNote, statusPids, type WorkerStatus } from "./status.js";
 import { appendLedger as ledgerLine } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 
@@ -139,11 +139,20 @@ export function realPpidRows(): PpidRow[] {
  * env (`env -u PAI_WORKER`) — some ancestor is still the running worker process, per
  * the status files' own pids. Test mode is exempt: there nothing real is reachable.
  */
-export function workerAncestryBlocked(rows: PpidRow[], statuses: WorkerStatus[], self: number): { id: string; pid: number } | null {
+export function workerAncestryBlocked(
+  rows: PpidRow[],
+  statuses: WorkerStatus[],
+  self: number,
+  owns: (s: OwnerFields) => boolean = ownsPid
+): { id: string; pid: number } | null {
   const by = new Map<number, number>();
   for (const r of rows) if (!by.has(r.pid)) by.set(r.pid, r.ppid);
   const workerPids = new Map<number, string>();
-  for (const s of statuses) for (const p of statusPids(s)) if (!workerPids.has(p)) workerPids.set(p, s.id);
+  // Only live workers, and only their own processes: a finished worker's pids are recycled, and parentPid is whatever spawned it (a terminal server).
+  for (const s of statuses) {
+    if (!isLive(s, owns)) continue;
+    for (const p of statusPids({ ...s, parentPid: undefined })) if (!workerPids.has(p)) workerPids.set(p, s.id);
+  }
   const seen = new Set<number>();
   for (let p = self; p > 1 && !seen.has(p); p = by.get(p) ?? 0) {
     seen.add(p);
