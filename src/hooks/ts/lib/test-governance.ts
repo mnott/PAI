@@ -18,10 +18,13 @@
  * Bash coverage: a command creating such a file — `>`/`>>`/`tee` targets,
  * `cp`/`mv` destinations, `touch`/`mkdir` targets, or an interpreter script
  * that writes one (python/node/ruby/perl, inline `-c`/`-e` or a /tmp script).
- * Unresolvable targets (variables, globs) fail closed; `.pai-scratch/` and the
- * worker's private $TMPDIR pass, a bare /tmp path does not (shared across
- * workers). Heredoc bodies are data, not commands, so the guard reads a
- * `cat > f <<EOF` start line directly rather than scanning the body.
+ * An in-place editor (`perl -i`, `sed -i`, `ruby -i`, …) edits its file
+ * arguments: existing files are edits and always pass; only a target that
+ * does not exist is treated as a new-test write. Unresolvable targets
+ * (variables, globs) fail closed; `.pai-scratch/` and the worker's private
+ * $TMPDIR pass, a bare /tmp path does not (shared across workers). Heredoc
+ * bodies are data, not commands, so the guard reads a `cat > f <<EOF` start
+ * line directly rather than scanning the body.
  *
  * First sight of a project without the ignore line: `.pai-scratch/` is added
  * to the repo's `.git/info/exclude` (shared by all its worktrees, never
@@ -147,15 +150,133 @@ function blankHeredocBodies(command: string): string {
   return lines.join("\n");
 }
 
+/** `-i`, `-pi`, `-ni`, `-i.bak`, `--in-place[=SUFFIX]`: the in-place rewrite flag of perl/sed/ruby. */
+const IN_PLACE_FLAG = /^-i(?:[a-z]*|\..+)?$|^--in-place(?:=.*)?$/;
+
+/** True when the segment is an interpreter editing its file arguments in place (`perl|sed|ruby … -i`). */
+function inPlaceEditSegment(words: string[]): boolean {
+  const cmd = words[0]?.replace(/^.*\//, "");
+  return cmd !== undefined && ["perl", "sed", "ruby"].includes(cmd) && words.slice(1).some((w) => IN_PLACE_FLAG.test(w));
+}
+
+/** True when a positional of an in-place editor is script text, not a file: `s/x/y/`, `/re/p`, whitespace. */
+function looksLikeScriptArg(a: string): boolean {
+  if (/\s/.test(a)) return true;
+  if (/^[/\\]/.test(a) || /^[a-z]\/[^/]*\//i.test(a)) return true; // /re/, s/x/y/, y/a/b/, \|re\|
+  return (a.match(/\//g) ?? []).length >= 2; // a substitution or address with two slashes is code, not a path fragment
+}
+
+/**
+ * The file arguments of an in-place editor segment: the positionals after the
+ * script. Everything up to (and including) the first positional that is not a
+ * plausible path — `s/…/…/`, `/re/p`, a value with whitespace — is the script
+ * (`perl -i -pe 's/x/y/' f` → `f`; BSD sed's separate backup suffix,
+ * `sed -i '' f`, is consumed too). These are the targets of the rewrite — an
+ * existing file is an edit (always allowed), only a missing one creates a new
+ * test file. A positional that looks like code is never judged as a path.
+ */
+function inPlaceEditTargets(words: string[]): string[] {
+  const args = words.slice(1);
+  let i = 0;
+  for (; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") continue;
+    if (a.startsWith("-")) {
+      // -e/-f scripts take their program as the next word (except bundled `-pe`/`-pi`);
+      // a bare `-i` on sed takes its backup suffix as its own argument (`sed -i '' f`)
+      const bundled = /^-[a-z]+$/.test(a) && /[ip]/.test(a.slice(1));
+      if (a === "-e" || a === "-f" || (/^-[ef]/.test(a) && !bundled)) i++;
+      else if (words[0]?.replace(/^.*\//, "") === "sed" && /^-i$/.test(a) && i + 1 < args.length && !args[i + 1].startsWith("-")) i++;
+      continue;
+    }
+    // the first positional that is not a plausible path is the script, not a target
+    if (looksLikeScriptArg(a)) continue;
+    break;
+  }
+  return args.slice(i).filter((a) => a !== "--" && !a.startsWith("-"));
+}
+
+/** Quoted string literals of `text`, as the shell would pass them. */
+function quotedLiterals(text: string): string[] {
+  return [...text.matchAll(/(['"])((?:(?!\1)[^\\\n]|\\[\s\S])*)\1/g)].map((m) => m[2].replace(/\\(["'\\])/g, "$1"));
+}
+
+/** True when the offset sits inside a quoted region of `text` (not itself a quote). */
+function isQuotedAt(text: string, at: number): boolean {
+  let quote = "";
+  for (let i = 0; i < at; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = "";
+    } else if (c === "'" || c === '"') quote = c;
+  }
+  return quote !== "";
+}
+
+/**
+ * True when a quoted string is code rather than a path: whitespace, regex/
+ * substitution syntax (`s/…/…/`, `/re/` — two slashes), `\` escapes or `|`
+ * alternation. The interpreter-script heuristic must not read script code as
+ * a new test path (AIBroker worker 20261117-013816-67456, denied "No new test
+ * files" for `perl -i` edits of three existing test files).
+ */
+function looksLikeCode(s: string): boolean {
+  if (/\s/.test(s)) return true;
+  if ((s.match(/\//g) ?? []).length >= 2) return true;
+  if (/[$`(){}[\]*?\\|]/.test(s)) return true;
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+  }
+  return depth !== 0;
+}
+
+const INTERPRETERS = new Set(["python", "python3", "node", "ruby", "perl"]);
+/** The inline-code argument of an interpreter segment (`-c`/`-e`/`--eval`/`-p`, perl's bundled `-pe`). */
+function inlineCodeArg(args: string[], cmd: string): string | null {
+  for (let i = 0; i < args.length - 1; i++) {
+    const a = args[i];
+    if (a === "--") continue;
+    const takesCode = cmd.startsWith("python") ? a === "-c" : cmd === "node" ? ["-e", "--eval", "-p"].includes(a) : a === "-e" || (cmd === "perl" && /^-[a-z]*e$/.test(a));
+    if (takesCode) return args[i + 1];
+  }
+  return null;
+}
+
+/** The script texts an interpreter segment runs: inline `-c`/`-e` code, or a /tmp script file's content. */
+function interpreterScriptTexts(command: string, readFile: (path: string) => string | null): string[] {
+  const out: string[] = [];
+  for (const seg of parseCommand(command)) {
+    const words = [...seg.words];
+    while (words.length && (/^[A-Za-z_]\w*=/.test(words[0]) || ["nohup", "time", "env", "sudo"].includes(words[0]))) words.shift();
+    const [cmd, ...args] = words;
+    if (!cmd || !INTERPRETERS.has(cmd)) continue;
+    const code = inlineCodeArg(args, cmd);
+    if (code !== null) {
+      out.push(code);
+      continue;
+    }
+    const script = args.find((a) => !a.startsWith("-"));
+    if (script && /^(?:\/private)?\/tmp\//.test(script)) {
+      const text = readFile(script);
+      if (text !== null) out.push(text);
+    }
+  }
+  return out;
+}
+
 /** Why this Bash command creates a new test file outside scratch, or null. */
 export function bashCreatesNewTest(command: string, cwd: string): string | null {
   const vars = simpleAssignments(command);
   const consider = (raw: string, at: number): boolean => {
     const t = resolveVars(raw.replace(/^["']|["']$/g, ""), vars);
     if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return false;
-    const base = t.startsWith("/") || t.startsWith("$") || t.startsWith("~") ? t : join(cwdAfterCds(command.slice(0, at), cwd), t);
+    const here = cwdAfterCds(command.slice(0, at), cwd);
+    const base = t.startsWith("/") || t.startsWith("$") || t.startsWith("~") ? t : join(here, t);
     if (!looksLikeTest(base)) return false;
-    return !promoted(base, cwdAfterCds(command.slice(0, at), cwd)); // a KEPT.md-promoted path is not an unkept new test
+    return !promoted(base, here); // a KEPT.md-promoted path is not an unkept new test
   };
   // heredoc bodies are data, not commands: a `cat > f <<EOF` start line writes f
   let pos = 0;
@@ -168,26 +289,54 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
     pos += line.length + 1;
   }
   const scan = blankHeredocBodies(command);
-  for (const m of scan.matchAll(ANY_REDIRECT)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
-  for (const m of scan.matchAll(ANY_TEE)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
+  // a quoted script is code, not a redirection: `sed -i 's/a>b/c/' f` and a
+  // perl script containing `>` have no sink. The redirect/tee scan runs on the
+  // raw text, so blank `<>` inside quoted scripts (offsets preserved) before
+  // looking for targets.
+  const quotable = scan.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, (q) => q.replace(/[<>]/g, " "));
+  for (const m of quotable.matchAll(ANY_REDIRECT)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
+  for (const m of quotable.matchAll(ANY_TEE)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
   for (const seg of parseCommand(scan)) {
-    for (const t of toolWriteTargets([...seg.words])) if (consider(t, 0)) return DENY_TEXT;
+    const words = [...seg.words];
+    // an in-place editor rewrites its file arguments: existing files are edits
+    // (always allowed), only a missing target creates a new test file. The
+    // segment's own redirects still count (`perl -i -pe … > new.test.ts`).
+    if (inPlaceEditSegment(words)) {
+      // the file arguments sit after the interpreter word: resolve them with the
+      // segment's own cd state (`cd test; sed -i '' f` edits test/f)
+      const at = scan.indexOf(words[0]) + words[0].length;
+      for (const t of inPlaceEditTargets(words)) if (consider(t, at)) return DENY_TEXT;
+    }
+    for (const t of toolWriteTargets(words)) if (consider(t, 0)) return DENY_TEXT;
   }
   // an interpreter script (inline -c/-e, or a /tmp script) that writes repo code:
-  // it counts as a new-test write when the code names a test path outside scratch
-  if (
-    scriptWritesRepoCode(command, (p) => {
-      try {
-        return readFileSync(p, "utf8");
-      } catch {
-        return null;
+  // it counts as a new-test write when the code names a test path outside scratch.
+  // The path candidates are the quoted literals of the script TEXT itself (the
+  // command's own quotes are consumed by the shell), resolved against the cwd
+  // left by the `cd` segments before the interpreter; a literal that is script
+  // code rather than a plausible path (whitespace, substitution syntax) is
+  // skipped — reading a `s/…/…/` as a new test path was the false positive.
+  const readScript = (p: string): string | null => {
+    try {
+      return readFileSync(p, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  if (scriptWritesRepoCode(command, readScript)) {
+    // the interpreter's cwd is the cd state at its own segment: find each
+    // interpreter word and resolve with the prefix before it (a quoted `;` in a
+    // script does not split segments, so only separators outside quotes count)
+    const interpAt = [...command.matchAll(/(?:^|[;&|\n]\s*)(?:env\s+|command\s+|nohup\s+)*(?:[A-Za-z_]\w*=\S*\s+)*(?:\/\S*\/)?(?:python3?|node|ruby|perl)\b/g)]
+      .map((m) => m.index ?? 0)
+      .filter((i) => !isQuotedAt(command, i));
+    for (const text of interpreterScriptTexts(command, readScript)) {
+      for (const s of quotedLiterals(text)) {
+        if (!(s.includes("/") || /\.\w{1,5}$/.test(s))) continue;
+        if (looksLikeCode(s)) continue;
+        for (const at of interpAt.length ? interpAt : [0]) if (consider(s, at)) return DENY_TEXT;
       }
-    })
-  ) {
-    const paths = [...scan.matchAll(/['"]([^'"\n]+)['"]/g)]
-      .map((m) => m[1])
-      .filter((s) => s.includes("/") || /\.\w{1,5}$/.test(s));
-    if (paths.some((p) => looksLikeTest(p.startsWith("/") ? p : join(cwd, p)))) return DENY_TEXT;
+    }
   }
   return null;
 }
