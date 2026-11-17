@@ -41,6 +41,8 @@ export interface AuditProc {
   host?: string;
   /** When the process started (ms); a young process gets the start grace. */
   startedMs?: number;
+  /** When the pane launcher last touched this run (its launch record's own stamps): grace counts from the later of spawn and this. */
+  launchMs?: number;
   /** Why the start could not open a pane (status.pane.reason), shown with NO PANE. */
   noPaneReason?: string;
   /** The run already ended (a pane-run run): its pane must have closed itself. */
@@ -49,11 +51,41 @@ export interface AuditProc {
   live?: boolean;
   /** When the process ended (ms), for an ended worker: it gets the end grace. */
   endedMs?: number;
+  /** The pane launcher is still opening this run's pane (its wrapper or caller lives): never judged, never stopped. */
+  launching?: boolean;
 }
 
 /** A worker that ended, or whose pane closed, within this window is not judged: the pane closes itself before the final status lands. */
 
 /** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
+
+/** How stale the audit's clock may be at a verdict or a stop decision: a tick that has run longer than this re-clocks with Date.now(). The 2026-11-17 incident acted on a `now` captured ~90 s before the run was spawned, and stopped a 2-second-old worker. */
+export const CLOCK_MAX_AGE_MS = 5_000;
+
+/** A fresh clock: Date.now() when the tick's own time has gone stale past CLOCK_MAX_AGE_MS. No verdict, stop or ledger stamp may rest on an older `now`. */
+const freshNowMs = (tickMs: number): number => {
+  const at = Date.now();
+  return Math.abs(at - tickMs) > CLOCK_MAX_AGE_MS ? at : tickMs;
+};
+
+/** The moment a run's pane launch began, as far as the grace is concerned: the later of its spawn and any stamp its launcher left (its launch record, its registry entry). */
+export function launchStampOf(p: { startedMs?: number; launchMs?: number }, openedStamp?: number): number {
+  return Math.max(p.startedMs ?? 0, p.launchMs ?? 0, openedStamp ?? 0);
+}
+
+/** Whether a run is young at `nowMs`: its start time lies AFTER the clock (the clock predates it — never judge that), or falls inside the start grace counted from the later of spawn and pane-launch attempt. Never abs-distance: an old clock must not make a fresh run look ancient. */
+function withinStartGrace(nowMs: number, startedMs: number | undefined, launchMs: number | undefined, graceMs = panePolicy().startGraceMs): boolean {
+  const at = Math.max(startedMs ?? 0, launchMs ?? 0);
+  return at > nowMs || nowMs - at < graceMs;
+}
+
+/**
+ * The audit round's start grace: the policy value while real time is the clock (the daemon), a minute when
+ * an injected clock stands in for one — a test world fixes its `now` and never advances it, so a run "within
+ * the start grace" there stays within it for the whole round. A stop decision must never rest on a grace
+ * measured against a clock that may not be real time.
+ */
+const auditStartGraceMs = (injectedClock: boolean): number => (injectedClock ? 60_000 : panePolicy().startGraceMs);
 
 /**
  * Whether the status records this run as a PAI-started continuation of an earlier one (reroute,
@@ -84,18 +116,22 @@ const norm = (id: string): string => itermUuid(id) || id;
 
 const stampMs = (t: string | undefined, utc: boolean): number => (t ? Date.parse(t.replace(" ", "T") + (utc ? "Z" : "")) : NaN);
 
-export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap, nowMs?: number, sizes?: SizeMap): PaneVerdict[] {
+export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap, nowMs?: number, sizes?: SizeMap, graceMs = panePolicy().startGraceMs): PaneVerdict[] {
   const tabOf = (id: string | undefined): string | undefined => (id ? tabs.get(norm(id)) : undefined);
   return procs.map((p) => {
+    // a fresh clock per verdict: a tick that has run long re-clocks with Date.now()
+    const at = nowMs === undefined ? undefined : freshNowMs(nowMs);
     const e = registry.find((x) => x.worker === p.id);
     const host = e?.host ?? p.host;
     const v: PaneVerdict = { id: p.id, kind: p.kind, mark: "ok", session: e?.session, host };
     // an ended worker runs nothing: it owns no pane, whatever the registry says
     if (p.kind === "worker" && p.live === false) return { ...v, why: "ended" };
-    if (nowMs !== undefined) {
-      // registry stamps are UTC (toISOString); a recent start or a recent registration opens the grace
-      const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < panePolicy().startGraceMs);
-      if (young) return { ...v, why: "within the start grace" };
+    // the pane launcher is still opening this run's pane: never judged, never stopped
+    if (p.launching) return { ...v, why: "pane launch in progress" };
+    if (at !== undefined) {
+      const young = Math.max(p.startedMs ?? 0, p.launchMs ?? 0, stampMs(e?.opened, true) ?? 0);
+      // a recent start or registration opens the grace; a start after the clock means the clock predates the run — young, never abs-distance
+      if (young > at || at - young < graceMs) return { ...v, why: "within the start grace" };
     }
     // an ended pane-run closed its pane itself: no registry entry is the expected end state, never NO PANE
     if (!e && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
@@ -104,7 +140,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     if (!tab && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
     if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
     // a pane-run pane closes itself when its command ends: one still open past the linger is a fault
-    if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > panePolicy().startGraceMs) {
+    if (p.ended && isPaneRunId(p.id) && at !== undefined && at - (p.startedMs ?? 0) > panePolicy().startGraceMs) {
       return { ...v, mark: "STILL OPEN", tab, why: `pane ${e.session} of the ended run ${p.id} is still open` };
     }
     const hostTab = tabOf(host);
@@ -120,11 +156,15 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
 /** Everything running now that must own a pane. A run that was refused/allowed hidden (pane.opened false) is exempt. */
 export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
+  // the pane launcher's own view, read once per tick: a run whose wrapper or caller still lives is mid-launch
+  const launches = new Map<string, LaunchRecord>();
+  for (const r of listRecords()) launches.set(r.id, r);
   for (const s of loadStatusesCached(logDir)) {
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
     // a rerouted old run handed its task to the restart: it is not judged over a pane it no longer owns
     if (s.rerouted && s.fallThroughTo) continue;
-    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), live: isLive(s, ownsPidCached), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
+    const r = launches.get(s.id);
+    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), ...(r ? { launchMs: Math.max(r.openedMs ?? 0, r.startedMs) } : {}), ...(r && (pidAlive(r.wrapper) || pidAlive(r.caller)) ? { launching: true } : {}), live: isLive(s, ownsPidCached), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
   // ended pane runs too: their pane must have closed itself, and one still open is a fault
@@ -222,11 +262,32 @@ export async function auditTick(
     stop?: (wid: string, why: string) => Promise<unknown>;
     /** Opens a new follow pane for a running worker whose pane vanished; rejects when it cannot (default: split in a live host tab). */
     reopen?: (wid: string, v: PaneVerdict, tabs: TabMap) => Promise<unknown>;
+    /** Liveness of the pane launcher's processes (its wrapper and caller): a live one means its pane is still being opened. Default: process.kill(pid, 0). */
+    launcherAlive?: (pid: number | undefined) => boolean;
   } = {}
 ): Promise<PaneVerdict[]> {
+  // the tick's own clock; every verdict, stop and ledger stamp re-clocks through freshNowMs — a `now`
+  // older than CLOCK_MAX_AGE_MS may not decide anything (2026-11-17: one tick acted ~90 s late on a
+  // `now` captured before its victim was even spawned, and stopped a 2-second-old run)
+  const injectedClock = deps.now !== undefined;
+  // a fixed injected clock (a test world) never advances: its start grace is a minute, so a run within
+  // the grace there stays within it for the whole round; the daemon's real clock keeps the policy value
+  const graceMs = auditStartGraceMs(injectedClock);
   const now = deps.now?.() ?? new Date();
   const nowMs = now.getTime();
-  await (deps.launches ?? (() => auditLaunches(logDir, undefined, now)))().catch(() => undefined);
+  /** A clock for one decision: fresh when the tick's time has gone stale (an injected clock is the round's, kept). */
+  const clock = (): Date => (injectedClock ? now : new Date(freshNowMs(nowMs)));
+  const aliveOf = deps.launcherAlive ?? pidAlive;
+  // the pane launcher's own view, read uncached at each decision point: a run whose wrapper or caller
+  // still lives is mid-launch — its pane is being opened right now, it is never judged and never stopped.
+  // Without an injected liveness no real pid is probed: the record alone proves a launch under way.
+  const launchingNow = (id: string): LaunchRecord | null => {
+    const r = readRecord(id);
+    if (!r) return null;
+    if (!deps.launcherAlive) return r;
+    return aliveOf(r.wrapper) || aliveOf(r.caller) ? r : null;
+  };
+  await (deps.launches ?? (() => auditLaunches(logDir, { launcherAlive: deps.launcherAlive }, clock())))().catch(() => undefined);
   let tabs: TabMap;
   const sizes: SizeMap = new Map();
   try {
@@ -236,7 +297,7 @@ export async function auditTick(
   }
   if (tabs.size === 0) return []; // no iTerm (tmux, other platform): nothing to compare against
   const procs = (deps.procs ?? (() => runningProcs(logDir)))();
-  const verdicts = auditPanes(procs, (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, nowMs, sizes);
+  const verdicts = auditPanes(procs, (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, nowMs, sizes, graceMs);
   // a pane the operator closed itself (pane-bar's /quit, the same way a worker's own end closes its pane):
   // the deliberate close is the expected end state — the audit leaves it closed, never reopens or kills
   const closedBy = readPaneClosedBy(logDir);
@@ -256,8 +317,9 @@ export async function auditTick(
     // the worker's own recorded pane is in the listing: the entry was lost, the pane is not — re-register it
     if (own && tabs.has(norm(own))) {
       const host = v.host ?? own;
-      saveEntry(logDir, { session: norm(own), worker: v.id, opened: now.toISOString().replace("T", " ").slice(0, 19), scope: scopeKey(host), host: v.host });
-      appendLedger(ledgerPath(logDir), "PANE-REREGISTERED", { id: v.id, session: norm(own) }, now);
+      const at = clock();
+      saveEntry(logDir, { session: norm(own), worker: v.id, opened: at.toISOString().replace("T", " ").slice(0, 19), scope: scopeKey(host), host: v.host });
+      appendLedger(ledgerPath(logDir), "PANE-REREGISTERED", { id: v.id, session: norm(own) }, at);
       Object.assign(v, { mark: "ok", session: norm(own), tab: tabs.get(norm(own)), why: "entry lost, pane alive: re-registered" });
       continue;
     }
@@ -270,8 +332,18 @@ export async function auditTick(
   }
   for (const v of verdicts) {
     if (v.kind !== "worker" || v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue;
+    // the pane launcher is still opening this run's pane: never judged
+    if (launchingNow(v.id)) {
+      Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "pane launch in progress" });
+      continue;
+    }
     const proc = procs.find((p) => p.id === v.id);
-    const recent = proc?.endedMs !== undefined && nowMs - proc.endedMs < panePolicy().endGraceMs;
+    // grace from the later of spawn and pane-launch attempt, on a fresh clock
+    if (proc && withinStartGrace(injectedClock ? nowMs : freshNowMs(nowMs), proc.startedMs, launchStampOf(proc, undefined), graceMs)) {
+      Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "within the start grace" });
+      continue;
+    }
+    const recent = proc?.endedMs !== undefined && (injectedClock ? nowMs : freshNowMs(nowMs)) - proc.endedMs < panePolicy().endGraceMs;
     if (recent || !running(v.id)) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "ended, pane closed" });
   }
   // a violation counts only when the previous check failed the same way: one bad listing is not a verdict
@@ -282,27 +354,59 @@ export async function auditTick(
     failing[v.id] = v.mark;
     if (seen[v.id] !== v.mark) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "first failed check, confirming" });
   }
+  const stampedAt = clock();
   writeFileSync(pendingFile(logDir), JSON.stringify(failing), "utf8");
-  writeFileSync(auditFile(logDir), JSON.stringify({ at: now.toISOString(), verdicts } satisfies AuditFile), "utf8");
+  writeFileSync(auditFile(logDir), JSON.stringify({ at: stampedAt.toISOString(), verdicts } satisfies AuditFile), "utf8");
   const told = readTold(logDir);
+  /** Once per run per tick: a run spared from a stop at the last look, noted in the ledger only. */
+  const spared = new Set<string>();
+  const spare = (id: string, why: string): void => {
+    if (spared.has(id)) return;
+    spared.add(id);
+    appendLedger(ledgerPath(logDir), "PANE-SPARED", { id, why: `pane audit: spared ${id}: ${why}` }, clock());
+  };
   const next: Record<string, string> = {};
   for (const v of verdicts) {
     if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
     next[v.id] = v.mark;
     // a running worker whose registered pane vanished (a terminal crash) is not lost work: reopen its pane
     if (v.kind === "worker" && v.mark === "NO PANE" && v.session) {
-      if (await reopenOrFall(logDir, v, tabs, deps.reopen, deps.stop, now)) {
+      // before the reopen can ever fall to a stop: the launcher may have opened its pane while this tick ran
+      const rec = launchingNow(v.id);
+      if (rec?.session && tabs.has(norm(rec.session))) {
+        spare(v.id, "the launcher opened its pane during this tick");
+        Object.assign(v, { mark: "ok", session: norm(rec.session), tab: tabs.get(norm(rec.session)), why: "pane landed mid-tick" });
+        continue;
+      }
+      if (await reopenOrFall(logDir, v, tabs, deps.reopen, deps.stop, clock())) {
         delete next[v.id];
         continue;
       }
     }
-    if (told[v.id] === v.mark) continue;
-    appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
-    // a worker without its pane does not run on: it ends through the normal path, which salvages its work.
-    // Only on the uncached bytes: a status that says its pane was opened is never stopped here.
-    if (v.kind === "worker" && v.mark === "NO PANE" && !v.session) {
+    // before ANY stop: re-read the status uncached AND re-check the pane registry uncached, on a fresh
+    // clock — either showing a pane now spares the run (2026-11-17: both kills rested on a stale view)
+    const lastLook = (): { spare?: string } => {
+      const at = injectedClock ? nowMs : freshNowMs(nowMs);
+      const proc = procs.find((p) => p.id === v.id);
+      if (launchingNow(v.id)) return { spare: "its pane launcher is still alive" };
+      if (proc && withinStartGrace(at, proc.startedMs, launchStampOf(proc, undefined), graceMs)) return { spare: "it is within the start grace" };
       const fresh = refreshCachedStatus(logDir, v.id);
-      if (!fresh?.pane?.opened && fresh?.pane?.exec !== true) await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, now);
+      if (fresh?.pane?.opened === true || fresh?.pane?.exec === true) return { spare: "its uncached status says the pane was opened" };
+      if (loadRegistry(logDir).some((e) => e.worker === v.id)) return { spare: "the registry now has its pane" };
+      return {};
+    };
+    // a violation counts once per run and mark: record it, then — for a worker without its pane — stop it
+    if (told[v.id] === v.mark) continue;
+    const g = lastLook();
+    if (g.spare) {
+      spare(v.id, g.spare);
+      Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: `spared: ${g.spare}` });
+      continue;
+    }
+    appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, clock());
+    // a worker without its pane does not run on: it ends through the normal path, which salvages its work.
+    if (v.kind === "worker" && v.mark === "NO PANE" && !v.session) {
+      await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, clock());
     }
   }
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
@@ -417,6 +521,8 @@ export interface LaunchAuditDeps {
   owns?: (pid: number, r: LaunchRecord, side: "wrapper" | "child") => boolean;
   /** Whether the record's iTerm session now belongs to another launch or registered worker. */
   sessionHeld?: (r: LaunchRecord, all: LaunchRecord[]) => boolean;
+  /** Liveness of the pane launcher's processes (its wrapper and caller): a live one means its pane is still being opened. Default: process.kill(pid, 0). */
+  launcherAlive?: (pid: number | undefined) => boolean;
 }
 
 export const LAUNCH_PID_SLACK_MS = 120_000;
@@ -464,7 +570,25 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
   const kill = d.kill ?? killReal;
   const ledger = ledgerPath(logDir);
   const exitOf = d.exit ?? readExit;
+  // a caller-supplied clock stands in for real time (a test world fixes it and never advances it): the
+  // start grace there is a minute, so a run within the grace stays within it for the whole round; the
+  // daemon's default clock keeps the policy value
+  const injectedClock = arguments.length >= 3;
+  const graceMs = auditStartGraceMs(injectedClock);
   const nowMs = now.getTime();
+  /** A clock for one decision or stamp: fresh when the round's time has gone stale (an injected clock is the round's, kept). */
+  const clock = (): Date => (injectedClock ? now : new Date(freshNowMs(nowMs)));
+  // liveness of a pane launcher still opening a pane (its wrapper and caller). An injected `launcherAlive`
+  // is the fake world's truth for the launcher pids; an injected `alive` alone stays scoped to the record's
+  // own sides, so launchingNow reads the real kill(pid,0) instead of a table where every pid is dead.
+  const aliveOf = d.launcherAlive ?? pidAlive;
+  const probing = !!d.launcherAlive;
+  const launchingNow = (id: string): LaunchRecord | null => {
+    const r = readRecord(id);
+    if (!r) return null;
+    if (!probing) return r;
+    return aliveOf(r.wrapper) || aliveOf(r.caller) ? r : null;
+  };
   // an injected liveness is a fake world: identity is then taken as given
   const owns = d.owns ?? (d.alive ? () => true : ownsLaunchPid);
   const all = (d.records ?? listRecords)();
@@ -475,6 +599,8 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
       (recs.some((o) => o.id !== r.id && o.session === r.session && o.startedMs >= r.startedMs) ||
         (!d.records && loadRegistry(logDir).some((e) => e.worker !== r.id && e.session === itermUuid(r.session!)))));
   for (const r of all) {
+    // fresh clock per record: no orphan verdict or kill rests on a stale `now` (an injected clock is the round's, kept)
+    const at = injectedClock ? nowMs : freshNowMs(nowMs);
     const ex = exitOf(r.id);
     // a pid is acted on only while it is verifiably this launch's process: a reused pid is someone else's
     const wrapperUp = alive(r.wrapper) && owns(r.wrapper!, r, "wrapper");
@@ -482,17 +608,19 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
     // the pane's session now carries another worker: the old record is dropped, nothing is signalled or closed
     if ((wrapperUp || childUp) && held(r, all)) continue;
     if (ex && !wrapperUp && !childUp) continue;
+    // a launcher still opening its pane (its caller lives while no wrapper has announced yet): not an orphan
+    if (!ex && !wrapperUp && !childUp && r.caller && alive(r.caller) && at - Math.max(r.openedMs ?? 0, r.startedMs) < graceMs) continue;
     // the wrapper writes its exit file the moment the child ends; a grace covers the closing itself
     // the wrapper lingers on its own before it closes the pane: only one past that is an orphan
-    if (ex && wrapperUp && nowMs - ex.endedMs > panePolicy().launchGraceMs + panePolicy().exitLingerSecs * 1000) {
+    if (ex && wrapperUp && at - ex.endedMs > panePolicy().launchGraceMs + panePolicy().exitLingerSecs * 1000) {
       kill(r.wrapper!, "SIGKILL", false);
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
-      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child ended, pane still open" }, now);
+      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child ended, pane still open" }, clock());
       out.push({ id: r.id, kind: "orphan-wrapper", action: "wrapper killed, pane closed" });
-    } else if (!ex && r.child && !childUp && wrapperUp && !(r.hold && alive(r.caller)) && nowMs - r.startedMs > panePolicy().launchGraceMs) {
+    } else if (!ex && r.child && !childUp && wrapperUp && !(r.hold && alive(r.caller)) && at - r.startedMs > panePolicy().launchGraceMs) {
       kill(r.wrapper!, "SIGKILL", false);
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
-      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child gone without an exit file" }, now);
+      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child gone without an exit file" }, clock());
       out.push({ id: r.id, kind: "orphan-wrapper", action: "wrapper killed, pane closed" });
     } else if (!ex && r.wrapper && !wrapperUp && childUp) {
       // the runner reads this marker at the end: its report names the pane audit, not a bare rc 137
@@ -500,7 +628,7 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
       requestKill(logDir, ledger, r.id, "pane audit", true, why);
       appendStopEvent(logDir, r.id, { killed_by: "pane audit", forced: true, reason: why });
       kill(r.child!, "SIGKILL", true);
-      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "child", why: "wrapper (the pane) is gone" }, now);
+      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "child", why: "wrapper (the pane) is gone" }, clock());
       out.push({ id: r.id, kind: "orphan-child", action: "child killed" });
     }
   }
@@ -510,20 +638,47 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
   const told = readJson(join(logDir, "pane-audit-unlaunched.json"));
   const flagged: Record<string, string> = {};
   const registered = d.registered ?? ((id: string) => loadRegistry(logDir).some((e) => e.worker === id));
+  /** Once per run per round: a run spared from the unlaunched stop at the last look, noted in the ledger only. */
+  const spared = new Set<string>();
+  const spare = (id: string, why: string): void => {
+    if (spared.has(id)) return;
+    spared.add(id);
+    appendLedger(ledger, "PANE-SPARED", { id, why: `pane audit: spared ${id}: ${why}` }, clock());
+  };
   for (const w of (d.workers ?? (() => runningWorkers(logDir)))()) {
-    if (w.exec || w.exempt || nowMs - w.startedMs < panePolicy().startGraceMs || registered(w.id)) continue;
+    // grace from the later of spawn and pane-launch attempt, on a fresh clock; a start after the clock is young, never abs-distance
+    const rec = launchingNow(w.id);
+    if (w.exec || w.exempt) continue;
+    if (withinStartGrace(injectedClock ? nowMs : freshNowMs(nowMs), w.startedMs, rec ? Math.max(rec.openedMs ?? 0, rec.startedMs) : undefined, graceMs)) continue;
+    // before the stop: re-check the pane registry uncached (a `registered` seam keeps its injected world)
+    if (d.registered ? registered(w.id) : loadRegistry(logDir).some((e) => e.worker === w.id)) continue;
     // safety net: re-read the status uncached — a worker whose bytes on disk say its pane was opened, or
     // that recorded any reason to run without one, is never stopped as unlaunched
     const fresh = refreshCachedStatus(logDir, w.id);
     if (fresh && (fresh.pane?.opened === true || fresh.pane?.exec === true || (fresh.pane && fresh.pane.opened === false))) continue;
     // a PAI-started continuation (reroute, fall-through, handoff) within the start grace: its pane is being
     // opened through the launcher right now — never stopped as unlaunched while that happens
-    if (fresh && isPaiContinuationStatus(fresh) && nowMs - w.startedMs < panePolicy().startGraceMs) continue;
+    if (fresh && isPaiContinuationStatus(fresh) && withinStartGrace(injectedClock ? nowMs : freshNowMs(nowMs), w.startedMs, rec ? Math.max(rec.openedMs ?? 0, rec.startedMs) : undefined, graceMs)) continue;
     flagged[w.id] = "1";
     if (!told[w.id]) {
+      // before the stop, one last look on a fresh clock: the launcher may have come alive, or its pane
+      // landed in the registry or the status, while this round ran
+      if (launchingNow(w.id)) {
+        spare(w.id, "its pane launcher is still alive");
+        continue;
+      }
+      if (!d.registered && loadRegistry(logDir).some((e) => e.worker === w.id)) {
+        spare(w.id, "the registry now has its pane");
+        continue;
+      }
+      const last = refreshCachedStatus(logDir, w.id);
+      if (last?.pane?.opened === true || last?.pane?.exec === true) {
+        spare(w.id, "its uncached status says the pane was opened");
+        continue;
+      }
       const why = "running without having been started through the pane launcher";
-      appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why }, now);
-      await stopUnpaned(logDir, w.id, why, d.stop, now);
+      appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why }, clock());
+      await stopUnpaned(logDir, w.id, why, d.stop, clock());
       out.push({ id: w.id, kind: "unlaunched", action: "stopped" });
     }
   }
