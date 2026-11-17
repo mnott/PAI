@@ -7,6 +7,7 @@
  * PAI_POOL_SLOT through the log dir (worker-id.ts), same lookup as the loop guard's state files.
  */
 
+import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { loadStatus } from "../../../workers/status.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
@@ -18,7 +19,7 @@ export function workerTaskText(env: NodeJS.ProcessEnv, logDir: string): string |
     if (!id) return undefined;
     const st = loadStatus(logDir, id);
     if (!st) return undefined;
-    const file = [st.promptFile, st.spec].find((f): f is string => !!f && f !== "-" && existsSync(f));
+    const file = [st.promptFile, st.spec, join(logDir, `${st.id}.prompt`)].find((f): f is string => !!f && f !== "-" && existsSync(f));
     if (!file) return undefined;
     return readFileSync(file, "utf8");
   } catch {

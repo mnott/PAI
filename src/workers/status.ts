@@ -374,6 +374,12 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
   }
   // `external`: a one-shot writer of another process (goal, the note hook) whose copy is the fresh load, so nothing on disk may override it.
   const onDisk = baseline === undefined || external ? undefined : loadStatus(logDir, status.id);
+  // the task copy gate.ts kept beside the placeholder status: a fresh status for the same id (pool host, executeRun —
+  // a process with no baseline yet) never drops it
+  if (!status.promptFile && !external) {
+    const kept = (onDisk ?? loadStatus(logDir, status.id))?.promptFile;
+    if (kept) status.promptFile = kept;
+  }
   if (onDisk) {
     if (status.label === baseline && onDisk.label !== status.label) status.label = onDisk.label;
     // Set by another process (`pai worker controls`); a true flag is never dropped by a stale in-memory copy.

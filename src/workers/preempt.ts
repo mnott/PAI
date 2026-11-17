@@ -88,7 +88,7 @@ function sweepOne(logDir: string, s: WorkerStatus, all: WorkerStatus[], room: Ma
   if (!cur?.paused || !cur.pausedBy || (s.pausedBy && cur.pausedBy !== s.pausedBy)) return undefined;
   const by = cur.pausedBy;
   if (!preemptorGone(cur, all)) return undefined;
-  const next = otherUrgent(all.filter((x) => isLive(x)), cur.provider, by);
+  const next = otherUrgent(all.filter((x) => isLive(x)), cur.provider, by, cur.id);
   if (next) {
     if (cur.pausedBy === by) {
       cur.pausedBy = next.id;
@@ -103,8 +103,8 @@ function sweepOne(logDir: string, s: WorkerStatus, all: WorkerStatus[], room: Ma
 }
 
 /** An urgent worker still running or waiting on `provider`, other than `except`. */
-function otherUrgent(statuses: WorkerStatus[], provider: string, except: string): WorkerStatus | undefined {
-  return statuses.find((s) => s.id !== except && s.now && s.provider === provider && (s.state === "running" || s.state === "queued"));
+function otherUrgent(statuses: WorkerStatus[], provider: string, except: string, victim: string): WorkerStatus | undefined {
+  return statuses.find((s) => s.id !== except && s.id !== victim && s.now && s.provider === provider && (s.state === "running" || s.state === "queued"));
 }
 
 /** Pause every other running, not yet paused worker on `provider` for the now run `by`; returns the ids paused. */
@@ -167,6 +167,14 @@ export function makeUrgent(logDir: string, id: string, local: boolean, who = "cl
   s.priority = "high";
   saveStatus(logDir, s, new Date(now), true);
   appendLedger(ledgerPath(logDir), "WORKER-PRIORITY", { who, id, from, to: "now" });
+  // urgent workers never pause each other: its own preemption pause ends (an operator pause, pausedBy cleared, stays)
+  if (s.paused && s.pausedBy && s.state === "running") {
+    try {
+      if (setWorkerPaused(logDir, id, false, "priority-now", undefined, now)) appendLedger(ledgerPath(logDir), "WORKER-RESUME", { who: "priority-now", id });
+    } catch {
+      /* ended meanwhile */
+    }
+  }
   return s.state === "running" && local ? preemptLocal(logDir, s.provider, id, now) : [];
 }
 
