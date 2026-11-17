@@ -2,7 +2,7 @@ import { mkdtempSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, workerAncestryBlocked, freezeWorkerGuard, freezeLogDir, freezeTestMode, parseFreezeServers, realFreezeDeps, type FreezeDeps, type ProcRow } from "./freeze.js";
+import { isFrozen, activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, workerAncestryBlocked, freezeWorkerGuard, freezeLogDir, freezeTestMode, parseFreezeServers, realFreezeDeps, type FreezeDeps, type ProcRow } from "./freeze.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
 import { detectSupervisionEvents } from "./supervision.js";
@@ -135,6 +135,32 @@ describe("freeze / thaw", () => {
     clearTestEnv();
   });
 
+  it("--only on ended ids writes no marker and says nothing to freeze", async () => {
+    const r = await freezeAll("/nonexistent-log", "t", 60_000, deps(), ["gone-1", "gone-2"]);
+    expect(r.total).toBe(0);
+    expect(r.marker).toBeNull();
+    expect(r.lines).toEqual(["nothing to freeze: gone-1, gone-2 are not running"]);
+    expect(existsSync(process.env.PAI_FREEZE_FILE!)).toBe(false);
+    expect(readFreeze()).toBeNull();
+    expect(sent).toEqual([]);
+  });
+
+  it("a partial freeze is not global: the sweeps and the gate carry on, only the frozen id is skipped", async () => {
+    await freezeAll("/nonexistent-log", "t", 60_000, deps([]), ["L2"]);
+    expect(readFreeze()?.scope).toBe("workers");
+    expect(isFrozen()).toBe(false); // scheduler sweeps / reaper keep running
+    expect(freezeHold()).toBeUndefined(); // new runs are admitted
+    expect(frozenSince("L2")).toBeDefined(); // supervision skips the frozen worker
+    expect(frozenSince("L1")).toBeUndefined(); // and supervises the others
+  });
+
+  it("a global freeze still pauses everything", async () => {
+    await freezeAll("/nonexistent-log", "t", 60_000, deps());
+    expect(isFrozen()).toBe(true);
+    expect(freezeHold()).toMatch(/frozen/);
+    expect(frozenSince("L1")).toBeDefined();
+  });
+
   it("refuses inside a worker", async () => {
     process.env.PAI_WORKER = "1";
     await expect(freezeAll("/x", "t", undefined, deps())).rejects.toThrow(/cannot freeze/);
@@ -146,8 +172,8 @@ describe("freeze / thaw", () => {
     const d = deps();
     d.servers = async () => [];
     const r = await freezeAll("/nonexistent-log", "t", undefined, d, ["L2"]);
-    expect(r.marker.pids.every((e) => e.kind === "worker")).toBe(true);
-    expect(r.marker.pids.map((e) => e.id)).toEqual(["L2", "L2", "L2"]);
+    expect(r.marker!.pids.every((e) => e.kind === "worker")).toBe(true);
+    expect(r.marker!.pids.map((e) => e.id)).toEqual(["L2", "L2", "L2"]);
     expect(sent.filter((s) => s.startsWith("SIGSTOP"))).toEqual(["SIGSTOP:200", "SIGSTOP:201", "SIGSTOP:202"]);
   });
 
@@ -435,7 +461,7 @@ describe("test-mode isolation", () => {
     expect(parseFreezeServers(process.env.PAI_FREEZE_SERVERS)).toEqual([{ pid: 777, label: "test-gyro" }]);
     process.env.PAI_FREEZE_LOGDIR = dir; // the isolation is all-or-nothing: with both set the freeze runs fully inside them
     const r = await freezeAll(freezeLogDir(), "t", undefined, deps());
-    expect(r.marker.pids.map((e) => e.pid)).toEqual([100, 101, 777]); // the isolated tree + the listed pid, nothing else
+    expect(r.marker!.pids.map((e) => e.pid)).toEqual([100, 101, 777]); // the isolated tree + the listed pid, nothing else
     expect(sent).toContain("SIGSTOP:777");
   });
 
