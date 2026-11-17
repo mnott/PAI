@@ -91,7 +91,7 @@ export const nowCommand: CommandDef = {
   name: "now",
   summary: "Urgency window: this session's workers run with now (front + preempt local)",
   description:
-    "The operator's explicit instrumentation for urgency (the `/now` token in a prompt is the same switch). While a window is open, every worker this session starts runs with --now — ahead at the local engine, preempting the other local workers — and with where=local when it was opened with local. Workers already running when it opens are made urgent. `pai worker run --now` and `pai worker priority <id> now` are the per-worker forms. Workers never open a window themselves.",
+    "The operator's explicit instrumentation for urgency (the `/now` token in a prompt is the same switch). While a window is open, every worker this session starts runs with --now — ahead at the local engine, preempting the other local workers — and with where=local when it was opened with local. Workers already running when it opens are made urgent. `pai worker run --now` and `pai worker priority <id> now` are the per-worker forms. Workers never open a window themselves. Urgent workers never pause each other: a worker started from inside an urgent worker's tree inherits now, so it can use the slots its paused victims freed (it never pauses its ancestor), and making a worker that a preemption paused now resumes it (an operator pause stays).",
   examples: ["pai now", "pai now --local --minutes 15", "pai worker run --local -p 'fix the flake'", "pai now --clear"],
   options: [
     { name: "session", type: "string", value: "NAME|ID", summary: "Session name or id (default: this session)" },
