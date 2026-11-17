@@ -494,9 +494,13 @@ export const aibrokerPush: PushFn = async (logDir, target, ev) => {
  */
 export function shouldRelay(
   kind: SupervisionKind,
-  outputFormat: WorkerStatus["outputFormat"] | undefined
+  outputFormat: WorkerStatus["outputFormat"] | undefined,
+  restart = false
 ): boolean {
   if (MID_RUN_KINDS.includes(kind) || kind === "rerouted") return true;
+  // a reroute / fall-through / escalation restart is started detached by the daemon: no caller waits on its
+  // JSON result (the origin's caller followed the old run), so its end is only ever heard through this notice
+  if (restart) return true;
   return outputFormat !== "json" && outputFormat !== "stream-json";
 }
 
@@ -714,7 +718,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   for (const ev of written) {
     // the owner's iTerm identity is in its worker status, not the event
     const owner = statuses.find((s) => s.id === ev.worker);
-    if (!shouldRelay(ev.kind, owner?.outputFormat)) continue; // caller reads its own JSON result
+    if (!shouldRelay(ev.kind, owner?.outputFormat, !!owner?.fallThroughOf)) continue; // caller reads its own JSON result
     const target: PushTarget = {
       claudeSession: ev.session || owner?.spawnerSession || null,
       iterm: owner?.session?.id ?? null,
