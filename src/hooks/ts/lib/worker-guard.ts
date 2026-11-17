@@ -764,7 +764,8 @@ export function decideWorkerGuard(
       // a worker starts children on the mode chain: --model/--provider only when its own brief names one
       const route = childRouteReason(cmd, ctx().taskText?.());
       if (route) return deny(route);
-      const why = nodeOnTypeScriptReason(cmd) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
+      // the package's own test script (if it runs tsx) legitimises its node-based runner form in nodeOnTypeScriptReason
+      const why = nodeOnTypeScriptReason(cmd, ctx().testScript()) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
       if (why) return deny(why);
       if (isLocalWorker(env)) {
         const why2 = localRmReason(parseCommand(cmd), ctx().cwd);
