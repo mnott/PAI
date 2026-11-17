@@ -27,6 +27,9 @@ import { lowPowerActive } from "../daemon/low-power.js";
 import { buildNext, buildsDir, listBuilds, renderBuildQueue } from "../builds/queue.js";
 import { poolSlots } from "../builds/config.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { hotTools, type ToolHandler } from "./hot-tools.js";
+import { distBuildId } from "../daemon/dist-watch.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { PaiClient } from "../daemon/ipc-client.js";
@@ -196,7 +199,8 @@ const whereArgs = {
 // MCP server
 // ---------------------------------------------------------------------------
 
-async function startShim(): Promise<void> {
+/** Builds the server with every tool registered (not connected). Also called on a fresh import of a new build to collect its handlers. */
+export function buildServer(): { server: McpServer; handlers: Map<string, ToolHandler> } {
   const server = new McpServer(
     {
       name: "pai",
@@ -206,6 +210,13 @@ async function startShim(): Promise<void> {
       instructions: PAI_INSTRUCTIONS,
     }
   );
+  const entry = fileURLToPath(import.meta.url);
+  const handlers = hotTools(server, {
+    readId: () => distBuildId(entry),
+    startId: START_ID,
+    loadFresh: async (id) => ((await import(`${pathToFileURL(entry).href}?build=${encodeURIComponent(id)}`)) as { buildServer: typeof buildServer }).buildServer().handlers,
+    log: (l) => process.stderr.write(`[pai-mcp] ${l}\n`),
+  });
 
   // -------------------------------------------------------------------------
   // Prompts — one per skill workflow (fetched on demand)
@@ -2197,11 +2208,23 @@ async function startShim(): Promise<void> {
   // Connect transport and start serving
   // -------------------------------------------------------------------------
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  return { server, handlers };
 }
 
-startShim().catch((e) => {
-  process.stderr.write(`PAI MCP shim fatal error: ${String(e)}\n`);
-  process.exit(1);
-});
+/** Build id of this file when the process started; tool calls compare against it (hot-tools.ts). */
+const START_ID = distBuildId(fileURLToPath(import.meta.url));
+
+async function startShim(): Promise<void> {
+  const { server } = buildServer();
+  await server.connect(new StdioServerTransport());
+}
+
+// A fresh import of a newer build (hot-tools.ts) only wants buildServer(); the first load owns stdio.
+const g = globalThis as { __paiMcpStarted?: boolean };
+if (!g.__paiMcpStarted) {
+  g.__paiMcpStarted = true;
+  startShim().catch((e) => {
+    process.stderr.write(`PAI MCP shim fatal error: ${String(e)}\n`);
+    process.exit(1);
+  });
+}
