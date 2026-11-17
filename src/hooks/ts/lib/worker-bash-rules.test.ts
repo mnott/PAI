@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths } from "./worker-bash-rules.js";
+import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
 
 describe("nodeOnTypeScriptReason", () => {
   it("should deny node with .ts file", () => {
@@ -229,4 +230,30 @@ describe("maskedProofReason", () => {
     "cat <<'EOF'\nnpx tsc > /dev/null || true\nEOF",
   ];
   for (const c of fine) it(`allows ${c.split("\n")[0]}`, () => expect(maskedProofReason(c)).toBeNull());
+});
+
+describe("worker guard heredoc bodies", () => {
+  const ctx = (): WorkerGuardContext => ({
+    cwd: "/repo/.workers/worktrees/abc",
+    home: "/home/u",
+    worktreeRoot: "/repo/.workers/worktrees/abc",
+    inWorktree: true,
+    mainCheckout: "/repo",
+    testScript: () => null,
+  });
+  const denied = (command: string) =>
+    JSON.stringify(
+      decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" }, ctx)
+    ).includes("deny");
+  it("allows a heredoc script write whose body mentions kill/pkill/xargs", () => {
+    expect(denied(`cat > "$TMPDIR/p6.pl" <<'EOF'\nundef $/; s/timedOut = true; child\\.kill\\("SIGTERM"\\)/x/;\npkill -f foo; ls | xargs kill\nEOF`)).toBe(false);
+  });
+  it("allows a heredoc body containing sed -i", () => {
+    expect(denied("cat > x <<'EOF'\nsed -i s/a/b/ f\nEOF")).toBe(false);
+  });
+  it("denies a bare pkill and one after the terminator", () => {
+    expect(denied("pkill -f foo")).toBe(true);
+    expect(denied("cat > x <<EOF\nhello\nEOF\npkill foo")).toBe(true);
+    expect(denied("cat > x <<EOF; pkill foo\nhello\nEOF")).toBe(true);
+  });
 });

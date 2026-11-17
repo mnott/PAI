@@ -41,6 +41,7 @@ import { ensureScratchExcluded, isGitRepo } from "../../../workers/worktree.js";
 import { isTestPath as auditIsTestPath } from "../../../testgov/audit.js";
 import { parseKept } from "../../../testgov/kept.js";
 import { parseCommand } from "./worker-guard.js";
+import { blankHeredocBodies } from "./heredoc.js";
 import { cwdAfterCds } from "./worker-git-guard.js";
 import { scriptWritesRepoCode } from "./orchestrator-script-writes.js";
 
@@ -128,26 +129,6 @@ function toolWriteTargets(words: string[]): string[] {
   if (cmd === "touch") return words.slice(1).filter((w) => !w.startsWith("-"));
   if (cmd === "mkdir") return words.slice(1).filter((w) => !w.startsWith("-"));
   return [];
-}
-
-/** Command with heredoc bodies (and terminators) blanked to spaces; offsets and line starts are preserved. */
-function blankHeredocBodies(command: string): string {
-  const lines = command.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const h = lines[i].match(HEREDOC_START);
-    if (!h) continue;
-    const tag = h[1] ?? h[2] ?? h[3];
-    const dash = /<<-/.test(lines[i]);
-    let j = i + 1;
-    for (; j < lines.length; j++) {
-      const l = dash ? lines[j].replace(/^\t+/, "") : lines[j];
-      const end = l === tag;
-      lines[j] = " ".repeat(lines[j].length);
-      if (end) break;
-    }
-    i = j;
-  }
-  return lines.join("\n");
 }
 
 /** `-i`, `-pi`, `-ni`, `-i.bak`, `--in-place[=SUFFIX]`: the in-place rewrite flag of perl/sed/ruby. */
