@@ -21,6 +21,32 @@ export function dropHeredocBodies(command: string): string {
   return dropBodies(command, () => true);
 }
 
+const BLANK_START = /(?<!<)<<(?!<)-?\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_]\w*))/;
+
+/**
+ * The shared heredoc blanker for every segment/word-based rule: body lines (and the terminator) become spaces, so a word
+ * in a `cat > f <<EOF` body is never parsed as a command. Offsets and line starts are preserved — text before a start and
+ * after a terminator keeps its position and still counts (a real `pkill x` after EOF stays visible to the rules).
+ */
+export function blankHeredocBodies(command: string): string {
+  const lines = command.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const h = lines[i].match(BLANK_START);
+    if (!h) continue;
+    const tag = h[1] ?? h[2] ?? h[3];
+    const dash = /<<-/.test(lines[i]);
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const l = dash ? lines[j].replace(/^\t+/, "") : lines[j];
+      const end = l === tag;
+      lines[j] = " ".repeat(lines[j].length);
+      if (end) break;
+    }
+    i = j;
+  }
+  return lines.join("\n");
+}
+
 // a shell as the consumer: `bash <<EOF`, `sh -s <<EOF`, `cat <<EOF | bash`, `sudo sh <<EOF`
 const SHELL_CONSUMER = /(?:^|[|;&(]|\b(?:sudo|exec|env|command))\s*(?:\S*\/)?(?:ba|z|da|k|c|tc|fi)?sh(?![\w.-])/;
 // a redirect into a file (not `2>&1`, `>/dev/null`) or `tee <file>`

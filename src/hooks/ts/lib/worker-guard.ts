@@ -26,7 +26,7 @@ import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
 import { operatorTestsReason, projectTestsByOperator } from "./worker-test-rules.js";
-import { dropHeredocBodies } from "./heredoc.js";
+import { blankHeredocBodies } from "./heredoc.js";
 import { isScratchRootFile } from "./worker-scratch-name.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
 import { benchStartReason } from "./worker-bench-rules.js";
@@ -92,9 +92,9 @@ export function waitWhilePreempted(logDir: string, wid: string, maxMs: number, p
   return true;
 }
 
-/** Split into segments; quotes group words, operators outside quotes split. */
+/** Split into segments; quotes group words, operators outside quotes split. Heredoc bodies are blanked first (blankHeredocBodies) — their text is data, not commands — while the start line and everything after a terminator stay at their offsets. */
 export function parseCommand(raw: string): Segment[] {
-  const command = dropHeredocBodies(raw);
+  const command = blankHeredocBodies(raw);
   const segs: Segment[] = [];
   let seg: Segment = { words: [], redirects: [] };
   let tok = "";
@@ -246,7 +246,7 @@ function childOverrides(words: string[]): string[] {
  * `pai worker help` (the budgeted stronger-model call) and every other command pass.
  */
 export function childRouteReason(command: string, taskText: string | undefined): string | null {
-  const text = dropHeredocBodies(command);
+  const text = blankHeredocBodies(command);
   if (!/pai\s+worker\s+(?:run|resume)/.test(text)) return null;
   for (const seg of parseCommand(command)) {
     const overrides = childOverrides(seg.words);
@@ -461,7 +461,7 @@ function rootWalkReason(cmd: string, args: string[], cwd: string, home: string):
   return paths.some(isRoot) ? SEARCH_ROOT_REASON : null;
 }
 
-/** Decide one segment; `st.cwd` is the tracked working directory. */
+/** Decide one segment; `st.cwd` is the tracked working directory. The segments come from parseCommand (heredoc bodies blanked), and `st.raw` — what a git commit message check reads — has them blanked too: heredoc text is data, not commands. */
 function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
   const words = stripPrefix(seg.words);
   const [cmd, ...args] = words;
@@ -604,20 +604,21 @@ function longestTimeoutSecs(segs: Segment[]): number {
   return longest;
 }
 
-/** Deny a foreground command that would block longer than 2 min; `nohup …` segments are the detached launch and exempt. */
+/** Deny a foreground command that would block longer than 2 min; `nohup …` segments are the detached launch and exempt. Heredoc bodies never count: their text is data, not commands. */
 function longWaitReason(command: string, segs: Segment[]): string | null {
   const fg = segs.filter((s) => s.words[0] !== "nohup");
   const t = longestTimeoutSecs(fg);
   if (t > MAX_FOREGROUND_SECS) return `timeout ${t}s blocked: ${WAIT_REASON_TAIL}`;
   // Quoted text and nohup launches are not foreground sleeps; loops count at least one sleep floor (one parser: totalSleepSecs).
-  const bare = command.replace(/'[^']*'|"[^"]*"/g, "''").replace(/\bnohup\b[^;&|\n]*/g, "");
+  const bare = blankHeredocBodies(command).replace(/'[^']*'|"[^"]*"/g, "''").replace(/\bnohup\b[^;&|\n]*/g, "");
   const s = totalSleepSecs(bare);
   if (s > MAX_FOREGROUND_SECS) return `sleep ${s}s blocked: ${WAIT_REASON_TAIL}`;
   return null;
 }
 
 function decideCommand(command: string, ctx: WorkerGuardContext, detached = false): GateDecision {
-  const st = { cwd: ctx.cwd, raw: command };
+  // one pass over the text: heredoc bodies blanked for every rule below (parseCommand segments, the sleep scan, the commit message)
+  const st = { cwd: ctx.cwd, raw: blankHeredocBodies(command) };
   const segs = parseCommand(command);
   const long = detached ? null : longWaitReason(command, segs);
   if (long) return deny(long);
