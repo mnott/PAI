@@ -116,6 +116,7 @@ describe("waitOn --rc and the unknown end", () => {
     // a real --max: the loop must run its full budget on wall time, never cut short by the shifted clock.
     const maxSecs = 35;
     let slept = 0;
+    f.deps.now = () => t;
     f.deps.sleep = async (ms) => {
       slept += ms;
       t += ms;
