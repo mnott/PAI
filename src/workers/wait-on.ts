@@ -11,13 +11,15 @@
  * A `pai worker run` process (queued or running) is exempt from both: it has its own deadline; use `pai worker wait <id>`.
  * A tree waiting in the build-lock queue (a "waiting" build ticket owned by the pid or a descendant) is exempt
  * from the stall kill: the gate's queue heartbeats go to its own stderr, so the watched log stays silent by design.
+ * All clocks here are wall (`Date.now`): the rules compare them against `ps lstart` start times, and a
+ * freeze-adjusted clock (activeNow) reads a young job as ancient — it killed live builds under past freezes
+ * (fixed 2026-11-17; see realDeps.now).
  */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { buildsDir, listBuildsSync, ordered, ticketKind, type BuildTicket } from "../builds/queue.js";
-import { activeNow } from "./freeze.js";
-import { loadStatus, loadStatuses, pidAlive, saveStatus } from "./status.js";
+import { loadStatus, loadStatuses, ownsPid, pidAlive, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
 export const WAIT_DEFAULT_SECS = 110;
@@ -50,6 +52,9 @@ export interface WaitOnDeps {
   probe: (pid: number) => "alive" | "gone" | "foreign" | "zombie";
   /** Process start time in ms epoch, null when unknown. */
   startTime: (pid: number) => number | null;
+  /** Wall clock (ms epoch). Never a freeze-adjusted or otherwise shifted clock: the ceiling and stall
+   *  rules compare it against `ps lstart` start times, which are wall — a shifted clock reads a young job
+   *  as ancient and kills it, and one that jumps past the pid's death reads a live job as gone. */
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   out: (line: string) => void;
@@ -63,7 +68,7 @@ export interface WaitOnDeps {
   killTree?: (pid: number) => Promise<void>;
   /** Is the tree of pid doing work although silent: a descendant's CPU time advancing, or an open loopback TCP connection (a model/router request in flight)? */
   busy?: (pid: number) => Promise<{ busy: boolean; why: string }>;
-  /** Worker status of the awaited pid: queued behind the provider cap (capacity gate) or not, and when it left the queue (ms epoch); null = not a worker. */
+  /** Worker status of the awaited pid: queued behind the provider cap (capacity gate) or not, and when it left the queue (ms epoch); null = not a worker. Must verify the status still owns its pid: a recycled pid must never be treated as a worker (its exemption would disable the ceiling and stall rules for an unrelated job). */
   queue?: (pid: number) => { queued: boolean; started: number | null; id?: string } | null;
   /** Live build tickets, for the build-lock queue check (default: `listBuildsSync(buildsDir())`). */
   tickets?: () => BuildTicket[];
@@ -83,8 +88,12 @@ const inBuildQueue = (pid: number, d: WaitOnDeps): BuildTicket | null => {
 /** A `queue` dep reading the worker status whose pid is the awaited one. */
 export function statusQueue(logDir: string): NonNullable<WaitOnDeps["queue"]> {
   return (pid) => {
+    // a live pid alone is not a worker: the OS recycles pids, and a status whose recorded start no longer
+    // matches the process is a dead worker's file. Treating such a match as "worker" exempted the job from
+    // the ceiling AND the stall rule (and counted its ceiling from the stale `started`) — on 2026-11-17 an
+    // ordinary build pid matched an old status that way and was read gone/killed while still running.
     const s = loadStatuses(logDir).find(
-      (w) => (w.pid === pid || w.runPid === pid) && (w.state === "running" || w.state === "queued")
+      (w) => (w.pid === pid || w.runPid === pid) && (w.state === "running" || w.state === "queued") && ownsPid(w)
     );
     if (!s) return null;
     const t = Date.parse(s.started);
@@ -240,7 +249,13 @@ export const realDeps: WaitOnDeps = {
       return null;
     }
   },
-  now: activeNow,
+  // wall, not `activeNow`: that clock stands still while the machine is frozen and subtracts every past
+  // freeze (62 min accumulated on this machine by 2026-11-17). Compared against wall `ps lstart` start
+  // times it made a young job read ancient — the stall rule fired at once and killed a live build, which
+  // is how workers saw "pid … gone after 0m00s" for a running job (workers 20261117-014446-31064,
+  // 20261117-011605-83526). --max is deliberately wall now too: freezing the machine stops this process's
+  // timers as well, so the freeze was never deducted from a call's own budget anyway.
+  now: () => Date.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   out: (l) => console.log(l),
   proc: realProc,
@@ -288,6 +303,8 @@ const fmtMinutes = (ms: number): string => `${Math.round((ms / 60_000) * 100) / 
 export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<number> {
   const maxMs = Math.min(o.maxSecs ?? WAIT_DEFAULT_SECS, WAIT_CAP_SECS) * 1000;
   const tail = o.tail ?? 20;
+  // --max is this call's budget on its OWN clock: subtracting a shifted `now` (a past activeNow) from a
+  // wall `d.now()` would end the wait after maxMs minus the shift — seconds, not the asked-for budget.
   const t0 = d.now();
   const ceilMs = (o.maxMinutes ?? MAX_MINUTES_DEFAULT) * 60_000;
   const stallMs = (o.stallMinutes ?? STALL_MINUTES_DEFAULT) * 60_000;
@@ -362,6 +379,9 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
     while (d.now() - t0 < maxMs) {
       await d.sleep(Math.min(POLL_MS, Math.max(0, maxMs - (d.now() - t0))));
       const st = d.startTime(o.pid);
+      // Only a start time NEWER than this call began means pid reuse. A start older than `t0` is simply
+      // the awaited job predating wait-on (the recipe starts it first) — never "gone". The real clock's
+      // monotonicity plus probe() alone decide liveness; a shifted `now` must not fabricate either answer.
       if (d.probe(o.pid) !== "alive" || (st !== null && st > t0 + REUSE_SLACK_MS)) return finish();
       const q = d.queue?.(o.pid) ?? null;
       queued = q?.queued ?? false;
