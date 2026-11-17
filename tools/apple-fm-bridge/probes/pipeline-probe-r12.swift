@@ -696,9 +696,11 @@ func termCovered(_ term: String, sent: String, front: String, back: String) -> B
 /// only counts nouns and numbers now; verbs and function words the model legitimately adds are ignored
 func nounTokens(_ s: String) -> Set<String> {
   var out = Set<String>()
-  let prot = abbrProtect(s)
-  for m in rxc(#"\b[A-ZÄÖÜ][\wäöüß-]{3,}"#).matches(in: prot, range: NSRange(prot.startIndex..., in: prot)) {
-    guard let r = Range(m.range, in: prot) else { continue }
+  // run 12 fix: do NOT match on abbrProtect(s) — §§ replaces "." with the 2-char placeholder and GROWS the string, so a
+  // UTF-8 range of the protected text is invalid in `s` (this crashed card #11). Match on `s` itself; §§ words cannot
+  // match [A-ZÄÖÜ][\wäöüß-]{3,} anyway (§ is not a word char), so abbreviations are simply skipped as noun tokens
+  for m in rxc(#"\b[A-ZÄÖÜ][\wäöüß-]{3,}"#).matches(in: s, range: NSRange(s.startIndex..., in: s)) {
+    guard let r = Range(m.range, in: s) else { continue }
     let w = String(s[r])
     if stopLower.contains(w.lowercased()) || sentenceStartCaps.contains(w) { continue }
     out.insert(deStem(w))
