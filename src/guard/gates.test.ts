@@ -122,6 +122,14 @@ describe("GNU sed relative-range denial on macOS", () => {
     expect(gnu("sed -n 1,8p")).toBeNull();
     expect(gnu("sed 's/a,+b/c/' f")).toBeNull(); // a substitution containing ",+" is not an address
   });
+  (darwin ? it : it.skip)("denies sed -i followed by a script, allows a real backup suffix", () => {
+    for (const c of ["sed -i '1953s/x/y/' f", "sed -i '/re/d' f", "sed -i '$d' f", "sed -i '1,5d' f", "sed -i 's/a/b/' f", "sed -i '1953s/a/b/; 1969s/c/d/' f.swift"]) {
+      expect(gnu(c)?.action, c).toBe("deny");
+    }
+    for (const c of ["sed -i '' -e 's/a/b/' f", "sed -i.bak 's/a/b/' f", "sed -i '.bak' 's/a/b/' f", "sed -i '~' 's/a/b/' f", "sed -n 1,8p f"]) {
+      expect(gnu(c), c).toBeNull();
+    }
+  });
 });
 
 describe("ANTHROPIC_API_KEY is never set on a process (workers and L0)", () => {
