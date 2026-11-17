@@ -670,7 +670,9 @@ func hasFrontDanglingAntecedent(_ f: String) -> Bool {
 /// definition sentence — no finite verb beyond "ist") usually names its subject vaguely ("der deutsche
 /// Fremdwort-Begriff"); such fronts are rejected so the model re-asks explicitly
 func frontVagueSubject(_ f: String) -> Bool {
-  let body = norm(String(f.drop(while: { !$0.isLetter }))).lowercased()
+  // run 12 fix: the old drop(while: !isLetter) dropped EVERYTHING for a front starting with an umlaut ("Österreich…",
+  // isLetter == true), and the later dropLast(2) crashed on short fronts — match the question opener instead
+  let body = norm(f).lowercased()
   guard body.hasPrefix("was ist ") else { return false }
   let rest = body.replacingOccurrences(of: "was ist ", with: "")
   // vague when the subject is a bare article-noun chain without any genitive/of-phrase naming it ("der deutsche fremdwort-begriff");
@@ -1156,7 +1158,8 @@ func runSelftest(sectionsDir: String?) -> Int32 {
             // broken template ("Wie verhält sich X wie?") — always rejected; and a REVERSED front asks the answer term
             // as its subject ("Wie beeinflusst die Thermik die Intensität?" answers "die Intensität")
             if !norm(c.front).isEmpty {
-              let bodyW = norm(String(c.front.dropLast(2))).lowercased()   // the front without its final '?'/'e?' pair
+              let trimmedFront = c.front.hasSuffix("?") ? String(c.front.dropLast()) : c.front
+              let bodyW = norm(trimmedFront).lowercased()   // the front without its final '?'
               if has(rx(#"\bwie\?$"#), c.front) && has(rx(#"\bwie\b"#), bodyW) { flags.append("frontWieTemplate") }
               let qm = rx(#"[?？]\s*$"#).firstMatch(in: c.front, range: NSRange(c.front.startIndex..., in: c.front))
               let bodyEnd = (qm.flatMap { Range($0.range, in: c.front) }?.lowerBound) ?? c.front.endIndex
