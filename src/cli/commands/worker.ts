@@ -293,7 +293,6 @@ async function runDetached(ctx: RunContext): Promise<number> {
   const id = await startDetachedWorker(dir, args, { cwd: process.cwd(), timeoutMs: 60_000 });
   const st = loadStatus(dir, id);
   const state: "queued" | "running" = st?.state === "queued" ? "queued" : "running";
-
   out(JSON.stringify({ id, state }));
   return 0;
 }

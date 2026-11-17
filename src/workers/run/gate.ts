@@ -261,9 +261,8 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   };
   // this path announces once per id: gateStart owns it when it ran (a --detach starter learns the id at
   // the queue), so do not fire again here. foldRun's announce stays independent of this flag.
-  const announced = a.gated === true;
+  const announced = a.announced === true;
   const panePending = preparePane();
-
   // no pane, no claim: a pooled task must never start unseen. A failed pane falls through to the fresh spawn,
   // which re-attempts it and applies the pane-failure behaviour (the run is refused).
   const paneFailed = await panePending.then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
@@ -359,7 +358,6 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   const resp = outcome.ok;
   await followInPane().catch(() => undefined); // a task that ended before the poll saw it still leaves its transcript in the pane
   if (!announced) a.onWorkerStart?.(wid); // an ungated pool run: this is its start; a gated one announced at the queue (gateStart)
-
   if (claim && a.setupPaneMs !== undefined) {
     // the pane finishes beside the claim, so the host cannot know it: the client adds the pane share of the setup
     appendLedger(ledgerPath(a.logDir), "WORKER-SETUP", { id: wid, setupPaneMs: a.setupPaneMs, admissionMs: a.admissionMs, claimMs: postMs });
@@ -840,11 +838,6 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   // runs — whether the run starts or queues at the provider's cap (2026-11-17: a capped provider held
   // --detach past 60s and the coordinator retried, queueing the same package three times). The status
   // may read "queued" by the time it is read: runGates' first onWait saves it.
-  // the id exists and its status is on disk: tell the caller now, before the gates wait for a slot.
-  // A detached starter (`pai worker run --detach`, startDetachedWorker) returns as soon as this line
-  // runs — whether the run starts or queues at the provider's cap (2026-11-17: a capped provider held
-  // --detach past 60s and the coordinator retried, queueing the same package three times). The status
-  // may read "queued" by the time it is read: runGates' first onWait saves it.
   // One exception: a reroute's restart (PAI_RERUN_ID_FILE set) keeps its announce for its real start —
   // the waiting reroute stops the old run the moment this file is written, and a restart parked at the
   // target's cap must not get its predecessor killed while it never started.
@@ -852,6 +845,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     a.announced = true;
     a.onWorkerStart?.(wid);
   }
+  // the follow pane opens now, not after the queue (a run parked at a cap shows
   // its place in line there, runGates onWait) — and beside admission and the
   // claim, never in front of them: whoever needs the pane settled awaits paneOpening
   const ledger = ledgerPath(a.logDir);

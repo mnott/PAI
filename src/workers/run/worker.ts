@@ -306,11 +306,11 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // runWorker call) so the exit hook below knows which status to check,
   // whatever opts.id/onWorkerStart the caller did or didn't pass
   let workerId: string | undefined = opts.id;
-  // gateStart announces the id at the queue (a --detach starter returns while the run queues). The same
-  // id must reach opts.onWorkerStart once: execArgs.announced tells foldRun/tryPoolRun to skip theirs, so
-  // it is set here before the gates run; trackStart stays per-call, since an escalation or fall-through
-  // re-run announces its new id through it. An ungated interactive run has no gate announce and foldRun
-  // clears the flag to announce at the real start.
+  // the claude path announces its id once: execArgs.announced (set below, before the gates) means that
+  // announce is gateStart's — at the queue, so a --detach starter returns while the run queues — and
+  // foldRun/tryPoolRun skip theirs; an ungated interactive run has no gate announce and foldRun clears
+  // the flag to announce at its real start. trackStart stays per-call: an escalation or fall-through
+  // re-run announces its new id through it.
   const trackStart = (wid: string) => {
     workerId = wid;
     opts.onWorkerStart?.(wid);
@@ -421,7 +421,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       });
     } else {
       const execArgs: ExecuteArgs = {
-        // the claude path announces once per id: gateStart (at the queue) owns it; foldRun/tryPoolRun see this and skip theirs
+        // gateStart owns this run's announce (at the queue); foldRun/tryPoolRun see this and skip theirs
         announced: true,
         config,
         logDir,
