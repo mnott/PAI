@@ -532,7 +532,7 @@ Merge a worker's branch into your checkout
 pai worker merge ID [options]
 ```
 
-Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. With --verify (or the workers.yaml `merge.verify` default, which --verify overrides and --no-verify skips) the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1. A built-in stub scan always runs after the merge: added lines under src/ matching `TODO: implement`, `Promise.resolve(0) // TODO` or `throw new Error("not implemented` revert the merge the same way.
+Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. A worker that is still queued or running is refused (exit 3): wait with `pai worker wait ID` or stop it with `pai worker kill ID` first; --force merges anyway and leaves the worktree in place until the worker ends (gc reclaims it). With --verify (or the workers.yaml `merge.verify` default, which --verify overrides and --no-verify skips) the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1. A built-in stub scan always runs after the merge: added lines under src/ matching `TODO: implement`, `Promise.resolve(0) // TODO` or `throw new Error("not implemented` revert the merge the same way.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -546,6 +546,7 @@ Merges branch worker/ID into the original checkout, then removes the worktree an
 | `--no-verify` | flag | — | Skip the configured merge.verify default (prints a warning) |
 | `--no-verify-tests` | flag | — | Skip the related-tests check (config workers.merge.verify) for this merge |
 | `--no-build` | flag | — | Do not rebuild dist/ after merging into the running PAI checkout (config workers.merge.rebuild) |
+| `--force` | flag | — | Merge a still-running worker anyway; its worktree and branch stay until it ends |
 
 ```sh
 pai worker merge w-20260101-abc

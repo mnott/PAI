@@ -736,7 +736,15 @@ export const realProcTable: ProcTable = {
   alive,
   startMs: (pid) => {
     try {
-      const t = Date.parse(psOut(["-o", "lstart=", "-p", String(pid)]));
+      // `ps -o lstart= -p <dead pid>` prints the "STARTED" header and exits 0 on
+      // macOS, so a dead pid's Date.parse lands on the header text — and in a
+      // worker whose label is that very word (`--label started`, live
+      // 2026-11-17: worker 20261117-002658-15467, merged while running) the
+      // command-line fallback then matched it and ownsPid read a dead pid as
+      // owned. Only a real row counts; an unknown start must stay undefined.
+      const out = psOut(["-o", "lstart=", "-p", String(pid)]);
+      if (!out || out.trim().toUpperCase() === "STARTED") return undefined;
+      const t = Date.parse(out.split("\n")[0] ?? "");
       return Number.isNaN(t) ? undefined : t;
     } catch {
       return undefined;
@@ -772,6 +780,9 @@ export function makeOwnsPid(t: ProcTable): (status: OwnerFields) => boolean {
     const started = status.procStart ?? spawnTimeOf(status) ?? (status.started ? Date.parse(status.started.replace(" ", "T")) : NaN);
     if (psStart === undefined || Number.isNaN(started)) return t.alive(status.pid);
     if (Math.abs(psStart - started) <= 120_000) return true;
+    // a reused pid must name the worker in its own command line: match it against
+    // `ps -p <pid>` output, never against the whole table (`ps ax` is huge and any
+    // word — a label like "started" — appears in some row of it)
     const cmd = t.command(status.pid);
     return (!!status.id && cmd.includes(status.id)) || (!!status.label && status.label.length >= 8 && cmd.includes(status.label));
   };

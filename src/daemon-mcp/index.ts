@@ -2013,9 +2013,10 @@ async function startShim(): Promise<void> {
 
   server.tool(
     "worker_merge",
-    "Merge a finished worker's branch into its checkout (`pai worker merge`): verify command (default workers.yaml merge.verify), stub scan, related tests, then dist rebuild when it lands in the running PAI. A failing gate reverts (verify) or keeps the merge and reports the failing files (related tests).",
+    "Merge a finished worker's branch into its checkout (`pai worker merge`): a queued or running worker is refused (wait or kill it first; force=true merges anyway and leaves the worktree in place); verify command (default workers.yaml merge.verify), stub scan, related tests, then dist rebuild when it lands in the running PAI. A failing gate reverts (verify) or keeps the merge and reports the failing files (related tests).",
     {
       id: z.string().describe("Worker id."),
+      force: z.boolean().optional().describe("Merge a still-running worker anyway; its worktree and branch stay until it ends."),
       no_commit: z.boolean().optional().describe("Stage the merge without committing."),
       verify: z.string().optional().describe("Command to run on the merged tree; a non-zero exit reverts the merge."),
       no_verify: z.boolean().optional().describe("Skip the configured merge.verify default."),

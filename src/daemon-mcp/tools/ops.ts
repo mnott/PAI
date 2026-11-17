@@ -202,21 +202,26 @@ export interface WorkerMergeArgs {
   no_verify?: boolean;
   no_verify_tests?: boolean;
   no_build?: boolean;
+  force?: boolean;
 }
 
-/** pai worker merge: same function, same gates (verify, stub scan, related tests, dist rebuild). */
+/** pai worker merge: same function, same gates (running-worker refusal, verify, stub scan, related tests, dist rebuild). */
 export async function workerMerge(args: WorkerMergeArgs): Promise<WorkerToolResult> {
   try {
-    const { mergeWorker, RelatedTestsFailedError } = await import("../../workers/worktree.js");
+    const { mergeWorker, RelatedTestsFailedError, WorkerRunningError } = await import("../../workers/worktree.js");
     const { readMergeVerify } = await import("../../workers/workers-config.js");
     const verify = args.verify ?? (args.no_verify ? undefined : readMergeVerify());
     const r = await captured(() => {
       try {
-        console.log(mergeWorker(logDir(), args.id, { noCommit: args.no_commit === true, verify, verifyTests: args.no_verify_tests !== true, rebuild: args.no_build !== true }));
+        console.log(mergeWorker(logDir(), args.id, { noCommit: args.no_commit === true, verify, force: args.force === true, verifyTests: args.no_verify_tests !== true, rebuild: args.no_build !== true }));
         return 0;
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) {
           console.log(`${e.message}\nthe merge was kept; fix forward or revert it`);
+          return 3;
+        }
+        if (e instanceof WorkerRunningError) {
+          console.log(e.message);
           return 3;
         }
         throw e;

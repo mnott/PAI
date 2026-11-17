@@ -19,13 +19,14 @@ import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
-import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
+import { isLive, loadStatus, loadStatuses, ownsPid, refreshCachedStatus, saveStatus, statusPids, UNLABELED, type WorkerStatus } from "./status.js";
 import { currentWorkerId } from "./worker-id.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
 import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
+import { readMergeVerify } from "./workers-config.js";
 import { acquireTestSlotSync, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
 import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
@@ -918,7 +919,9 @@ function mergeSnapshotWorker(
   noCommit = false,
   verify?: string,
   /** The caller worker's own checkout: the branch is merged into its HEAD there instead of patching a tree. */
-  targetTree?: string
+  targetTree?: string,
+  /** --force on a live worker: merge, but leave the worktree and branch in place (gc reclaims them once it ends). */
+  keepLive = false
 ): string {
   const snapshot = st.worktreeBase!;
   const branch = st.branch!;
@@ -983,19 +986,21 @@ function mergeSnapshotWorker(
       () => null,
       { logDir, id }
     );
-    if (existsSync(worktreeDir)) assertWorktreeClean(worktreeDir, id);
-    for (const l of salvageNotes(targetTree, worktreeDir, id)) console.log(l);
-    removeWorktree(targetTree, worktreeDir, true);
-    try {
-      git(targetTree, ["branch", "-d", branch]);
-    } catch {
-      // -d refuses anything not fully merged; keep the branch, say so
+    if (!keepLive) {
+      if (existsSync(worktreeDir)) assertWorktreeClean(worktreeDir, id);
+      for (const l of salvageNotes(targetTree, worktreeDir, id)) console.log(l);
+      removeWorktree(targetTree, worktreeDir, true);
+      try {
+        git(targetTree, ["branch", "-d", branch]);
+      } catch {
+        // -d refuses anything not fully merged; keep the branch, say so
+      }
     }
     const s = { ...st, merged: true };
     saveStatus(logDir, s);
     return withGate(
       gate,
-      `merged ${branch} into the caller's branch in ${targetTree} (worktree removed${autoNote ? `; auto-resolved conflicts: ${autoNote}` : ""})`
+      `merged ${branch} into the caller's branch in ${targetTree}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed"}${autoNote ? `; auto-resolved conflicts: ${autoNote}` : ""})`
     );
   }
   assertNoSnapshotDrift(st.cwd, snapshot, changedPaths, id);
@@ -1043,18 +1048,20 @@ function mergeSnapshotWorker(
     { logDir, id }
   );
   if (noCommit) return withGate(gate, noCommitNextSteps(id, branch, worktreeDir, changedPaths));
-  for (const l of salvageNotes(st.cwd, worktreeDir, id)) console.log(l);
-  removeWorktree(st.cwd, worktreeDir, true);
-  try {
-    git(st.cwd, ["branch", "-D", branch]); // never merged by git — nothing for -d to see
-  } catch {
-    // already gone
+  if (!keepLive) {
+    for (const l of salvageNotes(st.cwd, worktreeDir, id)) console.log(l);
+    removeWorktree(st.cwd, worktreeDir, true);
+    try {
+      git(st.cwd, ["branch", "-D", branch]); // never merged by git — nothing for -d to see
+    } catch {
+      // already gone
+    }
   }
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   const base =
     `applied worker ${id}'s changes (branch ${branch}) to ${st.cwd} as uncommitted changes: ` +
-    `${changedPaths.join(", ")} (worktree removed, branch deleted)`;
+    `${changedPaths.join(", ")}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed, branch deleted)"}`;
   const notes: string[] = [];
   if (salvage.committed.length) {
     notes.push(
@@ -1422,13 +1429,81 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
   return notes.join("; ");
 }
 
+/** Thrown by `mergeWorker` when the worker is still queued or running. The CLI reports it as exit 3. */
+export class WorkerRunningError extends Error {}
+
+/** Live child pids of one pid via `pgrep -P`; any failure reads as "no children". */
+function liveChildren(pid: number): number[] {
+  try {
+    return execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" })
+      .split("\n")
+      .flatMap((l) => {
+        const n = Number(l.trim());
+        return Number.isInteger(n) && n > 0 ? [n] : [];
+      });
+  } catch {
+    return []; // pgrep exits 1 with no children, and fails outright when gone
+  }
+}
+
+/** The recorded pids of every other worker that is live. */
+function otherLiveWorkerPids(logDir: string, id: string): number[] {
+  const out: number[] = [];
+  for (const s of loadStatuses(logDir)) {
+    if (s.id === id || !isLive(s)) continue;
+    out.push(...statusPids(s));
+  }
+  return out;
+}
+
+/**
+ * The merge guard a running worker needs: read the status UNCACHED (a cached
+ * terminal view must never green-light a merge) and check liveness the way
+ * supervision does — `isLive`/`ownsPid` on the recorded pids, or a live pid of
+ * the worker's own child tree. Throws WorkerRunningError when it is queued or
+ * running; returns null when it is finished (or its pid belongs to no worker).
+ */
+export function liveWorker(logDir: string, id: string): WorkerStatus | null {
+  const st = refreshCachedStatus(logDir, id) ?? loadStatus(logDir, id);
+  if (!st) return null;
+  if (isLive(st, ownsPid)) return st;
+  if (st.state !== "running" && st.state !== "queued") return null;
+  // marked live but the recorded pid is gone: a surviving child of this worker still counts
+  const foreign = new Set(otherLiveWorkerPids(logDir, id));
+  const own = statusPids(st);
+  const kids = own.flatMap((p) => liveChildren(p)).filter((p) => !own.includes(p) && !foreign.has(p));
+  return kids.length ? st : null;
+}
+
+export function assertWorkerEnded(logDir: string, id: string): WorkerStatus | null {
+  const st = liveWorker(logDir, id);
+  if (!st) return null;
+  throw new WorkerRunningError(
+    `worker ${id} is still running (pid ${st.pid}); wait with \`pai worker wait ${id}\` or stop it with ` +
+      `\`pai worker kill ${id}\` first; --force merges anyway and leaves the worktree in place`
+  );
+}
+
+/** The workers.yaml merge.verify default, read here so every entry point shares one configured gate. */
+function configuredMergeVerify(): string | undefined {
+  try {
+    return readMergeVerify();
+  } catch {
+    return undefined;
+  }
+}
+
 export function mergeWorker(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; cliRoot?: string | null; targetToplevel?: string | null } = {}
+  opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; cliRoot?: string | null; targetToplevel?: string | null } = {}
 ): string {
+  const live = opts.force ? liveWorker(logDir, id) : assertWorkerEnded(logDir, id);
+  // --force on a live worker: still run the configured verify gate unless the caller opted out
+  const verify = opts.verify ?? (live ? configuredMergeVerify() : undefined);
   const st = mustHaveBranch(logDir, id);
-  if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
+  // a live worker is refused above; --force merges and leaves its worktree alone
+  if (st.merged && !live) return `worker ${id}: branch ${st.branch} already merged`;
   // a merge from inside a worker lands on the caller's own branch, never on main
   const callerId = callerWorkerId(process.env);
   const target = opts.targetToplevel !== undefined ? opts.targetToplevel : mergeTargetForCaller(logDir, id, st, process.env);
@@ -1450,12 +1525,14 @@ export function mergeWorker(
         `merging now would delete that branch under it. Merge ${st.escalatedTo} when it finishes.`
     );
   }
-  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit, opts.verify, target ?? undefined);
+  if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit, verify, target ?? undefined, !!live);
   const adopted = adoptDetachedHead(st.worktreeDir!, st.branch!);
   if (adopted) console.log(`worker ${id}: adopted detached HEAD ${adopted.slice(0, 7)} into ${st.branch}`);
   // salvage first: only a commit can carry uncommitted work through the merge
   const slot = isSlotWorktree(st.worktreeDir!);
-  const salvage = existsSync(st.worktreeDir!) && !slot
+  // --force on a live worker must not salvage onto the branch it is still committing to:
+  // merge only what is committed there now; its own work rides along when it ends.
+  const salvage = existsSync(st.worktreeDir!) && !slot && !live
     ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
     : { committed: [], skipped: [] };
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
@@ -1551,12 +1628,16 @@ export function mergeWorker(
       );
     }
   }
-  if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
-  // force: assertWorktreeClean already confirmed nothing but a skipped
-  // outside-pointing symlink (if anything) remains uncommitted
-  if (!slot) for (const l of salvageNotes(st.cwd, st.worktreeDir!, id)) console.log(l);
-  if (!slot) removeWorktree(st.cwd, st.worktreeDir!, true);
-  // a slot tree survives the merge: its scratch dir (one-time tests) is discarded explicitly
+  const keepTree = slot || !!live;
+  if (!keepTree) {
+    assertWorktreeClean(st.worktreeDir!, id);
+    // force: assertWorktreeClean already confirmed nothing but a skipped
+    // outside-pointing symlink (if anything) remains uncommitted
+    for (const l of salvageNotes(st.cwd, st.worktreeDir!, id)) console.log(l);
+    removeWorktree(st.cwd, st.worktreeDir!, true);
+  }
+  // a slot tree survives the merge: its scratch dir (one-time tests) is discarded explicitly.
+  // A live worker's own tree keeps everything: it is still working in there.
   if (slot) {
     try {
       rmSync(join(st.worktreeDir!, ".pai-scratch"), { recursive: true, force: true });
@@ -1565,7 +1646,9 @@ export function mergeWorker(
     }
   }
   let branchGone = true;
-  try {
+  if (keepTree && !slot) {
+    branchGone = false; // the worker is still running in it: the branch stays until gc
+  } else try {
     if (slot) {
       // For slot worktrees, we need to ensure we're not on the branch before deleting it
       try {
@@ -1586,7 +1669,13 @@ export function mergeWorker(
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   invalidatePendingCache(logDir, st.cwd);
-  const base = `merged ${st.branch} into ${st.cwd} (${slot ? "slot worktree kept" : "worktree removed"}${branchGone ? ", branch deleted" : "; branch kept: git refused -d"})`;
+  const base = `merged ${st.branch} into ${st.cwd} (${
+    live
+      ? "worker still running: worktree and branch kept, gc reclaims them once it ends"
+      : slot
+        ? "slot worktree kept"
+        : "worktree removed"
+  }${branchGone ? ", branch deleted" : live ? "" : "; branch kept: git refused -d"})`;
   const notes: string[] = [];
   if (salvage.committed.length) {
     notes.push(`salvaged ${salvage.committed.length} uncommitted change(s): ${salvage.committed.join(", ")}`);
