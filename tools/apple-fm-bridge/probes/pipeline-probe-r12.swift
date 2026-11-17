@@ -656,11 +656,18 @@ func hasFrontDanglingAntecedent(_ f: String) -> Bool {
   // run 12: ICU treats the \b after a non-ASCII letter as an optional boundary, so "die Zahl" matches inside
   // "BedeutUNG der Zahl" — test each word slot separately instead of relying on that anchor
   let ws0 = norm(f).lowercased().components(separatedBy: " ")
+  // run 12 fix after the first full run (18/93): a noun is only dangling when NOTHING names its referent after it —
+  // "die Zahl F", "die Bezeichnung Föhn" and "die Zahl für die Strömung" all name their subject; a bare final noun
+  // ("Was bedeutet die Zahl?") does not. The next slot must be a real word, not punctuation or a modifier
   for i in 0..<ws0.count where (ws0[i] == "die" || ws0[i] == "der") {
     guard i + 1 < ws0.count else { continue }
-    let nxt = ws0[i + 1]
-    if ws0[i] == "die" && ["bezeichnung","zahl","beschreibung","definition","angabe","größe","zustand"].contains(nxt) { return true }
-    if ws0[i] == "der" && ["begriff","name","föhnkühler"].contains(nxt) { return true }
+    let nxt = ws0[i + 1].trimmingCharacters(in: CharacterSet(charactersIn: "?!,"))
+    guard ["bezeichnung","zahl","beschreibung","definition","angabe","größe","zustand","begriff","name","föhnkühler"].contains(nxt) else { continue }
+    // the slot after the noun names the referent unless it is empty, punctuation or a modifier ("für", "von") —
+    // "die Zahl F" / "die Bezeichnung Föhn" are fine; "Was bedeutet die Zahl?" is not
+    let next = i + 2 < ws0.count ? ws0[i + 2].trimmingCharacters(in: CharacterSet(charactersIn: "?!,")) : ""
+    if !next.isEmpty && !["und","oder","aber"].contains(next) { continue }   // a name OR a modifier ("für …") follows
+    return true
   }
   // "Was ist die Bezeichnung für X?" names what is named: fine; a bare noun stands for the section's word — reject
   if has(rx(#"\bdie\s+(Bezeichnung|Zahl)\s+(für|von)\b"#), f) { return false }
@@ -673,8 +680,8 @@ func frontVagueSubject(_ f: String) -> Bool {
   // run 12 fix: the old drop(while: !isLetter) dropped EVERYTHING for a front starting with an umlaut ("Österreich…",
   // isLetter == true), and the later dropLast(2) crashed on short fronts — match the question opener instead
   let body = norm(f).lowercased()
-  guard body.hasPrefix("was ist ") else { return false }
-  let rest = body.replacingOccurrences(of: "was ist ", with: "")
+  guard body.hasPrefix("was ist ") || body.hasPrefix("was sind ") else { return false }
+  let rest = body.replacingOccurrences(of: "was ist ", with: "").replacingOccurrences(of: "was sind ", with: "")
   // vague when the subject is a bare article-noun chain without any genitive/of-phrase naming it ("der deutsche fremdwort-begriff");
   // run 12 fix: the '?' sits on the LAST WORD, so drop it before the shape test (the old "\??$" never matched)
   let restClean = rest.hasSuffix("?") ? String(rest.dropLast()) : rest
@@ -1053,7 +1060,9 @@ func runSelftest(sectionsDir: String?) -> Int32 {
   // "Föhnkühler" is a noun, not a verb; the -t tail of "als" is shorter than {3,} requires
   check("front-no-verb", !frontHasFiniteVerb("Was ist der Föhnkühler als Auslöser?") && frontVagueSubject("Was ist der deutsche Fremdwort-Begriff?"), "fhv=\(frontHasFiniteVerb("Was ist der Föhnkühler als Auslöser?")) vague=\(frontVagueSubject("Was ist der deutsche Fremdwort-Begriff?"))")
   check("front-with-verb", frontHasFiniteVerb("Wann spricht man vom Föhnsturm?"), "spricht is a finite verb")
-  check("front-dangling", hasFrontDanglingAntecedent("Was ist die Bezeichnung Föhn?") && hasFrontDanglingAntecedent("Was bedeutet die Zahl für die Strömung?"), "article/Zahl antecedents")
+  // run 12 first-run fix: only a BARE noun is dangling — "die Bezeichnung Föhn" and "die Zahl für die Strömung" name
+  // their referent and must NOT be flagged (18/93 over-fire); a bare "Was bedeutet die Zahl?" must
+  check("front-dangling", hasFrontDanglingAntecedent("Was bedeutet die Zahl?") && !hasFrontDanglingAntecedent("Was ist die Bezeichnung Föhn?") && !hasFrontDanglingAntecedent("Was bedeutet die Zahl für die Strömung?"), "bare noun flagged, named noun kept")
   // summaries: demonstrative pick, ":" stubs and verbless list items are caught in code
   check("demo-start", startsWithDemonstrative("Diese Luft wird daher auch Totluft genannt.") && startsWithDemonstrative("Das führt zu einer Erwärmung."), "Diese/Das leading")
   check("verbless-item", !sentenceHasFiniteVerb("Messung des Windfeldes mittels verschiedener Radartechniken, RADAR, LIDAR, SODAR"), "list item has no finite verb")
@@ -1133,13 +1142,19 @@ func runSelftest(sectionsDir: String?) -> Int32 {
           }
           // run 12 (Glidr's score): the sentence of the section that ACTUALLY supports the back — termsLost runs
           // against this, not against the whole factQuote (#50 lost words from other sentences of a two-sentence quote)
+          // run 12 fix after the first full run: a back is often a PARAPHRASE, so matching whole sentences at 0.5 fell
+          // back to the whole factQuote and termsLost over-fired again (29/93). Match at sentence level first, then per
+          // clause against the section; if nothing matches the model wrote freely — no restriction is imposed then
           func usedSentences(_ back: String) -> String {
-            let bs = splitSentences(norm(back)).map(norm)
+            let secSents = sp.paras.flatMap { splitSentences($0.text) }.map(norm)
             var joined = ""
-            for b in bs {
-              if let m = sp.paras.flatMap({ splitSentences($0.text) }).first(where: { contentOverlap(norm($0), b) >= 0.5 }) { joined += " " + norm(m) }
+            for b in splitSentences(norm(back)).map(norm) {
+              if let m = secSents.first(where: { contentOverlap($0, b) >= 0.5 }) { joined += " " + m; continue }
+              for cl in b.components(separatedBy: ",").map(norm) where cl.split(separator: " ").count >= 4 {
+                if let m = secSents.first(where: { contentOverlap($0, cl) >= 0.45 }) { joined += " " + m }
+              }
             }
-            return joined.isEmpty ? fact.quote : joined
+            return restoreAbbr(joined)
           }
           func checks(_ c0: Flashcard) -> (Flashcard, [String]) {
             var c = c0; var flags: [String] = []
@@ -1166,9 +1181,15 @@ func runSelftest(sectionsDir: String?) -> Int32 {
               let qm = rx(#"[?？]\s*$"#).firstMatch(in: c.front, range: NSRange(c.front.startIndex..., in: c.front))
               let bodyEnd = (qm.flatMap { Range($0.range, in: c.front) }?.lowerBound) ?? c.front.endIndex
               let body = norm(String(c.front[..<bodyEnd])).lowercased()
-              let bw = stems(c.back).subtracting(stems(fact.quote)).subtracting(qWordList.map(deStem))
+              // run 12 fix after the first full run (16/93 frontReversed): a question about X necessarily names X —
+              // "Was ist die Froudsche Zahl F?" is not reversed; only fronts that name EVERY distinguishing answer
+              // word are (the frontContainsAnswerCal rule, applied to stems)
+              let fw2 = stems(c.front).subtracting(qWordList.map(deStem))
+              let hw2 = stems(sp.heading).subtracting(qWordList.map(deStem))
+              let keyB = stems(c.back).subtracting(stems(fact.quote)).subtracting(hw2).subtracting(qWordList.map(deStem))
               let bodyStems = Set(body.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.map(deStem))
-              if !body.isEmpty && !bw.isEmpty && bw.contains(where: { bodyStems.contains($0) }) { flags.append("frontReversed") }
+              let reversed = keyB.count >= 3 && Double(keyB.intersection(fw2).count) / Double(keyB.count) >= 0.8 && !bodyStems.isEmpty
+              if reversed { flags.append("frontReversed") }
               // run 12 (Glidr's front grammar): a front without a finite verb is not a question; a dangling definite
               // article or "die Zahl" without an antecedent (#12/#13/#26) is rejected
               // a German question inverts verb-first ("Entsteht der Föhn …?"): the check accepts both orders
@@ -1189,8 +1210,10 @@ func runSelftest(sectionsDir: String?) -> Int32 {
             // at most one lost term, and never the named term or a number-with-unit. run 12 (Glidr's #50/#68): computed
             // against the sentence ACTUALLY USED for the back (not the whole factQuote) and matched on STEMS, so an
             // inflected form in the back ("pulsierender Thermik") counts as kept; §§ restored before comparing
-            let usedText = restoreAbbr(usedSentences(c.back))
+            let usedText = usedSentences(c.back)
             let backStemmed = stemWords(restoreAbbr(c.back))
+            // a paraphrased back legitimately drops words of the source: only terms that sit in a sentence the back
+            // ACTUALLY matches are checked; an empty usedText (free rewrite) imposes nothing (run 12 first-run fix)
             let tl = techTerms(usedText).filter { t in
               let toks = norm(t).split(separator: " ").map(String.init)
               return !toks.allSatisfy { w in backStemmed.contains(deStem(w)) || backStemmed.contains(w.lowercased()) }
