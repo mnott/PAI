@@ -36,7 +36,21 @@ function swiftSourceOpensWindow(words: string[], cwd: string): boolean {
   return false;
 }
 
-function segmentDenied(words: string[], cwd: string, depth: number): boolean {
+const APP_BIN = /\.app\/Contents\/MacOS\//;
+const APP_ARG = /\.app(\/|\b)/;
+const DEBUGGERS = new Set(["lldb", "gdb", "lldb-rpc-server"]);
+
+/** Names of variables assigned a .app/Contents/MacOS path anywhere in the command. */
+function appVars(segments: { words: string[] }[]): Set<string> {
+  const out = new Set<string>();
+  for (const s of segments) for (const w of s.words) {
+    const m = /^([A-Za-z_]\w*)=(.*)$/.exec(w);
+    if (m && APP_BIN.test(m[2])) out.add(m[1]);
+  }
+  return out;
+}
+
+function segmentDenied(words: string[], cwd: string, depth: number, vars: Set<string> = new Set()): boolean {
   let i = 0;
   while (i < words.length && (isAssignment(words[i]) || PREFIXES.has(bare(words[i])) || /^-/.test(words[i]) && i > 0)) i++;
   const w = words.slice(i);
@@ -46,7 +60,11 @@ function segmentDenied(words: string[], cwd: string, depth: number): boolean {
   if (bin === "open") return true;
   if (bin === "osascript") return OSA_SCREEN.test(w.join(" "));
   if (bin === "swift" || bin === "swiftc") return swiftSourceOpensWindow(w, cwd);
-  if (/\.app\/Contents\/MacOS\//.test(first)) return true;
+  if (APP_BIN.test(first)) return true;
+  const v = /^\$\{?([A-Za-z_]\w*)\}?$/.exec(first);
+  if (v && vars.has(v[1])) return true;
+  if (DEBUGGERS.has(bin)) return w.slice(1).some((a) => APP_ARG.test(a));
+  if (bin === "launchctl") return /^(submit|asuser)$/.test(w[1] ?? "") && w.slice(2).some((a) => APP_ARG.test(a));
   if (SHELLS.has(bin) && depth < 2) {
     const c = w.indexOf("-c");
     if (c > 0 && w[c + 1] !== undefined) return headlessDenied(w[c + 1], cwd, depth + 1);
@@ -56,7 +74,9 @@ function segmentDenied(words: string[], cwd: string, depth: number): boolean {
 
 function headlessDenied(command: string, cwd: string, depth: number): boolean {
   if (/(\$\(|`)\s*open\s/.test(command)) return true;
-  return parseCommand(command).some((s) => segmentDenied(s.words, cwd, depth));
+  const segs = parseCommand(command);
+  const vars = appVars(segs);
+  return segs.some((s) => segmentDenied(s.words, cwd, depth, vars));
 }
 
 /** Deny reason for a worker's Bash command that would show something on screen, else null. */
