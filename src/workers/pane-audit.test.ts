@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync, statSync, writeFileSync, utimesSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditLaunches, auditTick, isPaiContinuationStatus, type LaunchAuditDeps } from "./pane-audit.js";
@@ -109,6 +110,8 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
       const out = await auditWith(logDir, {
         // the cached view from before its pane landed; no registry entry yet — the launcher is mid-open
         workers: () => [{ id, startedMs: T0 - 10_000, exec: false, exempt: false }],
+        records: () => [], // no launch record on disk: no launcher is opening anything
+        launcherAlive: () => false, // and no wrapper or caller lives
         stop: async (wid) => void stopped.push(wid),
       });
       expect(stopped).toEqual([]);
@@ -230,6 +233,182 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
       expect(refreshCachedStatus(logDir, id)?.pane).toBeUndefined(); // and so does a direct re-read
     } finally {
       rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  // The 2026-11-17 incident: an audit tick captured its `now` at 01:06:57, then ran ~90 s behind it (the
+  // daemon was mid WORKER-GC), and with that stale clock stopped two fresh pane-launched runs — a young
+  // check built on Math.abs(now - started) called a 2-second-old run "85 s past grace", and the pre-start
+  // of the other took 47 s while its pane opened slowly. The audit now judges with a fresh clock (a start
+  // AFTER the tick's clock means young, never abs-distance), counts the grace from the later of spawn and
+  // pane-launch attempt, spares any run whose launcher is still opening its pane, and re-reads the status
+  // and the registry uncached before every stop.
+
+  const S0 = Date.parse("2026-11-17T01:08:22"); // when the real victim was spawned; its tick's clock was ~90 s older
+  const tickClock = new Date(S0 - 90_000); // "01:06:57": the stale `now` of the incident's audit round
+
+  it("(a) a tick clock captured 90 s before a run spawned does not stop it", async () => {
+    const logDir = makeLogDir();
+    const id = "20261117-010822-33427";
+    try {
+      // no pane field yet: the launcher is mid-open and the registry entry has not landed
+      writeFileSync(join(logDir, `${id}.status`), statusJson(id, 33427));
+      loadStatusesCached(logDir);
+      const stopped: string[] = [];
+      // two rounds past the pending-confirm gate; the tick's clock never moves from its stale capture
+      for (let i = 0; i < 2; i++) {
+        await auditTick(
+          logDir,
+          { toSession: async () => true, toPailot: async () => true },
+          {
+            tabs: async () => new Map([["HOST", "w1:t1"]]),
+            procs: () => [{ id, kind: "worker", host: "HOST", startedMs: S0, live: true }], // spawned 90 s AFTER the clock
+            registry: () => [],
+            now: () => tickClock,
+            launches: async () => undefined,
+            stop: async (wid) => void stopped.push(wid),
+          }
+        );
+      }
+      expect(stopped).toEqual([]);
+      const { readAudit } = await import("./pane-audit.js");
+      const v = readAudit(logDir).find((x) => x.id === id);
+      expect(v?.mark).toBe("ok"); // young, not ancient: the clock predates the run
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("(b) a run whose pre-start takes 45 s with its launcher alive is not stopped, and gets its pane", async () => {
+    const logDir = makeLogDir();
+    const id = "20261117-010619-59586";
+    try {
+      // spawned 01:06:19; the pane opens only at 01:07:04 (45 s of pre-start while WORKER-GC ran);
+      // status has no pane field yet and the registry entry lands late — as in the incident
+      writeFileSync(join(logDir, `${id}.status`), statusJson(id, 59586));
+      loadStatusesCached(logDir);
+      const openedMs = S0 + 45_000; // the launcher's pane-open moment on the fake clock
+      let opened = false; // set once the run's own bytes prove its pane: only then may it be judged
+      const stopped: string[] = [];
+      for (const at of [S0 + 31_000, S0 + 46_000, S0 + 76_000]) {
+        if (!opened && at >= openedMs) {
+          opened = true;
+          writeFileSync(join(logDir, `${id}.status`), statusJson(id, 59586, { opened: true, exec: true }));
+        }
+        await auditTick(
+          logDir,
+          { toSession: async () => true, toPailot: async () => true },
+          {
+            tabs: async () => new Map([["HOST", "w1:t1"], ["PANE", "w1:t1"]]),
+            // the launcher's stamps count toward the grace: once its pane lands (S0+45 s) that stamp opens
+            // the grace again, so at S0+76 s the run is only 31 s past its pane-launch attempt
+            procs: () => [{ id, kind: "worker", host: "HOST", startedMs: S0, ...(opened ? { launchMs: openedMs } : {}), live: true }],
+            registry: () => (opened ? [{ session: "PANE", worker: id, opened: new Date(openedMs).toISOString(), host: "HOST" }] : []),
+            now: () => new Date(at), // a fresh clock each round: the verdict rests on real time
+            launches: async () => undefined,
+            // the pane launcher (wrapper + caller) stays alive until the pane opens
+            launcherAlive: (pid) => !!pid && at < openedMs,
+            stop: async (wid) => void stopped.push(wid),
+          }
+        );
+      }
+      expect(stopped).toEqual([]); // never stopped while its launcher was still opening the pane
+      const { readAudit } = await import("./pane-audit.js");
+      const v = readAudit(logDir).find((x) => x.id === id);
+      expect(v?.mark).toBe("ok");
+      expect(v?.session).toBe("PANE"); // and it ends up judged with its pane
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("(c) a genuinely unpaned running worker past grace with no launcher is still stopped", async () => {
+    const logDir = makeLogDir();
+    const id = "20261117-010900-11111";
+    try {
+      writeFileSync(join(logDir, `${id}.status`), statusJson(id, 11111));
+      loadStatusesCached(logDir);
+      const stopped: string[] = [];
+      // two rounds past the pending-confirm gate; no registry entry, no launch record, nothing alive
+      for (let i = 0; i < 2; i++) {
+        await auditTick(
+          logDir,
+          { toSession: async () => true, toPailot: async () => true },
+          {
+            tabs: async () => new Map([["HOST", "w1:t1"]]),
+            procs: () => [{ id, kind: "worker", host: "HOST", startedMs: S0 - 300_000, live: true }], // minutes past grace
+            registry: () => [],
+            now: () => new Date(), // a fresh clock: the verdict stands on real time
+            launches: async () => undefined,
+            launcherAlive: () => false, // no wrapper, no caller: nobody is opening its pane
+            running: () => true, // the fake world's liveness: the test pids are not real processes
+            stop: async (wid) => void stopped.push(wid),
+          }
+        );
+      }
+      expect(stopped).toEqual([id]);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("the unlaunched path spares a run whose launcher is still alive, and notes the sparing once", async () => {
+    // the launch record lives in $PAI_HOME/state/pane-exec and is read uncached (never through a seam):
+    // run the round in a child process with PAI_HOME at a throwaway home — this is exactly what the audit
+    // reads live, and it keeps this test's module graph (and the daemon's real home) untouched
+    const id = "20261117-010619-59586";
+    const home = mkdtempSync(join(tmpdir(), "pane-audit-home-"));
+    const logDir = makeLogDir();
+    try {
+      // spawned 01:06:19; at the round's fresh clock it is minutes past the spawn grace, but its pane
+      // launcher (wrapper + caller) is still opening the pane — the incident killed exactly this run
+      writeFileSync(join(logDir, `${id}.status`), statusJson(id, 59586));
+      loadStatusesCached(logDir); // warm the cached view with the pane-less copy (the daemon's default workers source)
+      mkdirSync(join(home, "state", "pane-exec"), { recursive: true });
+      // the record's own stamps are minutes old (its pane opened long ago on real time): what can spare
+      // the run is only that its launcher's pids are still alive at the last look before the stop
+      const rec = { id, kind: "worker", caller: 4100, wrapper: 4200, openedMs: S0 - 120_000, startedMs: S0 - 120_000 };
+      writeFileSync(join(home, "state", "pane-exec", `${id}.json`), JSON.stringify(rec));
+      const script = join(tmpdir(), `pane-audit-spare-round-${process.pid}.mts`);
+      writeFileSync(
+        script,
+        `import { auditLaunches } from ${JSON.stringify(join(import.meta.dirname!, "pane-audit.ts"))};
+const [logDir, id] = process.argv.slice(2);
+const S0 = Date.parse("2026-11-17T01:08:22");
+const stopped = [];
+for (let i = 0; i < 2; i++) {
+  await auditLaunches(logDir, {
+    // the record's pids are not real processes in this fake world: every side is "dead"
+    alive: () => false,
+    kill: () => undefined,
+    closePane: async () => undefined,
+    registered: () => false,
+    workers: () => [{ id, startedMs: S0 - 120_000, exec: false, exempt: false }], // minutes past grace on spawn alone
+    launcherAlive: (pid) => pid === 4100 || pid === 4200, // wrapper + caller alive: the pane is opening
+    stop: async (wid) => void stopped.push(wid),
+  }); // the default clock: real time, like the daemon
+}
+console.log(JSON.stringify(stopped));
+`,
+        "utf8"
+      );
+      const r = execFileSync("npx", ["tsx", script, logDir, id], {
+        encoding: "utf8",
+        env: { ...process.env, PAI_HOME: home },
+      });
+      expect(JSON.parse(r.trim())).toEqual([]); // spared both rounds: its launcher was still opening the pane
+      const lines = readFileSync(join(logDir, "ledger.log"), "utf8").split("\n");
+      expect(lines.filter((l) => l.includes("PANE-SPARED") && l.includes(`id=${id}`)).length).toBe(1); // noted once, never a stop
+      expect(lines.some((l) => l.includes("pane audit: spared") && l.includes(id))).toBe(true); // the spared line names the run
+      expect(lines.some((l) => l.includes("PANE-UNLAUNCHED"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(logDir, { recursive: true, force: true });
+      try {
+        unlinkSync(join(tmpdir(), `pane-audit-spare-round-${process.pid}.mts`));
+      } catch {
+        /* the child left nothing behind */
+      }
     }
   });
 
