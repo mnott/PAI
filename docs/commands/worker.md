@@ -79,11 +79,11 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--no-report-retry` | flag | — | Do not ask once more when the final report is malformed |
 | `--orchestrate` | flag | — | This worker plans and reviews; code edits are denied and go to local units |
 | `--no-merge` | flag | — | --class orchestrate: do not wait for or join other orchestrate requests for the same repo (workers.orchestrate.mergeWindowSec) |
-| `--detach` | flag | — | Start in its own process group and return at once: prints {"id": "<worker id>"} as soon as the id exists and exits 0 without waiting; wait for it with `pai worker wait <id> --max 590` (the sanctioned way to start several children in parallel) |
+| `--detach` | flag | — | Start in its own process group and return at once: prints {"id": "<worker id>", "state": "queued"|"running"} as soon as the run is recorded (a run waiting for a slot returns queued), and exits 0 without waiting; wait for it with `pai worker wait <id> --max 590` (the sanctioned way to start several children in parallel) |
 
 ```sh
 pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'
-pai worker run --detach --class implement --spec /tmp/a.txt   (prints {"id": ...}, then `pai worker wait <ids...> --max 590`)
+pai worker run --detach --class implement --spec /tmp/a.txt   (prints {"id": ..., "state": "queued"|"running"} at once, then `pai worker wait <ids...> --max 590`)
 pai worker run --provider glm --spec /tmp/task.txt
 pai worker run --local -p 'Summarize the changelog'
 pai worker run --where cloud --model fast --now -p 'Say hi'
