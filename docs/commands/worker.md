@@ -389,7 +389,7 @@ Leave a goal note on a running worker
 pai worker goal ID TEXT
 ```
 
-Records a note shown under the worker's task in ps; the label is not changed and no message is sent. Prints ok.
+Records a note shown under the worker's task in ps; the label is not changed and no message is sent. The running worker is handed the note after its next tool call. Every goal is kept in order: a continuation of the run (escalation, fall-through, hand-off, reroute) gets all of them, undelivered ones too, in its prompt under the heading Operator goals given to the previous run, and passes them on down a chain. Prints ok.
 
 | Argument | Required | Description |
 |---|---|---|
