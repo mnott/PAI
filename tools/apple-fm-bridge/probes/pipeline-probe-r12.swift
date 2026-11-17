@@ -620,6 +620,20 @@ func deStem(_ w: String) -> String {
 }
 /// content words of a text as STEMS (run 12: every comparison that used to run on 5-char prefixes runs on these)
 func stemWords(_ s: String) -> Set<String> { Set(words(s).map(deStem)) }
+/// run 12 fix: is a lost-term candidate present in the back? numbers compare on their digit runs ("1,0 °C" vs "1 °C" and
+/// "100 m" both keep "100"), words on stems, hyphen compounds piece by piece; units alone never count as lost
+func termKept(_ t: String, back: String, backStems: Set<String>) -> Bool {
+  let b = restoreAbbr(back).lowercased()
+  if t.first?.isNumber ?? false {
+    let nums = t.components(separatedBy: CharacterSet(charactersIn: "0123456789,.").inverted).filter { $0.contains(where: { $0.isNumber }) }
+    let lead = nums.first.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ",.")) } ?? ""
+    if lead.isEmpty { return true }
+    let alt = lead.replacingOccurrences(of: ",", with: ".")
+    return b.contains(lead) || b.replacingOccurrences(of: ",", with: ".").contains(alt) || (lead.hasSuffix(",0") && b.contains(String(lead.dropLast(2))))
+  }
+  let pieces = t.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count >= 3 }
+  return pieces.allSatisfy { w in backStems.contains(deStem(w)) || backStems.contains(w) || b.contains(String(w.prefix(max(4, w.count - 3)))) }
+}
 /// the §§ abbreviation placeholder restored ("engl§§" -> "engl."); every term and output text passes through this
 func restoreAbbr(_ s: String) -> String { norm(s.replacingOccurrences(of: "§§ ", with: ". ").replacingOccurrences(of: "§§", with: ".")) }
 /// a German finite verb in 2nd/3rd person (bare infinitives like "abkühlen" are excluded; "abkühlt" is caught by -t):
@@ -632,6 +646,12 @@ let frontVerbRe = rx(#"\b(?:ist|sind|sei|war|waren|wurde|wurden|hat|hatte|hatten
 /// copula and does NOT count as an asking verb (Glidr's #12/#13: "Was ist die Bezeichnung Föhn?" has no real verb)
 func frontHasFiniteVerb(_ s: String) -> Bool {
   let prot = abbrProtect(s)
+  // run 12 fix: a W-question's second word is the finite verb when it is lowercase and no article/preposition/copula
+  // ("Wie treten Mountain waves auf?", "Wie entstand …", "Was spüren …") — the -st/-et/-t regex missed plural -en forms
+  let wsO = norm(prot).components(separatedBy: " ")
+  if wsO.count >= 3, ["was","wie","wo","wodurch","womit","warum","weshalb","wann","woher","woraus","wozu"].contains(wsO[0].lowercased()),
+     let f1 = wsO[1].first, f1.isLowercase, wsO[1].count >= 4,
+     !["der","die","das","dem","den","des","ein","eine","einer","einem","einen","ist","sind","sich","durch","bei","von","für","mit","aus"].contains(wsO[1]) { return true }
   if !has(frontVerbRe, prot) { return false }
   // the asking verb of a German W-question sits in second position; when that slot holds only the copula ("ist"),
   // the front has no real verb — "Was ist die Bezeichnung Föhn?" (Glidr #12/#13)
@@ -1063,6 +1083,9 @@ func runSelftest(sectionsDir: String?) -> Int32 {
   // run 12 first-run fix: only a BARE noun is dangling — "die Bezeichnung Föhn" and "die Zahl für die Strömung" name
   // their referent and must NOT be flagged (18/93 over-fire); a bare "Was bedeutet die Zahl?" must
   check("front-dangling", hasFrontDanglingAntecedent("Was bedeutet die Zahl?") && !hasFrontDanglingAntecedent("Was ist die Bezeichnung Föhn?") && !hasFrontDanglingAntecedent("Was bedeutet die Zahl für die Strömung?"), "bare noun flagged, named noun kept")
+  // run 12 fix: plural/preterite W-question verbs and numeric terms kept by digit run (no over-firing)
+  check("front-plural-verb", frontHasFiniteVerb("Wie treten Mountain waves auf?") && frontHasFiniteVerb("Wie entstand der Fachbegriff?"), "second-position lowercase verb")
+  check("term-kept-number", termKept("1,0 °c", back: "Pro 100 m kühlt sie sich um 1 °C ab.", backStems: stemWords("Pro 100 m kühlt sie sich um 1 °C ab.")) && !termKept("0,6 °c", back: "Sie kühlt sich ab.", backStems: stemWords("Sie kühlt sich ab.")) && termKept("west-ost", back: "von Westen nach Osten in West-Ost-Richtung", backStems: stemWords("von Westen nach Osten in West-Ost-Richtung")), "digits/hyphen")
   // summaries: demonstrative pick, ":" stubs and verbless list items are caught in code
   check("demo-start", startsWithDemonstrative("Diese Luft wird daher auch Totluft genannt.") && startsWithDemonstrative("Das führt zu einer Erwärmung."), "Diese/Das leading")
   check("verbless-item", !sentenceHasFiniteVerb("Messung des Windfeldes mittels verschiedener Radartechniken, RADAR, LIDAR, SODAR"), "list item has no finite verb")
@@ -1214,10 +1237,7 @@ func runSelftest(sectionsDir: String?) -> Int32 {
             let backStemmed = stemWords(restoreAbbr(c.back))
             // a paraphrased back legitimately drops words of the source: only terms that sit in a sentence the back
             // ACTUALLY matches are checked; an empty usedText (free rewrite) imposes nothing (run 12 first-run fix)
-            let tl = techTerms(usedText).filter { t in
-              let toks = norm(t).split(separator: " ").map(String.init)
-              return !toks.allSatisfy { w in backStemmed.contains(deStem(w)) || backStemmed.contains(w.lowercased()) }
-            }
+            let tl = techTerms(usedText).filter { t in !termKept(t, back: c.back, backStems: backStemmed) }
             let numLike = tl.filter { $0.first?.isNumber ?? false }
             // run 12: the named term counts as kept when every word of it appears in the back on STEMS (§§ restored)
             let termStems = norm(restoreAbbr(fact.term)).split(separator: " ").map { deStem(String($0)) }
@@ -1298,10 +1318,7 @@ func runSelftest(sectionsDir: String?) -> Int32 {
             if need.contains("termsLost") {
               let usedT = restoreAbbr(usedSentences(c.back))
               let bs = stemWords(restoreAbbr(c.back))
-              var lost = techTerms(usedT).filter { t in
-                let parts = norm(t).split(separator: " ").map(String.init)
-                return !parts.allSatisfy { w in bs.contains(deStem(w)) || bs.contains(w.lowercased()) }
-              }
+              var lost = techTerms(usedT).filter { t in !termKept(t, back: c.back, backStems: bs) }
               if fact.namedTerm && !fact.term.isEmpty && !norm(restoreAbbr(fact.term)).split(separator: " ").map { deStem(String($0)) }.allSatisfy({ bs.contains($0) }) { lost.insert(fact.term, at: 0) }
               if !lost.isEmpty { why += " — Die Rückseite muss wörtlich enthalten: „" + Array(Set(lost)).joined(separator: ", ") + "“." }
             }
