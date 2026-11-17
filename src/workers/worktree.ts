@@ -857,6 +857,7 @@ function assertNoDirtyOverlap(
  * link itself touches nothing outside the worktree.
  */
 export function assertWorktreeClean(wtDir: string, id: string): void {
+  if (!existsSync(wtDir)) return; // already reclaimed: nothing uncommitted left to lose
   const leftover = uncommittedPaths(wtDir).filter((p) => !symlinkEscapesWorktree(wtDir, p));
   if (leftover.length) {
     throw new Error(
@@ -1494,7 +1495,9 @@ function configuredMergeVerify(): string | undefined {
   }
 }
 
-export function mergeWorker(
+const MERGE_KEEP = "merge in progress:";
+
+function mergeWorkerInner(
   logDir: string,
   id: string,
   opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; cliRoot?: string | null; targetToplevel?: string | null } = {}
@@ -1536,6 +1539,10 @@ export function mergeWorker(
   const salvage = existsSync(st.worktreeDir!) && !slot && !live
     ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
     : { committed: [], skipped: [] };
+  // from here on no gc may reclaim the tree: the merge commit makes its branch look landed
+  if (!opts.noCommit && !live && !slot && existsSync(st.worktreeDir!) && keepMarker(st.worktreeDir!) === null) {
+    writeFileSync(join(st.worktreeDir!, KEEP_FILE), `${MERGE_KEEP} ${id}\n`, "utf8");
+  }
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
   const reapply = findRevertedMerge(st.cwd, st.branch!);
   if (incoming <= 0 && !reapply) {
@@ -1642,6 +1649,7 @@ export function mergeWorker(
   }
   const keepTree = slot || !!live;
   if (!keepTree) {
+    rmSync(join(st.worktreeDir!, KEEP_FILE), { force: true });
     assertWorktreeClean(st.worktreeDir!, id);
     // force: assertWorktreeClean already confirmed nothing but a skipped
     // outside-pointing symlink (if anything) remains uncommitted
@@ -1701,6 +1709,22 @@ export function mergeWorker(
   if (!related) return withBuild(text, rebuildDist(logDir, id, st.cwd, opts));
   if (related.status === "failed") throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
   return withBuild(`${text}\n${related.line}`, rebuildDist(logDir, id, st.cwd, opts));
+}
+
+/**
+ * Merge a worker branch. The run's own worktree carries a .pai-keep marker while the merge,
+ * its tests, build and restart run, so no gc (daemon or chain sibling) reclaims it once the
+ * merge commit makes its branch look landed. The marker goes before the worktree is removed.
+ */
+export function mergeWorker(logDir: string, id: string, opts: Parameters<typeof mergeWorkerInner>[2] = {}): string {
+  const st0 = loadStatus(logDir, id);
+  const dir = st0?.worktreeDir;
+  const mark = !!dir && !opts.noCommit && !opts.force && !isSlotWorktree(dir);
+  try {
+    return mergeWorkerInner(logDir, id, opts);
+  } finally {
+    if (mark && existsSync(dir!) && keepMarker(dir!)?.startsWith(MERGE_KEEP)) rmSync(join(dir!, KEEP_FILE), { force: true });
+  }
 }
 
 const withBuild = (text: string, build: string | null): string => (build ? `${text}\n${build}` : text);

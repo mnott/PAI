@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -200,5 +200,44 @@ describe("merge gate traps", () => {
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe(String(Number(before) + 2)); // second's commit + merge only
     expect(git(repo, ["log", "--format=%s"]).split("\n").filter((l) => l.startsWith("fix: reapply first (first)"))).toHaveLength(0);
     expect(existsSync(join(repo, "first.txt"))).toBe(true);
+  });
+});
+
+describe("merge of an escalated continuation", () => {
+  it("keeps its worktree until the merge completes, then removes both trees and reaches the build step", () => {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "origin", { file: "origin.txt" });
+    makeWorker(repo, logDir, "cont", { from: "worker/origin", file: "cont.txt" });
+    // a gc running right after the merge commit would find the branch landed: record what it would see
+    const seen = join(logDir, "hook-saw-keep");
+    const hook = join(repo, ".git", "hooks", "post-merge");
+    mkdirSync(dirname(hook), { recursive: true });
+    writeFileSync(hook, `#!/bin/sh\ncat "${worktreePath(logDir, "cont")}/.pai-keep" > "${seen}" 2>/dev/null\nexit 0\n`);
+    chmodSync(hook, 0o755);
+    let built = 0;
+    const out = mergeWorker(logDir, "cont", {
+      verifyTests: false,
+      cliRoot: repo,
+      build: () => ((built += 1), { ok: true, ms: 1, tail: "" }),
+      restartVerify: () => ({ restarted: true, forced: false, detail: "t" }),
+    });
+    expect(built).toBe(1);
+    expect(out).toContain("build: ok");
+    expect(readFileSync(seen, "utf8")).toContain("merge in progress");
+    expect(existsSync(worktreePath(logDir, "cont"))).toBe(false);
+    // the origin branch is fully contained in main: its tree goes on its own merge, not before
+    expect(existsSync(join(repo, "origin.txt"))).toBe(true);
+  });
+
+  it("a worktree already reclaimed does not fail a merge that landed", () => {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "gone");
+    const hook = join(repo, ".git", "hooks", "post-merge");
+    mkdirSync(dirname(hook), { recursive: true });
+    writeFileSync(hook, `#!/bin/sh\nrm -rf "${worktreePath(logDir, "gone")}"\nexit 0\n`);
+    chmodSync(hook, 0o755);
+    const out = mergeWorker(logDir, "gone", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(out).toContain("merged worker/gone");
+    expect(git(repo, ["log", "--format=%s", "-1"])).toContain("merge worker gone");
   });
 });
