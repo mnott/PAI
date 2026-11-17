@@ -301,3 +301,60 @@ describe("router end to end", () => {
     if (!r.ok) expect(r.status).toBe(400);
   });
 });
+
+describe("large tool-call arguments", () => {
+  // 30 KB Write content: backslashes, quotes, regexes, emoji, CRLF, markup-looking text
+  const unit = 'var re = /^\\s*"(\\w+)\\\\n"\\s*$/gm; // 😀 "q" \\ \\n \\" 日本語\r\n</parameter> <parameter=x> true\r\n';
+  const content = unit.repeat(Math.ceil(30000 / unit.length));
+  const args = JSON.stringify({ file_path: "/a/files.js", content });
+  const anth = adapterFor("POST", "/v1/messages")!;
+  const aSchemas = anth.schemas(bodyFor("anthropic" as WireId));
+  const aStream = (json: string, stop: string, cut: number) => {
+    const ev = (type: string, o: object) => ({ type, ...o });
+    return sse(
+      [
+        ev("message_start", { message: { id: "m", role: "assistant", content: [] } }),
+        ev("content_block_start", { index: 0, content_block: { type: "tool_use", id: "t1", name: "Write", input: {} } }),
+        ...(json.match(new RegExp(`[\\s\\S]{1,${cut}}`, "gu")) ?? []).map((f) => ev("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: f } })),
+        ev("content_block_stop", { index: 0 }),
+        ev("message_delta", { delta: { stop_reason: stop }, usage: { output_tokens: 8192 } }),
+        ev("message_stop", {}),
+      ],
+      true
+    );
+  };
+  const aInput = (out: string): string =>
+    out.split(/\n\n/).map((m) => m.split("\n").find((l) => l.startsWith("data:"))).filter((l): l is string => !!l).map((l) => JSON.parse(l.slice(5))).filter((e) => e.delta?.type === "input_json_delta").map((e) => e.delta.partial_json).join("");
+
+  it("anthropic stream: 30 KB Write arrives byte-identical", async () => {
+    for (const cut of [1, 5, 4096]) {
+      const out = await through(anth, aSchemas, aStream(args, "tool_use", 40), cut);
+      expect(aInput(out)).toBe(args);
+      expect(JSON.parse(aInput(out)).content).toBe(content);
+      expect(out).toContain('"stop_reason":"tool_use"');
+    }
+  });
+
+  it("anthropic stream: a max_tokens cut gives a clean note, no half JSON", async () => {
+    const out = await through(anth, aSchemas, aStream(args.slice(0, 20000), "max_tokens", 40), 13);
+    expect(aInput(out)).toBe("");
+    expect(out).not.toContain("tool_use");
+    expect(out).toContain("output limit");
+    expect(out).toContain('"stop_reason":"max_tokens"');
+  });
+
+  it("chat stream: 30 KB Write identical; a length cut gives a note", async () => {
+    const a = adapterFor("POST", "/v1/chat/completions")!;
+    const schemas = a.schemas(bodyFor("chat"));
+    const mk = (json: string, fin: string) => {
+      const ch = (delta: object, finish: string | null = null) => ({ id: "c", choices: [{ index: 0, delta, finish_reason: finish }] });
+      return sse([ch({ tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "Write", arguments: "" } }] }), ...frags(json).map((f) => ch({ tool_calls: [{ index: 0, function: { arguments: f } }] })), ch({}, fin)]) + "data: [DONE]\n\n";
+    };
+    const good = mk(args, "tool_calls");
+    expect(await through(a, schemas, good, 9)).toBe(good);
+    const out = await through(a, schemas, mk(args.slice(0, 20000), "length"), 9);
+    expect(sseArgs("chat", out)).toEqual([]);
+    expect(out).toContain("output limit");
+    expect(out).toContain('"finish_reason":"length"');
+  });
+});
