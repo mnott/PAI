@@ -58,7 +58,7 @@ const stampMs = (stamp: string | undefined): number | null => {
  * thaw or resume the overdue spell restarts from its end.
  */
 export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy()): string | null {
-  if (s.rerouted || s.origin === "chat" || s.paused || providerPinned(s)) return null;
+  if (s.rerouted || s.continuedBy || s.origin === "chat" || s.paused || providerPinned(s)) return null;
   if (frozenSince(s.id) !== undefined) return null; // frozen by the operator: no escalation verdict
   if (!s.spec && !s.promptFile) return null;
   const pause = { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs };
@@ -81,10 +81,11 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
 export const FALLTHROUGH_RECENT_MS = 5 * 60_000;
 
 /** The run that already continues `origin` among these statuses: queued/running, or finished within FALLTHROUGH_RECENT_MS of `nowMs`. Null when there is none. */
-function recentFallThrough(all: WorkerStatus[], origin: string, nowMs: number): string | null {
+function recentFallThrough(all: WorkerStatus[], origin: string, nowMs: number, cleanForever = false): string | null {
   for (const s of all) {
     if (s.fallThroughOf !== origin || s.id === origin) continue;
     if (s.state === "queued" || s.state === "running") return s.id;
+    if (cleanForever && s.state === "done" && (s.rc ?? 0) === 0) return s.id; // the work was done: the origin is never escalated again
     const t = stampMs(s.updated);
     if (t !== null && nowMs - t < FALLTHROUGH_RECENT_MS) return s.id;
   }
@@ -96,7 +97,7 @@ function recentFallThrough(all: WorkerStatus[], origin: string, nowMs: number): 
  * view cannot hide it): queued/running, or finished within FALLTHROUGH_RECENT_MS. Null when there is none.
  */
 export function liveFallThrough(logDir: string, origin: string, nowMs: number = Date.now()): string | null {
-  return recentFallThrough(loadStatuses(logDir), origin, nowMs);
+  return recentFallThrough(loadStatuses(logDir), origin, nowMs, true);
 }
 
 /**
@@ -191,7 +192,7 @@ export interface RerouteResult {
 }
 
 /** The note a continued task starts with. */
-export const continuedNote = (id: string, branch: string): string => `continued from ${id} on branch ${branch} — its commits are there, start from that branch`;
+export const continuedNote = (id: string, branch: string): string => `continued from ${id} on branch ${branch} — its commits are there, start from that branch. If the work is already done on it, change nothing and report \"nothing to do\" as a success (r=+), never a failure`;
 
 async function defaultResolve(where: string): Promise<RerouteTarget> {
   const { resolveTarget } = await import("./target.js");
@@ -202,7 +203,11 @@ async function defaultResolve(where: string): Promise<RerouteTarget> {
 
 async function defaultKill(logDir: string, id: string, reason: string, by: string): Promise<unknown> {
   const { killWorker } = await import("./kill-tree.js");
-  return killWorker(logDir, id, { by, reason });
+  const r = await killWorker(logDir, id, { by, reason });
+  // a kill that returned without ending the run (pid gone but status still live, signal lost) is a failed stop
+  const st = loadStatus(logDir, id);
+  if (st && (st.state === "running" || st.state === "queued")) throw new Error(`worker ${id} is still ${st.state} after the stop`);
+  return r;
 }
 
 /** Env the restart process carries: the old run's id and why it moved (read back by `rerunFromEnv`). */
@@ -282,6 +287,20 @@ export async function waitAnnouncedId(idFile: string, pid: number, timeoutMs = 1
 }
 
 /**
+ * A restart that did not announce in time must not live on beside its origin (2026-11-18: 26042 and 43292/82237 started
+ * after the 15 s wait ended, while the origin kept running). Its process group is ended; an id announced meanwhile is stopped too.
+ */
+export async function abandonRestart(logDir: string, idFile: string, pid: number): Promise<void> {
+  try {
+    if (pid > 0) process.kill(-pid, "SIGTERM");
+  } catch {
+    /* already gone */
+  }
+  const late = existsSync(idFile) ? readFileSync(idFile, "utf8").trim() : "";
+  if (late) await defaultKill(logDir, late, "restart abandoned: it did not announce in time", "reroute").catch(() => undefined);
+}
+
+/**
  * Start `pai worker <verb> args` detached (own session, survives a daemon restart) and return the worker id
  * once the process has announced it. The caller's env (session identity, urgency window, pane anchoring) is
  * inherited. Throws with the process output when it exits or times out before an id exists.
@@ -348,8 +367,9 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
       env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
       outPath: join(logDir, "runs", `reroute-${s.id}.out`),
     });
-    const newId = await waitAnnouncedId(idFile, pid);
+    const newId = await waitAnnouncedId(idFile, pid, 60_000);
     if (!newId) {
+      await abandonRestart(logDir, idFile, pid);
       const out = join(logDir, "runs", `reroute-${s.id}.out`);
       const tail = existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").slice(-5).join(" / ") : "";
       throw new Error(`the restart on ${s.provider} did not start${tail ? `: ${tail}` : ""}`);
@@ -376,9 +396,10 @@ export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.Proces
   if (old?.term) run._hostTerm = old.term;
   run.onWorkerStart = (id2) => {
     announceRerunId(id2, env); // the waiting reroute holds the old run until this line ran
-    if (!old) return;
-    old.fallThroughTo = id2;
-    saveStatus(logDir, old);
+    const cur = loadStatus(logDir, of) ?? old; // fresh: the stopped origin may have rewritten its status since
+    if (!cur) return;
+    cur.fallThroughTo = id2;
+    saveStatus(logDir, cur, new Date(), true);
   };
 }
 
@@ -425,10 +446,41 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const branch = old.state === "running" ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
   const specFile = join(d.logDir, `${id}.reroute.prompt`);
   writeFileSync(specFile, branch ? `${continuedNote(id, branch)}\n\n${text}` : text, "utf8");
-  // the restart first: nothing is stopped before it announced its id — a restart that cannot start must leave the
-  // job where it was (still queued or running) and say so, never drop it (2026-11-16: 93019 lost this way)
+  const stop = async (): Promise<void> => {
+    markHandover(d.logDir, id, old.rerouted ?? `rerouted to ${target.provider} (${reason})`);
+    await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
+  };
+  const start = (): Promise<void> | void => (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+  if (old.state === "running") {
+    // a running origin is stopped FIRST (its commits are salvaged onto the branch): a continuation never runs beside it.
+    // A stop that fails starts nothing and leaves the origin as it is.
+    const wait0 = d.announceMs ?? (old.pane ? 1500 : 0);
+    if (wait0 > 0) await new Promise((r) => setTimeout(r, wait0));
+    try {
+      await stop();
+    } catch (e) {
+      unmark();
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `stop failed, no continuation started: ${(e as Error).message}`.slice(0, 200) });
+      throw e;
+    }
+    // the origin's own exit may have rewritten its status without the marker: record the hand-over on the final state
+    const end = loadStatus(d.logDir, id);
+    if (end && end.rerouted !== old.rerouted) {
+      end.rerouted = old.rerouted;
+      saveStatus(d.logDir, end, new Date(), true);
+    }
+    try {
+      await start();
+    } catch (e) {
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 200) });
+      throw e;
+    }
+    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
+  }
+  // a queued origin: the restart first — nothing is stopped before it announced its id; a restart that cannot start
+  // must leave the job where it was and say so, never drop it (2026-11-16: 93019 lost this way)
   try {
-    await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+    await start();
   } catch (e) {
     unmark();
     appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
@@ -436,9 +488,8 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   }
   const wait = d.announceMs ?? (old.pane ? 1500 : 0);
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  markHandover(d.logDir, id, old.rerouted ?? `rerouted to ${target.provider} (${reason})`);
   try {
-    await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
+    await stop();
   } catch (e) {
     // the restart is live and linked; a kill that failed leaves the old run visible for `pai worker kill`
     appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `stop failed after the restart: ${(e as Error).message}`.slice(0, 200) });
