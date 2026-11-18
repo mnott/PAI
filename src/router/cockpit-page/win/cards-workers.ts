@@ -10,7 +10,7 @@
 
 export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted, then the paused and frozen ones. Every button acts on that one job (or on every job of a session) and the state badge shows the effect at once.";
 var WK_EXPLAIN="running = holds a slot; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs.";
-var WK_COLS=[["state","state",150],["session","session",130],["task","task",0],["model","model",90],["prio","prio",90],["time","time r",80],["actions","actions",90]];
+var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%"],["model","model",90],["prio","prio",90],["time","time r",80],["actions","actions",90]];
 var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
 var WK_GROUPS=["running","waiting","paused / frozen"];
 var WK_BADGE={"running":"wq-run","waiting":"wq-wait","paused":"wq-pause","frozen":"wq-frozen","deep-frozen":"wq-deep"};
@@ -36,7 +36,7 @@ function wkTRow(r){
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
 /** The one table: fixed layout, one line per job, a thin labelled separator where the group changes. */
 function wkQTable(rows){
- var out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+'px"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+'>'+c[0]+'</th>'}).join("")+'</tr></thead><tbody>',g=-1;
+ var out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+'>'+c[0]+'</th>'}).join("")+'</tr></thead><tbody>',g=-1;
  rows.forEach(function(r){var k=wkGroupOf(r);if(k!==g){g=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+'</td></tr>'}out+=wkTRow(r)});
  return out+'</tbody></table>';
 }
