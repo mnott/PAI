@@ -851,6 +851,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     ...(spawner ? { spawnerSession: spawner } : {}),
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
     ...(a.className ? { className: a.className } : {}),
+    ...(a.topic ? { topic: a.topic } : {}),
     ...promptCopy(a.logDir, wid, a.parsed.prompt),
   };
   saveStatus(a.logDir, status);

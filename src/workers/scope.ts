@@ -26,6 +26,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadStatus, type WorkerStatus } from "./status.js";
+import { topicChip } from "./topic.js";
 
 export const AIBROKER_REGISTRY = join(homedir(), ".aibroker", "session-names.json");
 
@@ -109,8 +110,9 @@ export function scopeKey(term: string): string {
 }
 
 /** `[Name]` when the worker has an AIBroker session name, else "". */
-export function sessionTag(worker: { session?: { name?: string } | null }): string {
-  return worker.session?.name ? `[${worker.session.name}]` : "";
+export function sessionTag(worker: { session?: { name?: string } | null; topic?: string }): string {
+  const name = worker.session?.name ? `[${worker.session.name}]` : "";
+  return worker.topic ? [name, `[${topicChip(worker.topic)}]`].filter(Boolean).join(" ") : name;
 }
 
 /**

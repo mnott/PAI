@@ -33,9 +33,10 @@ import { workerFreezeCommand, workerThawCommand } from "./freeze.js";
 import { setWorkerPaused } from "../../workers/engine-control.js";
 import { resumeWorker } from "../../workers/preempt.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
+import { normalizeTopic } from "../../workers/topic.js";
 import { providerCap } from "../../workers/capacity.js";
 import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
-import { filterBySession, renderQueueTable } from "../../workers/queue-table.js";
+import { filterBySession, filterByTopic, renderQueueTable } from "../../workers/queue-table.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
 import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile } from "../../workers/reroute.js";
@@ -195,6 +196,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       localOk: o["local-ok"] === true ? true : undefined,
       cloud: o.cloud === true ? true : undefined,
       className: className ?? agentClass,
+      topic: normalizeTopic(o.topic),
       modelFlag: str(o.model),
       label,
       mcpFlag: str(o.mcp),
@@ -338,6 +340,7 @@ const runCommand: CommandDef = {
     { name: "mcp", type: "string", value: "NAMES", summary: "MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`)" },
     { name: "no-pane", type: "boolean", summary: "Ignored: every start needs a visible pane" },
     { name: "priority", type: "string", value: "high|normal|low", summary: "Priority when the provider is full or its local engine is shared (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker; change it live with `pai worker priority <id> <level>`" },
+    { name: "topic", type: "string", value: "name", summary: "Topic that groups related jobs in the queue and cockpit (children of a worker and continuations keep the parent's; no topic is guessed from the label)" },
     { name: "no-queue", type: "boolean", summary: "Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent)" },
     { name: "no-stagger", type: "boolean", summary: "Do not wait for an earlier run on the same provider to warm its prompt cache" },
     { name: "worktree", type: "boolean", summary: "Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo)" },
@@ -513,6 +516,7 @@ const psCommand: CommandDef = {
     "Shows the workers started from this terminal. When other sessions have live workers too, a MACHINE section lists every live worker on this computer with the session that owns it.",
   options: [
     { name: "all", type: "boolean", summary: "Workers of all sessions, not just this terminal's" },
+    { name: "topic", type: "string", value: "NAME", summary: "Only the workers of this topic" },
     { name: "panes", type: "boolean", summary: "List process -> pane -> tab for everything running, checked live" },
     { name: "mute-local-idle", type: "string", value: "SESSION", summary: "Stop the idle-local-model nudge to this session name (or iTerm id)" },
     { name: "unmute-local-idle", type: "string", value: "SESSION", summary: "Resume the idle-local-model nudge to this session" },
@@ -542,7 +546,7 @@ const psCommand: CommandDef = {
         const d = new Date(w.until);
         out(`urgent: ${w.key} now${w.where === "local" ? ", local" : ""} until ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
       }
-      out(psOutput(dir, flag(ctx, "all"), process.env));
+      out(psOutput(dir, flag(ctx, "all"), process.env, undefined, str(ctx.opts.topic)));
     }),
 };
 
@@ -1359,7 +1363,10 @@ const queueCommand: CommandDef = {
     { name: "VERB", summary: "next (alias front), up or down (default: list the queue)" },
     { name: "ID", summary: "Worker id to pull forward (with next/up)" },
   ],
-  options: [{ name: "session", type: "string", value: "NAME", repeatable: true, summary: "Show only the jobs of this session (repeatable); the default is every session" }],
+  options: [
+    { name: "session", type: "string", value: "NAME", repeatable: true, summary: "Show only the jobs of this session (repeatable); the default is every session" },
+    { name: "topic", type: "string", value: "NAME", repeatable: true, summary: "Show only the jobs of this topic (repeatable); the default is every topic" },
+  ],
   examples: ["pai worker queue", "pai worker queue --session pai --session jobs", "pai worker queue down 20261019-142851-84910", "pai worker queue next 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
   seeAlso: ["pai worker ps", "pai worker kill"],
   run: (ctx) =>
@@ -1370,7 +1377,7 @@ const queueCommand: CommandDef = {
       const { workers } = readWorkersSection();
       if (verb === "list") {
         const sessions = (ctx.multi?.session ?? []) as string[];
-        for (const l of renderQueueTable(filterBySession(readQueueTable(dir, workers), sessions))) out(l);
+        for (const l of renderQueueTable(filterByTopic(filterBySession(readQueueTable(dir, workers), sessions), (ctx.multi?.topic ?? []) as string[]))) out(l);
         for (const l of schedulerLines(schedulerView(dir, workers))) out(l);
         return;
       }

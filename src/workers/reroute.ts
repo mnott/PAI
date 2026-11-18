@@ -350,7 +350,7 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
   return async (s) => {
     const st = loadStatus(logDir, s.id);
     if (!st) throw new Error(`no worker named "${s.id}" to restart`);
-    const args = ["worker", "run", "--provider", s.provider, ...(st.outputFormat && st.outputFormat !== "text" ? ["--output-format", st.outputFormat] : []), ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
+    const args = ["worker", "run", "--provider", s.provider, ...(st.outputFormat && st.outputFormat !== "text" ? ["--output-format", st.outputFormat] : []), ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.topic ? ["--topic", st.topic] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
     mkdirSync(join(logDir, "runs"), { recursive: true });
     const idFile = join(logDir, "runs", `rerun-${s.id}.id`);
     try {

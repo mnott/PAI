@@ -64,6 +64,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--mcp NAMES` | string | — | MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`) |
 | `--no-pane` | flag | — | Ignored: every start needs a visible pane |
 | `--priority high|normal|low` | string | — | Priority when the provider is full or its local engine is shared (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker; change it live with `pai worker priority <id> <level>` |
+| `--topic name` | string | — | Topic that groups related jobs in the queue and cockpit (children of a worker and continuations keep the parent's; no topic is guessed from the label) |
 | `--no-queue` | flag | — | Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent) |
 | `--no-stagger` | flag | — | Do not wait for an earlier run on the same provider to warm its prompt cache |
 | `--worktree` | flag | — | Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo) |
@@ -138,6 +139,7 @@ Shows the workers started from this terminal. When other sessions have live work
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | flag | — | Workers of all sessions, not just this terminal's |
+| `--topic NAME` | string | — | Only the workers of this topic |
 | `--panes` | flag | — | List process -> pane -> tab for everything running, checked live |
 | `--mute-local-idle SESSION` | string | — | Stop the idle-local-model nudge to this session name (or iTerm id) |
 | `--unmute-local-idle SESSION` | string | — | Resume the idle-local-model nudge to this session |
@@ -759,6 +761,7 @@ No arguments lists every worker parked behind a provider's concurrency cap, per 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--session NAME` | string | — | Show only the jobs of this session (repeatable); the default is every session |
+| `--topic NAME` | string | — | Show only the jobs of this topic (repeatable); the default is every topic |
 
 ```sh
 pai worker queue

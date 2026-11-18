@@ -140,12 +140,13 @@ export function psOutput(
   logDir: string,
   showAll: boolean,
   env: NodeJS.ProcessEnv,
-  color = process.stdout.isTTY === true
+  color = process.stdout.isTTY === true,
+  topic?: string
 ): string {
   const c = makeColor(color);
   const term = env.ITERM_SESSION_ID ?? "";
   reconcileStatuses(logDir, new Date(), 0);
-  const statuses = loadStatuses(logDir);
+  const statuses = loadStatuses(logDir).filter((s) => !topic || s.topic === topic);
   const scoped = showAll || !term ? statuses : statuses.filter((s) => workerInScope(s, term));
   const scopeLabel =
     showAll || !term

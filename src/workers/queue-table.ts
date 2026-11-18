@@ -15,6 +15,7 @@ import type { QueueRow } from "./capacity.js";
 import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
 import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
+import { topicChip } from "./topic.js";
 
 /** Short id of a worker or pane run: the last dash-part of its id (a queue row never prints the full id). */
 export const shortId = (id: string): string => id.slice(id.lastIndexOf("-") + 1);
@@ -74,6 +75,8 @@ export interface TableRow {
   stateText: string;
   priority: "low" | "normal" | "high" | "now";
   session: string;
+  /** The job's topic (--topic), when it has one: the cockpit chip after the session chip. */
+  topic?: string;
   /** Short name: "<provider>" for a local model / "cloud: <short model>". */
   model: string;
   /** Full "local: <model id>" / "cloud: <provider> <model id>" for a tooltip. */
@@ -258,6 +261,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       stateText,
       priority: prioOf(s, prio),
       session: i.sessionOf(s),
+      ...(s.topic ? { topic: s.topic } : {}),
       model: shortModel(local, s.provider, s.model),
       modelFull: `${local ? "local" : "cloud"}: ${local ? s.model || s.provider : `${s.provider} ${s.model || ""}`.trim()}`,
       local,
@@ -312,6 +316,10 @@ export const GROUP_LABEL = ["running", "waiting", "paused / frozen"] as const;
 export function filterBySession<T extends Pick<TableRow, "session">>(rows: T[], sessions: string[]): T[] {
   return sessions.length ? rows.filter((r) => sessions.includes(r.session)) : rows;
 }
+/** Rows of the chosen topics only (none chosen = all). */
+export function filterByTopic<T extends Pick<TableRow, "topic">>(rows: T[], topics: string[]): T[] {
+  return topics.length ? rows.filter((r) => !!r.topic && topics.includes(r.topic)) : rows;
+}
 /** Sorted by session, then by the order the rows came in (admission order); a stable sort. */
 export function sortBySession<T extends Pick<TableRow, "session">>(rows: T[]): T[] {
   return rows.map((r, i) => ({ r, i })).sort((a, b) => (a.r.session < b.r.session ? -1 : a.r.session > b.r.session ? 1 : a.i - b.i)).map((o) => o.r);
@@ -332,7 +340,7 @@ export function renderQueueTable(rows: TableRow[]): string[] {
   const body = rows.map((r) => [
     // the activity word is fixed 7 chars so the state column never moves (full meaning in the cockpit tooltip)
     `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity.padEnd(7).trimEnd() : ""}`,
-    clip(r.session, 18),
+    clip(r.session, 18) + (r.topic ? ` [${topicChip(r.topic)}]` : ""),
     clip(r.task, 50),
     clip(r.model, 26),
     r.priority,

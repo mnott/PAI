@@ -20,6 +20,8 @@ export interface RunOptions {
   providerFlag?: string;
   /** --class value (the old --role): a task class from workers.classes. */
   className?: string;
+  /** --topic: groups related jobs in the queue (topic.ts). */
+  topic?: string;
   modelFlag?: string;
   label?: string;
   /** Typed system waiver (keepalive heartbeat): the start may run headless, ledgered PANE-WAIVED kind=system. Nothing else waives a pane. */
@@ -250,6 +252,7 @@ export interface ExecuteArgs {
   worktreeFlag?: boolean;
   resumeOf?: string;
   className?: string;
+  topic?: string;
   reroutes: number;
   emptyRetried?: boolean;
   route?: RouteInfo;
