@@ -28,6 +28,7 @@ import { ok, warn, err, dim, bold } from "../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
 import { resolvedMainConfigPath } from "../../config/main-config.js";
 import { loadWatchStatusLine, readLoadWatch } from "../../daemon/load-watch.js";
+import { lowPriorityStatusLine, readLowPriority } from "../../daemon/low-priority-keeper.js";
 import { describeQuiet, nextOccurrence, readQuiet, writeQuiet } from "../../daemon/quiet.js";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
@@ -208,6 +209,8 @@ async function cmdStatus(): Promise<number> {
     if (lag) console.log(lag.severity === "error" ? err(`    ${lag.text}`) : warn(`    ${lag.text}`));
     const lw = loadWatchStatusLine(readLoadWatch());
     if (lw) console.log(dim(`    ${lw}`));
+    const lp = lowPriorityStatusLine(readLowPriority());
+    if (lp) console.log(dim(`    ${lp}`));
     const quiet = readQuiet();
     if (quiet.on) console.log(warn(`    Quiet:       ${describeQuiet(quiet)}`));
 
