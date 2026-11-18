@@ -77,6 +77,12 @@ export interface TableRow {
   session: string;
   /** The job's topic (--topic), when it has one: the cockpit chip after the session chip. */
   topic?: string;
+  /** 1 = orchestrator (class orchestrate/plan), 2 = does the work (its children and direct implement runs). */
+  level: 1 | 2;
+  /** The L1 job this one was started by, when that job is a row of the table (the child is drawn under it). */
+  parent?: string;
+  /** Why this job is not on the local model ("class orchestrate runs on the cloud"); absent for a local job. */
+  cloudWhy?: string;
   /** Short name: "<provider>" for a local model / "cloud: <short model>". */
   model: string;
   /** Full "local: <model id>" / "cloud: <provider> <model id>" for a tooltip. */
@@ -141,6 +147,29 @@ export const PRIORITY_TIP: Record<"low" | "normal" | "high" | "now", string> = {
   high: "ahead of normal",
   now: "front of the queue and pauses all other local jobs while it runs",
 };
+
+/** Tooltips of the level badge. */
+export const LEVEL_TIP: Record<1 | 2, string> = {
+  1: "L1 coordinates: splits the work, starts L2 workers, checks their results",
+  2: "L2 does the work",
+};
+/** L1 = an orchestrator (class orchestrate / plan); everything else is L2. */
+export const levelOf = (className?: string): 1 | 2 => (className === "orchestrate" || className === "plan" ? 1 : 2);
+
+/** Why a cloud job is not local, in plain words, from the fields the run recorded (route, routeWhy, escalated); "" for a local job. */
+export function cloudWhy(s: Pick<WorkerStatus, "route" | "routeWhy" | "escalated" | "className" | "provider">, local: boolean): string {
+  if (local) return "";
+  const r = s.route?.reason ?? "";
+  let m: RegExpMatchArray | null;
+  const OP = /^(?:cli|operator|cockpit|you)\b/i;
+  if (/^escalated to \S+: (?:by )?(?:cli|operator|cockpit|you)\b/i.test(s.escalated ?? "") || OP.test(r.match(/^(?:rerouted|fall-through) \((.*)\)$/)?.[1] ?? "")) return "moved by operator";
+  if ((m = r.match(/^(?:rerouted|fall-through) \(escalation: no edit or commit for (\d+)m\)$/))) return `moved: no edit or commit for ${m[1]} min on the local model`;
+  if ((m = r.match(/^(?:rerouted|fall-through) \((.*)\)$/))) return `moved: ${m[1]!.replace(/^escalation: /, "")}`;
+  if (s.escalated) return plainWording(s.escalated);
+  if ((m = (s.routeWhy ?? "").match(/^class: (\S+)/))) return `class ${m[1]} runs on the cloud`;
+  if (/--cloud|flag: --provider/.test(s.routeWhy ?? "")) return "--cloud at start";
+  return s.routeWhy ? `chosen at start: ${s.routeWhy}` : "cloud";
+}
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -265,6 +294,9 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       model: shortModel(local, s.provider, s.model),
       modelFull: `${local ? "local" : "cloud"}: ${local ? s.model || s.provider : `${s.provider} ${s.model || ""}`.trim()}`,
       local,
+      level: levelOf(s.className),
+      ...(s.parent ? { parent: s.parent } : {}),
+      ...(cloudWhy(s, local) ? { cloudWhy: cloudWhy(s, local) } : {}),
       task: s.label || s.id,
       activity: state === "running" ? activityOf(s, false, i.now, reqOf(s.id)) : "",
       activityTip: "",
@@ -300,10 +332,25 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     if (r) (r.waits ??= []).push({ id: p.id, label: p.label });
   }
   // one order: running, then waiting, then paused/frozen (stable inside each group)
-  return out
-    .map((r, n) => ({ r, n }))
-    .sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n)
-    .map(({ r }) => ({ ...r, activityTip: r.activity ? activityTip(r.activity, r.now) : "" }));
+  const sorted = out.map((r, n) => ({ r, n })).sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n).map(({ r }) => r);
+  return nestChildren(sorted).map((r) => ({ ...r, activityTip: r.activity ? activityTip(r.activity, r.now) : "" }));
+}
+
+/** A child of an L1 row follows it directly when both are in the same state group; everything else keeps its place. */
+export function nestChildren(rows: TableRow[]): TableRow[] {
+  const l1 = new Set(rows.filter((r) => r.level === 1).map((r) => r.id));
+  const kids = (p: TableRow): TableRow[] => rows.filter((c) => c.parent === p.id && c.level === 2 && rowGroup(c) === rowGroup(p));
+  const placed = new Set<string>();
+  const out: TableRow[] = [];
+  for (const r of rows) {
+    if (placed.has(r.id)) continue;
+    const p = r.level === 2 && r.parent ? rows.find((x) => x.id === r.parent && l1.has(x.id) && rowGroup(x) === rowGroup(r)) : undefined;
+    if (p) continue; // drawn under its L1
+    placed.add(r.id);
+    out.push(r);
+    if (l1.has(r.id)) for (const c of kids(r)) if (!placed.has(c.id)) (placed.add(c.id), out.push(c));
+  }
+  return out;
 }
 
 /** 0 = running, 1 = waiting, 2 = paused / frozen / deep-frozen. */
@@ -337,12 +384,13 @@ const clip = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1)
 export function renderQueueTable(rows: TableRow[]): string[] {
   if (!rows.length) return ["nothing running or waiting"];
   const head = ["state", "session", "task", "model", "prio", "time", "id"];
+  const l1Ids = new Set(rows.filter((r) => r.level === 1).map((r) => r.id));
   const body = rows.map((r) => [
     // the activity word is fixed 7 chars so the state column never moves (full meaning in the cockpit tooltip)
     `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity.padEnd(7).trimEnd() : ""}`,
     clip(r.session, 18) + (r.topic ? ` [${topicChip(r.topic)}]` : ""),
-    clip(r.task, 50),
-    clip(r.model, 26),
+    clip(`L${r.level} ${r.level === 2 && r.parent && l1Ids.has(r.parent) ? "└ " : ""}${r.task}`, 50),
+    clip(r.model + (r.cloudWhy ? " ↑" : ""), 26),
     r.priority,
     fmtDur(r.seconds),
     shortId(r.id),

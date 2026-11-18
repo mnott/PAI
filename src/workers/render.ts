@@ -26,7 +26,7 @@ import { sessionTag } from "./scope.js";
 import { endLabel } from "./endreason.js";
 import { parseWorkerReport, renderReport } from "./report.js";
 import { scanLine } from "./scan.js";
-import { activityOf, type RequestState } from "./queue-table.js";
+import { activityOf, levelOf, type RequestState } from "./queue-table.js";
 import { readSchedFile } from "../router/scheduler.js";
 
 export type ColorEnabled = boolean;
@@ -677,7 +677,7 @@ export function renderTable(
         last
       )
     );
-    lines.push(treeLine(`${q}task: ${s.label}`, chain, last));
+    lines.push(treeLine(`${q}task: L${levelOf(s.className)} ${s.label}`, chain, last));
     if (s.note) lines.push(treeLine(`${q}${c("dim", `note: ${s.note.replace(/\s+/g, " ").slice(0, 100)}${noteMark(s)}`)}`, chain, last));
     lines.push(
       treeLine(
