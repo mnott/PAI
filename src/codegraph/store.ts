@@ -113,7 +113,7 @@ export interface TripleRow extends TripleSpec {
   validTo: number | null;
 }
 
-export interface CodeGraphStore {
+export interface CodeGraphStore extends CodeSummaryStore {
   /** Insert or replace a file with its symbols+refs in one transaction.
    *  Returns the file row id. Symbols/refs of the previous version are removed
    *  (cascade); refs from OTHER files that pointed at its symbols are nulled
@@ -186,4 +186,26 @@ export interface CodeGraphStore {
 
   /** Triple counts per predicate for relations written by relate (source_session 'relate:*'). */
   tripleCounts(): Promise<Record<string, { open: number; closed: number }>>;
+}
+
+/** A generated module or repo summary, one row per key (code:<slug>:<path>). */
+export interface SummaryRow {
+  key: string;
+  kind: "module" | "repo";
+  /** repo-relative directory ("." for the repo) */
+  path: string;
+  summary: string;
+  model: string;
+  /** hash of the module's source (file content hashes); regenerate only when it changes */
+  sourceHash: string;
+  generatedAt: number;
+}
+
+/** Storage of module/repo summaries, next to the graph. Scoped by repo_root. */
+export interface CodeSummaryStore {
+  getSummary(repoRoot: string, key: string): Promise<SummaryRow | null>;
+  upsertSummary(repoRoot: string, row: SummaryRow): Promise<void>;
+  listSummaries(repoRoot: string): Promise<SummaryRow[]>;
+  /** Remove summaries whose key is not in `keep` (modules that no longer exist). */
+  pruneSummaries(repoRoot: string, keep: string[]): Promise<number>;
 }

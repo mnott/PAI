@@ -932,6 +932,16 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
   );
 
   server.tool(
+    "code_summary",
+    "Get the stored summary of a module or repo from the code graph: purpose, entry points, what it depends on and what depends on it. Pass a key (code:<slug>:<path>), a directory or a file path; the nearest enclosing module answers.",
+    {
+      target: z.string().min(1).describe("A summary key, a directory or a file path. Use '.' for the repo."),
+      root: z.string().optional().describe("Repository root. Default: the repo around the current directory."),
+    },
+    async (args) => proxyTool("code_summary", args)
+  );
+
+  server.tool(
     "graph_related",
     "Neighbours of a code key, file path, symbol, note or external key across projects and domains (depends-on, calls-api, shares-protocol, duplicates, mentions, cites), grouped by predicate with file:line. Use it to see what else a change touches beyond this repo.",
     {

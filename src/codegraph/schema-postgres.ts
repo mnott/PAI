@@ -80,4 +80,19 @@ ALTER TABLE code_symbols ADD COLUMN IF NOT EXISTS doc TEXT NOT NULL DEFAULT '';
 /** Apply the code-graph schema to a Postgres database. Idempotent. */
 export async function ensureCodeGraphSchemaPostgres(pool: Pool): Promise<void> {
   await pool.query(CODEGRAPH_POSTGRES_SQL);
+  await pool.query(CODE_SUMMARIES_POSTGRES_SQL);
 }
+
+export const CODE_SUMMARIES_POSTGRES_SQL = `
+CREATE TABLE IF NOT EXISTS code_summaries (
+  repo_root    TEXT NOT NULL,
+  key          TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  path         TEXT NOT NULL,
+  summary      TEXT NOT NULL,
+  model        TEXT NOT NULL,
+  source_hash  TEXT NOT NULL,
+  generated_at BIGINT NOT NULL,
+  PRIMARY KEY (repo_root, key)
+);
+`;

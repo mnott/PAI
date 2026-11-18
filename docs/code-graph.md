@@ -26,7 +26,15 @@ All take `--root <dir>` (default: the repo around the current directory), `--jso
 - `code_search` — `query`, optional `root`, `limit`.
 - `code_callers` — `name`, optional `root`, `limit`.
 
+- `code_summary` — `target` (a key `code:<slug>:<path>`, a directory or a file path; `.` is the repo), optional `root`. Returns the stored module or repo summary.
+
 Headless workers (local and cloud) get these three tools with the `pai` MCP server, and their guidance tells them to call `code_explore` before grepping an unfamiliar repo.
+
+## Module and repo summaries
+
+`pai code summarize [--project <slug>|--all] [--changed]` writes a short summary for every module (a directory with source files) and for the repo: purpose in one or two sentences, entry points, what it depends on and what depends on it. The purpose comes from the local model only (it fails when none is running, never a cloud model), fed a bounded digest of signatures, one-line doc comments and top references; entry points and dependencies come straight from the graph. It runs at background priority, one module at a time.
+
+Rows live in `code_summaries` next to the graph (key `code:<slug>:<path>`, the model, a source hash, the time). A module is regenerated only when its source hash changed; `--force` redoes all. Each summary is also stored as a memory chunk, so the normal embed pass embeds it and `memory_search` finds it. The daemon runs `pai code summarize --all --changed` once a day in the maintenance cycle, for projects whose graph is already indexed. `pai code summary <key|path>` and `code_summary` read a summary back, and `code_explore` adds the summaries of the modules its symbols live in.
 
 ## Languages and limits
 

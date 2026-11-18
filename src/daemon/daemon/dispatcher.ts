@@ -26,7 +26,7 @@ import { detectTopicShift } from "../../topics/detector.js";
 import { registryBackend, storageBackend, daemonConfig } from "./state.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" (prune-dist.mjs deletes superseded chunks).
-import { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes, toolZettelGodNotes, toolZettelCommunities, toolKgAdd, toolKgQuery, toolKgInvalidate, toolKgContradictions, toolMemoryTunnels, toolCodeExplore, toolCodeSearch, toolCodeCallers, toolGraphRelated } from "../../mcp/tools.js";
+import { toolZettelExplore, toolZettelHealth, toolZettelSurprise, toolZettelSuggest, toolZettelConverse, toolZettelThemes, toolZettelGodNotes, toolZettelCommunities, toolKgAdd, toolKgQuery, toolKgInvalidate, toolKgContradictions, toolMemoryTunnels, toolCodeExplore, toolCodeSearch, toolCodeCallers, toolGraphRelated, toolCodeSummary } from "../../mcp/tools.js";
 import { handleGraphClusters } from "../../graph/clusters.js";
 import { handleGraphNeighborhood } from "../../graph/neighborhood.js";
 import { handleGraphNoteContext } from "../../graph/note-context.js";
@@ -181,6 +181,8 @@ export async function dispatchTool(
     case "code_callers":
       return toolCodeCallers(storageBackend, p as Parameters<typeof toolCodeCallers>[1]);
 
+    case "code_summary":
+      return toolCodeSummary(storageBackend, p as Parameters<typeof toolCodeSummary>[1]);
     case "graph_related":
       return toolGraphRelated(storageBackend, p as Parameters<typeof toolGraphRelated>[1]);
 

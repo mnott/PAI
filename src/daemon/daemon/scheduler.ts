@@ -40,6 +40,7 @@ import { createDistWatch, distBuildId, DIST_POLL_MS } from "../dist-watch.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
 import { runCodeGraphNightly } from "../../codegraph/nightly.js";
+import { runCodeSummariesDaily } from "../code-summaries-pass.js";
 import { startWorktreeGc } from "../worktree-gc.js";
 import { startBuildReapSweep } from "../build-reap.js";
 import { startRuntimeAutostart } from "../runtime-autostart.js";
@@ -159,6 +160,7 @@ export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "
       await runEmbedPhase();
       await runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path));
       await runCodeGraphNightly(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path));
+      await runCodeSummariesDaily();
     },
   };
 }
@@ -314,6 +316,8 @@ export function startIndexScheduler(): void {
       .then(() => runVaultIndex())
       .then(() => (withEmbed ? runEmbedPhase() : undefined))
       .then(() => (withEmbed ? runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path)) : undefined))
+      .then(() => (withEmbed ? runCodeGraphNightly(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path)) : undefined))
+      .then(() => (withEmbed ? runCodeSummariesDaily() : undefined))
       .catch((e) => {
         process.stderr.write(`[pai-daemon] ${label} index error: ${e}\n`);
       });

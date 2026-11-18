@@ -91,3 +91,17 @@ CREATE INDEX IF NOT EXISTS idx_code_refs_tosym ON code_refs(to_symbol_id);
 -- tables get it added by store-sqlite.ts ensure() (SQLite has no ADD COLUMN
 -- IF NOT EXISTS, so the ALTER is guarded there and absent from this SQL).
 `;
+
+export const CODE_SUMMARIES_SQLITE_SQL = `
+CREATE TABLE IF NOT EXISTS code_summaries (
+  repo_root    TEXT NOT NULL,
+  key          TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  path         TEXT NOT NULL,
+  summary      TEXT NOT NULL,
+  model        TEXT NOT NULL,
+  source_hash  TEXT NOT NULL,
+  generated_at INTEGER NOT NULL,
+  PRIMARY KEY (repo_root, key)
+);
+`;

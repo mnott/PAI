@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { extractFile } from "./extract/index.js";
 import { openFederation } from "../storage/sqlite/federation-db.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
+import { summarizeRepo, findSummary, MAX_PROMPT_CHARS } from "./summaries.js";
 import { indexRepo, callers, searchSymbols, explore, callees } from "./api.js";
 import { execFileSync } from "node:child_process";
 import { GRAPH_INDEXING_LINE, incrementalIndexIfIndexed, lockPath, markDirty, readDirty, runningIndex, sessionGraphLine, startBackgroundIndex, type BgDeps } from "./session.js";
@@ -67,6 +68,66 @@ describe("index + resolve + incremental (SQLite)", () => {
     const third = await indexRepo(backend, root);
     expect(third.deleted).toBe(1);
     expect(third.files).toBe(1);
+  }, 30000);
+});
+
+describe("module and repo summaries (model mocked)", () => {
+  function setup() {
+    const root = tmp();
+    mkdirSync(join(root, "src/a"), { recursive: true });
+    mkdirSync(join(root, "src/b"), { recursive: true });
+    writeFileSync(join(root, "src/a/a.ts"), 'import { helper } from "../b/b.js";\n/** Entry of the a module. */\nexport function main(){ helper(); }\n');
+    writeFileSync(join(root, "src/b/b.ts"), "export function helper(){}\n");
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    const prompts: string[] = [];
+    const model = { name: "mock/model", client: async (p: string) => { prompts.push(p); return "It does a thing."; } };
+    return { root, backend, prompts, model };
+  }
+
+  it("regenerates only when the source hash changed", async () => {
+    const { root, backend, prompts, model } = setup();
+    await indexRepo(backend, root);
+    const first = await summarizeRepo(backend, root, { model, slug: "demo" });
+    expect(first.modules).toBe(2);
+    expect(first.summarized).toBe(3); // 2 modules + repo
+    const calls = prompts.length;
+    const again = await summarizeRepo(backend, root, { model, slug: "demo" });
+    expect(again.summarized).toBe(0);
+    expect(again.unchanged).toBe(3);
+    expect(prompts.length).toBe(calls);
+
+    writeFileSync(join(root, "src/b/b.ts"), "export function helper(){}\nexport function more(){}\n");
+    await indexRepo(backend, root);
+    const third = await summarizeRepo(backend, root, { model, slug: "demo" });
+    expect(third.summarized).toBe(2); // module b + repo; module a untouched
+    expect(prompts.length).toBe(calls + 2);
+    const row = await findSummary(backend.codeGraph(), root, "src/b/b.ts");
+    expect(row!.key).toBe("code:demo:src/b");
+    expect(row!.model).toBe("mock/model");
+    expect(row!.summary).toContain("more");
+    expect((await findSummary(backend.codeGraph(), root, "code:demo:src/a"))!.summary).toContain("Depends on: src/b");
+  }, 30000);
+
+  it("bounds the prompt input", async () => {
+    const { root, backend, prompts, model } = setup();
+    const big = Array.from({ length: 400 }, (_, i) => `export function fn${i}(${"arg: string, ".repeat(30)}){}`).join("\n");
+    writeFileSync(join(root, "src/b/big.ts"), big);
+    await indexRepo(backend, root);
+    await summarizeRepo(backend, root, { model, slug: "demo" });
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const p of prompts) expect(p.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS);
+    expect(prompts.some((p) => p.includes("fn0"))).toBe(true);
+    expect(prompts.every((p) => !p.includes("fn399"))).toBe(true);
+  }, 30000);
+
+  it("explore includes the module and repo summary", async () => {
+    const { root, backend, model } = setup();
+    await indexRepo(backend, root);
+    await summarizeRepo(backend, root, { model, slug: "demo" });
+    const r = await explore(backend, root, "helper");
+    expect(r.text).toContain("## Module summary: src/b");
+    expect(r.text).toContain("It does a thing.");
+    expect(r.text).toContain("## Repo summary: .");
   }, 30000);
 });
 

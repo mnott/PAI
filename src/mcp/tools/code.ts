@@ -1,5 +1,5 @@
 /**
- * MCP tool handlers: code_explore, code_search, code_callers
+ * MCP tool handlers: code_explore, code_search, code_callers, code_summary
  *
  * Code graph surface: one-call repo mapping (definitions, source, callers,
  * blast radius) backed by the PAI database. The repo is indexed on first use
@@ -11,6 +11,7 @@ import type { ToolResult } from "./types.js";
 import { registeredProjects } from "../../codegraph/projects.js";
 import { related, formatRelated, type Domain } from "../../codegraph/graph.js";
 import { resolveRoot, ensureFresh, explore, searchSymbols, callers } from "../../codegraph/api.js";
+import { findSummary } from "../../codegraph/summaries.js";
 
 function ok(text: string): ToolResult {
   return { content: [{ type: "text", text }] };
@@ -77,6 +78,23 @@ export async function toolCodeCallers(backend: StorageBackend, params: CodeCalle
     return ok(JSON.stringify(hits, null, 2));
   } catch (e) {
     return fail("code_callers", e);
+  }
+}
+
+export interface CodeSummaryParams {
+  /** A summary key (code:<slug>:<path>), a directory or a file path. */
+  target: string;
+  root?: string;
+}
+
+export async function toolCodeSummary(backend: StorageBackend, params: CodeSummaryParams): Promise<ToolResult> {
+  try {
+    const root = params.root ?? resolveRoot(process.cwd());
+    const row = await findSummary(backend.codeGraph(), root, params.target);
+    if (!row) return ok(`No summary stored for ${params.target}. Run: pai code summarize`);
+    return ok(`${row.key}\n${row.summary}\n\n(model ${row.model}, generated ${new Date(row.generatedAt).toISOString()})`);
+  } catch (e) {
+    return fail("code_summary", e);
   }
 }
 

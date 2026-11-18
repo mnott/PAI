@@ -145,6 +145,8 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai code relate` | Derive relations between projects and notes |
 | `pai code search` | Find symbols by name |
 | `pai code status` | Show what is indexed for a repository |
+| `pai code summarize` | Write module and repo summaries with the local model |
+| `pai code summary` | Show the stored summary of a module or repo |
 | `pai config` | PAI settings: show, read, change |
 | `pai config get` | Print one setting |
 | `pai config list` | Print all settings (secrets hidden) |
