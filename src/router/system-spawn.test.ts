@@ -51,6 +51,17 @@ describe("cockpit page script", () => {
     expect(html).toContain('title="a very long task');
     expect(html).toContain("aria-label=");
   });
+  it("queue table colgroup leaves the task column the free width", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
+    const html = vm.runInContext("wkQTable([])", ctx) as string;
+    const cols = [...html.matchAll(/<col(?!group)([^>]*)>/g)].map((m) => m[1]!);
+    expect(cols).toHaveLength(7);
+    expect(cols[2]).toBe("");
+    expect(cols.filter((c) => c.includes("width:"))).toHaveLength(6);
+  });
   it("queue model column is a short name", async () => {
     const { shortModel } = await import("../workers/queue-table.js");
     expect(shortModel(true, "gyro-l", "gyro-l/qwen3.8-flash-next-gyro-l")).toBe("gyro-l");
