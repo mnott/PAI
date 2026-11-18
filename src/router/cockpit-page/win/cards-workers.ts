@@ -9,8 +9,9 @@
  *  are the generic types of win/types.ts; the cards here only carry views (wkTableView / wkLocalView / wkWtView). */
 
 export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted, then the paused and frozen ones. Every button acts on that one job (or on every job of a session) and the state badge shows the effect at once.";
-var WK_EXPLAIN="running = holds a slot, or started and waiting to take its slot back; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: N of M slots busy counts jobs holding a slot; K lent = started jobs waiting on a long tool or for their slot back (slot back?): busy + lent = the running rows; engine idle: admitted K extra = jobs started above the cap because the model had nothing to do.";
-var WK_ACT="Activity: writing = its request is open at the model, the model is writing its reply; in line = its request waits in the local scheduler queue behind other workers; tool = no request open, a tool (build, test) is running; waiting = waiting for a slot, no request has gone to the model yet; idle Nm = no request at the model and no tool running for N minutes, it may be stuck.";
+var WK_EXPLAIN="running = holds a slot, or started and waiting to take its slot back; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: N of M slots busy counts jobs holding a slot; K waiting for their slot back = started jobs that hold a ticket to get a slot back (their own rows); engine idle: admitted K extra = jobs started above the cap because the model had nothing to do.";
+var WK_ACT="Activity: writing = its request is open at the model, the model is writing its reply; in line = waiting for the model, either at the engine or for a slot (the tooltip says which); tool = no request open, a tool (build, test) is running; waiting = waiting for a slot, no request has gone to the model yet; idle Nm = no request at the model and no tool running for N minutes, it may be stuck.";
+var WK_BTNS="Buttons: ▶ one step toward running (resume / resume saved), ⏸ one step toward paused, ⤒ next in line, ↑ move up, ↓ move down, ■ stop, ⋯ more actions. Chips: the coloured session chip filters to that session, the dashed topic chip filters to that topic, the model chip names the model (↑ = why it is not local).";
 var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%"],["model","model",110],["prio","prio",90],["time","time r",80],["actions","actions",210]];
 var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
 var WK_GROUPS=["running","waiting","paused / frozen"];
@@ -69,7 +70,7 @@ function wkTRow(r){
  var tip=r.task;if(r.summary)tip+="\n\n"+r.summary;tip+="\nid: "+r.id;if(r.waits&&r.waits.length){for(var wi=0;wi<r.waits.length;wi++)tip+="\na session waits for this job: "+r.waits[wi].label}
  var kid=r.level!==1&&!!r.parent&&((WQ&&WQ.table)||[]).some(function(x){return x.id===r.parent&&x.level===1});
  tip+="\n\nmodel: "+(r.modelFull||r.model||"-")+(r.cloudWhy?" ("+r.cloudWhy+")":"")+"\npriority: "+r.priority+"\ntime: "+wkDur(r.seconds);
- var task=wkLevel(r,kid)+'<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
+ var task=wkLevel(r,kid)+'<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
  return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
@@ -96,7 +97,9 @@ function wkMenuHtml(){
 /** Title row: (i) legend tooltip, the session chips as filters, and the All jobs menu at the right. */
 function wkBar(q){
  var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)}).join(" ")+(function(){var ts={};return(q.table||[]).filter(function(r){return r.topic&&!ts[wkTk(r)]&&(ts[wkTk(r)]=1)}).map(function(r){return wkTopic(r,WK_TF.indexOf(wkTk(r))>=0)}).join("")})(),n=(q.table||[]).length,sh=(WK_FILTERS.length||WK_TF.length)?wkView(q.table).length:n,cnt=(WK_FILTERS.length||WK_TF.length)?'<span class="wq-cnt dim" title="active session filter">showing '+sh+' of '+n+'</span>':"";
- return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" title="'+esc(WK_INFO+" "+WK_EXPLAIN+" "+WK_ACT)+'" aria-label="legend">(i)</span><span class="wq-chips">'+chips+'</span>'+cnt+'<button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
+ var leg=WK_INFO+" "+WK_EXPLAIN+" "+WK_ACT+" "+WK_BTNS;
+ // the (i) legend: a CSS tooltip that shows on hover, focus and click/tap (touch screens), not only the native title
+ return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" data-tip="'+esc(leg)+'" aria-label="legend">(i)<span class="wq-tip" role="tooltip">'+esc(leg)+'</span></span><span class="wq-chips">'+chips+'</span>'+cnt+'<button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
 }
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
 var WQ=null,WK_BLOCKS={},WK_DRAG=null;
@@ -146,6 +149,10 @@ function wkWire(ctx){
  var body=ctx.body,from=null;
  body.addEventListener("click",function(e){
   var T=e.target&&e.target.closest?e.target:null,rd=function(){if(WQ)Win.update("queue",WQ)};
+  // the (i) legend opens its tooltip on click/tap too (touch screens have no hover); a second click closes it
+  var ii=T?T.closest(".wq-i"):null;
+  if(ii){var was=ii.classList.contains("on");document.querySelectorAll(".wq-i.on").forEach(function(x){x.classList.remove("on")});if(!was)ii.classList.add("on");return}
+  document.querySelectorAll(".wq-i.on").forEach(function(x){x.classList.remove("on")});
   var wm=T?T.closest("button[data-wm]"):null;
   if(wm){var k=wm.getAttribute("data-wm"),rc=wm.getBoundingClientRect();WK_MENU=WK_MENU&&WK_MENU.key===k?null:{key:k,x:Math.max(4,Math.min(Math.round(rc.left),window.innerWidth-190)),y:Math.round(rc.bottom)+2};rd();return}
   var inMenu=T&&T.closest(".wq-menu"),qs0=T?T.closest("button[data-qs]"):null;

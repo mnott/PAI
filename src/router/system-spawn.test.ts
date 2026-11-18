@@ -107,9 +107,29 @@ describe("cockpit page script", () => {
     // every word has a tooltip, idle included
     (ctx as Record<string, unknown>).__c = mk("idle 10m", "no request at the model and no tool running for 10 minutes; it may be stuck");
     expect(vm.runInContext("wkTRow(__c)", ctx)).toContain('title="no request at the model and no tool running for 10 minutes; it may be stuck');
-    // the (i) legend carries the activity words with their one-line meanings
+    // the (i) legend carries a real CSS tooltip: shown on hover AND click/tap, never only the native title
     const bar = vm.runInContext("wkBar({table:[]})", ctx) as string;
+    expect(bar).toContain('class="wq-i"');
+    expect(bar).toContain('data-tip=');
+    expect(bar).toContain('<span class="wq-tip" role="tooltip">');
+    // the legend itself: states, activity words (both 'in line' meanings), buttons and chips
     for (const w of ["writing =", "in line =", "tool =", "waiting =", "idle Nm ="]) expect(bar).toContain(w);
+    expect(bar).toContain("either at the engine or for a slot");
+    expect(bar).toContain("Buttons: ▶ one step toward running");
+    expect(bar).toContain("⏸ one step toward paused");
+    expect(bar).toContain("more actions");
+    expect(bar).toContain("session chip filters");
+    expect(bar).toContain("topic chip filters");
+    expect(bar).toContain("model chip names the model");
+  });
+  it("the (i) legend tooltip shows on click/tap: the CSS rule covers hover, focus and .on", async () => {
+    const { readFileSync } = await import("node:fs");
+    const cssSrc = readFileSync("src/router/cockpit-page/css.ts", "utf8");
+    expect(cssSrc).toContain(".wq-i:hover .wq-tip,.wq-i:focus-visible .wq-tip,.wq-i.on .wq-tip{display:block}");
+    // the page script toggles .on on click (touch screens have no hover)
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    expect(WIN_WORKERS_JS).toContain('closest(".wq-i")');
+    expect(WIN_WORKERS_JS).toContain('classList.add("on")');
   });
   it("queue view filters by the chosen sessions and sorts by session then position", async () => {
     const vm = await import("node:vm");
@@ -170,6 +190,33 @@ describe("cockpit page script", () => {
     cols.forEach((c, i) => {
       if (i !== 2) expect(c).toMatch(/width:\d+px/);
     });
+  });
+  it("the spec? marker has a real tooltip: the guard's count and the first conflicting reason, shortened", async () => {
+    const { denialMark, specMarkTip } = await import("../workers/denials.js");
+    const s = {
+      denialCount: 3,
+      denials: [
+        { at: "2026-11-18T21:52:00Z", tool: "Bash", hook: "ztk", input: "git push", reason: "Never push from a worker session; the operator merges. Never push from a worker session; the operator merges.", specConflict: true },
+        { at: "2026-11-18T21:53:00Z", tool: "Write", hook: "hook", input: "/x", reason: "path outside worktree", specConflict: false },
+      ],
+    };
+    expect(denialMark(s)).toBe("denied 3 spec?");
+    const tip = specMarkTip(s);
+    expect(tip.startsWith("the guard blocked this job 3 times; the block may contradict its brief: Never push from a worker session")).toBe(true);
+    expect(tip).toContain("operator merges");
+    expect(tip.length).toBeLessThanOrEqual("the guard blocked this job 3 times; the block may contradict its brief: ".length + 160);
+    // no spec conflict = no marker, no tip
+    expect(specMarkTip({ denialCount: 2, denials: [{ at: "x", tool: "Bash", hook: "h", input: "", reason: "r", specConflict: false }] })).toBe("");
+    expect(specMarkTip({})).toBe("");
+  });
+  it("the cockpit row renders the ? marker with a CSS tooltip carrying the spec tip", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
+    (ctx as Record<string, unknown>).__r = { slot: "running", kind: "job", id: "a", sid: "a", state: "running", stateText: "running", priority: "normal", session: "PAI", model: "m", local: true, level: 2, task: "t", seconds: 5, activity: "", now: "", detail: "", actions: ["pause"], specTip: "the guard blocked this job 2 times; the block may contradict its brief: x" };
+    const h = vm.runInContext("wkTRow(__r)", ctx) as string;
+    expect(h).toContain('class="wq-tip" role="tooltip">the guard blocked this job 2 times');
   });
   it("queue model column is a short name", async () => {
     const { shortModel } = await import("../workers/queue-table.js");

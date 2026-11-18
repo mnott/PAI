@@ -124,9 +124,29 @@ function ungrantedTool(r: ToolErrorRecord): boolean {
 
 const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ugrep", "ag"]);
 
+const MAX_CMD = 8192;
+
+/**
+ * Heredoc bodies dropped, every quoted span replaced by Q. One linear pass over the first 8 KB
+ * (the structure is at the head); an unmatched quote quotes the rest of the string.
+ */
+function stripQuotes(command: string): string {
+  const src = dropHeredocBodies(command.slice(0, MAX_CMD));
+  let out = "";
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c !== '"' && c !== "'") { out += c; continue; }
+    let j = i + 1;
+    while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
+    out += "Q";
+    i = j; // j past the end when unmatched: rest is quoted
+  }
+  return out;
+}
+
 /** Last simple command of a pipeline / && / ; chain: command name (path and env prefixes stripped) and the full segment. */
 export function lastCommand(command: string): { name: string; segment: string; compound: boolean } | null {
-  const bare = dropHeredocBodies(command).replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
+  const bare = stripQuotes(command);
   const segs = bare.split(/\|\|?|&&|;|\n/).map((x) => x.trim()).filter(Boolean);
   const segment = segs[segs.length - 1];
   if (!segment) return null;
@@ -137,7 +157,7 @@ export function lastCommand(command: string): { name: string; segment: string; c
 
 /** A loop whose last statement is `[ … ] && echo …` (or `test … && …`): it ends 1 when that last test is false. */
 function endsInFalseTest(command: string): boolean {
-  const bare = dropHeredocBodies(command).replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q").trim();
+  const bare = stripQuotes(command).trim();
   const body = bare.match(/^(?:for|while|until)\b[\s\S]*?\bdo\b([\s\S]*)\bdone$/)?.[1];
   const stmt = body?.split(/;|\n/).map((x) => x.trim()).filter(Boolean).pop();
   return !!stmt && /^(?:test|\[)\s[^|]*?&&\s*echo\b/.test(stmt);
@@ -207,7 +227,7 @@ const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\
 const SCRATCH_RUN = /^(?:node|tsx|bun|sh|bash|npx\s+tsx)\s+(?:-\S+\s+)*["']?(\S*(?:\$\{TMPDIR\}|\$TMPDIR|pai-scratch)\/\S*)/;
 export function isScratchProbe(r: ToolErrorRecord): boolean {
   if (r.tool !== "Bash" || !r.input) return false;
-  const stmt = dropHeredocBodies(r.input).split(/&&|;|\n/).map((x) => x.trim()).filter(Boolean).pop();
+  const stmt = dropHeredocBodies(r.input.slice(0, MAX_CMD)).split(/&&|;|\n/).map((x) => x.trim()).filter(Boolean).pop();
   const path = stmt?.split(/(?<!\|)\|(?!\|)/)[0].trim().match(SCRATCH_RUN)?.[1];
   if (!path) return false;
   if (/(^|\/)\.pai-scratch\//.test(path)) return true;
@@ -526,6 +546,15 @@ export function toolErrorSigTag(signature: string): string {
  * pushed after the run ends. `sent` maps worker id → signature → push time
  * and is updated for the returned pushes.
  */
+/** Classes already computed per record (the log is re-read each tick): only new events are classified. */
+const classCache = new Map<string, ErrorClass>();
+function cachedClass(r: ToolErrorRecord): ErrorClass {
+  const key = `${r.worker}|${r.ts}|${r.signature}|${r.raw.length}|${r.input?.length ?? 0}`;
+  let c = classCache.get(key);
+  if (c === undefined) classCache.set(key, (c = classifyToolError(r).cls));
+  return c;
+}
+
 export function detectRunningWorkerErrors(
   running: readonly RunningWorkerRef[],
   records: readonly ToolErrorRecord[],
@@ -537,13 +566,15 @@ export function detectRunningWorkerErrors(
   const byWorker = new Map<string, Map<string, ToolErrorRecord[]>>();
   const benign = new Map<string, number>();
   markProbeLoops(records);
+  if (classCache.size > 20_000) classCache.clear();
   for (const r of records) {
     if (!sessions.has(r.worker)) continue;
-    if (harnessOnly && !pushable(classifyToolError(r).cls)) {
-      if (classifyToolError(r).cls === "benign") benign.set(r.worker, (benign.get(r.worker) ?? 0) + 1);
+    const cls = cachedClass(r);
+    if (harnessOnly && !pushable(cls)) {
+      if (cls === "benign") benign.set(r.worker, (benign.get(r.worker) ?? 0) + 1);
       continue; // recorded, summarised at the end of the run, not pushed
     }
-    if (classifyToolError(r).cls === "benign") {
+    if (cls === "benign") {
       benign.set(r.worker, (benign.get(r.worker) ?? 0) + 1); // recorded and counted, never pushed
       continue;
     }
