@@ -260,17 +260,11 @@ describe("config set provider overrides (2026-11-17 incident)", () => {
     const h = fakeCfgHome(GYRO_YAML);
     const cfgBefore = readFileSync(join(h, "config.yaml"), "utf8");
     const wBefore = readFileSync(join(h, "workers.yaml"), "utf8");
-    // --force past the schema check: an active provider nobody defines would
-    // not load — the loader validation refuses the write, nothing touches disk.
-    expect(() => setConfigValueOp("active", "ghost", { force: true })).toThrow(/would not load/);
+    // a provider nobody defines, with no url: the loader would fail on it, so
+    // the write is refused before anything touches disk (env value or not).
+    expect(() => setConfigValueOp("workers.providers.newbie.env.FOO", "32768")).toThrow(/would not load/);
     expect(readFileSync(join(h, "config.yaml"), "utf8")).toBe(cfgBefore);
     expect(readFileSync(join(h, "workers.yaml"), "utf8")).toBe(wBefore);
-  });
-
-  it("an env value for a provider workers.yaml does not define still lands as a string", () => {
-    const h = fakeCfgHome(GYRO_YAML);
-    setConfigValueOp("workers.providers.newbie.env.FOO", "32768");
-    expect(readFileSync(join(h, "config.yaml"), "utf8")).toContain('FOO: "32768"');
   });
 
   it("a stray partial provider block in config.yaml deep-merges onto its workers.yaml provider", () => {

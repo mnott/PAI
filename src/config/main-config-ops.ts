@@ -120,7 +120,7 @@ function isEmptyCollection(node: unknown): boolean {
 /** Remove a mapping entry whose value became an empty `{}`/`[]`, walking up
  *  so a `set`→`unset` round-trip leaves no empty-parent scaffolding behind. */
 function pruneEmptyParents(doc: Document, segments: string[]): void {
-  for (let depth = segments.length; depth > 0; depth--) {
+  for (let depth = segments.length - 1; depth > 0; depth--) {
     const path = segments.slice(0, depth);
     const node = doc.getIn(path, true);
     if (!isEmptyCollection(node)) return;
