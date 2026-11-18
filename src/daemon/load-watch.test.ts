@@ -10,12 +10,17 @@ import {
 import {
   AUTOSTART_MAX_FAILURES,
   AUTOSTART_RETRY_MS,
+  autostartBusyRuntimes,
+  autostartDownInfo,
   freshAutostartStates,
   isAlreadyUp,
   runtimeAutostartConfig,
   runtimeAutostartTick,
+  schedulerInflightFor,
   type AutostartDeps,
 } from "./runtime-autostart.js";
+import { DOWN_CONFIRM_MS, localBusyHint, localStatusLine, type LocalStatus } from "../workers/local-status.js";
+import type { SchedSnapshot } from "../router/scheduler.js";
 import { freeMemoryGb, DEFAULT_RESERVE_GB, type MemoryDeps } from "../workers/local-memory.js";
 import { parseVmStat } from "../router/system.js";
 import type { WorkerStatus } from "../workers/status.js";
@@ -147,6 +152,8 @@ interface Autolog { starts: string[]; alerts: string[]; ledger: string[]; lines:
 
 const autostartDeps = (log: Autolog, over: Partial<AutostartDeps> = {}): AutostartDeps => ({
   isUp: async () => false,
+  // liveness defaults to refused (a dead machine); busy tests pass `alive` explicitly
+  alive: async () => false,
   frozen: () => false,
   freeGb: async () => 100,
   start: async (r) => {
@@ -167,8 +174,8 @@ describe("runtime autostart", () => {
     expect(cfg.tiers?.["apple-fm"]?.tier).toBe("apple-fm");
     expect(cfg.memoryGb["apple-fm"]).toBe(8);
     const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
-    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { isUp: async () => true, freeGb: async () => 1 }))).toEqual([]);
-    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { freeGb: async () => 4 }))).toEqual([{ kind: "skip-memory", runtime: "apple-fm", needGb: 8, freeGb: 4 }]);
+    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { isUp: async () => true, alive: async () => true, freeGb: async () => 1 }))).toEqual([]);
+    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { alive: async () => false, freeGb: async () => 4 }))).toEqual([{ kind: "skip-memory", runtime: "apple-fm", needGb: 8, freeGb: 4 }]);
     expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log))).toEqual([{ kind: "start", runtime: "apple-fm" }]);
     expect(runtimeAutostartConfig({ nothing: { autostart: true } }, [autostartTier("apple-fm")]).enabled).toBe(false); // no start command, no tier: nothing to start
   });
@@ -178,6 +185,7 @@ describe("runtime autostart", () => {
     let up = false;
     const d = autostartDeps(log, {
       isUp: async (r) => (r === "gyro-l" ? up : false),
+      alive: async (r) => (r === "gyro-l" ? up : false), // the port opens with the runtime
       start: async (r) => {
         log.starts.push(r);
         up = true;
@@ -185,10 +193,10 @@ describe("runtime autostart", () => {
       },
     });
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     expect(log.starts).toEqual(["gyro-l"]); // ollama has no autostart: never started
     expect(log.ledger[0]).toContain("RUNTIME-AUTOSTART runtime=gyro-l result=ok");
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
     expect(log.starts).toEqual(["gyro-l"]); // the up runtime is started once
   });
 
@@ -197,17 +205,17 @@ describe("runtime autostart", () => {
     let free = 10; // below the tier's 48 GB
     const d = autostartDeps(log, { freeGb: async () => free });
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "skip-memory", runtime: "gyro-l", needGb: 48, freeGb: 10 }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "skip-memory", runtime: "gyro-l", needGb: 48, freeGb: 10 }]);
     expect(log.starts).toEqual([]);
     // a skip alone never alerts (the alert follows a real failed start — see the failure tests): only the log line names the measured numbers
     expect(log.alerts).toEqual([]);
     expect(log.lines.some((x) => x.includes("skipped") && x.includes("needs ~48 GB") && x.includes("available 10 GB"))).toBe(true);
     // a skip is not a failure: retried on later ticks, still no alert
-    await runtimeAutostartTick(autostartCfg, states, d);
+    await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d);
     expect(log.alerts).toEqual([]);
     expect(log.starts).toEqual([]);
     free = 60;
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     expect(log.starts).toEqual(["gyro-l"]);
   });
 
@@ -216,10 +224,10 @@ describe("runtime autostart", () => {
     let frozen = true;
     const d = autostartDeps(log, { frozen: () => frozen });
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
     expect(log.starts).toEqual([]);
     frozen = false;
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     expect(log.starts).toEqual(["gyro-l"]);
   });
 
@@ -234,18 +242,18 @@ describe("runtime autostart", () => {
       now: () => now,
     });
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     now += 5 * MIN; // inside the backoff: no retry
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
     expect(log.starts).toHaveLength(1);
     now += 5 * MIN + 1; // out of it: failure 2
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     now += AUTOSTART_RETRY_MS;
-    await runtimeAutostartTick(autostartCfg, states, d); // failure 3 = the cap
+    await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d); // failure 3 = the cap
     expect(log.starts).toHaveLength(AUTOSTART_MAX_FAILURES);
     expect(log.lines.some((x) => x.includes("giving up until the next daemon start"))).toBe(true);
     now += 60 * MIN; // given up: nothing more, however long it stays down
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
     expect(log.starts).toHaveLength(AUTOSTART_MAX_FAILURES);
     // a fresh manager (a daemon start) resets the count and tries again
     expect(await runtimeAutostartTick(autostartCfg, freshAutostartStates(), d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
@@ -258,6 +266,7 @@ describe("runtime autostart", () => {
     let up = false;
     const d = autostartDeps(log, {
       isUp: async () => up,
+      alive: async () => up, // the port opens and closes with the runtime
       start: async (r) => {
         log.starts.push(r);
         return { ok: false, message: "engine died" }; // the restart attempt fails too: the backoff applies to it
@@ -265,18 +274,18 @@ describe("runtime autostart", () => {
       now: () => now,
     });
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // the boot start (fails)
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // the boot start (fails)
     up = true; // it came up after all
     now += MIN;
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]); // up: nothing to do, the failure count resets
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]); // up: nothing to do, the failure count resets
     up = false; // it dies again
     now += MIN;
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // restarted at once (the count was reset)
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // restarted at once (the count was reset)
     up = false;
     now += AUTOSTART_RETRY_MS - 1; // inside the next backoff window after the failed restart
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
     now += 2;
-    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // out of it: retried, never in a tight loop
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // out of it: retried, never in a tight loop
     expect(log.starts).toHaveLength(3);
   });
 
@@ -303,10 +312,10 @@ describe("runtime autostart", () => {
     const log2: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
     const d2 = autostartDeps(log2, { freeGb: () => freeMemoryGb(0, memDeps(tight, total)) });
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick(autostartCfg, states, d2)).toEqual([{ kind: "skip-memory", runtime: "gyro-l", needGb: 48, freeGb: 20 }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d2)).toEqual([{ kind: "skip-memory", runtime: "gyro-l", needGb: 48, freeGb: 20 }]);
     expect(log2.starts).toEqual([]);
     expect(log2.lines.some((x) => x.includes("skipped") && x.includes("available 20 GB"))).toBe(true); // the measured numbers are logged
-    await runtimeAutostartTick(autostartCfg, states, d2);
+    await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d2);
     expect(log2.alerts).toEqual([]); // a skip is not a failure: no alert for a skip alone
   });
 
@@ -318,6 +327,7 @@ describe("runtime autostart", () => {
     let freeCalls = 0;
     const d = autostartDeps(log, {
       isUp: async (r) => r === "gyro-l", // gyro-l answers its ready URL
+      alive: async (r) => r === "gyro-l",
       freeGb: async () => {
         freeCalls++;
         return 10; // far below the 48 GB need — must never be consulted for an up runtime
@@ -373,17 +383,75 @@ describe("runtime autostart", () => {
     expect(log.alerts[1]).toContain("giving up");
   });
 
+  // incident 2026-11-18 19:48/20:27: gyro-l ran 3 of 3 slots at GPU 98–100%, its /v1/models answered too slowly, and the prompt hint read
+  // "local model down: starting ollama" — a runtime started for an engine that was alive and working. Busy is not down.
+  it("a busy engine (health slow, port accepts) is never down: no start, no failure, the cache says busy", async () => {
+    const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
+    let now = 0;
+    const d = autostartDeps(log, { isUp: async () => false, alive: async () => true, now: () => now }); // health times out, the port accepts
+    const states = freshAutostartStates();
+    for (let i = 0; i < 3; i++) {
+      expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]); // busy: never a start, however long it lasts
+      now += MIN;
+    }
+    expect(log.starts).toEqual([]);
+    expect(log.alerts).toEqual([]);
+    expect(states.get("gyro-l")).toMatchObject({ attempts: 0, gaveUp: false });
+    // the hint line reads busy and never an autostart "starting" (the hook must not read down for a busy engine)
+    expect(autostartBusyRuntimes(states)).toEqual(["gyro-l"]);
+    expect(autostartDownInfo(autostartCfg, states)?.starting).toBeUndefined();
+    const st: LocalStatus = { at: new Date().toISOString(), running: [], down: ["gyro-l"], disabled: [], busy: autostartBusyRuntimes(states) };
+    expect(localBusyHint(st.busy)).toBe("local model busy (gyro-l)");
+    expect(localStatusLine(st)).toContain("busy");
+    expect(localStatusLine(st)).not.toContain("down");
+  });
+
+  it("requests in flight at the local scheduler also read alive: a health timeout there is busy, not down", () => {
+    const snap = {
+      at: 0,
+      engines: {
+        "gyro-l": { inflight: { session: "s1", worker: "w1", sinceMs: 5000 }, queued: {}, counters: {} },
+        "gyro-l#2": { inflight: null, queued: {}, counters: {} },
+        "apple-fm": { inflight: null, queued: { s2: 1 }, counters: {} }, // queued alone is not in flight
+      },
+      workers: {},
+    } as SchedSnapshot;
+    expect(schedulerInflightFor(snap, "gyro-l")).toBe(1); // the instance copies count for the provider
+    expect(schedulerInflightFor(snap, "apple-fm")).toBe(0);
+    expect(schedulerInflightFor(null, "gyro-l")).toBe(0);
+  });
+
+  it("a dead port is down only after two refused probes 10 s apart: first probe confirms nothing, the second starts", async () => {
+    const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
+    let now = 0;
+    const d = autostartDeps(log, { isUp: async () => false, alive: async () => false, now: () => now }); // health fails AND the port refuses, twice
+    const states = freshAutostartStates();
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]); // probe 1 refused: suspected, not started yet
+    expect(states.get("gyro-l")?.suspectedDownAt).toBe(0);
+    expect(log.starts).toEqual([]);
+    now += DOWN_CONFIRM_MS - 1; // still inside the window: no start on a second refusal this close
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
+    expect(log.starts).toEqual([]);
+    now = DOWN_CONFIRM_MS; // probe 2 refused 10 s after probe 1: down — the autostart runs
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(log.starts).toEqual(["gyro-l"]);
+    // and once it answers again the suspicion clears: a later slow health check reads busy, not down
+    const up = autostartDeps(log, { isUp: async () => true });
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, up)).toEqual([]);
+    expect(states.get("gyro-l")?.suspectedDownAt).toBeUndefined();
+  });
+
   it("a memory skip never alerts; the first real failed start alerts once", async () => {
     const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
     let free = 10; // below the tier's 48 GB
     const d = autostartDeps(log, { freeGb: async () => free });
     const states = freshAutostartStates();
-    for (let i = 0; i < 3; i++) await runtimeAutostartTick(autostartCfg, states, d); // three skips
+    for (let i = 0; i < 3; i++) await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d); // three skips
     expect(log.alerts).toEqual([]);
     expect(log.starts).toEqual([]);
-    free = 60; // memory frees: the start runs and fails for real
-    const failed = autostartDeps(log, { freeGb: async () => free, start: async (r) => ({ ok: false, message: "engine died" }) });
-    expect(await runtimeAutostartTick(autostartCfg, states, failed)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    free = 60; // memory frees: the start runs and fails for real (the port still refuses: a dead runtime, not a busy one)
+    const failed = autostartDeps(log, { alive: async () => false, freeGb: async () => free, start: async (r) => ({ ok: false, message: "engine died" }) });
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, failed)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     expect(log.alerts).toHaveLength(1); // one alert, only now — after a real failed start
     expect(log.alerts[0]).toContain("start failed");
   });

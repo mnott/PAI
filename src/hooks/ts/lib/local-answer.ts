@@ -5,7 +5,7 @@
 
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
-import { localDownHint, localStatusLine, readLocalStatusWhy } from "../../../workers/local-status.js";
+import { localBusyHint, localDownHint, localStatusLine, readLocalStatusWhy } from "../../../workers/local-status.js";
 
 export const UNKNOWN_ANSWER = "unknown (the daemon is not reporting; run `pai worker local`)";
 
@@ -19,6 +19,10 @@ export function cachedLocalAnswer(): string {
     // answer (starting X / gave up / off) is the daemon's own, so it may stand:
     // balanced mode reads this line and must know whether local work is coming up.
     if (st.running.length) return localStatusLine(st);
+    // a busy engine reads "busy", never "none running": the autostart hint must not stand next to it
+    // (2026-11-18: gyro-l at 3 of 3 slots read "local model down: starting ollama" — a needless runtime start)
+    const busy = localBusyHint(st.busy);
+    if (busy) return `local: ${busy}`;
     const why = localDownHint(st.downInfo);
     return why ? `local: none running — ${why}` : unknownBecause("daemon's last probe found none running");
   } catch {
