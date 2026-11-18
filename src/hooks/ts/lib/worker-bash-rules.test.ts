@@ -482,3 +482,28 @@ describe("headless-browser automation is denied (operator rule)", () => {
     expect(call("Write", { file_path: join(dir, "dep", "e2e.spec.ts"), content: imp }).decision).not.toBe("deny");
   });
 });
+
+describe("worker guard GNU sed X,+N range", () => {
+  const ctx = (): WorkerGuardContext => ({
+    cwd: "/repo/.workers/worktrees/abc",
+    home: "/home/u",
+    worktreeRoot: "/repo/.workers/worktrees/abc",
+    inWorktree: true,
+    mainCheckout: "/repo",
+    testScript: () => null,
+  });
+  const run = (command: string) =>
+    decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" }, ctx) as { decision: string; updatedInput?: { command: string }; context?: string };
+  it.skipIf(process.platform !== "darwin")("rewrites a single-quoted range", () => {
+    const d = run("sed -n '120,+40p' f.ts");
+    expect(d.decision).toBe("allow");
+    expect(d.updatedInput?.command).toBe("sed -n '120,160p' f.ts");
+    expect(d.context).toContain("rewrote sed X,+N to X,Y");
+  });
+  it.skipIf(process.platform !== "darwin")("rewrites a double-quoted range with two files", () => {
+    expect(run('sed -n "5,+3p" a b').updatedInput?.command).toBe('sed -n "5,8p" a b');
+  });
+  it.skipIf(process.platform !== "darwin")("still denies a non-numeric start", () => {
+    expect(run("sed -n '/foo/,+3p' f").decision).toBe("deny");
+  });
+});

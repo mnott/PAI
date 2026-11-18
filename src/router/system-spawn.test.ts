@@ -176,4 +176,32 @@ describe("cockpit page script", () => {
     expect(shortModel(true, "gyro-l", "gyro-l/qwen3.8-flash-next-gyro-l")).toBe("gyro-l");
     expect(shortModel(false, "anthropic", "claude-sonnet-5-5")).toBe("cloud: sonnet");
   });
+  it("queue row: level badge, child mark, cloud marker, narrow columns and chip hues", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const { cockpitHtml } = await import("./cockpit-page.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
+    const mk = (id: string, o: object) => ({ slot: "running", kind: "job", id, sid: id, state: "running", stateText: "running", priority: "normal", session: "PAI", model: "cloud: opus", modelFull: "cloud: anthropic claude-opus", local: false, level: 2, task: "t " + id, seconds: 5, activity: "", now: "", detail: "", actions: ["pause"], ...o });
+    (ctx as Record<string, unknown>).__t = [mk("o", { level: 1, cloudWhy: "class orchestrate runs on the cloud" }), mk("k", { parent: "o", cloudWhy: "moved by operator" })];
+    vm.runInContext("WQ={table:__t}", ctx);
+    const o = vm.runInContext("wkTRow(WQ.table[0])", ctx) as string;
+    const k = vm.runInContext("wkTRow(WQ.table[1])", ctx) as string;
+    expect(o).toContain("L1 coordinates: splits the work, starts L2 workers, checks their results");
+    expect(o).not.toContain("wq-kid");
+    expect(k).toContain("L2 does the work");
+    expect(k).toContain("wq-kid");
+    expect(o).toContain("class orchestrate runs on the cloud");
+    expect(o).toContain("↑ cloud: opus");
+    expect(k).toContain("moved by operator");
+    expect(k).toContain("priority: normal");
+    // palette: 12 hues; visible sessions never share one
+    (ctx as Record<string, unknown>).__n = Array.from({ length: 12 }, (_, i) => "sess" + i);
+    const hues = vm.runInContext("wkAssign(__n);__n.map(wkSessHue)", ctx) as number[];
+    expect(new Set(hues).size).toBe(12);
+    // narrow screens: columns hide, never tiles
+    const page = cockpitHtml();
+    expect(page).toMatch(/@media\(max-width:900px\)\{table\.wq\{min-width:0\}[^}]*nth-child\(5\)/);
+    expect(page).toMatch(/@media\(max-width:760px\)\{table\.wq col:nth-child\(4\)/);
+  });
 });

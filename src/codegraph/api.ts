@@ -13,6 +13,7 @@ import type { StorageBackend } from "../storage/interface.js";
 import type { CodeGraphStore, SymbolRow } from "./store.js";
 import { indexFiles, indexRoot, reconcile } from "./indexer.js";
 import { consumeDirty, readDirty, runningIndex } from "./session.js";
+import { exactNameTokens, pathWords, questionTerms, rankCandidates } from "./rank.js";
 
 export interface IndexStats {
   root: string;
@@ -229,11 +230,6 @@ export interface ExploreResult {
   truncated: boolean;
 }
 
-/** identifier-like tokens from a question or symbol list */
-function queryTokens(query: string): string[] {
-  return [...new Set(query.match(/[A-Za-z_][A-Za-z0-9_]{1,}/g) ?? [])];
-}
-
 /** verbatim source of a symbol, read from disk by line range */
 function sourceOf(rootAbs: string, s: SymbolHit): string {
   try {
@@ -262,16 +258,26 @@ export async function explore(
   const budgetChars = (opts?.budgetTokens ?? 4000) * 4;
   const depth = opts?.depth ?? 1;
 
-  // exact-name matches first, then full-text
-  const tokens = queryTokens(query);
-  const matched = new Map<number, SymbolHit>();
-  for (const t of tokens) {
-    for (const s of await store.symbolsByName(rootAbs, t, 5)) if (!matched.has(s.id)) matched.set(s.id, toHit(s));
-    // qualified tail match: "preempt.otherUrgent" style
-    for (const s of await store.searchSymbols(rootAbs, t, 3)) if (!matched.has(s.id)) matched.set(s.id, toHit(s));
-    if (matched.size >= 12) break;
+  // question terms (stopwords dropped), candidates from name, FTS and path, then ranked
+  const terms = questionTerms(query);
+  const exactTokens = exactNameTokens(query);
+  const exactNames = new Set(exactTokens);
+  const candidates: SymbolRow[] = [];
+  for (const t of exactTokens) candidates.push(...await store.symbolsByName(rootAbs, t, 5));
+  for (const t of terms) {
+    candidates.push(...await store.symbolsByName(rootAbs, t, 5));
+    candidates.push(...await store.searchSymbols(rootAbs, t, 60));
   }
-  const symbols = [...matched.values()];
+  if (terms.length) {
+    const pathHits = (await store.listFiles(rootAbs))
+      .map((f) => ({ path: f.path, n: terms.filter((t) => pathWords(f.path).has(t)).length }))
+      .filter((f) => f.n > 0)
+      .sort((a, b) => b.n - a.n || a.path.length - b.path.length)
+      .slice(0, 8);
+    for (const f of pathHits) candidates.push(...await store.symbolsInFile(rootAbs, f.path));
+  }
+  const ranked = rankCandidates(candidates, terms, exactNames, { files: 6, perFile: 4, total: 12 });
+  const symbols = ranked.flatMap((f) => f.symbols.map((r) => toHit(r.symbol)));
 
   let text = "";
   let truncated = false;
@@ -290,11 +296,7 @@ export async function explore(
 
   // definitions grouped by file
   const byFile = new Map<string, SymbolHit[]>();
-  for (const s of symbols) {
-    let list = byFile.get(s.file);
-    if (!list) { list = []; byFile.set(s.file, list); }
-    list.push(s);
-  }
+  for (const f of ranked) byFile.set(f.file, f.symbols.map((r) => toHit(r.symbol)));
   for (const [file, syms] of byFile) {
     if (!push(`\n## ${file}\n`)) break;
     for (const s of syms) {

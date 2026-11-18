@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { extractFile } from "./extract/index.js";
 import { openFederation } from "../storage/sqlite/federation-db.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
-import { indexRepo, callers, searchSymbols } from "./api.js";
+import { indexRepo, callers, searchSymbols, explore, callees } from "./api.js";
 import { execFileSync } from "node:child_process";
 import { GRAPH_INDEXING_LINE, incrementalIndexIfIndexed, lockPath, markDirty, readDirty, runningIndex, sessionGraphLine, startBackgroundIndex, type BgDeps } from "./session.js";
 
@@ -132,4 +132,29 @@ describe("sessions and workers use the graph", () => {
     expect(await incrementalIndexIfIndexed(backend, root, d)).toBe("started");
     expect(d.spawned).toEqual([root]);
   });
+});
+
+describe("explore ranking and callees", () => {
+  it("ranks the merge gate above a local `where`, and callees skip own parameters", async () => {
+    const root = tmp();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/gate.ts"),
+      "/** the merge gate: checks a branch before it is merged */\nexport function runMergeGate(branch: string){ return moveTo(branch); }\nexport function moveTo(b: string){ return b; }\n");
+    writeFileSync(join(root, "src/target.ts"),
+      "export function other(){ const where = 1; return where; }\n");
+    writeFileSync(join(root, "src/front.ts"),
+      "import { moveTo } from \"./gate.js\";\nexport function setFront(logDir: string, id: string){ const tmp = id; moveTo(logDir); return tmp; }\n");
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    await indexRepo(backend, root);
+
+    const r = await explore(backend, root, "where is the merge gate implemented");
+    expect(r.symbols[0].file).toBe("src/gate.ts");
+    expect(r.symbols[0].name).toBe("runMergeGate");
+    expect(r.symbols.some((s) => s.name === "where")).toBe(false);
+    expect(r.text.indexOf("## src/gate.ts")).toBeGreaterThan(-1);
+
+    const c = await callees(backend, root, "setFront");
+    expect(c.map((h) => h.name)).toContain("moveTo");
+    for (const p of ["logDir", "id", "tmp"]) expect(c.map((h) => h.name)).not.toContain(p);
+  }, 30000);
 });

@@ -494,3 +494,26 @@ describe("no continuation while its origin lives", () => {
     expect(escalationReason(job({ state: "running", continuedBy: "w2", progressAt: new Date(NOW - 30 * 60_000).toISOString() } as never), NOW, pol(0))).toBeNull();
   });
 });
+
+describe("escalationReason: time in line at the local model", () => {
+  const min = (n: number): string => new Date(NOW - n * 60_000).toISOString();
+  const sched = (waitMin: number) => ({ at: NOW, engines: {}, workers: { w1: { waitMsTotal: waitMin * 60_000, waitingSince: 0 } } }) as never;
+  const run = (o: object) => job({ state: "running", started: min(60), ...o } as never);
+  it("12 wall minutes, 9 in line: not escalated", () => {
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(9))).toBeNull();
+  });
+  it("12 wall minutes, 1 in line: escalated with both numbers", () => {
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(1))).toBe("no edit or commit for 11m of own time (12m wall, 1m in line)");
+  });
+  it("in line before the last progress does not count", () => {
+    expect(escalationReason(run({ progressAt: min(12), lineAtProgressMs: 9 * 60_000 }), NOW, pol(0), sched(9))).toContain("no edit or commit for 12m");
+  });
+  it("cloud worker (no scheduler entry) unchanged", () => {
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(0))).toBe("no edit or commit for 12m");
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), null)).toBe("no edit or commit for 12m");
+  });
+  it("read-only worker with steady successful calls is not escalated; silent one is", () => {
+    expect(escalationReason(run({ readOnly: true, progressAt: min(1) }), NOW, pol(0))).toBeNull();
+    expect(escalationReason(run({ readOnly: true, progressAt: min(12) }), NOW, pol(0))).toBe("no successful tool call for 12m");
+  });
+});

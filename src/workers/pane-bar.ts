@@ -10,13 +10,16 @@ import { createInterface } from "node:readline";
 import { cellWidth, chatBlankRow, chatPromptRow, parseChatLine, wrapText } from "./chatui.js";
 import { PassThrough } from "node:stream";
 import { applyScroll, PANE_ENTER, PANE_LEAVE, parseScrollInput, Viewport } from "./pane-viewport.js";
-import { paneRunStatusRow, paneStatusRow } from "./render.js";
-import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
-import { reorderQueue, waitingForSlotText } from "./capacity.js";
+import { paneQueueStatusRow, paneRunStatusRow, paneStatusRow } from "./render.js";
+import { providerCap, queueRows, readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
+import { reorderQueue } from "./capacity.js";
+import { buildQueueTable, stateBadge, type TableInput, type TableRow } from "./queue-table.js";
 import { setWorkerPriority } from "./engine-control.js";
 import { escalationLine } from "./reroute.js";
 import { paneExecDir } from "./pane-exec.js";
-import { isLive, type WorkerStatus } from "./status.js";
+import { isLive, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
+import { isLocalProvider, readWorkersSection, type WorkersConfig } from "./config.js";
+import { ownerSessionName } from "./scope.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendLedger } from "./ledger.js";
@@ -170,6 +173,9 @@ export interface PaneBarDeps {
   setPaused?: (logDir: string, id: string, paused: boolean) => void;
   /** Ledger hook for a delivered pane line (default: WORKER-NOTE-DELIVERED in the logDir's ledger). */
   delivered?: (logDir: string, id: string, count: number) => void;
+  /** The cockpit queue's rows for this tick (default: buildQueueTable over the live statuses + queue tickets);
+   *  the pane takes its state word from here — no separate derivation. Injected by tests. */
+  queueRowsOf?: (logDir: string, id: string, now: number) => TableRow[];
   /** Whether the worker process still runs (default: status.isLive). */
   live?: (s: WorkerStatus) => boolean;
   now?: () => number;
@@ -182,6 +188,48 @@ export interface PaneBar {
   /** one transcript line above the fixed rows */
   line(s: string): void;
   stop(): void;
+}
+
+/**
+ * The pane's state word from the ONE queue table — the same function the cockpit draws
+ * (`buildQueueTable` → `stateBadge`, so "running", "waiting #2", "paused", "frozen",
+ * "deep-frozen"): re-read every tick (status files + queue tickets), so a job admitted or
+ * resumed shows the new word within one tick. null: no row yet (the plain row without a word).
+ */
+export function paneStateWord(
+  logDir: string,
+  id: string,
+  now: number,
+  workers?: WorkersConfig,
+  owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPidCached
+): string | null {
+  let cfg: WorkersConfig;
+  try {
+    cfg = workers ?? readWorkersSection().workers;
+  } catch {
+    return null; // unreadable config: no word this tick, the plain row shows on
+  }
+  const caps: Record<string, number | undefined> = {};
+  for (const name of Object.keys(cfg.providers)) caps[name] = providerCap(cfg, name);
+  const statuses = loadStatusesCached(logDir, now);
+  const local = (p: string): boolean => {
+    const prov = cfg.providers[p];
+    return !!prov && isLocalProvider(prov.baseUrl);
+  };
+  const live = statuses.filter((s) => s.state === "queued" || (s.state === "running" && owns(s)) || s.state === "deepfrozen");
+  const input: TableInput = {
+    statuses: live,
+    queue: queueRows(logDir, caps, () => true, statuses),
+    panes: [],
+    now,
+    isLocal: local,
+    sessionOf: (s) => {
+      const n = ownerSessionName(s);
+      return n.startsWith("tab ") || n === "?" ? "other" : n;
+    },
+  };
+  const row = buildQueueTable(input).find((r) => r.id === id);
+  return row ? stateBadge(row) : null;
 }
 
 /** Visible-width truncation (ANSI sequences count 0); a cut line ends in "…". */
@@ -222,18 +270,30 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
   const region = (): number => Math.max(1, rows - 3);
   const view = new Viewport(region());
   let status: WorkerStatus | null = null;
+  // the cockpit's word for this job, re-read every tick from the ONE queue table
+  // (status files + queue tickets) — the pane never derives a state on its own
+  const stateWordOf = (logDir: string, id: string): string | null => {
+    try {
+      if (d.queueRowsOf) {
+        const row = d.queueRowsOf(logDir, id, now()).find((r) => r.id === id);
+        return row ? stateBadge(row) : null;
+      }
+      return paneStateWord(logDir, id, now());
+    } catch {
+      return null; // the row shows without a word this tick rather than failing the bar
+    }
+  };
   const text = (): string => {
     if (d.spec.kind === "run") return paneRunStatusRow(d.spec.label, d.spec.startedMs, new Date(now()));
     // while the run waits for a provider slot the row is the queue line,
-    // refreshed in place; the command's own row takes over once it starts
+    // refreshed in place; once it holds a slot the cockpit's state word leads the row
     const { id, logDir } = d.spec;
     const queued = (d.readQueued ?? readQueuedFile)(d.queuedDir ?? paneExecDir(), id);
     if (queued) return paneStatusRow(status ?? ({} as WorkerStatus), new Date(now()), d.columns(), queued);
     status = (d.loadStatus ?? (() => null))(logDir, id) ?? status;
     if (!status) return id;
-    const row = paneStatusRow(status, new Date(now()), d.columns());
-    // the pause shows in the bar whether the status came from disk or from a test seam
-    return (status.paused === true || workerPaused(logDir, id)) ? `${status.pausedBy ? "paused" : (waitingForSlotText(logDir, { id, provider: status.provider, paused: true }) ?? "paused")} · ${row}` : row;
+    // the queue table is the only state derivation: a job admitted or resumed shows the new word next tick
+    return paneQueueStatusRow(status, stateWordOf(logDir, id), new Date(now()), d.columns());
   };
   // stdin goes through a filter: wheel reports and scroll keys move the viewport, the rest feeds readline
   const src = d.input;

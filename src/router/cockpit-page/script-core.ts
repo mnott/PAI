@@ -80,7 +80,7 @@ function fitTables(root){
  root=root||document;if(!root.querySelectorAll)return;
  var ws=root.querySelectorAll(".tw"),i,w,t,cs,cw;
  for(i=0;i<ws.length;i++)ws[i].classList.remove("stacked");
- for(i=0;i<ws.length;i++){w=ws[i];t=w.querySelector("table");cs=getComputedStyle(w);cw=w.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);if(t&&(t.scrollWidth>cw||w.scrollWidth>w.clientWidth)){w.classList.add("stacked");zeroCells(w)}}
+ for(i=0;i<ws.length;i++){w=ws[i];t=w.querySelector("table");if(t&&t.classList.contains("wq"))continue;cs=getComputedStyle(w);cw=w.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);if(t&&(t.scrollWidth>cw||w.scrollWidth>w.clientWidth)){w.classList.add("stacked");zeroCells(w)}}
 }
 /** Stacked blocks de-emphasise cells that say nothing: 0, 0%, -. */
 function zeroCells(w){var c=w.querySelectorAll("td"),i,x;for(i=0;i<c.length;i++){x=(c[i].textContent||"").trim();if(x==="0"||x==="0%"||x==="-"||x==="–")c[i].setAttribute("data-z","1")}}

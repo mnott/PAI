@@ -26,6 +26,7 @@ function wkOne(){return WK_FILTERS.length===1?WK_FILTERS[0]:null}
 /** The short id (last dash-part) in grey under the task; computed here so every view has it. */
 function wkSid(r){r.sid=String(r.id).slice(String(r.id).lastIndexOf("-")+1);return r}
 function wkView(rows){
+ wkAssign((rows||[]).map(function(x){return x.session}));
  var r=(rows||[]).map(function(x,i){return{x:wkSid(x),i:i}});
  if(WK_FILTERS.length||WK_TF.length)r=r.filter(function(o){return WK_FILTERS.indexOf(o.x.session)>=0||(!!o.x.topic&&WK_TF.indexOf(wkTk(o.x))>=0)});
  if(WK_SORT){var c=WK_SORT.col,sg=WK_SORT.dir==="desc"?-1:1;r.sort(function(a,b){var u=c==="session"?(a.x.session<b.x.session?-1:a.x.session>b.x.session?1:0):c==="time"?a.x.seconds-b.x.seconds:wkGroupOf(a.x)-wkGroupOf(b.x);return u?u*sg:a.i-b.i})}
@@ -35,9 +36,14 @@ var WK_LBL={"next":["run next","goes to the front of the waiting jobs and takes 
 var WK_SURE={"deep-freeze":1,"to-local":1,"to-cloud":1},WK_CONF=null,WK_CT=null;
 /** One-click inline confirm: the first click arms the button ("confirm?") for 3 s, the second runs it. True = run now. */
 function wkArm(key,a,rd){if(!WK_SURE[a]||WK_CONF===key){WK_CONF=null;return true}WK_CONF=key;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_CONF=null;rd()},3000);rd();return false}
-/** The stable hue of a session name. */
-function wkHue(n){var h=0,i;for(i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))%360;return h}
-function wkChip(name,on){var h=wkHue(name);return'<button type="button" class="wq-chip'+(on?' on':'')+'" data-qs="'+esc(name)+'"'+(on?' aria-pressed="true"':'')+' style="--h:'+h+'" title="'+esc(name)+': click to show only this session (several may be active); click again to remove it">'+esc(name)+'</button>'}
+/** 12 clearly distinct hues (readable on the dark background). A name takes the hue of its stable hash; sessions visible together never share one (wkAssign). */
+var WK_PAL=[5,28,48,85,140,170,190,210,240,270,300,330],WK_SH={};
+function wkHash(n){var h=0,i;for(i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))%9973;return h}
+function wkHue(n){return WK_PAL[wkHash(n)%WK_PAL.length]}
+/** Collision check: the hash slot of each visible session, the next free slot when taken (names in sorted order, so it is stable). */
+function wkAssign(names){var used={},out={},u=names.filter(function(x,i){return names.indexOf(x)===i}).sort(),i,k,n;for(i=0;i<u.length;i++){k=wkHash(u[i])%WK_PAL.length;for(n=0;n<WK_PAL.length&&used[k];n++)k=(k+1)%WK_PAL.length;used[k]=1;out[u[i]]=WK_PAL[k]}WK_SH=out}
+function wkSessHue(n){return WK_SH[n]!==undefined?WK_SH[n]:wkHue(n)}
+function wkChip(name,on){var h=wkSessHue(name);return'<button type="button" class="wq-chip'+(on?' on':'')+'" data-qs="'+esc(name)+'"'+(on?' aria-pressed="true"':'')+' style="--h:'+h+'" title="'+esc(name)+': click to show only this session (several may be active); click again to remove it">'+esc(name)+'</button>'}
 /** The filter key of a topic chip: "session · topic" (a topic is only meaningful inside its session). */
 function wkTk(r){return r.session+" · "+r.topic}
 /** Topic chip: own muted hue per topic, max 16 chars, the full topic in the tooltip; click filters to that session's topic. */
@@ -45,7 +51,11 @@ function wkTopic(r,on){if(!r.topic)return"";var t=r.topic,s=t.length>16?t.slice(
 /** One icon button of a row: data-qa = the action, data-id = the job; label in the tooltip and the aria-label. */
 /** Model as a chip: each local provider its own stable hue, cloud: violet (sonnet), amber (opus), other cloud families their own. */
 function wkModelHue(r){var m=r.model||"";if(r.local)return wkHue(m);return/opus/.test(m)?40:/sonnet/.test(m)?270:/haiku/.test(m)?200:/fable/.test(m)?320:290}
-function wkModel(r){if(!r.model)return'<span class="dim">–</span>';return'<span class="wq-chip wq-mc" style="--h:'+wkModelHue(r)+'" title="'+esc(r.modelFull||r.model)+'">'+esc(r.model)+'</span>'}
+/** A cloud job carries "↑" on its model chip and says why it is not local in the tooltip (cloudWhy: route / reroute / escalation fields). */
+function wkModel(r){if(!r.model)return'<span class="dim">–</span>';var up=!r.local&&r.cloudWhy;return'<span class="wq-chip wq-mc" style="--h:'+wkModelHue(r)+'" title="'+esc((up?r.cloudWhy+"\n":"")+(r.modelFull||r.model))+'">'+(up?'↑ ':'')+esc(r.model)+'</span>'}
+var WK_LTIP={1:"L1 coordinates: splits the work, starts L2 workers, checks their results",2:"L2 does the work"};
+/** The level badge before the task text; an L2 under an L1 row of the table gets a "└" prefix. */
+function wkLevel(r,kid){return(kid?'<span class="wq-kid" aria-hidden="true">└</span>':'')+'<span class="wq-lv wq-l'+(r.level===1?1:2)+'" title="'+esc(WK_LTIP[r.level===1?1:2])+'">L'+(r.level===1?1:2)+'</span>'}
 var WK_ICO={"pause":"⏸","resume":"▶","stop":"■","next":"⤒","up":"↑","down":"↓","deep-resume":"▶"};
 function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic'+(a==="up"||a==="down"?" wq-sm":"")+'" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
 function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯</button>'}
@@ -57,10 +67,12 @@ function wkTRow(r){
  var badge=r.state==="waiting"&&typeof r.slot==="number"?"waiting #"+r.slot:r.state;
  var st='<span class="wq-b '+(WK_BADGE[r.state]||"")+'" title="'+esc(r.stateText+(r.detail?" · "+r.detail:""))+'">'+esc(badge)+'</span>'+(r.activity&&r.state==="running"?' <span class="wq-act" title="'+esc(r.activityTip||r.now||"")+'">'+esc(r.activity)+'</span>':"");
  var tip=r.task;if(r.summary)tip+="\n\n"+r.summary;tip+="\nid: "+r.id;if(r.waits&&r.waits.length){for(var wi=0;wi<r.waits.length;wi++)tip+="\na session waits for this job: "+r.waits[wi].label}
- var task='<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
+ var kid=r.level!==1&&!!r.parent&&((WQ&&WQ.table)||[]).some(function(x){return x.id===r.parent&&x.level===1});
+ tip+="\n\nmodel: "+(r.modelFull||r.model||"-")+(r.cloudWhy?" ("+r.cloudWhy+")":"")+"\npriority: "+r.priority+"\ntime: "+wkDur(r.seconds);
+ var task=wkLevel(r,kid)+'<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
- return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td>'+pr+'</td><td class="r">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
+ return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
 }
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
 /** The one table: fixed layout, one line per job, a thin labelled separator where the group changes. */

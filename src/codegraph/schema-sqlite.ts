@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS code_symbols (
   end_line       INTEGER NOT NULL,
   signature      TEXT NOT NULL DEFAULT '',
   exported       INTEGER NOT NULL DEFAULT 0,
-  search_text    TEXT NOT NULL DEFAULT ''
+  search_text    TEXT NOT NULL DEFAULT '',
+  doc            TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS code_refs (
@@ -68,4 +69,8 @@ CREATE INDEX IF NOT EXISTS idx_code_symbols_name ON code_symbols(repo_root, name
 CREATE INDEX IF NOT EXISTS idx_code_refs_from ON code_refs(from_file_id);
 CREATE INDEX IF NOT EXISTS idx_code_refs_toname ON code_refs(repo_root, to_name);
 CREATE INDEX IF NOT EXISTS idx_code_refs_tosym ON code_refs(to_symbol_id);
+
+-- doc comments became a searchable column after the first release; existing
+-- tables get it added by store-sqlite.ts ensure() (SQLite has no ADD COLUMN
+-- IF NOT EXISTS, so the ALTER is guarded there and absent from this SQL).
 `;

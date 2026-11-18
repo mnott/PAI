@@ -197,6 +197,10 @@ export interface WorkerStatus {
   consecFails?: number | null;
   /** nowStamp() of the last successful Edit/Write/commit; the supervision tick escalates a run that stops making progress (reroute.ts). */
   progressAt?: string;
+  /** Cumulative ms this worker's requests waited in the router's local scheduler queue, as of progressAt (reroute.ts: that wait is not stall time). */
+  lineAtProgressMs?: number;
+  /** A read-only job (no Edit/Write grant, or a spec saying so): any successful tool call counts as progress for the stall escalation. */
+  readOnly?: boolean;
   /** Copy of the task text (<id>.prompt), kept so the run can be started again elsewhere (reroute.ts). */
   promptFile?: string;
   /** The --class the run was started with. */
