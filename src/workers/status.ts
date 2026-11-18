@@ -201,6 +201,8 @@ export interface WorkerStatus {
   promptFile?: string;
   /** The --class the run was started with. */
   className?: string;
+  /** --topic, inherited from the parent worker or the run this one continues (topic.ts). */
+  topic?: string;
   /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
   rerouted?: string;
   /** A running job moving to a slot-limited provider: it keeps running here until its continuation is admitted there (reroute.ts finishDeferredMoves). The target provider name. */

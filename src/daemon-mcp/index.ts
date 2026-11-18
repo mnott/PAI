@@ -1519,6 +1519,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
             ...(args.capability ? ["--capability", args.capability] : []),
             ...(args.no_pool ? ["--no-pool"] : []),
             ...(args.priority ? ["--priority", args.priority] : []),
+            ...(args.topic ? ["--topic", args.topic] : []),
             ...(args.mcp ? ["--mcp", args.mcp] : []),
             ...(args.cwd ? ["--cwd", args.cwd] : []),
             ...(args.allowed_tools ? ["--allowedTools", args.allowed_tools] : []),
@@ -1573,6 +1574,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
   );
 
   // Delegation tools for tier 0 (direct library calls, see tools/delegation.ts)
+  const topicArg = z.string().max(60).optional().describe("Topic that groups related jobs in the queue (the plan's / item's workers run under it).");
   const localArg = z.boolean().optional().describe("Same as where: \"local\".");
   const delegation = realDelegationDeps();
   const project = z.string().min(1).describe("Project slug or checkout folder.");
@@ -1613,7 +1615,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
   server.tool(
     "plan_run",
     "Start a saved plan in the background and return at once; merged parts are skipped on a re-run. Follow with plan_status.",
-    { project, name: planName, escalate: z.boolean().optional().describe("After the local retry, run one Sonnet worker instead of stopping at needs-decision."), local: localArg, ...whereArgs },
+    { project, name: planName, escalate: z.boolean().optional().describe("After the local retry, run one Sonnet worker instead of stopping at needs-decision."), topic: topicArg, local: localArg, ...whereArgs },
     async (args) => planRun(args, delegation)
   );
   server.tool(
@@ -1642,6 +1644,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       sentence: z.string().min(1),
       files: z.array(z.string()).optional(),
       image: z.string().optional(),
+      topic: topicArg,
       local: localArg,
       ...whereArgs,
     },

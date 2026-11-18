@@ -32,6 +32,7 @@ export const workerRunShape = {
     .optional()
     .describe("Priority when the provider is full or its local engine is shared (default normal). Change it live with worker_priority."),
   mcp: z.string().optional().describe("MCP servers/sets the worker may use (comma-separated)."),
+  topic: z.string().max(60).optional().describe("Topic that groups related jobs in the queue (children and continuations keep it)."),
 };
 
 export type WorkerRunArgs = z.infer<z.ZodObject<typeof workerRunShape>>;

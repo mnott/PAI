@@ -132,6 +132,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     ...(a.route ? { route: a.route } : {}),
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
     ...(a.className ? { className: a.className } : {}),
+    ...(a.topic ? { topic: a.topic } : {}),
     ...(target.via === "auto" && target.switchReason ? { switchReason: target.switchReason } : {}),
     ...(a.fallThroughOf ? { fallThroughOf: a.fallThroughOf } : {}),
     ...(process.env.PATH ? { callerPath: process.env.PATH } : {}),

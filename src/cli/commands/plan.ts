@@ -62,6 +62,7 @@ const runCmd: CommandDef = {
     { name: "model", type: "string", value: "MODEL", summary: "Model the parts' workers get: default, fast or a model id (default: the provider's worker_model)" },
     { name: "now", type: "boolean", summary: "The parts' workers go ahead of the runs waiting for a slot on the provider" },
     { name: "no-pool", type: "boolean", summary: "The parts' workers start fresh, never using the worker pool" },
+    { name: "topic", type: "string", value: "name", summary: "Topic the parts' workers run under (groups related jobs in the queue)" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports its events back to it" },
     { name: "dry-run", type: "boolean", summary: "Print the schedule that would run; start nothing" },
     { name: "allow-dirty", type: "boolean", summary: "Run although the repo has uncommitted changes to files a part touches" },
@@ -86,6 +87,7 @@ const runCmd: CommandDef = {
       const clash = dirtyConflicts(plan, await dirtyPaths(plan.repo));
       if (clash.length) throw new CliError(`${plan.repo} has uncommitted changes to files the plan touches: ${clash.join(", ")}. A run would clobber or mix them in.`, "commit or stash them, or pass --allow-dirty");
     }
+    if (typeof ctx.opts.topic === "string" && ctx.opts.topic.trim()) process.env.PAI_TOPIC = ctx.opts.topic.trim();
     const logDir = workersLogDir(readWorkersSection().workers);
     const origin = await reportOriginWithHost();
     if (ctx.opts.detach === true) {

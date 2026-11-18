@@ -15,10 +15,10 @@ var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%
 var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
 var WK_GROUPS=["running","waiting","paused / frozen"];
 var WK_BADGE={"running":"wq-run","waiting":"wq-wait","paused":"wq-pause","frozen":"wq-frozen","deep-frozen":"wq-deep"};
-var WK_FILTERS=[],WK_SORT=null,WK_MENU=null,WK_COPY=null;
+var WK_FILTERS=[],WK_TF=[],WK_SORT=null,WK_MENU=null,WK_COPY=null;
 /** Filters (session names) and sort ({col,dir}) persist in localStorage. */
-function wkLoad(){try{var f=JSON.parse(localStorage.getItem("wqFilter")||"[]"),s=JSON.parse(localStorage.getItem("wqSort")||"null");if(Array.isArray(f))WK_FILTERS=f.filter(function(x){return typeof x==="string"});if(s&&(s.col==="session"||s.col==="state"||s.col==="time"))WK_SORT={col:s.col,dir:s.dir==="desc"?"desc":"asc"}}catch(e){}}
-function wkSave(){try{localStorage.setItem("wqFilter",JSON.stringify(WK_FILTERS));if(WK_SORT)localStorage.setItem("wqSort",JSON.stringify(WK_SORT));else localStorage.removeItem("wqSort")}catch(e){}}
+function wkLoad(){try{var f=JSON.parse(localStorage.getItem("wqFilter")||"[]"),s=JSON.parse(localStorage.getItem("wqSort")||"null");if(Array.isArray(f))WK_FILTERS=f.filter(function(x){return typeof x==="string"});var tf=JSON.parse(localStorage.getItem("wqTopic")||"[]");if(Array.isArray(tf))WK_TF=tf.filter(function(x){return typeof x==="string"});if(s&&(s.col==="session"||s.col==="state"||s.col==="time"))WK_SORT={col:s.col,dir:s.dir==="desc"?"desc":"asc"}}catch(e){}}
+function wkSave(){try{localStorage.setItem("wqFilter",JSON.stringify(WK_FILTERS));localStorage.setItem("wqTopic",JSON.stringify(WK_TF));if(WK_SORT)localStorage.setItem("wqSort",JSON.stringify(WK_SORT));else localStorage.removeItem("wqSort")}catch(e){}}
 wkLoad();
 /** The one open session (for the session menu): the single active filter, else null. */
 function wkOne(){return WK_FILTERS.length===1?WK_FILTERS[0]:null}
@@ -27,7 +27,7 @@ function wkOne(){return WK_FILTERS.length===1?WK_FILTERS[0]:null}
 function wkSid(r){r.sid=String(r.id).slice(String(r.id).lastIndexOf("-")+1);return r}
 function wkView(rows){
  var r=(rows||[]).map(function(x,i){return{x:wkSid(x),i:i}});
- if(WK_FILTERS.length)r=r.filter(function(o){return WK_FILTERS.indexOf(o.x.session)>=0});
+ if(WK_FILTERS.length||WK_TF.length)r=r.filter(function(o){return WK_FILTERS.indexOf(o.x.session)>=0||(!!o.x.topic&&WK_TF.indexOf(wkTk(o.x))>=0)});
  if(WK_SORT){var c=WK_SORT.col,sg=WK_SORT.dir==="desc"?-1:1;r.sort(function(a,b){var u=c==="session"?(a.x.session<b.x.session?-1:a.x.session>b.x.session?1:0):c==="time"?a.x.seconds-b.x.seconds:wkGroupOf(a.x)-wkGroupOf(b.x);return u?u*sg:a.i-b.i})}
  return r.map(function(o){return o.x});
 }
@@ -38,6 +38,10 @@ function wkArm(key,a,rd){if(!WK_SURE[a]||WK_CONF===key){WK_CONF=null;return true
 /** The stable hue of a session name. */
 function wkHue(n){var h=0,i;for(i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))%360;return h}
 function wkChip(name,on){var h=wkHue(name);return'<button type="button" class="wq-chip'+(on?' on':'')+'" data-qs="'+esc(name)+'"'+(on?' aria-pressed="true"':'')+' style="--h:'+h+'" title="'+esc(name)+': click to show only this session (several may be active); click again to remove it">'+esc(name)+'</button>'}
+/** The filter key of a topic chip: "session · topic" (a topic is only meaningful inside its session). */
+function wkTk(r){return r.session+" · "+r.topic}
+/** Topic chip: own muted hue per topic, max 16 chars, the full topic in the tooltip; click filters to that session's topic. */
+function wkTopic(r,on){if(!r.topic)return"";var t=r.topic,s=t.length>16?t.slice(0,15)+"…":t;return' <button type="button" class="wq-chip wq-tp'+(on?' on':'')+'" data-qt="'+esc(wkTk(r))+'"'+(on?' aria-pressed="true"':'')+' style="--h:'+wkHue("topic:"+t)+'" title="'+esc("topic: "+t+" (click to show only "+wkTk(r)+")")+'">'+esc(s)+'</button>'}
 /** One icon button of a row: data-qa = the action, data-id = the job; label in the tooltip and the aria-label. */
 /** Model as a chip: each local provider its own stable hue, cloud: violet (sonnet), amber (opus), other cloud families their own. */
 function wkModelHue(r){var m=r.model||"";if(r.local)return wkHue(m);return/opus/.test(m)?40:/sonnet/.test(m)?270:/haiku/.test(m)?200:/fable/.test(m)?320:290}
@@ -56,7 +60,7 @@ function wkTRow(r){
  var task='<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
- return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td>'+pr+'</td><td class="r">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
+ return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td>'+pr+'</td><td class="r">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
 }
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
 /** The one table: fixed layout, one line per job, a thin labelled separator where the group changes. */
@@ -79,7 +83,7 @@ function wkMenuHtml(){
 }
 /** Title row: (i) legend tooltip, the session chips as filters, and the All jobs menu at the right. */
 function wkBar(q){
- var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)}).join(" "),n=(q.table||[]).length,sh=WK_FILTERS.length?wkView(q.table).length:n,cnt=WK_FILTERS.length?'<span class="wq-cnt dim" title="active session filter">showing '+sh+' of '+n+'</span>':"";
+ var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)}).join(" ")+(function(){var ts={};return(q.table||[]).filter(function(r){return r.topic&&!ts[wkTk(r)]&&(ts[wkTk(r)]=1)}).map(function(r){return wkTopic(r,WK_TF.indexOf(wkTk(r))>=0)}).join("")})(),n=(q.table||[]).length,sh=(WK_FILTERS.length||WK_TF.length)?wkView(q.table).length:n,cnt=(WK_FILTERS.length||WK_TF.length)?'<span class="wq-cnt dim" title="active session filter">showing '+sh+' of '+n+'</span>':"";
  return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" title="'+esc(WK_INFO+" "+WK_EXPLAIN+" "+WK_ACT)+'" aria-label="legend">(i)</span><span class="wq-chips">'+chips+'</span>'+cnt+'<button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
 }
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
@@ -142,6 +146,8 @@ function wkWire(ctx){
   if(qg){var gv=qg.getAttribute("data-qg");if(!wkArm("qg:"+gv,gv,rd))return;WK_MENU=null;rd();if(gv.indexOf("deep")===0){WinA.runAction(ctx.id,"queue.act",{action:gv,all:true},qg,wkHost());return}(WQ&&WQ.table||[]).forEach(function(r){if(r.kind==="job"&&r.actions.indexOf(qg.getAttribute("data-qg"))>=0)WinA.runAction(ctx.id,"queue.act",{action:qg.getAttribute("data-qg"),id:r.id},qg,wkHost())});return}
   var so=T?T.closest("button[data-qsort]"):null;
   if(so){var sc=so.getAttribute("data-qsort");WK_SORT=!WK_SORT||WK_SORT.col!==sc?{col:sc,dir:"asc"}:WK_SORT.dir==="asc"?{col:sc,dir:"desc"}:null;wkSave();rd();return}
+  var qt=T?T.closest("button[data-qt]"):null;
+  if(qt){var tn=qt.getAttribute("data-qt"),ti=WK_TF.indexOf(tn);if(ti>=0)WK_TF.splice(ti,1);else WK_TF.push(tn);wkSave();rd();return}
   var qs=qs0;
   if(qs){var sn=qs.getAttribute("data-qs"),rc2=qs.getBoundingClientRect();var ix=WK_FILTERS.indexOf(sn);if(ix>=0)WK_FILTERS.splice(ix,1);else WK_FILTERS.push(sn);wkSave();WK_MENU=wkOne()?{key:"sess:"+wkOne(),x:Math.max(4,Math.min(Math.round(rc2.left),window.innerWidth-190)),y:Math.round(rc2.bottom)+2}:null;rd();return}
   var qx=e.target&&e.target.closest?e.target.closest("button[data-qx]"):null;
