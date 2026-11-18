@@ -62,6 +62,7 @@ import { executeImageRun, executeRun, executeCodexRun, executeOpencodeRun } from
 import { executeUhpRun } from "./execute-uhp.js";
 import { carryGoals } from "../note-delivery.js";
 import { applyModeToConfig } from "../mode.js";
+import { localOnlyStartCheck } from "../local-only.js";
 import { parseHarnessFlag, resolveHarnessProvider } from "../uhp.js";
 
 /**
@@ -97,6 +98,15 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     if (gc?.length) process.stderr.write(`pai worker: archived ${gc.length} leftover worktree(s) (pai worker gc)\n`);
   } catch {
     // best effort
+  }
+
+  // the local-only window (local-only.ts): a cloud start is refused while it is
+  // open, unless the gatekeeper approved this one (--approved-by <gatekeeper>,
+  // or a one-time token from `pai budget approve`). Judged before the planner:
+  // a plan L1 whose class routes to the cloud is a cloud start too.
+  {
+    const why = await localOnlyStartCheck({ config, cloud: opts.cloud, whereFlag: opts.whereFlag, providerFlag: opts.providerFlag, className: opts.className, label: opts.label, approvedBy: opts.approvedBy, logDir });
+    if (why) throw new LocalProviderRefusedError(why);
   }
 
   // class plan is not one worker but the planner orchestration (planner.ts)

@@ -195,6 +195,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       urgent: o.urgent === true ? true : undefined,
       localOk: o["local-ok"] === true ? true : undefined,
       cloud: o.cloud === true ? true : undefined,
+      approvedBy: str(o["approved-by"]),
       className: className ?? agentClass,
       topic: normalizeTopic(o.topic),
       modelFlag: str(o.model),

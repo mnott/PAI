@@ -220,6 +220,8 @@ export interface LocalOnlyCheck {
   className?: string;
   id?: string;
   label?: string;
+  /** --approved-by <session>: the gatekeeper's standing approval, valid only when it names the configured gatekeeper. */
+  approvedBy?: string;
   /** An operator action (reroute from the CLI or the cockpit): always allowed through. */
   byOperator?: boolean;
   logDir?: string;
@@ -228,14 +230,20 @@ export interface LocalOnlyCheck {
 
 /**
  * The start-time gate: null lets the run go, a message refuses it. A cloud ask
- * passes only on a one-time approval token (written by the gatekeeper session's
- * `pai budget approve`); every refusal is ledgered.
+ * passes on `--approved-by <gatekeeper>` or on a one-time approval token
+ * (written by the gatekeeper session's `pai budget approve`); every refusal is
+ * ledgered.
  */
 export async function localOnlyStartCheck(o: LocalOnlyCheck): Promise<string | null> {
   const now = o.now ?? Date.now();
   const w = readLocalOnly(now);
   if (!w) return null;
   if (o.byOperator) return null;
+  // --approved-by names the gatekeeper session: a standing pass for this start
+  if (o.approvedBy && o.approvedBy === gatekeeperSession()) {
+    if (o.logDir) appendLedger(ledgerPath(o.logDir), "LOCAL-ONLY-APPROVED", { kind: "flag", target: "cloud", worker: o.id ?? "-", label: o.label ?? "-", by: o.approvedBy });
+    return null;
+  }
   let config = o.config;
   try {
     config ??= readWorkersCached();
@@ -293,3 +301,21 @@ export function localOnlyBanner(now: number = Date.now()): string | null {
   const w = readLocalOnly(now);
   return w ? `local only until ${w.label}` : null;
 }
+
+/**
+ * Where an automatic continuation (fall-through, escalation) may go: the cloud
+ * while no window is open and the session's escalate switch stands; during the
+ * window, or when the run's session has `escalate off`, the continuation stays
+ * local. Pure except for the window file.
+ */
+export function continuationTarget(
+  o: { escalationOff?: boolean; now?: number },
+  w: LocalOnlyState | null = readLocalOnly(o.now ?? Date.now())
+): "cloud" | "local" {
+  if (w) return "local";
+  if (o.escalationOff) return "local";
+  return "cloud";
+}
+
+/** The reason line a locally-continued fall-through carries. */
+export const CONTINUED_LOCALLY = "continued locally (local-only)";
