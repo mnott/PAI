@@ -184,7 +184,8 @@ export function fairOrder(i: FairInput): QueueEntry[] {
   const load = new Map<string, number>();
   for (const k of i.running) load.set(k, (load.get(k) ?? 0) + 1);
   for (const e of front) load.set(i.sessionOf(e.id), (load.get(i.sessionOf(e.id)) ?? 0) + 1);
-  const out: QueueEntry[] = [...front];
+  // front group: by rank (unranked after ranked), then oldest — without it id order beat an operator's pull-forward
+  const out: QueueEntry[] = [...front].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity) || since(a) - since(b));
   // higher priority is admitted first; fairness and aging only order tickets of the same priority
   for (const tier of QUEUE_PRIORITIES) {
     const inTier = rest.filter((e) => (e.priority ?? "normal") === tier);
@@ -287,12 +288,9 @@ export function liveQueue(logDir: string, provider: string, isAlive: (pid: numbe
   return fairEntries(logDir, provider, isAlive, statuses, now, agingMs).map((e) => e.id);
 }
 
-/** Put a waiting run ahead of the provider's non-front runs ("front"). False when it is not waiting. */
+/** Put a waiting run at position 1 ("next"); renumbers every ticket. False when it is not waiting. */
 export function setFront(logDir: string, provider: string, id: string, isAlive: (pid: number) => boolean = alive): boolean {
-  const e = liveEntries(logDir, provider, isAlive).find((x) => x.id === id);
-  if (!e) return false;
-  if (!e.front) writeTicket(join(queueDir(logDir, provider), id), entryText({ ...e, front: true, rank: undefined }));
-  return true;
+  return moveTo(logDir, provider, id, 1, isAlive);
 }
 
 /** Move a waiting run one place up. False when it is not waiting or already first. */

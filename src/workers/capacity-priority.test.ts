@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { capacityGate, currentBuildId, isStaleBuild, liveQueue, queueRows, writeTicket, type QueueRow } from "./capacity.js";
+import { capacityGate, currentBuildId, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, writeTicket, type QueueRow } from "./capacity.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
@@ -384,5 +384,29 @@ describe("least-impact queue controls", () => {
       expect(await finishDeferredMoves(dir, async () => undefined)).toEqual([]);
       expect(loadStatus(dir, "old")!.movingTo).toBeUndefined();
     });
+  });
+});
+
+describe("pull-forward among front tickets without rank", () => {
+  const front = (): void => {
+    mkdirSync(join(dir, "queue", "fakeA"), { recursive: true });
+    for (const [id, t] of [["19344", 1000], ["55574", 2000], ["84703", 3000]] as const) writeTicket(join(dir, "queue", "fakeA", id), `${process.pid} front @${t}`);
+  };
+
+  it("next on the second puts it first", () => {
+    front();
+    expect(liveQueue(dir, "fakeA")).toEqual(["19344", "55574", "84703"]);
+    expect(reorderQueue(dir, "fakeA", "55574", "front")).toEqual(["55574", "19344", "84703"]);
+  });
+
+  it("next on the job already first keeps the order", () => {
+    front();
+    expect(reorderQueue(dir, "fakeA", "19344", "front")).toEqual(["19344", "55574", "84703"]);
+  });
+
+  it("up on #2 makes it #1", () => {
+    front();
+    expect(moveUp(dir, "fakeA", "55574")).toBe(true);
+    expect(liveQueue(dir, "fakeA")).toEqual(["55574", "19344", "84703"]);
   });
 });
