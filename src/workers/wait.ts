@@ -114,7 +114,8 @@ export async function waitWorkers(
   opts: WaitOptions = {}
 ): Promise<{ results: WaitResult[]; timedOut: string[] }> {
   const timeoutMs = opts.timeoutMs ?? 900_000;
-  const intervalMs = opts.intervalMs ?? 2_000;
+  const intervalMs = opts.intervalMs ?? 3_000;
+  let reconciledAt = activeNow();
   const known = new Map<string, WorkerStatus>();
   reconcileStatuses(logDir, new Date(), 0, opts.owns);
   const pending = new Set<string>();
@@ -130,7 +131,11 @@ export async function waitWorkers(
   const anyDone = () => opts.any === true && pending.size < ids.length;
   while (pending.size > 0 && !anyDone() && activeNow() < deadline) {
     await sleep(Math.min(intervalMs, Math.max(1, deadline - activeNow())));
-    reconcileStatuses(logDir, new Date(), 0, opts.owns);
+    // reconcile scans every status file: at most every 20 s, the per-id reads below are cheap
+    if (activeNow() - reconciledAt >= 20_000) {
+      reconcileStatuses(logDir, new Date(), 0, opts.owns);
+      reconciledAt = activeNow();
+    }
     for (const id of [...pending]) {
       const st = loadStatus(logDir, id);
       if (st) known.set(id, st); // a vanished file keeps the last known status
