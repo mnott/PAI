@@ -326,6 +326,8 @@ export interface PaiDaemonConfig {
 
   /** Worker settings; `merge` drives conflict auto-resolution in `pai worker merge`. */
   workers?: {
+    /** Runaway-load watchdog (src/daemon/load-watch.ts). */
+    loadWatch?: { enabled?: boolean; maxLoadPerCore?: number; minutes?: number; thawMinutes?: number; intervalSecs?: number };
     merge?: {
       /** Globs of generated paths: a conflict only in these is resolved by regenerating. */
       generated?: string[];
