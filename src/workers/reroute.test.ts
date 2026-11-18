@@ -86,6 +86,55 @@ describe("rerouteWorker", () => {
     expect(r.was).toBe(state);
   });
 
+  it("a running origin is stopped before the continuation starts and ends rerouted with fallThroughTo", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
+    const order: string[] = [];
+    await rerouteWorker("w1", "cloud", {
+      logDir: dir,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async (id) => {
+        order.push("kill");
+        const st = loadStatus(dir, id)!;
+        st.state = "killed"; st.rc = 143; delete st.rerouted; // the origin's own exit rewrote its status without the marker
+        saveStatus(dir, st, new Date(), true);
+        return [];
+      },
+      spawn: (s: SpawnSpec) => {
+        order.push("spawn");
+        const o = loadStatus(dir, s.id)!;
+        o.fallThroughTo = "w2";
+        saveStatus(dir, o, new Date(), true);
+      },
+    });
+    expect(order).toEqual(["kill", "spawn"]);
+    const st = loadStatus(dir, "w1")!;
+    expect(st.rerouted).toBe("fakeB: reroute");
+    expect(st.fallThroughTo).toBe("w2");
+    expect(st.state).toBe("killed");
+  });
+
+  it("a running origin that cannot be stopped gets no continuation", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
+    let spawned = false;
+    await expect(
+      rerouteWorker("w1", "cloud", {
+        logDir: dir,
+        resolve: async () => ({ provider: "fakeB", description: "d" }),
+        kill: async () => { throw new Error("still running"); },
+        spawn: () => { spawned = true; },
+      })
+    ).rejects.toThrow(/still running/);
+    expect(spawned).toBe(false);
+    expect(loadStatus(dir, "w1")!.rerouted).toBeUndefined();
+  });
+
+  it("a priority change on a running worker never starts a fall-through", () => {
+    const fresh = new Date(NOW - 60_000).toISOString();
+    for (const o of [{ now: true }, { now: false, queuePriority: "high" }, { queuePriority: "high", now: true }]) {
+      expect(escalationReason(job({ state: "running", progressAt: fresh, ...o } as never), NOW, pol(0))).toBeNull();
+    }
+  });
+
   it("a restart that cannot start leaves the old run queued and unmarked (no silent drop)", async () => {
     saveStatus(dir, queued({ promptFile: join(dir, "spec.txt") }));
     let killed = false;
