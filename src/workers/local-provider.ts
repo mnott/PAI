@@ -48,7 +48,7 @@ import {
 import { PORT_TIMEOUT_MS, httpModelsCheck, providerModelIds, type PortCheck } from "../cli/lib/setups.js";
 import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
-import { currentAutostartDownInfo } from "../daemon/runtime-autostart.js";
+import { currentAutostartBusy, currentAutostartDownInfo } from "../daemon/runtime-autostart.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { classRoute, entryProvider, type TierDef } from "./route-lists.js";
 
@@ -288,9 +288,14 @@ export function startLocalStatusRefresh(): () => void {
       const { workers } = readWorkersSection();
       const dir = workersLogDir(workers);
       const st = await computeLocalStatus(workers, dir);
+      // a busy engine (liveness alive — port accepts, or the scheduler has requests in flight — while its health check times out) is never down:
+      // the hint line says "busy" and no autostart state rides along with it (2026-11-18 19:48/20:27: gyro-l at 3 of 3 slots,
+      // GPU 98–100%, read "local model down: starting ollama" — a runtime started for an engine that was alive and working)
+      const busy = currentAutostartBusy();
+      if (!st.running.length && busy.length) st.busy = busy;
       // while nothing runs, the autostart manager's answer rides along: the hint
       // line says "starting gyro-l" / "autostart off", never a bare "none running"
-      if (!st.running.length && st.down.length) {
+      if (!st.running.length && !st.busy?.length && st.down.length) {
         const info = currentAutostartDownInfo();
         if (info) st.downInfo = info;
       }

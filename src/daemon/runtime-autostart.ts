@@ -35,8 +35,18 @@
  * `ollama serve` refused with "ollama is already running" and burned a failure
  * attempt). One operator alert goes out after the FIRST real failed start,
  * then at most once more per give-up; a memory skip alone never alerts.
+ *
+ * Busy is not down (incident 2026-11-18 19:48/20:27: gyro-l ran 3 of 3 slots at
+ * GPU 98–100%, its /v1/models answered too slowly, and the prompt hint read
+ * "local model down: starting ollama" — a runtime started for an engine that
+ * was alive and working). A runtime counts ALIVE while its TCP port accepts a
+ * connection or the router's local scheduler reports requests in flight for it;
+ * an alive runtime whose readiness times out is busy — no start, no failure,
+ * no alert. Down needs two refused liveness probes DOWN_CONFIRM_MS (10 s)
+ * apart: one slow answer never starts a runtime.
  */
 
+import { connect } from "node:net";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { readLocalConfig, healthUrl, type LocalTier } from "../workers/local-tiers.js";
@@ -47,6 +57,9 @@ import { isFrozen } from "../workers/freeze.js";
 import { deepfreezeHold } from "../workers/deepfreeze.js";
 import { appendLedger } from "../workers/ledger.js";
 import { guardedPailot } from "../workers/pailot-guard.js";
+import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
+import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
+import { DOWN_CONFIRM_MS } from "../workers/local-status.js";
 
 /** The ledger event of an autostart action. */
 export const AUTOSTART_EVENT = "RUNTIME-AUTOSTART";
@@ -58,6 +71,8 @@ export const AUTOSTART_MAX_FAILURES = 3;
 
 export interface AutostartConfig {
   enabled: boolean;
+  /** Two refused liveness probes this far apart decide down (default DOWN_CONFIRM_MS, 10 s). */
+  downConfirmMs?: number;
   /** The runtime name → its commands (models.runtimes); only autostart:true entries act. */
   runtimes: Record<string, RuntimeCommands>;
   /** Memory need per provider name, GB (workers.yaml local_tiers memoryGb). */
@@ -112,24 +127,36 @@ export interface AutostartRuntimeState {
   gaveUp: boolean;
   /** An operator alert went out for this runtime's failures (first failure, and once more at give-up). */
   alerted: boolean;
+  /** epoch ms of the first liveness probe that found the port refusing; absent = alive (or never probed). Down needs a second refusal DOWN_CONFIRM_MS later. */
+  suspectedDownAt?: number;
 }
 
 /** The autostart state of every configured runtime, including the ones that never needed a pass (up). */
 export type AutostartStates = Map<string, AutostartRuntimeState>;
 
-/** The autostart answer for the local-status cache: what the hint line says while nothing runs. */
+/** A runtime whose liveness holds (port accepts, or requests in flight) while its readiness times out: busy, never down, never started. */
+export const isBusyRuntime = (st: AutostartRuntimeState | undefined): boolean => st !== undefined && st.suspectedDownAt === undefined;
+
+/** The autostart answer for the local-status cache: what the hint line says while nothing runs. A busy runtime is not down: it yields no "starting", and nothing starts for it. */
 export function autostartDownInfo(cfg: AutostartConfig, states: AutostartStates): { starting?: string; gaveUp?: string; autostartOff?: boolean } | undefined {
   if (!cfg.enabled) return { autostartOff: true };
-  const down = [...states.keys()];
+  const down = [...states.keys()].filter((r) => !isBusyRuntime(states.get(r)));
   const g = down.find((r) => states.get(r)?.gaveUp);
   if (g) return { gaveUp: g };
   const s = down[0];
   return s ? { starting: s } : undefined;
 }
 
+/** The autostart runtimes the cache reports busy: liveness alive, readiness not answering. */
+export function autostartBusyRuntimes(states: AutostartStates): string[] {
+  return [...states.keys()].filter((r) => isBusyRuntime(states.get(r)));
+}
+
 export interface AutostartDeps {
   /** The runtime answers its readiness (the same probe `pai models start` uses to refuse a duplicate). */
   isUp: (runtime: string) => Promise<boolean>;
+  /** Liveness of the runtime's server, independent of how slow its health check is: its port accepts a TCP connection, or the router's local scheduler has requests in flight for it. A busy engine answers /v1/models too slowly yet stays alive — this is what separates busy from down. */
+  alive: (runtime: string) => Promise<boolean>;
   /** True while the machine is frozen (`pai freeze`): nothing starts. */
   frozen: () => boolean;
   /** Available memory (reclaimable counted) after the reserve, GB; undefined = unmeasurable (a short-memory skip cannot be made). */
@@ -171,8 +198,30 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
       st.attempts = 0;
       st.gaveUp = false;
       st.alerted = false;
+      delete st.suspectedDownAt;
       continue;
     }
+    // busy is not down (2026-11-18: gyro-l at 3 of 3 slots, GPU 98–100%, its readiness timing out read "local model down: starting ollama").
+    // While the port accepts connections or the scheduler has requests in flight, the engine is alive and working: no start, no failure, no alert.
+    let alive = false;
+    try {
+      alive = await d.alive(runtime);
+    } catch {
+      /* a failed liveness probe reads not-alive: the confirm below decides */
+    }
+    if (alive) {
+      delete st.suspectedDownAt;
+      continue; // busy: its health answers slowly while it works
+    }
+    // down needs two refused probes 10 s apart: one slow or transient answer never starts a runtime
+    const confirmMs = cfg.downConfirmMs ?? DOWN_CONFIRM_MS;
+    // two refused probes decide down. The first refusal only opens the window; a runtime already inside its start backoff is confirmed down (its earlier probes refused too), and an injected 0 window confirms at once.
+    if (st.suspectedDownAt === undefined) {
+      st.suspectedDownAt = d.now();
+      d.log(`autostart ${runtime}: health not answering, port refuses — confirming down in ${Math.round(confirmMs / 1000)} s`);
+    }
+    const secondRefusal = st.attempts > 0 || confirmMs === 0;
+    if (!secondRefusal && d.now() - st.suspectedDownAt < confirmMs) continue; // still inside the window: wait, start nothing
     if (st.gaveUp) continue;
     const needGb = cfg.memoryGb[runtime] ?? 0;
     if (needGb > 0 && avail === undefined) avail = await d.freeGb();
@@ -195,6 +244,7 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
     }
     // "already running" from the start command means the runtime is up: success, not a failure attempt
     const success = r.ok || isAlreadyUp(r.message);
+    if (success) delete st.suspectedDownAt; // a runtime that came up resets its down-confirmation window
     d.ledger(AUTOSTART_EVENT, { runtime, result: success ? "ok" : `error: ${r.message.slice(0, 200)}`, attempt: st.attempts });
     if (success) {
       d.log(`autostart ${runtime}: up (${r.message})`);
@@ -242,6 +292,7 @@ export function liveAutostartDeps(): AutostartDeps {
       if (!cmd?.ready) return false; // no readiness configured: a start is attempted once per backoff, the ledger tells
       return readyIsUrl(cmd.ready) ? liveRuntimeOpDeps.getUrl(cmd.ready) : (await liveRuntimeOpDeps.runCmd(cmd.ready)) === 0;
     },
+    alive: (runtime) => liveRuntimeAlive(runtime),
     frozen: () => isFrozen() || deepfreezeHold(),
     // no reserve here: the skip compares the measured AVAILABLE (reclaimable counted) against the tier's memoryGb as the brief demands
     freeGb: () => freeMemoryGb(0),
@@ -283,10 +334,68 @@ export function liveAutostartDeps(): AutostartDeps {
 /** The live singleton state the local-status refresher reads for its hint line. */
 let current: { cfg: AutostartConfig; states: AutostartStates } | null = null;
 
-/** What the local-status cache says about why the tier reads down (undefined: no autostart manager ran). */
+/** What the local-status cache says about why the tier reads down (undefined: no autostart manager ran). A busy runtime never yields "starting". */
 export function currentAutostartDownInfo(): { starting?: string; gaveUp?: string; autostartOff?: boolean } | undefined {
   if (!current) return undefined;
   return autostartDownInfo(current.cfg, current.states);
+}
+
+/** The autostart runtimes the live manager reports busy (liveness alive, readiness slow): the cache's `busy` list. */
+export function currentAutostartBusy(): string[] {
+  if (!current) return [];
+  return autostartBusyRuntimes(current.states);
+}
+
+/** The port a runtime's server listens on: its ready URL when one names a port, else its local_tiers base port; null = nothing to probe. */
+function runtimePort(cmd: RuntimeCommands | undefined, tier: LocalTier | undefined): number | null {
+  if (cmd?.ready && readyIsUrl(cmd.ready)) {
+    // the ready URL may carry the {port} template of a local_tiers model: expand it against the tier's base port
+    try {
+      const p = Number(new URL(cmd.ready.replaceAll("{port}", String(tier?.port ?? 0))).port);
+      if (Number.isFinite(p) && p > 0) return p;
+    } catch {
+      /* an unparsable ready URL: the tier's base port decides */
+    }
+  }
+  return tier?.port ?? null;
+}
+
+/** Whether something accepts a TCP connection on host:port within timeoutMs (a hung-but-listening server counts as alive). */
+export function tcpConnectAlive(host: string, port: number, timeoutMs = LOCAL_PROBE_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((res) => {
+    const s = connect({ host, port });
+    const done = (v: boolean): void => {
+      s.destroy();
+      res(v);
+    };
+    s.setTimeout(timeoutMs, () => done(false));
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+  });
+}
+
+/** Requests the router's local scheduler has in flight for a provider (its instances are engine keys `<provider>` / `<provider>#<n>`). In flight means the engine is working: busy, never down. */
+export function schedulerInflightFor(snap: SchedSnapshot | null, provider: string): number {
+  if (!snap) return 0;
+  let n = 0;
+  for (const [key, e] of Object.entries(snap.engines)) {
+    if (key !== provider && !key.startsWith(`${provider}#`)) continue;
+    if (e.inflight) n += 1;
+  }
+  return n;
+}
+
+/** The live liveness answer: the runtime's port accepts a TCP connection, or the router's local scheduler reports requests in flight for it. */
+export function liveRuntimeAlive(runtime: string): Promise<boolean> {
+  const cmd = readRuntimeCommands()[runtime];
+  // the same tier resolution isUp uses: a command-less ready URL is a local_tiers template
+  const tier = !cmd?.start && !cmd?.ready ? liveRuntimeAutostartConfig().tiers?.[runtime] : undefined;
+  // the scheduler first: requests in flight prove the engine is working, whatever its health check does
+  const prov = tier?.provider ?? runtime;
+  if (schedulerInflightFor(readSchedFile(workersLogDir(readWorkersSection().workers)), prov) > 0) return Promise.resolve(true);
+  const port = runtimePort(cmd, tier);
+  if (port === null) return Promise.resolve(false); // no port to probe: liveness cannot say alive
+  return tcpConnectAlive("127.0.0.1", port);
 }
 
 /** Start the autostart supervision: one pass at daemon start (after boot), then every tick.
