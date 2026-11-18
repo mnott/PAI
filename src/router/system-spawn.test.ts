@@ -26,3 +26,18 @@ describe("listening-port parse", () => {
     expect([...parseListenPorts("p1\nn*:8037\nn127.0.0.1:11434\nn[::1]:80\n")].sort((a, b) => a - b)).toEqual([80, 8037, 11434]);
   });
 });
+
+describe("cockpit page script", () => {
+  it("every inline script of the served page parses", async () => {
+    const { Script } = await import("node:vm");
+    const { cockpitHtml } = await import("./cockpit-page.js");
+    const scripts = [...cockpitHtml().matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map((m) => m[1]).filter((s) => s.trim());
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const src of scripts) expect(() => new Script(src)).not.toThrow();
+  });
+  it("queue model column is a short name", async () => {
+    const { shortModel } = await import("../workers/queue-table.js");
+    expect(shortModel(true, "gyro-l", "gyro-l/qwen3.8-flash-next-gyro-l")).toBe("gyro-l");
+    expect(shortModel(false, "anthropic", "claude-sonnet-5-5")).toBe("cloud: sonnet");
+  });
+});

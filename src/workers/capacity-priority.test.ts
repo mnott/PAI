@@ -64,8 +64,8 @@ describe("queue table", () => {
     const a = qst("a", { session: { name: "mdf" } as WorkerStatus["session"] });
     const p = qst("p", { state: "queued", paused: true, provider: "anthropic", model: "opus" });
     const rows = buildQueueTable(qin([a, p], [qrow(p, "anthropic", 1)]));
-    expect(rows[0]).toMatchObject({ session: "mdf", model: "local: qwen", stateText: "running" });
-    expect(rows[1]).toMatchObject({ state: "paused", model: "cloud: anthropic opus", session: "other", stateText: "paused (slot freed)" });
+    expect(rows[0]).toMatchObject({ session: "mdf", model: expect.any(String), modelFull: "local: qwen", stateText: "running" });
+    expect(rows[1]).toMatchObject({ state: "paused", model: "cloud: opus", modelFull: "cloud: anthropic opus", session: "other", stateText: "paused (slot freed)" });
   });
 
   it("marks frozen and deep-frozen rows and offers the matching action", () => {
