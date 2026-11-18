@@ -63,6 +63,10 @@ const REF_SELECT = `
   LEFT JOIN code_symbols ts ON ts.id = cr.to_symbol_id
   LEFT JOIN code_files tf ON tf.id = ts.file_id`;
 
+/** Paths per delete statement in deleteFiles — keeps the ANY() list and the
+ *  cascade work bounded while turning N round-trips into N/BATCH. */
+const DELETE_BATCH = 500;
+
 /** tsquery for a symbol search: OR of quoted sub-word terms, same shape as memory search. */
 export function buildSymbolTsQuery(query: string): string {
   const words = [...new Set(splitIdentifierWords(query))];
@@ -154,21 +158,52 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     }
   }
 
+  /**
+   * Set-based, batched. The delete walks the UNIQUE (repo_root, path) index in
+   * chunks of BATCH rows instead of one statement per file: a per-file
+   * `DELETE FROM code_files WHERE id = $1` pays the FK cascade scan of
+   * code_symbols/code_refs plus GIN fts_vector maintenance once per call, and
+   * on --force that ran 1393 times (11 min at 0.6% CPU — Postgres-bound).
+   */
   async deleteFiles(repoRoot: string, paths: string[]): Promise<{ brokenRefIds: number[] }> {
     await this.ensure();
     if (paths.length === 0) return { brokenRefIds: [] };
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const broken = await client.query<{ id: number }>(
-        `SELECT cr.id FROM code_refs cr
-         JOIN code_symbols s ON s.id = cr.to_symbol_id
-         WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[]))`,
-        [repoRoot, paths],
-      );
-      await client.query("DELETE FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[])", [repoRoot, paths]);
+      const brokenRefIds: number[] = [];
+      for (let i = 0; i < paths.length; i += DELETE_BATCH) {
+        const batch = paths.slice(i, i + DELETE_BATCH);
+        const broken = await client.query<{ id: number }>(
+          `SELECT cr.id FROM code_refs cr
+           JOIN code_symbols s ON s.id = cr.to_symbol_id
+           WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[]))`,
+          [repoRoot, batch],
+        );
+        for (const r of broken.rows) brokenRefIds.push(r.id);
+        await client.query("DELETE FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[])", [repoRoot, batch]);
+      }
       await client.query("COMMIT");
-      return { brokenRefIds: broken.rows.map((r) => r.id) };
+      return { brokenRefIds };
+    } catch (e) {
+      try { await client.query("ROLLBACK"); } catch { /* dead connection */ }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** One transaction, three set-based deletes — refs first so inbound
+   *  to_symbol_id SET NULL triggers find nothing to fire per row. */
+  async clearRepo(repoRoot: string): Promise<void> {
+    await this.ensure();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM code_refs WHERE repo_root = $1", [repoRoot]);
+      await client.query("DELETE FROM code_symbols WHERE repo_root = $1", [repoRoot]);
+      await client.query("DELETE FROM code_files WHERE repo_root = $1", [repoRoot]);
+      await client.query("COMMIT");
     } catch (e) {
       try { await client.query("ROLLBACK"); } catch { /* dead connection */ }
       throw e;

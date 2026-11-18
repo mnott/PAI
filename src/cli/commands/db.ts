@@ -4,7 +4,7 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { cmdQuery, cmdTables, cmdSchema, cmdMigrateToPostgres } from "../impl/db.js";
+import { cmdQuery, cmdTables, cmdSchema, cmdMigrateToPostgres, cmdCleanupTestDbs } from "../impl/db.js";
 
 export const dbSubcommands: CommandDef[] = [
 {
@@ -48,6 +48,15 @@ export const dbSubcommands: CommandDef[] = [
     skipDump: ctx.opts["skip-dump"] === true,
     allowRunning: ctx.opts["allow-running"] === true
   }),
+},
+{
+  name: "cleanup-test-dbs",
+  summary: "Drop leaked pai_test_* scratch databases older than an hour",
+  description: "Drop leaked pai_test_* scratch databases older than an hour.\n\nTest runs create scratch Postgres databases (pai_test_*) and drop them in afterAll; this clears the leftovers a crashed run left behind. Only names matching pai_test_* are ever dropped, and only once their oldest relation is more than an hour old, so a database a running test still uses is never touched",
+  options: [{ name: "dry-run", type: "boolean", summary: "List what would be dropped, drop nothing" }],
+  examples: ["pai db cleanup-test-dbs --dry-run","pai db cleanup-test-dbs"],
+  seeAlso: ["pai db tables"],
+  run: (ctx) => cmdCleanupTestDbs({ dryRun: ctx.opts["dry-run"] === true }),
 },
 ];
 
