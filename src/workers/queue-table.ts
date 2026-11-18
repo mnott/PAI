@@ -15,6 +15,7 @@ import type { QueueRow } from "./capacity.js";
 import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
 import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
+import { topicChip } from "./topic.js";
 
 /** Short id of a worker or pane run: the last dash-part of its id (a queue row never prints the full id). */
 export const shortId = (id: string): string => id.slice(id.lastIndexOf("-") + 1);
@@ -70,10 +71,20 @@ export interface TableRow {
   kind: "job";
   id: string;
   state: RowState;
+  /** Full state wording that replaces the short badge (a resumed worker waiting for a slot). */
+  badge?: string;
   /** Plain-language state ("waiting for a local slot", "paused: frees its slot"). */
   stateText: string;
   priority: "low" | "normal" | "high" | "now";
   session: string;
+  /** The job's topic (--topic), when it has one: the cockpit chip after the session chip. */
+  topic?: string;
+  /** 1 = orchestrator (class orchestrate/plan), 2 = does the work (its children and direct implement runs). */
+  level: 1 | 2;
+  /** The L1 job this one was started by, when that job is a row of the table (the child is drawn under it). */
+  parent?: string;
+  /** Why this job is not on the local model ("class orchestrate runs on the cloud"); absent for a local job. */
+  cloudWhy?: string;
   /** Short name: "<provider>" for a local model / "cloud: <short model>". */
   model: string;
   /** Full "local: <model id>" / "cloud: <provider> <model id>" for a tooltip. */
@@ -81,7 +92,7 @@ export interface TableRow {
   local: boolean;
   task: string;
   seconds: number;
-  /** Fixed-width activity cell: "gen" | "in line" | "tool" | "idle 2m" | "waiting" | "" — real state, never a guess (see ACT_TIP). */
+  /** Fixed-width activity cell: "writing" | "in line" | "tool" | "idle 2m" | "waiting" | "" — real state, never a guess (see ACT_TIP). */
   activity: string;
   /** Plain sentence of what the activity word means, for its tooltip. */
   activityTip: string;
@@ -129,7 +140,7 @@ export interface RequestState {
 /** The one line above the table (also the CLI footer): states and priorities in plain words. */
 export const QUEUE_EXPLAIN =
   "running = holds a slot; waiting = next in line; paused = parked, slot freed for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives reboot. " +
-  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs.";
+  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: \"N of M slots busy\" counts jobs holding a slot; \"back from a long tool run\" = a job that lent its slot while waiting on a long tool took it back while others filled it, so it runs above the cap until one finishes.";
 
 /** Plain-words tooltip of each priority. */
 export const PRIORITY_TIP: Record<"low" | "normal" | "high" | "now", string> = {
@@ -138,6 +149,29 @@ export const PRIORITY_TIP: Record<"low" | "normal" | "high" | "now", string> = {
   high: "ahead of normal",
   now: "front of the queue and pauses all other local jobs while it runs",
 };
+
+/** Tooltips of the level badge. */
+export const LEVEL_TIP: Record<1 | 2, string> = {
+  1: "L1 coordinates: splits the work, starts L2 workers, checks their results",
+  2: "L2 does the work",
+};
+/** L1 = an orchestrator (class orchestrate / plan); everything else is L2. */
+export const levelOf = (className?: string): 1 | 2 => (className === "orchestrate" || className === "plan" ? 1 : 2);
+
+/** Why a cloud job is not local, in plain words, from the fields the run recorded (route, routeWhy, escalated); "" for a local job. */
+export function cloudWhy(s: Pick<WorkerStatus, "route" | "routeWhy" | "escalated" | "className" | "provider">, local: boolean): string {
+  if (local) return "";
+  const r = s.route?.reason ?? "";
+  let m: RegExpMatchArray | null;
+  const OP = /^(?:cli|operator|cockpit|you)\b/i;
+  if (/^escalated to \S+: (?:by )?(?:cli|operator|cockpit|you)\b/i.test(s.escalated ?? "") || OP.test(r.match(/^(?:rerouted|fall-through) \((.*)\)$/)?.[1] ?? "")) return "moved by operator";
+  if ((m = r.match(/^(?:rerouted|fall-through) \(escalation: no edit or commit for (\d+)m\)$/))) return `moved: no edit or commit for ${m[1]} min on the local model`;
+  if ((m = r.match(/^(?:rerouted|fall-through) \((.*)\)$/))) return `moved: ${m[1]!.replace(/^escalation: /, "")}`;
+  if (s.escalated) return plainWording(s.escalated);
+  if ((m = (s.routeWhy ?? "").match(/^class: (\S+)/))) return `class ${m[1]} runs on the cloud`;
+  if (/--cloud|flag: --provider/.test(s.routeWhy ?? "")) return "--cloud at start";
+  return s.routeWhy ? `chosen at start: ${s.routeWhy}` : "cloud";
+}
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -161,8 +195,8 @@ export function plainWording(text: string): string {
 }
 
 /** The short word of each activity, shown fixed-width in the cell; ACT_TIP carries the sentence for its tooltip. */
-export const ACT_TIP: Record<"gen" | "in line" | "tool" | "waiting", string> = {
-  gen: "its request is open at the model — the engine is generating its reply",
+export const ACT_TIP: Record<"writing" | "in line" | "tool" | "waiting", string> = {
+  writing: "its request is open at the model — the model is writing its reply",
   "in line": "its request waits in the local scheduler queue, behind other workers at the engine",
   tool: "no request open at the model; a tool (build, test) is running",
   waiting: "waiting for a slot: no request has gone to the model yet",
@@ -170,13 +204,13 @@ export const ACT_TIP: Record<"gen" | "in line" | "tool" | "waiting", string> = {
 
 /**
  * The activity word of a RUNNING job, from real state — never the age of the last status write:
- * "gen" its request is open at the model; "in line" it waits in the router's local scheduler queue;
+ * "writing" its request is open at the model; "in line" it waits in the router's local scheduler queue;
  * "tool" no request open and a tool runs (a Bash the worker waits on); else "idle Nm" past 90 s.
  * Without `req` (the router cannot be reached) only the status file speaks: "tool" / "idle", never a guess.
  */
 export function activityOf(s: Pick<WorkerStatus, "updated" | "toolWaitSince">, waiting: boolean, now: number, req?: RequestState): string {
   if (waiting) return "waiting";
-  if (req?.inflight) return "gen";
+  if (req?.inflight) return "writing";
   if (req?.queued) return "in line";
   // a tool running: the PreToolUse hook stamped the wait and the result has not cleared it yet
   if (s.toolWaitSince !== undefined || slotLent(s, now)) return "tool";
@@ -250,7 +284,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     const state: RowState = deep ? "deep-frozen" : fr ? "frozen" : s.paused && !(waiting && s.state === "running") ? "paused" : waiting ? "waiting" : "running";
     const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? ""].filter(Boolean);
     const stateText =
-      state === "waiting" ? (s.restarting ? "restarting on new version" : `waiting for a ${local ? "local" : "cloud"} slot`) : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : moving ?? "running";
+      state === "waiting" ? (s.restarting ? "restarting on new version" : s.paused ? "waiting for a slot (resumed)" : `waiting for a ${local ? "local" : "cloud"} slot`) : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : moving ?? "running";
     return {
       kind: "job",
       id: s.id,
@@ -258,9 +292,13 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       stateText,
       priority: prioOf(s, prio),
       session: i.sessionOf(s),
+      ...(s.topic ? { topic: s.topic } : {}),
       model: shortModel(local, s.provider, s.model),
       modelFull: `${local ? "local" : "cloud"}: ${local ? s.model || s.provider : `${s.provider} ${s.model || ""}`.trim()}`,
       local,
+      level: levelOf(s.className),
+      ...(s.parent ? { parent: s.parent } : {}),
+      ...(cloudWhy(s, local) ? { cloudWhy: cloudWhy(s, local) } : {}),
       task: s.label || s.id,
       activity: state === "running" ? activityOf(s, false, i.now, reqOf(s.id)) : "",
       activityTip: "",
@@ -284,7 +322,12 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
   const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status && !(q.status.fallThroughOf && movers.has(q.status.fallThroughOf))).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
-  waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, { first: q.position === 1, last: q.position === q.queued }) }));
+  waiting.forEach((q, n) => {
+    const r: TableRow = { slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, { first: q.position === 1, last: q.position === q.queued }) };
+    // a resumed worker (paused + ticket) is waiting for a slot, not paused: one wording for pane, ps and cockpit
+    if (q.status!.paused && !q.status!.pausedBy && !q.status!.restarting) r.badge = `waiting for a slot (position ${q.position} of ${q.queued})`;
+    out.push(r);
+  });
   for (const s of runners.filter((x) => pausedFree(x))) out.push({ slot: "freed", ...row(s, false, stMs(s)) });
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
   // pane runs are not rows (no model, no slot); one whose command waits on a job shows as an eye on that job's row
@@ -296,10 +339,25 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     if (r) (r.waits ??= []).push({ id: p.id, label: p.label });
   }
   // one order: running, then waiting, then paused/frozen (stable inside each group)
-  return out
-    .map((r, n) => ({ r, n }))
-    .sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n)
-    .map(({ r }) => ({ ...r, activityTip: r.activity ? activityTip(r.activity, r.now) : "" }));
+  const sorted = out.map((r, n) => ({ r, n })).sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n).map(({ r }) => r);
+  return nestChildren(sorted).map((r) => ({ ...r, activityTip: r.activity ? activityTip(r.activity, r.now) : "" }));
+}
+
+/** A child of an L1 row follows it directly when both are in the same state group; everything else keeps its place. */
+export function nestChildren(rows: TableRow[]): TableRow[] {
+  const l1 = new Set(rows.filter((r) => r.level === 1).map((r) => r.id));
+  const kids = (p: TableRow): TableRow[] => rows.filter((c) => c.parent === p.id && c.level === 2 && rowGroup(c) === rowGroup(p));
+  const placed = new Set<string>();
+  const out: TableRow[] = [];
+  for (const r of rows) {
+    if (placed.has(r.id)) continue;
+    const p = r.level === 2 && r.parent ? rows.find((x) => x.id === r.parent && l1.has(x.id) && rowGroup(x) === rowGroup(r)) : undefined;
+    if (p) continue; // drawn under its L1
+    placed.add(r.id);
+    out.push(r);
+    if (l1.has(r.id)) for (const c of kids(r)) if (!placed.has(c.id)) (placed.add(c.id), out.push(c));
+  }
+  return out;
 }
 
 /** 0 = running, 1 = waiting, 2 = paused / frozen / deep-frozen. */
@@ -312,13 +370,18 @@ export const GROUP_LABEL = ["running", "waiting", "paused / frozen"] as const;
 export function filterBySession<T extends Pick<TableRow, "session">>(rows: T[], sessions: string[]): T[] {
   return sessions.length ? rows.filter((r) => sessions.includes(r.session)) : rows;
 }
+/** Rows of the chosen topics only (none chosen = all). */
+export function filterByTopic<T extends Pick<TableRow, "topic">>(rows: T[], topics: string[]): T[] {
+  return topics.length ? rows.filter((r) => !!r.topic && topics.includes(r.topic)) : rows;
+}
 /** Sorted by session, then by the order the rows came in (admission order); a stable sort. */
 export function sortBySession<T extends Pick<TableRow, "session">>(rows: T[]): T[] {
   return rows.map((r, i) => ({ r, i })).sort((a, b) => (a.r.session < b.r.session ? -1 : a.r.session > b.r.session ? 1 : a.i - b.i)).map((o) => o.r);
 }
 
 /** Badge text of a row: "running", "waiting #2", "paused", "frozen", "deep-frozen". */
-export function stateBadge(r: Pick<TableRow, "state" | "slot">): string {
+export function stateBadge(r: Pick<TableRow, "state" | "slot" | "badge">): string {
+  if (r.badge) return r.badge;
   return r.state === "waiting" && typeof r.slot === "number" ? `waiting #${r.slot}` : r.state;
 }
 
@@ -329,12 +392,13 @@ const clip = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1)
 export function renderQueueTable(rows: TableRow[]): string[] {
   if (!rows.length) return ["nothing running or waiting"];
   const head = ["state", "session", "task", "model", "prio", "time", "id"];
+  const l1Ids = new Set(rows.filter((r) => r.level === 1).map((r) => r.id));
   const body = rows.map((r) => [
     // the activity word is fixed 7 chars so the state column never moves (full meaning in the cockpit tooltip)
     `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity.padEnd(7).trimEnd() : ""}`,
-    clip(r.session, 18),
-    clip(r.task, 50),
-    clip(r.model, 26),
+    clip(r.session, 18) + (r.topic ? ` [${topicChip(r.topic)}]` : ""),
+    clip(`L${r.level} ${r.level === 2 && r.parent && l1Ids.has(r.parent) ? "└ " : ""}${r.task}`, 50),
+    clip(r.model + (r.cloudWhy ? " ↑" : ""), 26),
     r.priority,
     fmtDur(r.seconds),
     shortId(r.id),

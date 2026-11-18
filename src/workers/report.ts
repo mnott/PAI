@@ -251,6 +251,10 @@ export const ORCHESTRATOR_CONTRACT =
 export const CODE_EXPLORE_LINE =
   "Before grepping or globbing an unfamiliar repo, run `pai code explore <question or symbol names>` via Bash (or the code_explore tool where the pai MCP server is loaded); it returns definitions, source, callers and blast radius in one answer and indexes the repo on first use.";
 
+/** Added when the run's repo is already indexed: the graph is current, so ask it before grepping. */
+export const CODE_GRAPH_FIRST_LINE =
+  "This repo is indexed in the code graph (kept current on every query): ask it first with `pai code explore \"<question>\"`, `pai code callers <symbol>`, `pai code callees <symbol>` (MCP: code_explore, code_callers, ...) before grepping or globbing.";
+
 /**
  * The system prompt appended to every headless run, chosen by task class and
  * report format. `spotcheck`/`simple` get a short contract (no delegation
@@ -263,13 +267,15 @@ export function workerContractPrompt(
   format: "ag2" | "json",
   orchestrate?: boolean,
   noteToken?: string,
-  scratch?: string
+  scratch?: string,
+  graphIndexed?: boolean
 ): string {
   // planner classes get the L1 opening even without the flag; with it they also get ORCHESTRATOR_CONTRACT below.
   const short = SHORT_CONTRACT_CLASSES.has(cls ?? "");
   const planner = !short && (PLANNER_CLASSES.has(cls ?? "") || Boolean(orchestrate));
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
   base += `\n${CODE_EXPLORE_LINE}`;
+  if (graphIndexed) base += `\n${CODE_GRAPH_FIRST_LINE}`;
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;
   // a planner without the flag still gets the exact start/wait/merge commands.

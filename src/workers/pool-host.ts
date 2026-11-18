@@ -1102,6 +1102,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       origin: "spawn",
       outputFormat: task.outputFormat,
       ...(task.className || prior?.className ? { className: task.className ?? prior?.className } : {}),
+      ...(prior?.topic ? { topic: prior.topic } : {}),
       ...(task.maxMinutes ? { deadlineAt: t0 + task.maxMinutes * 60_000, maxMinutes: task.maxMinutes } : {}),
       ...(task.parent ? { parent: task.parent } : {}),
       ...(task.stage ? { stage: task.stage } : {}),

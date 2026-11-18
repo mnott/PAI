@@ -12,7 +12,7 @@ import { deadlineLabel } from "./deadline.js";
 import { lowPowerFactor, lowPowerStretchActive } from "../daemon/low-power.js";
 import { activeText } from "./active-time.js";
 import { sessionOf } from "./capacity.js";
-import { ellipsize, queuedBarRow, queuedText, type QueuedFile } from "./capacity.js";
+import { ellipsize, queuedBarRow, queuedText, waitingForSlotText, type QueuedFile } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, nativeAnthropicModels, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
@@ -26,7 +26,7 @@ import { sessionTag } from "./scope.js";
 import { endLabel } from "./endreason.js";
 import { parseWorkerReport, renderReport } from "./report.js";
 import { scanLine } from "./scan.js";
-import { activityOf, type RequestState } from "./queue-table.js";
+import { activityOf, levelOf, type RequestState } from "./queue-table.js";
 import { readSchedFile } from "../router/scheduler.js";
 
 export type ColorEnabled = boolean;
@@ -559,6 +559,7 @@ export function renderTable(
       ...(s.switchReason ? [s.switchReason] : []),
       ...(s.fallThroughOf ? [`fall-through of ${s.fallThroughOf}`] : []),
       ...(s.handoffNote ? [s.handoffNote] : s.fallThroughTo ? [`fell through to ${s.fallThroughTo}`] : []),
+      ...(s.escalationHeld ? [s.escalationHeld] : []),
       ...(s.escalated ? [s.escalated] : []),
       ...(s.escalatedTo ? [`escalated -> ${s.escalatedTo}`] : []),
     ];
@@ -594,13 +595,13 @@ export function renderTable(
 
   // engine controls: "paused" or a non-normal priority, only while set
   const engineMark = (s: WorkerStatus): string => {
-    const m = [slotLent(s) ? "waiting on tool (slot lent)" : "", s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
+    const m = [slotLent(s) ? "waiting on tool (slot lent)" : "", s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : waitingForSlotText(logDir, s) ?? "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
     return m ? "  " + c(s.paused ? "yellow" : "dim", m) : "";
   };
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   // the activity word of every running row comes from real state (the same words as the queue table and
-  // the cockpit): gen = request open at the model, in line = waiting behind other workers at the engine,
+  // the cockpit): writing = request open at the model, in line = waiting behind other workers at the engine,
   // tool = a tool runs with no request open, idle Nm = none of those over 90 s. Never a guess from time:
   // without the router's snapshot only "tool" / "idle" show (the status file alone).
   let reqOf: (id: string) => RequestState | undefined = () => undefined;
@@ -614,7 +615,7 @@ export function renderTable(
   }
   const actMark = (s: WorkerStatus): string => {
     const a = activityOf(s, false, now.getTime(), reqOf(s.id));
-    return a ? "  " + c(a === "gen" ? "green" : a === "in line" ? "yellow" : "dim", a) : "";
+    return a ? "  " + c(a === "writing" ? "green" : a === "in line" ? "yellow" : "dim", a) : "";
   };
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   // the QUEUED section only exists while something waits: a table that never
@@ -677,7 +678,7 @@ export function renderTable(
         last
       )
     );
-    lines.push(treeLine(`${q}task: ${s.label}`, chain, last));
+    lines.push(treeLine(`${q}task: L${levelOf(s.className)} ${s.label}`, chain, last));
     if (s.note) lines.push(treeLine(`${q}${c("dim", `note: ${s.note.replace(/\s+/g, " ").slice(0, 100)}${noteMark(s)}`)}`, chain, last));
     lines.push(
       treeLine(
@@ -806,7 +807,9 @@ export function paneStatusRow(
   now: Date = new Date(),
   columns: number | null = null,
   /** The pane's queue line while the run waits for a slot (the `<id>.queued` file), before any status exists. */
-  queued: QueuedFile | null = null
+  queued: QueuedFile | null = null,
+  /** The cockpit's word for this job from the ONE queue table (`paneStateWord`): the state prefix of the row. */
+  stateWord?: string | null
 ): string {
   // the pane opened before the queue: while the run waits for a slot the line
   // is the queue itself, refreshed in place (no goal/model tail yet — nothing has started)
@@ -826,7 +829,26 @@ export function paneStatusRow(
     (cap ? capacityText(cap) : null) ??
     warmupText(s.warmup) ??
     (s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget));
-  return `${head} · ${tail}`;
+  // the state word comes from the queue table (the cockpit's own words), never
+  // a derivation here: the pane and the cockpit can never disagree on it
+  return `${stateWord ? `${stateWord} · ` : ""}${head} · ${tail}`;
+}
+
+/**
+ * The worker pane's bottom line with the state word of the ONE queue table in front:
+ * `<waiting #2 | running> · <goal> · <model> · started HH:MM · <age>` — while the run
+ * waits for a slot the queue line is the row (unchanged); once it holds a slot the
+ * cockpit's word leads. A pane whose worker has no row yet keeps the plain row.
+ */
+export function paneQueueStatusRow(
+  s: Parameters<typeof paneStatusRow>[0],
+  stateWord: string | null,
+  now: Date = new Date(),
+  columns: number | null = null,
+  queued: QueuedFile | null = null
+): string {
+  if (queued) return paneStatusRow(s, now, columns, queued);
+  return paneStatusRow(s, now, columns, null, stateWord);
 }
 
 /**

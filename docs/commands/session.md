@@ -140,23 +140,27 @@ See also: `pai ls`, `pai open`
 Show or change this session's model profile (chat, workers)
 
 ```
-pai session profile [VERB] [options]
+pai session profile [VERB] [SETTING] [VALUE] [options]
 ```
 
-`pai session profile` shows the profile and where the next worker spawn runs. `set --workers <provider> [--model <m>]` pins where this session's workers run (an explicit choice; beats global routing). `clear --workers` removes the pin so spawns follow global routing again. `repair` clears the workers pin launches wrote implicitly (the setup's provider stored as a standing pin), but only for this folder's named session; other sessions are listed and left alone. `--name` takes another session; default: this session. Same store and resolver as the MCP session_profile tools.
+`pai session profile` shows the profile and where the next worker spawn runs. `set escalate on|off [--until HH:MM]` switches the stall rule that moves this session's workers to the cloud (default on; off holds until the time). `set --workers <provider> [--model <m>]` pins where this session's workers run (an explicit choice; beats global routing). `clear --workers` removes the pin so spawns follow global routing again. `repair` clears the workers pin launches wrote implicitly (the setup's provider stored as a standing pin), but only for this folder's named session; other sessions are listed and left alone. `--name` takes another session; default: this session. Same store and resolver as the MCP session_profile tools.
 
 | Argument | Required | Description |
 |---|---|---|
 | `VERB` | no | show (default), set, clear or repair |
+| `SETTING` | no | With set: escalate |
+| `VALUE` | no | With set escalate: on or off |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--workers PROVIDER` | string | — | With set: the worker provider (with --model: default, fast or a model id); with clear: bare --workers clears the pin |
 | `--model ID` | string | — | Worker model for --workers: default, fast or a model id |
 | `--name SESSION` | string | — | Session name (default: this session) |
+| `--until HH:MM` | string | — | With set escalate off: local time (next occurrence) when the switch expires by itself |
 
 ```sh
 pai session profile
+pai session profile set --name job-search escalate off --until 07:00
 pai session profile set --workers kimi --model fast
 pai session profile clear --workers
 pai session profile show --name job-search
@@ -618,7 +622,7 @@ See also: `pai session route`, `pai project info`
 
 ## See also
 
-[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai graph`](graph.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <command>` to read any of these in the terminal.
 

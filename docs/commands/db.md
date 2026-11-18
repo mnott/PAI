@@ -118,6 +118,29 @@ pai db migrate-to-postgres --skip-dump
 
 See also: `pai db schema`
 
+### pai db cleanup-test-dbs
+
+Drop leaked pai_test_* scratch databases older than an hour
+
+```
+pai db cleanup-test-dbs [options]
+```
+
+Drop leaked pai_test_* scratch databases older than an hour.
+
+Test runs create scratch Postgres databases (pai_test_*) and drop them in afterAll; this clears the leftovers a crashed run left behind. Only names matching pai_test_* are ever dropped, and only once their oldest relation is more than an hour old, so a database a running test still uses is never touched
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dry-run` | flag | — | List what would be dropped, drop nothing |
+
+```sh
+pai db cleanup-test-dbs --dry-run
+pai db cleanup-test-dbs
+```
+
+See also: `pai db tables`
+
 ## Subcommands
 
 | Command | Description |
@@ -126,10 +149,11 @@ See also: `pai db schema`
 | `pai db tables` | List the tables |
 | `pai db schema` | Show the columns of a table |
 | `pai db migrate-to-postgres` | One-time copy of the data from SQLite to PostgreSQL |
+| `pai db cleanup-test-dbs` | Drop leaked pai_test_* scratch databases older than an hour |
 
 ## See also
 
-[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai graph`](graph.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <command>` to read any of these in the terminal.
 

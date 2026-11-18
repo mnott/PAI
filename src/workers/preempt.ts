@@ -105,13 +105,14 @@ export function admitResumedWaiters(logDir: string, now = Date.now(), roomFn: Ro
     return out;
   }
   for (const prov of provs) {
-    const head = liveQueue(logDir, prov)[0];
-    if (!head) continue;
-    const s = loadStatus(logDir, head);
-    if (!s?.paused || s.pausedBy || s.state !== "running") continue;
-    if (roomFn(loadStatuses(logDir), s.provider) <= 0) continue;
-    rmSync(join(queueDir(logDir, s.provider), head), { force: true });
-    if (setWorkerPaused(logDir, head, false, "queue", undefined, now)) out.push(head);
+    // in queue order while a slot is free; a head that is not a resumed waiter (a new job) keeps its place and stops the walk
+    for (const id of liveQueue(logDir, prov)) {
+      const s = loadStatus(logDir, id);
+      if (!s?.paused || s.pausedBy || s.state !== "running") break;
+      if (roomFn(loadStatuses(logDir), s.provider) <= 0) break;
+      rmSync(join(queueDir(logDir, s.provider), id), { force: true });
+      if (setWorkerPaused(logDir, id, false, "queue", undefined, now)) out.push(id);
+    }
   }
   return out;
 }

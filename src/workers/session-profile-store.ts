@@ -72,6 +72,10 @@ export interface SessionProfile {
   parallel_min?: number;
   /** Most workers of this session running at once, on any provider (1 = one after the other). */
   max_parallel?: number;
+  /** "off": the stall/queue escalation never moves this session's workers to the cloud (default on). */
+  escalate?: "off";
+  /** With escalate off: epoch ms when the switch expires by itself (absent = until turned on). */
+  escalate_until?: number;
   /** Routing rows this session overrides: class -> ordered models (route-lists.ts). */
   routes?: Record<string, string[]>;
   /** Optional reason per overridden row. */
@@ -106,6 +110,10 @@ function cleanProfile(v: unknown): SessionProfile {
   }
   if (typeof r.parallel_min === "number" && Number.isInteger(r.parallel_min) && r.parallel_min > 0) out.parallel_min = r.parallel_min;
   if (typeof r.max_parallel === "number" && Number.isInteger(r.max_parallel) && r.max_parallel > 0) out.max_parallel = r.max_parallel;
+  if (r.escalate === "off") {
+    out.escalate = "off";
+    if (typeof r.escalate_until === "number" && Number.isFinite(r.escalate_until) && r.escalate_until > 0) out.escalate_until = r.escalate_until;
+  }
   if (r.routes && typeof r.routes === "object") {
     const routes: Record<string, string[]> = {};
     // overrides stored per class (the nine-row table) become per-role ones
@@ -184,6 +192,8 @@ export interface ProfilePatch {
   fallback?: ProfileTarget[] | null;
   parallel_min?: number | null;
   max_parallel?: number | null;
+  escalate?: "off" | null;
+  escalate_until?: number | null;
   routes?: Record<string, string[]> | null;
   route_notes?: Record<string, string> | null;
 }
@@ -197,7 +207,7 @@ export interface ProfilePatch {
 export function updateProfile(name: string, patch: ProfilePatch, path: string = profilesPath(), caller: ProfileCaller = "session-profile-set"): SessionProfile {
   const profiles = readProfiles(path);
   const next: SessionProfile = { ...(profiles[name] ?? {}) };
-  for (const k of ["chat", "workers", "workers_implicit", "fallback", "parallel_min", "max_parallel", "routes", "route_notes"] as const) {
+  for (const k of ["chat", "workers", "workers_implicit", "fallback", "parallel_min", "max_parallel", "escalate", "escalate_until", "routes", "route_notes"] as const) {
     if (!(k in patch)) continue;
     const v = patch[k];
     if (v === null || v === undefined) delete next[k];
@@ -213,6 +223,21 @@ export function updateProfile(name: string, patch: ProfilePatch, path: string = 
   writeAtomic(path, profiles);
   logProfileWrite(caller, name, Object.keys(patch).join(","));
   return profiles[name];
+}
+
+/** Whether the session's escalation switch is off at `nowMs` (off and not yet expired). */
+export function escalationOff(profile: Pick<SessionProfile, "escalate" | "escalate_until"> | null | undefined, nowMs: number = Date.now()): boolean {
+  return profile?.escalate === "off" && (profile.escalate_until === undefined || profile.escalate_until > nowMs);
+}
+
+/** Epoch ms of the next local HH:MM after `now` (today when still ahead, else tomorrow); throws on a bad time. */
+export function nextClockTime(hhmm: string, now: Date = new Date()): number {
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(hhmm.trim());
+  if (!m) throw new Error(`bad time "${hhmm}": use HH:MM (24 hour)`);
+  const d = new Date(now);
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
+  return d.getTime();
 }
 
 /** The session's persistent name: exported by `pai` at launch; undefined when the session is unnamed. */

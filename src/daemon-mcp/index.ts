@@ -941,6 +941,17 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
     async (args) => proxyTool("code_summary", args)
   );
 
+  server.tool(
+    "graph_related",
+    "Neighbours of a code key, file path, symbol, note or external key across projects and domains (depends-on, calls-api, shares-protocol, duplicates, mentions, cites), grouped by predicate with file:line. Use it to see what else a change touches beyond this repo.",
+    {
+      key: z.string().min(1).describe("A typed key (code:<slug>:<path>#<symbol>, note:<vault>:<path>, caseleaf:..., cite:...), a path, a symbol name or a project slug."),
+      depth: z.number().int().min(1).max(3).optional().describe("Hops to follow. Default: 1."),
+      domains: z.array(z.enum(["code", "note", "external"])).optional().describe("Only neighbours in these domains."),
+    },
+    async (args) => proxyTool("graph_related", args)
+  );
+
   // Tool: audit_export — a tenant's firings, decisions and outcomes with a manifest (read-only, in-process)
   server.tool(
     "audit_export",
@@ -1428,6 +1439,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       "parallel_min: in batch fan-outs skip fallback targets whose concurrency cap is lower.",
       "max_parallel: most of this session's workers running at once, on any provider; 1 = one after the other, null/0 = parallel again.",
       "routes {class: [models]}: override routing rows for this session only (e.g. {implement: [\"anthropic/sonnet\"]}); null/[] for a class clears it, routes null clears all. Reason: cloud before local for context width and reasoning.",
+      "escalate on|off [+ until HH:MM]: off keeps this session's workers from being moved to the cloud by the stall rule until the time (or turned on).",
       "chat {provider, model}: the session's default chat model, applied when it next starts; apply_now sends /model into the running session.",
     ].join("\n"),
     {
@@ -1438,6 +1450,8 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       parallel_min: z.number().int().min(0).nullable().optional(),
       max_parallel: z.number().int().min(0).nullable().optional(),
       routes: z.record(z.string(), z.array(z.string()).nullable()).nullable().optional(),
+      escalate: z.enum(["on", "off"]).optional().describe("off: this session's workers are never moved to the cloud by the stall rule (stalls still show in ps); on (default) restores it."),
+      until: z.string().optional().describe("With escalate off: HH:MM (local time, next occurrence) when the switch expires by itself."),
       apply_now: z.boolean().optional().describe("With chat: also send /model <m> into the running session."),
     },
     async (args) => sessionProfileSet(args, await realSessionProfileDeps())
@@ -1529,6 +1543,8 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
             ...(args.capability ? ["--capability", args.capability] : []),
             ...(args.no_pool ? ["--no-pool"] : []),
             ...(args.priority ? ["--priority", args.priority] : []),
+            ...(args.topic ? ["--topic", args.topic] : []),
+            ...(args.escalate === false ? ["--no-escalate"] : []),
             ...(args.mcp ? ["--mcp", args.mcp] : []),
             ...(args.cwd ? ["--cwd", args.cwd] : []),
             ...(args.allowed_tools ? ["--allowedTools", args.allowed_tools] : []),
@@ -1583,6 +1599,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
   );
 
   // Delegation tools for tier 0 (direct library calls, see tools/delegation.ts)
+  const topicArg = z.string().max(60).optional().describe("Topic that groups related jobs in the queue (the plan's / item's workers run under it).");
   const localArg = z.boolean().optional().describe("Same as where: \"local\".");
   const delegation = realDelegationDeps();
   const project = z.string().min(1).describe("Project slug or checkout folder.");
@@ -1623,7 +1640,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
   server.tool(
     "plan_run",
     "Start a saved plan in the background and return at once; merged parts are skipped on a re-run. Follow with plan_status.",
-    { project, name: planName, escalate: z.boolean().optional().describe("After the local retry, run one Sonnet worker instead of stopping at needs-decision."), local: localArg, ...whereArgs },
+    { project, name: planName, escalate: z.boolean().optional().describe("After the local retry, run one Sonnet worker instead of stopping at needs-decision."), topic: topicArg, local: localArg, ...whereArgs },
     async (args) => planRun(args, delegation)
   );
   server.tool(
@@ -1652,6 +1669,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       sentence: z.string().min(1),
       files: z.array(z.string()).optional(),
       image: z.string().optional(),
+      topic: topicArg,
       local: localArg,
       ...whereArgs,
     },

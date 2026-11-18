@@ -12,13 +12,16 @@ import { CODEGRAPH_SQLITE_SQL, CODE_SUMMARIES_SQLITE_SQL } from "./schema-sqlite
 import { symbolFtsText } from "./fts.js";
 import type {
   CodeGraphStore, CodeFileRow, CodeGraphStats, FileRecord, RefRow,
-  ResolvedRefRow, SymbolRow, SummaryRow,
+  ResolvedRefRow, SymbolRow, TripleSpec, TripleRow, SummaryRow,
 } from "./store.js";
+
+/** Paths per delete statement in deleteFiles (same bound as the Postgres store). */
+const DELETE_BATCH = 500;
 
 interface SymDbRow {
   id: number; repo_root: string; file_id: number; name: string;
   qualified_name: string; kind: string; start_line: number; end_line: number;
-  signature: string; exported: number;
+  signature: string; exported: number; doc?: string;
 }
 interface FileDbRow {
   id: number; path: string; language: string; content_hash: string;
@@ -45,7 +48,7 @@ function mapSymbol(r: SymDbRow): SymbolRow {
     id: r.id, name: r.name, qualifiedName: r.qualified_name, kind: r.kind,
     file: (r as unknown as { file: string }).file, fileId: r.file_id,
     startLine: r.start_line, endLine: r.end_line, signature: r.signature,
-    exported: r.exported === 1,
+    doc: r.doc ?? "", exported: r.exported === 1,
   };
 }
 
@@ -53,7 +56,7 @@ function mapRef(r: RefDbRow): ResolvedRefRow {
   const target: SymbolRow | null = r.to_symbol_id == null ? null : {
     id: r.to_symbol_id, name: r.t_name!, qualifiedName: r.t_qualified_name!, kind: r.t_kind!,
     file: r.t_file!, fileId: r.t_file_id!, startLine: r.t_start_line!, endLine: r.t_end_line!,
-    signature: r.t_signature!, exported: r.t_exported === 1,
+    signature: r.t_signature!, doc: "", exported: r.t_exported === 1,
   };
   return {
     id: r.id, kind: r.kind, line: r.line, toName: r.to_name, toSymbolId: r.to_symbol_id,
@@ -96,7 +99,12 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     // cut at that word silently dropped every index (a ref lookup took 88 ms instead of <1 ms).
     const cut = CODEGRAPH_SQLITE_SQL.indexOf("-- The FTS sync triggers");
     const indexes = CODEGRAPH_SQLITE_SQL.slice(CODEGRAPH_SQLITE_SQL.indexOf("CREATE INDEX"));
+    // the doc-column migration below the index block is guarded here: SQLite has
+    // no ADD COLUMN IF NOT EXISTS, and a plain ALTER would throw on every re-run
     this.db.exec(CODEGRAPH_SQLITE_SQL.slice(0, cut) + indexes);
+    if (!this.db.prepare("SELECT 1 FROM pragma_table_info('code_symbols') WHERE name='doc'").get()) {
+      this.db.exec("ALTER TABLE code_symbols ADD COLUMN doc TEXT NOT NULL DEFAULT ''");
+    }
     for (const [name, sql] of [
       ["code_symbols_ai", `CREATE TRIGGER code_symbols_ai AFTER INSERT ON code_symbols BEGIN
         INSERT INTO code_symbols_fts (rowid, search_text) VALUES (new.id, new.search_text); END`],
@@ -145,14 +153,15 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
       const fileId = Number(info.lastInsertRowid);
 
       const insertSym = db.prepare(
-        `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text, doc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       const symbolIds: number[] = [];
       for (const s of file.symbols) {
         const r = insertSym.run(
           repoRoot, fileId, s.name, s.qualifiedName, s.kind, s.startLine, s.endLine,
           s.signature, s.exported ? 1 : 0, symbolFtsText(s.name, s.qualifiedName, s.signature),
+          s.doc ?? "",
         );
         symbolIds.push(Number(r.lastInsertRowid));
       }
@@ -170,23 +179,39 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     })();
   }
 
+  /** Batched like the Postgres store's: one statement per DELETE_BATCH paths. */
   async deleteFiles(repoRoot: string, paths: string[]): Promise<{ brokenRefIds: number[] }> {
     this.ensure();
     if (paths.length === 0) return { brokenRefIds: [] };
     const db = this.db;
     return db.transaction(() => {
-      const selectBroken = db.prepare(
-        `SELECT cr.id FROM code_refs cr
-         JOIN code_symbols s ON s.id = cr.to_symbol_id
-         WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = ? AND path = ?)`
-      );
-      const deleteFile = db.prepare("DELETE FROM code_files WHERE repo_root = ? AND path = ?");
       const broken: number[] = [];
-      for (const p of paths) {
-        for (const r of selectBroken.all(repoRoot, p) as Array<{ id: number }>) broken.push(r.id);
-        deleteFile.run(repoRoot, p);
+      for (let i = 0; i < paths.length; i += DELETE_BATCH) {
+        const batch = paths.slice(i, i + DELETE_BATCH);
+        const placeholders = batch.map(() => "?").join(",");
+        const rows = db
+          .prepare(
+            `SELECT cr.id FROM code_refs cr
+             JOIN code_symbols s ON s.id = cr.to_symbol_id
+             WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = ? AND path IN (${placeholders}))`
+          )
+          .all(repoRoot, ...batch) as Array<{ id: number }>;
+        for (const r of rows) broken.push(r.id);
+        db.prepare(`DELETE FROM code_files WHERE repo_root = ? AND path IN (${placeholders})`).run(repoRoot, ...batch);
       }
       return { brokenRefIds: broken };
+    })();
+  }
+
+  /** Three set-based deletes in one transaction; the cascade + FTS triggers do
+   *  the rest (foreign_keys is on for the federation db — see federation-db). */
+  async clearRepo(repoRoot: string): Promise<void> {
+    this.ensure();
+    const db = this.db;
+    db.transaction(() => {
+      db.prepare("DELETE FROM code_refs WHERE repo_root = ?").run(repoRoot);
+      db.prepare("DELETE FROM code_symbols WHERE repo_root = ?").run(repoRoot);
+      db.prepare("DELETE FROM code_files WHERE repo_root = ?").run(repoRoot);
     })();
   }
 
@@ -406,5 +431,58 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     let n = 0;
     for (const r of await this.listSummaries(repoRoot)) if (!keepSet.has(r.key)) n += del.run(repoRoot, r.key).changes;
     return n;
+  }
+
+  async syncTriples(scope: string, desired: TripleSpec[]): Promise<{ added: number; closed: number; kept: number }> {
+    this.ensure();
+    const key = (t: { subject: string; predicate: string; object: string }) => `${t.subject}\u0000${t.predicate}\u0000${t.object}`;
+    const want = new Map(desired.map((t) => [key(t), t]));
+    const open = this.db
+      .prepare("SELECT id, subject, predicate, object FROM kg_triples WHERE source_session = ? AND valid_to IS NULL")
+      .all(scope) as Array<{ id: number; subject: string; predicate: string; object: string }>;
+    const have = new Set<string>();
+    const now = Date.now();
+    let added = 0, closed = 0, kept = 0;
+    const close = this.db.prepare("UPDATE kg_triples SET valid_to = ? WHERE id = ?");
+    const ins = this.db.prepare(
+      "INSERT INTO kg_triples (subject, predicate, object, project_id, source_session, valid_from, confidence, created_at) VALUES (?,?,?,?,?,?,?,?)",
+    );
+    this.db.transaction(() => {
+      for (const r of open) {
+        const k = key(r);
+        if (want.has(k) && !have.has(k)) { have.add(k); kept++; } else { close.run(now, r.id); closed++; }
+      }
+      for (const [k, t] of want) {
+        if (have.has(k)) continue;
+        ins.run(t.subject, t.predicate, t.object, t.projectId ?? null, scope, now, t.confidence, now);
+        added++;
+      }
+    })();
+    return { added, closed, kept };
+  }
+
+  async triplesTouching(keys: string[], opts?: { limit?: number; includeClosed?: boolean }): Promise<TripleRow[]> {
+    this.ensure();
+    if (keys.length === 0) return [];
+    const ph = keys.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM kg_triples WHERE (subject IN (${ph}) OR object IN (${ph}))${opts?.includeClosed ? "" : " AND valid_to IS NULL"}
+         AND source_session LIKE 'relate:%' ORDER BY id LIMIT ?`,
+      )
+      .all(...keys, ...keys, opts?.limit ?? 500) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r.id as number, subject: r.subject as string, predicate: r.predicate as string, object: r.object as string,
+      confidence: r.confidence as "EXTRACTED" | "INFERRED", projectId: (r.project_id as number | null) ?? null,
+      validFrom: r.valid_from as number, validTo: (r.valid_to as number | null) ?? null,
+    }));
+  }
+
+  async tripleCounts(): Promise<Record<string, { open: number; closed: number }>> {
+    this.ensure();
+    const rows = this.db
+      .prepare("SELECT predicate, SUM(valid_to IS NULL) AS open, SUM(valid_to IS NOT NULL) AS closed FROM kg_triples WHERE source_session LIKE 'relate:%' GROUP BY predicate")
+      .all() as Array<{ predicate: string; open: number; closed: number }>;
+    return Object.fromEntries(rows.map((r) => [r.predicate, { open: r.open, closed: r.closed }]));
   }
 }

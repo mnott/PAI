@@ -8,6 +8,9 @@ import { getRegistryBackend } from "../../storage/factory.js";
 import { reexecBackground } from "../../daemon/pass-priority.js";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+import { relate } from "../../codegraph/relate.js";
+import { registeredProjects } from "../../codegraph/projects.js";
+import { loadConfig } from "../../daemon/config.js";
 
 const root: OptDef = { name: "root", type: "string", value: "DIR", summary: "Repository root (default: the repo around the current directory)" };
 const json: OptDef = { ...OPT.json, summary: "Output raw JSON" };
@@ -46,7 +49,7 @@ export const codeCommand: CommandDef = {
   description:
     "The code graph indexes a repository's definitions and references into PAI's own database (Postgres, or SQLite as fallback). " +
     "It reads TypeScript/TSX, JavaScript, Swift and Python; other files get a file row only. " +
-    "The index is reconciled with the repo whenever you query it; nothing runs in the background.",
+    "The index is reconciled with the repo whenever you query it; a first index of an unindexed repo is started in the background (one at a time) when a session opens there, and after each worker merge. Edits are only marked; the next query re-reads them.",
   examples: ["pai code index", "pai code explore how does the router pick a provider", "pai code callers resolveRoot"],
   seeAlso: ["pai memory search", "pai kg"],
   subcommands: [
@@ -91,7 +94,9 @@ export const codeCommand: CommandDef = {
         const backend = await getStorageBackend();
         const r = rootOf(ctx);
         await cg.ensureFresh(backend, r);
-        const res = await cg.explore(backend, r, words(ctx, "QUERY"), { budgetTokens: num(ctx.opts.budget), depth: num(ctx.opts.depth) });
+        const res = await cg.explore(backend, r, words(ctx, "QUERY"), {
+          budgetTokens: num(ctx.opts.budget), depth: num(ctx.opts.depth), projects: await registeredProjects().catch(() => []),
+        });
         console.log(ctx.opts.json === true ? JSON.stringify(res, null, 2) : res.text);
       },
     },
@@ -226,14 +231,40 @@ export const codeCommand: CommandDef = {
       },
     },
     {
+      name: "relate",
+      summary: "Derive relations between projects and notes",
+      description:
+        "Reads the code graphs of the indexed registered projects and writes relations to the knowledge graph (kg_triples): depends-on (manifests), calls-api (routes and MCP tools), shares-protocol (same message types), duplicates (near-identical functions) and, from the vault notes, mentions and cites. " +
+        "A relation that disappears gets an end date, never deleted. Index the projects first (pai code index).",
+      options: [
+        { name: "project", type: "string", value: "SLUG", summary: "Write only this project's relations (all projects are still read)" },
+        { name: "all", type: "boolean", default: false, summary: "All registered projects and the notes (the default)" },
+        json,
+      ],
+      examples: ["pai code relate", "pai code relate --project my-app"],
+      seeAlso: ["pai graph related", "pai code index"],
+      run: async (ctx) => {
+        const backend = await getStorageBackend();
+        const slug = ctx.opts.project as string | undefined;
+        const rep = await relate(backend, await registeredProjects(), { only: slug ? [slug] : undefined, vaultPath: loadConfig().vaultPath || undefined });
+        print(ctx, rep, [
+          `projects  ${rep.projects}`,
+          `triples   ${rep.triples} (added ${rep.added}, ended ${rep.closed}, unchanged ${rep.kept})`,
+          ...Object.entries(rep.byPredicate).map(([k, v]) => `  ${k.padEnd(16)} ${v}`),
+          ...rep.samples.map((x) => `  e.g. ${x.subject} ${x.predicate} ${x.object}`),
+        ]);
+      },
+    },
+    {
       name: "status",
       summary: "Show what is indexed for a repository",
-      description: "Prints the counts, languages and last index time. Does not index anything.",
+      description: "Prints whether the repo is indexed, the counts, languages, last full index, files marked dirty by edits, and an index running now. Does not index anything.",
+      args: [{ name: "ROOT", summary: "Repository root (default: the repo around the current directory)" }],
       options: [root, json],
-      examples: ["pai code status", "pai code status --json"],
+      examples: ["pai code status", "pai code status ~/dev/my-repo --json"],
       seeAlso: ["pai code index"],
       run: async (ctx) => {
-        const s = await cg.status(await getStorageBackend(), rootOf(ctx));
+        const s = await cg.status(await getStorageBackend(), cg.resolveRoot((ctx.args.ROOT as string | undefined) ?? (ctx.opts.root as string | undefined) ?? process.cwd()));
         print(ctx, s, [
           `root      ${s.root}`,
           `backend   ${s.backend}`,
@@ -242,7 +273,9 @@ export const codeCommand: CommandDef = {
           `symbols   ${s.symbols}`,
           `refs      ${s.refs} (${s.resolvedRefs} resolved)`,
           `languages ${Object.entries(s.byLanguage).map(([k, v]) => `${k} ${v}`).join(", ") || "-"}`,
-          `last run  ${s.lastIndexedAt ?? "never"}`,
+          `last full index ${s.lastIndexedAt ?? "never"}`,
+          `dirty     ${s.dirty} file(s) marked since the last query`,
+          `running   ${s.indexing ? `index of ${s.indexing.root} (pid ${s.indexing.pid}, since ${s.indexing.startedAt})` : "no index running"}`,
         ]);
       },
     },

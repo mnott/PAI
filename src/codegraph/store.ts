@@ -31,6 +31,8 @@ export interface SymbolRecord {
   startLine: number;
   endLine: number;
   signature: string;
+  /** doc comment (/// or /** …) attached to the definition, when any */
+  doc?: string;
   exported: boolean;
 }
 
@@ -63,6 +65,8 @@ export interface SymbolRow {
   startLine: number;
   endLine: number;
   signature: string;
+  /** doc comment attached to the definition ("" when none is stored) */
+  doc: string;
   exported: boolean;
 }
 
@@ -92,6 +96,23 @@ export interface ResolvedRefRow extends RefRow {
   target: SymbolRow | null;
 }
 
+/** A relation between two typed keys (see relate.ts for the key grammar and predicates). */
+export interface TripleSpec {
+  subject: string;
+  predicate: string;
+  object: string;
+  confidence: "EXTRACTED" | "INFERRED";
+  projectId?: number | null;
+}
+
+export interface TripleRow extends TripleSpec {
+  id: number;
+  /** epoch ms */
+  validFrom: number;
+  /** epoch ms; null while the relation holds */
+  validTo: number | null;
+}
+
 export interface CodeGraphStore extends CodeSummaryStore {
   /** Insert or replace a file with its symbols+refs in one transaction.
    *  Returns the file row id. Symbols/refs of the previous version are removed
@@ -100,8 +121,15 @@ export interface CodeGraphStore extends CodeSummaryStore {
   upsertFile(repoRoot: string, file: FileRecord): Promise<{ fileId: number; brokenRefIds: number[] }>;
 
   /** Delete files (symbols/refs cascade; inbound to_symbol_id links null).
-   *  Returns the ids of refs that pointed at deleted symbols and must be re-resolved. */
+   *  Takes the paths in batches so a whole-repo wipe is a handful of set-based
+   *  statements, not one delete per file. Returns the ids of refs that pointed
+   *  at deleted symbols and must be re-resolved. */
   deleteFiles(repoRoot: string, paths: string[]): Promise<{ brokenRefIds: number[] }>;
+
+  /** Wipe every row of a repo (files + their symbols/refs) in one set-based
+   *  transaction — the --force path. No brokenRefIds: every ref of the repo is
+   *  gone with it, and the reindex rebuilds them. */
+  clearRepo(repoRoot: string): Promise<void>;
 
   /** Refresh mtime/size/indexed_at after a touch whose content hash did not change —
    *  never touches symbols/refs (unlike upsertFile, which replaces them). */
@@ -148,6 +176,16 @@ export interface CodeGraphStore extends CodeSummaryStore {
   allSymbols(repoRoot: string): Promise<SymbolRow[]>;
 
   stats(repoRoot: string): Promise<CodeGraphStats>;
+
+  /** Make the open triples owned by `scope` equal `desired`: new ones are inserted, ones that
+   *  vanished get valid_to set (never deleted). Rows live in kg_triples (source_session = scope). */
+  syncTriples(scope: string, desired: TripleSpec[]): Promise<{ added: number; closed: number; kept: number }>;
+
+  /** Open triples (or all, with includeClosed) whose subject or object is one of `keys`. */
+  triplesTouching(keys: string[], opts?: { limit?: number; includeClosed?: boolean }): Promise<TripleRow[]>;
+
+  /** Triple counts per predicate for relations written by relate (source_session 'relate:*'). */
+  tripleCounts(): Promise<Record<string, { open: number; closed: number }>>;
 }
 
 /** A generated module or repo summary, one row per key (code:<slug>:<path>). */

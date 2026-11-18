@@ -57,6 +57,7 @@ import {
   recordPoolSkip,
   gateStart,
 } from "./gate.js";
+import { resolveTopic } from "../topic.js";
 import { executeImageRun, executeRun, executeCodexRun, executeOpencodeRun } from "./execute.js";
 import { executeUhpRun } from "./execute-uhp.js";
 import { carryGoals } from "../note-delivery.js";
@@ -109,6 +110,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // caps from workers.tree apply to parents that are workers themselves.
   const parent = launchParent(opts.parent, process.env, logDir);
   if (parent) assertChildAllowed(logDir, parent, config.tree);
+  const topic = resolveTopic(logDir, opts.topic, [opts._fallThroughOf, opts.resumeOf, opts._restartOf, ...(opts._priorIds ?? []).slice().reverse()], parent);
 
   // An explicit --provider always bypasses capability resolution entirely;
   // otherwise --capability, or a class whose implied capability is not
@@ -449,10 +451,12 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         worktreeFlag: opts.worktreeFlag,
         resumeOf: opts.resumeOf,
         className: opts.className,
+        ...(topic ? { topic } : {}),
         reroutes: opts._reroutes ?? 0,
         emptyRetried: opts._emptyRetried ?? false,
         route,
         routeWhy,
+        noEscalate: opts.noEscalate,
         fallThroughOf: opts._fallThroughOf,
         escalatedFrom: opts._escalatedFrom,
         priorIds: opts._priorIds,

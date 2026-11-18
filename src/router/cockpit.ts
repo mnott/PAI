@@ -22,7 +22,7 @@ import { setProviderCap } from "../workers/providers.js";
 import { HideRuleError, hideMatcher, parseHideRules, readHideRules, writeHideRules } from "./cockpit-hide.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
-import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
+import { buildsDir, listBuildsSync, ticketKind, ticketSessionOf, waitReason, type SessionOfWorker } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { WORKER_ID_RE, ledgerPath, workersLogDir } from "../workers/paths.js";
 import { sharedPoolPanel } from "./pool-panel.js";
@@ -44,7 +44,7 @@ import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers
 import { readQueueTable, runGlobalDeep, runRowAction, runSessionAction } from "../workers/queue-ops.js";
 import type { RowAction, TableRow } from "../workers/queue-table.js";
 import { rerouteWorker } from "../workers/reroute.js";
-import { ownerSessionName } from "../workers/scope.js";
+import { sessionGroup } from "../workers/scope.js";
 import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
 import { getProfile } from "../workers/session-profile-store.js";
 import { loadPaneRunStatuses, paneRunRows } from "../workers/pane-run.js";
@@ -1176,15 +1176,6 @@ function schedNames(logDir: string): Record<string, string> {
   return out;
 }
 
-/**
- * The block a worker belongs to: the session that started it (AIBroker name),
- * else its project (cwd) name when a terminal is known, else "other" (a bare shell).
- */
-function sessionGroup(s: WorkerStatus): string {
-  if (!s.session?.name && !s.session?.id && !s.term) return "other";
-  const name = ownerSessionName(s);
-  return name.startsWith("tab ") || name === "?" ? basename(s.cwd || "") || "other" : name;
-}
 
 const ROW_ACTIONS = new Set<string>(["next", "up", "down", "pause", "resume", "freeze", "thaw", "deep-freeze", "deep-resume", "to-local", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now", "stop"]);
 
@@ -1192,12 +1183,12 @@ const ROW_ACTIONS = new Set<string>(["next", "up", "down", "pause", "resume", "f
 export interface CockpitBuilds {
   slots: number;
   testSlots: number;
-  running: Array<{ kind: string; id: string; label: string; key?: string; session: string; mode: string; ageSec: number; stalledSec?: number }>;
-  waiting: Array<{ kind: string; id: string; label: string; key?: string; why?: string; session: string; mode: string; waitedSec: number; position: number }>;
+  running: Array<{ kind: string; id: string; label: string; key?: string; session: string; chip?: string; mode: string; ageSec: number; stalledSec?: number }>;
+  waiting: Array<{ kind: string; id: string; label: string; key?: string; why?: string; session: string; chip?: string; mode: string; waitedSec: number; position: number }>;
 }
 
 /** The machine-wide build queue, for its own block in the worker panel. */
-export function cockpitBuilds(now = Date.now()): CockpitBuilds {
+export function cockpitBuilds(now = Date.now(), sessionOf?: SessionOfWorker): CockpitBuilds {
   let tickets: ReturnType<typeof listBuildsSync> = [];
   try {
     tickets = listBuildsSync(buildsDir());
@@ -1209,8 +1200,8 @@ export function cockpitBuilds(now = Date.now()): CockpitBuilds {
   return {
     slots: buildSlots(),
     testSlots: testSlots(),
-    running: tickets.filter((t) => t.state === "running").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, session: t.session, mode: t.mode, ageSec: sec(t.startedAt ?? t.enqueuedAt), ...(t.stalledAt ? { stalledSec: sec(t.stalledAt) } : {}) })),
-    waiting: tickets.filter((t) => t.state === "waiting").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, why: waitReason(t, tickets) ?? undefined, session: t.session, mode: t.mode, waitedSec: sec(t.enqueuedAt), position: (pos[ticketKind(t)] = (pos[ticketKind(t)] ?? 0) + 1) })),
+    running: tickets.filter((t) => t.state === "running").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, session: t.session, chip: ticketSessionOf(t, sessionOf), mode: t.mode, ageSec: sec(t.startedAt ?? t.enqueuedAt), ...(t.stalledAt ? { stalledSec: sec(t.stalledAt) } : {}) })),
+    waiting: tickets.filter((t) => t.state === "waiting").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, why: waitReason(t, tickets) ?? undefined, session: t.session, chip: ticketSessionOf(t, sessionOf), mode: t.mode, waitedSec: sec(t.enqueuedAt), position: (pos[ticketKind(t)] = (pos[ticketKind(t)] ?? 0) + 1) })),
   };
 }
 
@@ -1281,7 +1272,7 @@ export function cockpitQueue(
   }
   for (const [id, name] of Object.entries(schedNames(logDir))) names.set(id, { ...(names.get(id) ?? {}), name });
   const sched = schedPlain(snap, Object.fromEntries([...names].map(([id, info]) => [id, info.name])));
-  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
+  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now, (id) => { const w = statuses.find((x) => x.id === id); return w ? sessionGroup(w) : undefined; }), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 
 const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;

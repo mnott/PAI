@@ -26,6 +26,8 @@ export interface QueueItem {
   repo: string;
   files: string[];
   image?: string;
+  /** `--topic` the item's worker runs under. */
+  topic?: string;
   created: string;
   state: ItemState;
   /** `again` rounds so far. */
@@ -169,7 +171,7 @@ export class QueueStore {
     return this.list().find((i) => i.id === id);
   }
 
-  add(text: string, repo: string, opts: { files?: string[]; image?: string } = {}): QueueItem {
+  add(text: string, repo: string, opts: { files?: string[]; image?: string; topic?: string } = {}): QueueItem {
     return this.mutate((s) => {
       const item: QueueItem = {
         id: `q${s.next}`,
@@ -177,6 +179,7 @@ export class QueueStore {
         repo,
         files: opts.files ?? [],
         ...(opts.image ? { image: opts.image } : {}),
+        ...(opts.topic ? { topic: opts.topic } : {}),
         created: new Date(this.now()).toISOString(),
         state: "pending",
         rounds: 0,

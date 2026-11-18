@@ -8,6 +8,8 @@
 
 import type { StorageBackend } from "../../storage/interface.js";
 import type { ToolResult } from "./types.js";
+import { registeredProjects } from "../../codegraph/projects.js";
+import { related, formatRelated, type Domain } from "../../codegraph/graph.js";
 import { resolveRoot, ensureFresh, explore, searchSymbols, callers } from "../../codegraph/api.js";
 import { findSummary } from "../../codegraph/summaries.js";
 
@@ -37,6 +39,7 @@ export async function toolCodeExplore(backend: StorageBackend, params: CodeExplo
     const r = await explore(backend, root, params.query, {
       budgetTokens: params.budget_tokens ?? 4000,
       depth: params.depth,
+      projects: await registeredProjects().catch(() => []),
     });
     return ok(r.text);
   } catch (e) {
@@ -92,5 +95,23 @@ export async function toolCodeSummary(backend: StorageBackend, params: CodeSumma
     return ok(`${row.key}\n${row.summary}\n\n(model ${row.model}, generated ${new Date(row.generatedAt).toISOString()})`);
   } catch (e) {
     return fail("code_summary", e);
+  }
+}
+
+export interface GraphRelatedParams {
+  /** A typed key (code:/note:/caseleaf:/cite:), a file path, a symbol name or a project slug. */
+  key: string;
+  depth?: number;
+  /** Subset of code, note, external. */
+  domains?: string[];
+}
+
+export async function toolGraphRelated(backend: StorageBackend, params: GraphRelatedParams): Promise<ToolResult> {
+  try {
+    const domains = (params.domains ?? []).filter((d): d is Domain => d === "code" || d === "note" || d === "external");
+    const r = await related(backend, await registeredProjects(), params.key, { depth: params.depth, domains });
+    return ok(formatRelated(r));
+  } catch (e) {
+    return fail("graph_related", e);
   }
 }

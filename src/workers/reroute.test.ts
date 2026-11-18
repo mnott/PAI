@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSpawn, endContinuedOrigins, escalationReason, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
+import { defaultSpawn, endContinuedOrigins, escalationReason, escalationHeldNote, providerPinned, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
-import { getProfile, lastProfileWriteLogError, profilesPath, setProfileLedger, updateProfile } from "./session-profile-store.js";
+import { getProfile, lastProfileWriteLogError, profilesPath, setProfileLedger, updateProfile, nextClockTime } from "./session-profile-store.js";
 import { resolveWorkers } from "./session-profile.js";
 import { resolveTarget, type TargetDeps } from "./target.js";
 import { sessionProfileSet, type SessionProfileDeps } from "../daemon-mcp/tools/session-profile.js";
@@ -492,5 +492,68 @@ describe("no continuation while its origin lives", () => {
     const { liveFallThrough } = await import("./reroute.js");
     expect(liveFallThrough(dir, "w1", Date.now() + 3600_000)).toBe("w2");
     expect(escalationReason(job({ state: "running", continuedBy: "w2", progressAt: new Date(NOW - 30 * 60_000).toISOString() } as never), NOW, pol(0))).toBeNull();
+  });
+});
+
+describe("escalationReason: time in line at the local model", () => {
+  const min = (n: number): string => new Date(NOW - n * 60_000).toISOString();
+  const sched = (waitMin: number) => ({ at: NOW, engines: {}, workers: { w1: { waitMsTotal: waitMin * 60_000, waitingSince: 0 } } }) as never;
+  const run = (o: object) => job({ state: "running", started: min(60), ...o } as never);
+  it("12 wall minutes, 9 in line: not escalated", () => {
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(9))).toBeNull();
+  });
+  it("12 wall minutes, 1 in line: escalated with both numbers", () => {
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(1))).toBe("no edit or commit for 11m of own time (12m wall, 1m in line)");
+  });
+  it("in line before the last progress does not count", () => {
+    expect(escalationReason(run({ progressAt: min(12), lineAtProgressMs: 9 * 60_000 }), NOW, pol(0), sched(9))).toContain("no edit or commit for 12m");
+  });
+  it("cloud worker (no scheduler entry) unchanged", () => {
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(0))).toBe("no edit or commit for 12m");
+    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), null)).toBe("no edit or commit for 12m");
+  });
+  it("read-only worker with steady successful calls is not escalated; silent one is", () => {
+    expect(escalationReason(run({ readOnly: true, progressAt: min(1) }), NOW, pol(0))).toBeNull();
+    expect(escalationReason(run({ readOnly: true, progressAt: min(12) }), NOW, pol(0))).toBe("no successful tool call for 12m");
+  });
+});
+
+describe("escalation switch: per session, per run, pinned local", () => {
+  const stalled = (o: object = {}) => job({ state: "running", started: new Date(NOW - 60 * 60_000).toISOString(), progressAt: new Date(NOW - 12 * 60_000).toISOString(), ...o } as never);
+  it("session escalate off: no escalation for that session, still for others", () => {
+    updateProfile("Quiet", { escalate: "off" });
+    expect(escalationReason(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toBeNull();
+    expect(escalationReason(stalled({ sessionKey: "Loud" }), NOW, pol(0))).toContain("no edit or commit");
+    expect(escalationHeldNote(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toBe("stalled 12m, escalation off for this session");
+    expect(escalationHeldNote(stalled({ sessionKey: "Loud" }), NOW, pol(0))).toBeNull();
+    updateProfile("Quiet", { escalate: null });
+    expect(escalationReason(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toContain("no edit or commit");
+  });
+  it("--until expires by itself", () => {
+    updateProfile("Quiet", { escalate: "off", escalate_until: NOW + 60_000 });
+    expect(escalationReason(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toBeNull();
+    expect(escalationReason(stalled({ sessionKey: "Quiet" }), NOW + 120_000, pol(0))).toContain("no edit or commit");
+    expect(nextClockTime("07:00", new Date(2026, 10, 18, 19, 0))).toBe(new Date(2026, 10, 19, 7, 0).getTime());
+    expect(nextClockTime("21:30", new Date(2026, 10, 18, 19, 0))).toBe(new Date(2026, 10, 18, 21, 30).getTime());
+  });
+  it("set through session_profile_set (escalate off + until) and show lists it", async () => {
+    const deps: SessionProfileDeps = { path: profilesPath(), env: {}, ctx: fakeCtx() };
+    const r = await sessionProfileSet({ name: "Quiet", escalate: "off", until: "07:00" }, deps);
+    expect(r.content[0].text).toContain("escalate: off until");
+    expect(getProfile("Quiet")?.escalate).toBe("off");
+    const on = await sessionProfileSet({ name: "Quiet", escalate: "on" }, deps);
+    expect(on.content[0].text).toContain("escalate: on");
+    expect(getProfile("Quiet")?.escalate).toBeUndefined();
+  });
+  it("--no-escalate run is never escalated", () => {
+    expect(escalationReason(stalled({ noEscalate: true }), NOW, pol(0))).toBeNull();
+    expect(escalationReason(stalled({ noEscalate: true, consecFails: 9 }), NOW, pol(0))).toBeNull();
+  });
+  it("--where local / --force-local routeWhy count as pinned", () => {
+    for (const why of ["gyro-l/m (--where local)", "gyro-l/m (--force-local)", "gyro-l/m (local)", "gyro-l/m (flag: --provider)"]) {
+      expect(providerPinned({ routeWhy: why })).toBe(true);
+      expect(escalationReason(stalled({ routeWhy: why }), NOW, pol(0))).toBeNull();
+    }
+    expect(providerPinned({ routeWhy: "gyro-l/m (class: implement)" })).toBe(false);
   });
 });

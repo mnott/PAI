@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS code_symbols (
   end_line       INTEGER NOT NULL,
   signature      TEXT NOT NULL DEFAULT '',
   exported       INTEGER NOT NULL DEFAULT 0,
-  search_text    TEXT NOT NULL DEFAULT ''
+  search_text    TEXT NOT NULL DEFAULT '',
+  doc            TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS code_refs (
@@ -58,6 +59,23 @@ CREATE VIRTUAL TABLE IF NOT EXISTS code_symbols_fts USING fts5(
   tokenize="unicode61 remove_diacritics 2"
 );
 
+-- SQLite fallback of Postgres kg_triples (same columns; times are epoch ms).
+CREATE TABLE IF NOT EXISTS kg_triples (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject        TEXT NOT NULL,
+  predicate      TEXT NOT NULL,
+  object         TEXT NOT NULL,
+  project_id     INTEGER,
+  source_session TEXT,
+  valid_from     INTEGER NOT NULL,
+  valid_to       INTEGER,
+  confidence     TEXT DEFAULT 'EXTRACTED',
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kg_subject ON kg_triples(subject);
+CREATE INDEX IF NOT EXISTS idx_kg_object ON kg_triples(object);
+CREATE INDEX IF NOT EXISTS idx_kg_scope ON kg_triples(source_session);
+
 -- The FTS sync triggers are created by store-sqlite.ts ensure() with explicit
 -- sqlite_master guards: CREATE TRIGGER ... IF NOT EXISTS cannot run inside a
 -- multi-statement db.exec() through better-sqlite3's statement splitter.
@@ -68,6 +86,10 @@ CREATE INDEX IF NOT EXISTS idx_code_symbols_name ON code_symbols(repo_root, name
 CREATE INDEX IF NOT EXISTS idx_code_refs_from ON code_refs(from_file_id);
 CREATE INDEX IF NOT EXISTS idx_code_refs_toname ON code_refs(repo_root, to_name);
 CREATE INDEX IF NOT EXISTS idx_code_refs_tosym ON code_refs(to_symbol_id);
+
+-- doc comments became a searchable column after the first release; existing
+-- tables get it added by store-sqlite.ts ensure() (SQLite has no ADD COLUMN
+-- IF NOT EXISTS, so the ALTER is guarded there and absent from this SQL).
 `;
 
 export const CODE_SUMMARIES_SQLITE_SQL = `

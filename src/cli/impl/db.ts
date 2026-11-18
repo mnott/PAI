@@ -12,7 +12,7 @@ import { ok, warn, err, dim, bold, header, renderTable } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { migrateToPostgres, renderReport } from "../../storage/migrate-to-postgres.js";
 import { createStorageBackend } from "../../storage/factory.js";
-import { runDbQuery, listDbTables, getDbTableSchema } from "../../storage/db-admin.js";
+import { runDbQuery, listDbTables, getDbTableSchema, cleanupTestDatabases, pgAdminUrl } from "../../storage/db-admin.js";
 import type { StorageBackend } from "../../storage/interface.js";
 
 // ---------------------------------------------------------------------------
@@ -184,4 +184,30 @@ export async function cmdMigrateToPostgres(opts: { dryRun?: boolean; skipDump?: 
   });
   console.log(renderReport(result));
   return result.ok ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// pai db cleanup-test-dbs
+// ---------------------------------------------------------------------------
+
+export async function cmdCleanupTestDbs(opts: { dryRun?: boolean }): Promise<number> {
+  const config = loadConfig();
+  const connStr = config.postgres?.connectionString;
+  if (!connStr) {
+    console.error(err("  postgres.connectionString is not configured — nothing to clean up"));
+    return 1;
+  }
+  try {
+    const dropped = await cleanupTestDatabases(pgAdminUrl(connStr), { dryRun: opts.dryRun });
+    if (dropped.length === 0) {
+      console.log(dim("  no leaked pai_test_* databases older than an hour"));
+      return 0;
+    }
+    for (const name of dropped) console.log(`  ${opts.dryRun ? "would drop" : "dropped"} ${bold(name)}`);
+    console.log();
+    console.log(dim(`  ${dropped.length} database(s)${opts.dryRun ? " (dry run)" : ""}`));
+    return 0;
+  } catch (e) {
+    return reportFailure(e);
+  }
 }

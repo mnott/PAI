@@ -12,13 +12,13 @@ import { ensureCodeGraphSchemaPostgres } from "./schema-postgres.js";
 import { symbolFtsText, splitIdentifierWords } from "./fts.js";
 import type {
   CodeGraphStore, CodeFileRow, CodeGraphStats, FileRecord, RefRow,
-  ResolvedRefRow, SymbolRow, SummaryRow,
+  ResolvedRefRow, SymbolRow, TripleSpec, TripleRow, SummaryRow,
 } from "./store.js";
 
 interface SymDbRow {
   id: number; name: string; qualified_name: string; kind: string;
   file: string; file_id: number; start_line: number; end_line: number;
-  signature: string; exported: boolean;
+  signature: string; exported: boolean; doc?: string;
 }
 interface RefDbRow {
   id: number; kind: string; line: number; to_name: string; to_symbol_id: number | null;
@@ -40,7 +40,7 @@ function mapSymbol(r: SymDbRow): SymbolRow {
   return {
     id: r.id, name: r.name, qualifiedName: r.qualified_name, kind: r.kind,
     file: r.file, fileId: r.file_id, startLine: r.start_line, endLine: r.end_line,
-    signature: r.signature, exported: r.exported,
+    signature: r.signature, doc: r.doc ?? "", exported: r.exported,
   };
 }
 
@@ -51,7 +51,7 @@ function mapRef(r: RefDbRow): ResolvedRefRow {
       : {
           id: r.to_symbol_id, name: r.t_name, qualifiedName: r.t_qualified_name!, kind: r.t_kind!,
           file: r.t_file!, fileId: r.t_file_id!, startLine: r.t_start_line!, endLine: r.t_end_line!,
-          signature: r.t_signature!, exported: !!r.t_exported,
+          signature: r.t_signature!, doc: "", exported: !!r.t_exported,
         };
   return {
     id: r.id, kind: r.kind, line: r.line, toName: r.to_name, toSymbolId: r.to_symbol_id,
@@ -70,6 +70,10 @@ const REF_SELECT = `
   LEFT JOIN code_symbols fs ON fs.id = cr.from_symbol_id
   LEFT JOIN code_symbols ts ON ts.id = cr.to_symbol_id
   LEFT JOIN code_files tf ON tf.id = ts.file_id`;
+
+/** Paths per delete statement in deleteFiles — keeps the ANY() list and the
+ *  cascade work bounded while turning N round-trips into N/BATCH. */
+const DELETE_BATCH = 500;
 
 /** tsquery for a symbol search: OR of quoted sub-word terms, same shape as memory search. */
 export function buildSymbolTsQuery(query: string): string {
@@ -123,13 +127,13 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
         const chunk = file.symbols.slice(i, i + 500);
         const params: unknown[] = [];
         const rows = chunk.map((s, j) => {
-          const o = j * 10;
+          const o = j * 11;
           params.push(repoRoot, fileId, s.name, s.qualifiedName, s.kind, s.startLine, s.endLine, s.signature, s.exported,
-            symbolFtsText(s.name, s.qualifiedName, s.signature));
-          return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10})`;
+            symbolFtsText(s.name, s.qualifiedName, s.signature), s.doc ?? "");
+          return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10},$${o + 11})`;
         });
         const r = await client.query<{ id: number }>(
-          `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text)
+          `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text, doc)
            VALUES ${rows.join(",")} RETURNING id`,
           params,
         );
@@ -162,21 +166,52 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     }
   }
 
+  /**
+   * Set-based, batched. The delete walks the UNIQUE (repo_root, path) index in
+   * chunks of BATCH rows instead of one statement per file: a per-file
+   * `DELETE FROM code_files WHERE id = $1` pays the FK cascade scan of
+   * code_symbols/code_refs plus GIN fts_vector maintenance once per call, and
+   * on --force that ran 1393 times (11 min at 0.6% CPU — Postgres-bound).
+   */
   async deleteFiles(repoRoot: string, paths: string[]): Promise<{ brokenRefIds: number[] }> {
     await this.ensure();
     if (paths.length === 0) return { brokenRefIds: [] };
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const broken = await client.query<{ id: number }>(
-        `SELECT cr.id FROM code_refs cr
-         JOIN code_symbols s ON s.id = cr.to_symbol_id
-         WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[]))`,
-        [repoRoot, paths],
-      );
-      await client.query("DELETE FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[])", [repoRoot, paths]);
+      const brokenRefIds: number[] = [];
+      for (let i = 0; i < paths.length; i += DELETE_BATCH) {
+        const batch = paths.slice(i, i + DELETE_BATCH);
+        const broken = await client.query<{ id: number }>(
+          `SELECT cr.id FROM code_refs cr
+           JOIN code_symbols s ON s.id = cr.to_symbol_id
+           WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[]))`,
+          [repoRoot, batch],
+        );
+        for (const r of broken.rows) brokenRefIds.push(r.id);
+        await client.query("DELETE FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[])", [repoRoot, batch]);
+      }
       await client.query("COMMIT");
-      return { brokenRefIds: broken.rows.map((r) => r.id) };
+      return { brokenRefIds };
+    } catch (e) {
+      try { await client.query("ROLLBACK"); } catch { /* dead connection */ }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** One transaction, three set-based deletes — refs first so inbound
+   *  to_symbol_id SET NULL triggers find nothing to fire per row. */
+  async clearRepo(repoRoot: string): Promise<void> {
+    await this.ensure();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM code_refs WHERE repo_root = $1", [repoRoot]);
+      await client.query("DELETE FROM code_symbols WHERE repo_root = $1", [repoRoot]);
+      await client.query("DELETE FROM code_files WHERE repo_root = $1", [repoRoot]);
+      await client.query("COMMIT");
     } catch (e) {
       try { await client.query("ROLLBACK"); } catch { /* dead connection */ }
       throw e;
@@ -230,7 +265,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     if (!tsQuery) return [];
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND s.fts_vector @@ to_tsquery('simple', $2)
@@ -245,7 +280,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND (s.name = $2 OR s.qualified_name = $2)
@@ -259,7 +294,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND cf.path = $2 ORDER BY s.start_line`,
@@ -334,7 +369,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 ORDER BY cf.path, s.start_line`,
@@ -390,5 +425,69 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query("DELETE FROM code_summaries WHERE repo_root = $1 AND NOT (key = ANY($2::text[]))", [repoRoot, keep]);
     return r.rowCount ?? 0;
+  }
+
+  async syncTriples(scope: string, desired: TripleSpec[]): Promise<{ added: number; closed: number; kept: number }> {
+    await this.ensure();
+    const key = (t: { subject: string; predicate: string; object: string }) => `${t.subject}\u0000${t.predicate}\u0000${t.object}`;
+    const want = new Map(desired.map((t) => [key(t), t]));
+    const open = await this.pool.query<{ id: number; subject: string; predicate: string; object: string }>(
+      "SELECT id, subject, predicate, object FROM kg_triples WHERE source_session = $1 AND valid_to IS NULL",
+      [scope],
+    );
+    const have = new Set<string>();
+    const closeIds: number[] = [];
+    let kept = 0;
+    for (const r of open.rows) {
+      const k = key(r);
+      if (want.has(k) && !have.has(k)) { have.add(k); kept++; } else closeIds.push(r.id);
+    }
+    const fresh = [...want].filter(([k]) => !have.has(k)).map(([, t]) => t);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (closeIds.length) await client.query("UPDATE kg_triples SET valid_to = NOW() WHERE id = ANY($1::int[])", [closeIds]);
+      for (let i = 0; i < fresh.length; i += 500) {
+        const c = fresh.slice(i, i + 500);
+        await client.query(
+          `INSERT INTO kg_triples (subject, predicate, object, project_id, source_session, confidence)
+           SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[], $6::text[])`,
+          [c.map((t) => t.subject), c.map((t) => t.predicate), c.map((t) => t.object), c.map((t) => t.projectId ?? null), c.map(() => scope), c.map((t) => t.confidence)],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+    return { added: fresh.length, closed: closeIds.length, kept };
+  }
+
+  async triplesTouching(keys: string[], opts?: { limit?: number; includeClosed?: boolean }): Promise<TripleRow[]> {
+    await this.ensure();
+    if (keys.length === 0) return [];
+    const r = await this.pool.query<Record<string, unknown>>(
+      `SELECT id, subject, predicate, object, project_id, confidence,
+              (EXTRACT(EPOCH FROM valid_from) * 1000)::float8 AS vf, (EXTRACT(EPOCH FROM valid_to) * 1000)::float8 AS vt
+       FROM kg_triples WHERE (subject = ANY($1::text[]) OR object = ANY($1::text[]))${opts?.includeClosed ? "" : " AND valid_to IS NULL"}
+         AND source_session LIKE 'relate:%' ORDER BY id LIMIT $2`,
+      [keys, opts?.limit ?? 500],
+    );
+    return r.rows.map((x) => ({
+      id: x.id as number, subject: x.subject as string, predicate: x.predicate as string, object: x.object as string,
+      confidence: x.confidence as "EXTRACTED" | "INFERRED", projectId: (x.project_id as number | null) ?? null,
+      validFrom: Number(x.vf), validTo: x.vt == null ? null : Number(x.vt),
+    }));
+  }
+
+  async tripleCounts(): Promise<Record<string, { open: number; closed: number }>> {
+    await this.ensure();
+    const r = await this.pool.query<{ predicate: string; open: string; closed: string }>(
+      `SELECT predicate, COUNT(*) FILTER (WHERE valid_to IS NULL)::text AS open, COUNT(*) FILTER (WHERE valid_to IS NOT NULL)::text AS closed
+       FROM kg_triples WHERE source_session LIKE 'relate:%' GROUP BY predicate`,
+    );
+    return Object.fromEntries(r.rows.map((x) => [x.predicate, { open: Number(x.open), closed: Number(x.closed) }]));
   }
 }

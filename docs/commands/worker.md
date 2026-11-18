@@ -54,6 +54,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--where WHERE` | string | — | Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where) |
 | `--batch` | flag | — | This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min |
 | `--now` | flag | — | Go ahead of the runs waiting for a slot on the provider |
+| `--no-escalate` | flag | — | Never move this run (or its continuations) to the cloud by the stall / queued-too-long rule |
 | `--force-local` | flag | — | With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts) |
 | `--local NAME` | string | — | Run on the local model PAI resolves: the first running one in the class's routing tier order, else the workers.yaml `local:` preference when running (a `local:` that is not running is ignored), else the most recently used running model; --local NAME picks a specific running model |
 | `--local-ok` | flag | — | This run may go to a local provider under the prefer-cloud policy |
@@ -64,6 +65,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--mcp NAMES` | string | — | MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`) |
 | `--no-pane` | flag | — | Ignored: every start needs a visible pane |
 | `--priority high|normal|low` | string | — | Priority when the provider is full or its local engine is shared (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker; change it live with `pai worker priority <id> <level>` |
+| `--topic name` | string | — | Topic that groups related jobs in the queue and cockpit (children of a worker and continuations keep the parent's; no topic is guessed from the label) |
 | `--no-queue` | flag | — | Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent) |
 | `--no-stagger` | flag | — | Do not wait for an earlier run on the same provider to warm its prompt cache |
 | `--worktree` | flag | — | Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo) |
@@ -138,6 +140,7 @@ Shows the workers started from this terminal. When other sessions have live work
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--all` | flag | — | Workers of all sessions, not just this terminal's |
+| `--topic NAME` | string | — | Only the workers of this topic |
 | `--panes` | flag | — | List process -> pane -> tab for everything running, checked live |
 | `--mute-local-idle SESSION` | string | — | Stop the idle-local-model nudge to this session name (or iTerm id) |
 | `--unmute-local-idle SESSION` | string | — | Resume the idle-local-model nudge to this session |
@@ -759,6 +762,7 @@ No arguments lists every worker parked behind a provider's concurrency cap, per 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--session NAME` | string | — | Show only the jobs of this session (repeatable); the default is every session |
+| `--topic NAME` | string | — | Show only the jobs of this topic (repeatable); the default is every topic |
 
 ```sh
 pai worker queue
@@ -2064,7 +2068,7 @@ use `--cloud` or `--provider`.
 
 ## See also
 
-[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
+[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai graph`](graph.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <command>` to read any of these in the terminal.
 

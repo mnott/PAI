@@ -132,6 +132,8 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   vaultIndex: "Read-only indexing of vaultPath for memory search: { enabled } (default true). Independent of obsidian.enabled.",
   lessonsIndex: "Indexing of <PAI home>/lessons (review-gated lessons) for memory search: { enabled } (default true).",
   vaultPath: "Obsidian vault root path for zettelkasten indexing, if any.",
+  externalGraph:
+    "Optional external document graph for `pai graph related`: { enabled (default false), connectionEnv (env var holding the Postgres connection string), schema, view }. The view needs src_key, dst_key, kind, page_hint, updated_at. Read-only; unreachable means queries run without it.",
   vaultProjectId: "Registry project_id used for vault chunks in memory_chunks. Default: auto-detected.",
   notifications: "Notification subsystem configuration.",
   search: "Search defaults, applied when an MCP tool or CLI call doesn't specify one.",
