@@ -10,19 +10,37 @@
 
 export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted, then the paused and frozen ones. Every button acts on that one job (or on every job of a session) and the state badge shows the effect at once.";
 var WK_EXPLAIN="running = holds a slot; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs.";
-var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%"],["model","model",90],["prio","prio",90],["time","time r",80],["actions","actions",90]];
+var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%"],["model","model",110],["prio","prio",90],["time","time r",80],["actions","actions",210]];
 var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
 var WK_GROUPS=["running","waiting","paused / frozen"];
 var WK_BADGE={"running":"wq-run","waiting":"wq-wait","paused":"wq-pause","frozen":"wq-frozen","deep-frozen":"wq-deep"};
-var WK_FILTER=null,WK_MENU=null;
-var WK_LBL={"next":["run next","moves it to the front of the waiting jobs"],"up":["move up","one place earlier"],"down":["move down","one place later"],"pause":["pause","park it; its slot goes to the next job"],"resume":["resume","continue it"],"freeze":["freeze","stop its processes in memory (lost on reboot)"],"thaw":["thaw","continue the frozen processes"],"deep-freeze":["deep-freeze","save its work and stop it; survives a reboot"],"deep-resume":["resume saved","continue from the saved stop"],"to-local":["move to local","move the task to the local model"],"to-cloud":["move to cloud","move the task to a cloud provider"],"stop":["stop","end this command"]};
-var WK_ICON={"pause":"⏸","resume":"▶","deep-resume":"▶","stop":"■","next":"↑"};
+var WK_FILTERS=[],WK_SORT=null,WK_MENU=null;
+/** Filters (session names) and sort ({col,dir}) persist in localStorage. */
+function wkLoad(){try{var f=JSON.parse(localStorage.getItem("wqFilter")||"[]"),s=JSON.parse(localStorage.getItem("wqSort")||"null");if(Array.isArray(f))WK_FILTERS=f.filter(function(x){return typeof x==="string"});if(s&&(s.col==="session"||s.col==="state"||s.col==="time"))WK_SORT={col:s.col,dir:s.dir==="desc"?"desc":"asc"}}catch(e){}}
+function wkSave(){try{localStorage.setItem("wqFilter",JSON.stringify(WK_FILTERS));if(WK_SORT)localStorage.setItem("wqSort",JSON.stringify(WK_SORT));else localStorage.removeItem("wqSort")}catch(e){}}
+wkLoad();
+/** The one open session (for the session menu): the single active filter, else null. */
+function wkOne(){return WK_FILTERS.length===1?WK_FILTERS[0]:null}
+/** Filtered by the chosen sessions, then sorted (admission order is the tie-break and the default). */
+function wkView(rows){
+ var r=(rows||[]).map(function(x,i){return{x:x,i:i}});
+ if(WK_FILTERS.length)r=r.filter(function(o){return WK_FILTERS.indexOf(o.x.session)>=0});
+ if(WK_SORT){var c=WK_SORT.col,sg=WK_SORT.dir==="desc"?-1:1;r.sort(function(a,b){var u=c==="session"?(a.x.session<b.x.session?-1:a.x.session>b.x.session?1:0):c==="time"?a.x.seconds-b.x.seconds:wkGroupOf(a.x)-wkGroupOf(b.x);return u?u*sg:a.i-b.i})}
+ return r.map(function(o){return o.x});
+}
+var WK_LBL={"next":["run next","goes to the front of the waiting jobs and takes the next free slot"],"up":["move up","one place earlier in the waiting order"],"down":["move down","one place later in the waiting order"],"pause":["pause","stops taking model time, frees its slot for the next job, keeps its work"],"resume":["resume","goes back into the queue and continues"],"freeze":["freeze","stops its processes in memory (lost on reboot)"],"thaw":["thaw","continues the frozen processes"],"deep-freeze":["deep-freeze","saves its work and stops it; survives a reboot"],"deep-resume":["resume","continues from the saved stop"],"to-local":["move to local","restarts the job on the local model and continues its branch"],"to-cloud":["move to cloud","restarts the job on a cloud provider and continues its branch"],"stop":["stop","ends this command"]};
+var WK_SURE={"deep-freeze":1,"to-local":1,"to-cloud":1},WK_CONF=null,WK_CT=null;
+/** One-click inline confirm: the first click arms the button ("confirm?") for 3 s, the second runs it. True = run now. */
+function wkArm(key,a,rd){if(!WK_SURE[a]||WK_CONF===key){WK_CONF=null;return true}WK_CONF=key;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_CONF=null;rd()},3000);rd();return false}
 /** The stable hue of a session name. */
 function wkHue(n){var h=0,i;for(i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))%360;return h}
-function wkChip(name,on){var h=wkHue(name);return'<button type="button" class="wq-chip'+(on?' on':'')+'" data-qs="'+esc(name)+'"'+(on?' aria-pressed="true"':'')+' style="--h:'+h+'" title="'+esc(name)+': click to show only this session and open its actions; click again for all">'+esc(name)+'</button>'}
+function wkChip(name,on){var h=wkHue(name);return'<button type="button" class="wq-chip'+(on?' on':'')+'" data-qs="'+esc(name)+'"'+(on?' aria-pressed="true"':'')+' style="--h:'+h+'" title="'+esc(name)+': click to show only this session (several may be active); click again to remove it">'+esc(name)+'</button>'}
 /** One icon button of a row: data-qa = the action, data-id = the job; label in the tooltip and the aria-label. */
-function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0])+'">'+(WK_ICON[a]||l[0])+'</button>'}
-function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯</button>'}
+/** Model as a chip: each local provider its own stable hue, cloud: violet (sonnet), amber (opus), other cloud families their own. */
+function wkModelHue(r){var m=r.model||"";if(r.local)return wkHue(m);return/opus/.test(m)?40:/sonnet/.test(m)?270:/haiku/.test(m)?200:/fable/.test(m)?320:290}
+function wkModel(r){if(!r.model)return'<span class="dim">–</span>';return'<span class="wq-chip wq-mc" style="--h:'+wkModelHue(r)+'" title="'+esc(r.modelFull||r.model)+'">'+esc(r.model)+'</span>'}
+function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic wq-tx" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0])+'">'+l[0]+'</button>'}
+function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic wq-tx'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯ more</button>'}
 function wkTRow(r){
  var has=function(a){return r.actions.indexOf(a)>=0},main=r.kind==="command"?"stop":has("deep-resume")?"deep-resume":has("resume")?"resume":"pause";
  var acts=(has(main)?wkIconBtn(r.id,main):"")+(has("next")?wkIconBtn(r.id,"next"):"")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
@@ -31,29 +49,30 @@ function wkTRow(r){
  var full=r.task+(r.detail?" · "+r.detail:"")+" ["+r.id+"]";
  var task='<span class="wq-t" title="'+esc(full)+'">'+esc(r.task)+'</span>'+(r.stale?' <span class="wq-stale" title="waiting since an older build">stale waiter</span>':"");
  var pr=r.kind==="command"?'<span class="dim">–</span>':'<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
- return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTER===r.session)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m" title="'+esc(r.modelFull||r.model)+'">'+esc(r.model)+'</td><td>'+pr+'</td><td class="r">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
+ return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td>'+pr+'</td><td class="r">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
 }
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
 /** The one table: fixed layout, one line per job, a thin labelled separator where the group changes. */
 function wkQTable(rows){
- var out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+'>'+c[0]+'</th>'}).join("")+'</tr></thead><tbody>',g=-1;
- rows.forEach(function(r){var k=wkGroupOf(r);if(k!==g){g=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+'</td></tr>'}out+=wkTRow(r)});
+ var out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){var k=c[0]==="time"?"time":c[0],sk=k==="state"||k==="session"||k==="time",on=WK_SORT&&WK_SORT.col===k,ar=on?(WK_SORT.dir==="desc"?" ▼":" ▲"):"";return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+(on?' aria-sort="'+(WK_SORT.dir==="desc"?"descending":"ascending")+'"':'')+'>'+(sk?'<button type="button" class="wq-sort'+(on?' on':'')+'" data-qsort="'+k+'" title="sort by '+k+' (click again: ascending, descending, default order)">'+c[0]+ar+'</button>':c[0])+'</th>'}).join("")+'</tr></thead><tbody>',g=-1;
+ var bs=WK_SORT&&WK_SORT.col==="session",flat=WK_SORT&&!bs,sg=null;
+ rows.forEach(function(r){if(bs){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}}else if(!flat){var k=wkGroupOf(r);if(k!==g){g=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+'</td></tr>'}}out+=wkTRow(r)});
  return out+'</tbody></table>';
 }
 /** The open menu (row, session or All jobs), fixed at the clicked button. */
 function wkMenuHtml(){
  if(!WK_MENU)return"";
  var k=WK_MENU.key,items=[],r;
- if(k==="all")items=[["data-qg","freeze","freeze all","stop every worker's processes in memory (lost on reboot)"],["data-qg","thaw","thaw all","continue all frozen processes"],["data-qg","deep-freeze","deep-freeze all","pai stop: save all work and stop everything; survives a reboot"],["data-qg","deep-resume","resume all","pai resume: restore everything saved"]];
- else if(k.indexOf("sess:")===0)items=[["pause","pause"],["freeze","freeze"],["deep-freeze","deep-freeze"],["deep-resume","resume saved"],["resume","resume"]].map(function(x){return["data-qx",x[0],x[1]+" all of "+k.slice(5),x[1]+" every job of this session"]});
+ if(k==="all")items=[["data-qg","freeze","freeze all","stop every worker's processes in memory (lost on reboot)"],["data-qg","thaw","thaw all","continue all frozen processes"],["data-qg","deep-freeze",WK_CONF==="qg:deep-freeze"?"confirm?":"deep-freeze all","pai stop: save all work and stop everything; survives a reboot"],["data-qg","deep-resume","resume all","pai resume: restore everything saved"]];
+ else if(k.indexOf("sess:")===0)items=[["pause","pause"],["freeze","freeze"],["deep-freeze","deep-freeze"],["deep-resume","resume saved"],["resume","resume"]].map(function(x){return["data-qx",x[0],(WK_CONF==="qx:"+x[0]?"confirm?":x[1]+" all of "+k.slice(5)),x[1]+" every job of this session: "+(WK_LBL[x[0]]||["",""])[1]]});
  else{r=((WQ&&WQ.table)||[]).filter(function(x){return"row:"+x.id===k})[0];if(!r)return"";
-  items=["freeze","thaw","deep-freeze","deep-resume","to-cloud","to-local","up","down"].filter(function(a){return r.actions.indexOf(a)>=0}).map(function(a){var l=WK_LBL[a];return["data-qa",a,l[0],l[1],r.id]})}
+  items=["freeze","thaw","deep-freeze","deep-resume","to-cloud","to-local","up","down"].filter(function(a){return r.actions.indexOf(a)>=0}).map(function(a){var l=WK_LBL[a];return["data-qa",a,WK_CONF===r.id+":"+a?"confirm?":l[0],l[1],r.id]})}
  return'<div class="wq-menu" role="menu" style="left:'+WK_MENU.x+'px;top:'+WK_MENU.y+'px">'+items.map(function(x){return'<button type="button" role="menuitem" '+x[0]+'="'+esc(x[1])+'"'+(x[4]?' data-id="'+esc(x[4])+'"':'')+' title="'+esc(x[3])+'">'+esc(x[2])+'</button>'}).join("")+'</div>';
 }
 /** Title row: (i) legend tooltip, the session chips as filters, and the All jobs menu at the right. */
 function wkBar(q){
- var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return wkChip(r.session,WK_FILTER===r.session)}).join(" ");
- return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" title="'+esc(WK_INFO+" "+WK_EXPLAIN)+'" aria-label="legend">(i)</span><span class="wq-chips">'+chips+'</span><button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
+ var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)}).join(" "),n=(q.table||[]).length,sh=WK_FILTERS.length?wkView(q.table).length:n,cnt=WK_FILTERS.length?'<span class="wq-cnt dim" title="active session filter">showing '+sh+' of '+n+'</span>':"";
+ return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" title="'+esc(WK_INFO+" "+WK_EXPLAIN)+'" aria-label="legend">(i)</span><span class="wq-chips">'+chips+'</span>'+cnt+'<button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
 }
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
 var WQ=null,WK_BLOCKS={},WK_DRAG=null;
@@ -79,7 +98,7 @@ function wkBlockOf(id){return WK_BLOCKS[id]||null}
 /** A block's card html: the table (plus its footnote); a block that is gone says so. */
 function wkBlockHtml(b){
  if(!b)return WK_NONE;
- if(b.table){var tr=((WQ&&WQ.table)||[]).filter(function(r){return!WK_FILTER||r.session===WK_FILTER});return wkBar(WQ||{})+'<div class="wq-w">'+wkQTable(tr)+'</div>'+wkMenuHtml()}
+ if(b.table){var tr=wkView((WQ&&WQ.table)||[]);return wkBar(WQ||{})+'<div class="wq-w">'+wkQTable(tr)+'</div>'+wkMenuHtml()}
  return table(b.head,b.rows)+(b.foot?'<div class="dim" style="text-align:left">'+esc(b.foot)+'</div>':"");
 }
 /** Make the waiting rows of a card draggable (after every repaint; the morph does not carry the attribute). */
@@ -108,13 +127,15 @@ function wkWire(ctx){
   var inMenu=T&&T.closest(".wq-menu"),qs0=T?T.closest("button[data-qs]"):null;
   if(WK_MENU&&!inMenu&&!qs0){WK_MENU=null;rd()}
   var qa=T?T.closest("button[data-qa]"):null;
-  if(qa){if(!qa.disabled){WinA.runAction(ctx.id,"queue.act",{action:qa.getAttribute("data-qa"),id:qa.getAttribute("data-id")},qa,wkHost());if(inMenu){WK_MENU=null;rd()}}return}
+  if(qa){var qak=qa.getAttribute("data-qa");if(!qa.disabled&&wkArm(qa.getAttribute("data-id")+":"+qak,qak,rd)){WinA.runAction(ctx.id,"queue.act",{action:qa.getAttribute("data-qa"),id:qa.getAttribute("data-id")},qa,wkHost());if(inMenu){WK_MENU=null;rd()}}return}
   var qg=e.target&&e.target.closest?e.target.closest("button[data-qg]"):null;
-  if(qg){var gv=qg.getAttribute("data-qg");WK_MENU=null;rd();if(gv.indexOf("deep")===0){WinA.runAction(ctx.id,"queue.act",{action:gv,all:true},qg,wkHost());return}(WQ&&WQ.table||[]).forEach(function(r){if(r.kind==="job"&&r.actions.indexOf(qg.getAttribute("data-qg"))>=0)WinA.runAction(ctx.id,"queue.act",{action:qg.getAttribute("data-qg"),id:r.id},qg,wkHost())});return}
+  if(qg){var gv=qg.getAttribute("data-qg");if(!wkArm("qg:"+gv,gv,rd))return;WK_MENU=null;rd();if(gv.indexOf("deep")===0){WinA.runAction(ctx.id,"queue.act",{action:gv,all:true},qg,wkHost());return}(WQ&&WQ.table||[]).forEach(function(r){if(r.kind==="job"&&r.actions.indexOf(qg.getAttribute("data-qg"))>=0)WinA.runAction(ctx.id,"queue.act",{action:qg.getAttribute("data-qg"),id:r.id},qg,wkHost())});return}
+  var so=T?T.closest("button[data-qsort]"):null;
+  if(so){var sc=so.getAttribute("data-qsort");WK_SORT=!WK_SORT||WK_SORT.col!==sc?{col:sc,dir:"asc"}:WK_SORT.dir==="asc"?{col:sc,dir:"desc"}:null;wkSave();rd();return}
   var qs=qs0;
-  if(qs){var sn=qs.getAttribute("data-qs"),rc2=qs.getBoundingClientRect();WK_FILTER=WK_FILTER===sn?null:sn;WK_MENU=WK_FILTER?{key:"sess:"+sn,x:Math.max(4,Math.min(Math.round(rc2.left),window.innerWidth-190)),y:Math.round(rc2.bottom)+2}:null;rd();return}
+  if(qs){var sn=qs.getAttribute("data-qs"),rc2=qs.getBoundingClientRect();var ix=WK_FILTERS.indexOf(sn);if(ix>=0)WK_FILTERS.splice(ix,1);else WK_FILTERS.push(sn);wkSave();WK_MENU=wkOne()?{key:"sess:"+wkOne(),x:Math.max(4,Math.min(Math.round(rc2.left),window.innerWidth-190)),y:Math.round(rc2.bottom)+2}:null;rd();return}
   var qx=e.target&&e.target.closest?e.target.closest("button[data-qx]"):null;
-  if(qx){if(!qx.disabled)WinA.runAction(ctx.id,"queue.act",{action:qx.getAttribute("data-qx"),session:WK_FILTER},qx,wkHost());WK_MENU=null;rd();return}
+  if(qx){if(!qx.disabled&&wkArm("qx:"+qx.getAttribute("data-qx"),qx.getAttribute("data-qx"),rd))WinA.runAction(ctx.id,"queue.act",{action:qx.getAttribute("data-qx"),session:wkOne()},qx,wkHost());if(WK_CONF===null){WK_MENU=null;rd()}return}
   var cb=e.target&&e.target.closest?e.target.closest("button[data-wk]"):null;
   if(cb){wkCtlRun(ctx,"worker."+cb.getAttribute("data-wk"),cb.getAttribute("data-id"),undefined,cb);return}
   var pb=e.target&&e.target.closest?e.target.closest("button[data-wp]"):null;
