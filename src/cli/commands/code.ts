@@ -3,6 +3,9 @@
 import { OPT, CliError, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { getStorageBackend } from "../../storage/factory.js";
 import * as cg from "../../codegraph/api.js";
+import { relate } from "../../codegraph/relate.js";
+import { registeredProjects } from "../../codegraph/projects.js";
+import { loadConfig } from "../../daemon/config.js";
 
 const root: OptDef = { name: "root", type: "string", value: "DIR", summary: "Repository root (default: the repo around the current directory)" };
 const json: OptDef = { ...OPT.json, summary: "Output raw JSON" };
@@ -86,7 +89,9 @@ export const codeCommand: CommandDef = {
         const backend = await getStorageBackend();
         const r = rootOf(ctx);
         await cg.ensureFresh(backend, r);
-        const res = await cg.explore(backend, r, words(ctx, "QUERY"), { budgetTokens: num(ctx.opts.budget), depth: num(ctx.opts.depth) });
+        const res = await cg.explore(backend, r, words(ctx, "QUERY"), {
+          budgetTokens: num(ctx.opts.budget), depth: num(ctx.opts.depth), projects: await registeredProjects().catch(() => []),
+        });
         console.log(ctx.opts.json === true ? JSON.stringify(res, null, 2) : res.text);
       },
     },
@@ -152,6 +157,31 @@ export const codeCommand: CommandDef = {
         await cg.ensureFresh(backend, r);
         const res = await cg.impact(backend, r, ctx.args.NAME as string, num(ctx.opts.depth));
         print(ctx, res, [`${res.files.length} files, ${res.symbols.length} symbols`, ...res.files.map((f) => `  ${f}`), ...res.symbols.map((s) => `  ${sym(s)}`)]);
+      },
+    },
+    {
+      name: "relate",
+      summary: "Derive relations between projects and notes",
+      description:
+        "Reads the code graphs of the indexed registered projects and writes relations to the knowledge graph (kg_triples): depends-on (manifests), calls-api (routes and MCP tools), shares-protocol (same message types), duplicates (near-identical functions) and, from the vault notes, mentions and cites. " +
+        "A relation that disappears gets an end date, never deleted. Index the projects first (pai code index).",
+      options: [
+        { name: "project", type: "string", value: "SLUG", summary: "Write only this project's relations (all projects are still read)" },
+        { name: "all", type: "boolean", default: false, summary: "All registered projects and the notes (the default)" },
+        json,
+      ],
+      examples: ["pai code relate", "pai code relate --project my-app"],
+      seeAlso: ["pai graph related", "pai code index"],
+      run: async (ctx) => {
+        const backend = await getStorageBackend();
+        const slug = ctx.opts.project as string | undefined;
+        const rep = await relate(backend, await registeredProjects(), { only: slug ? [slug] : undefined, vaultPath: loadConfig().vaultPath || undefined });
+        print(ctx, rep, [
+          `projects  ${rep.projects}`,
+          `triples   ${rep.triples} (added ${rep.added}, ended ${rep.closed}, unchanged ${rep.kept})`,
+          ...Object.entries(rep.byPredicate).map(([k, v]) => `  ${k.padEnd(16)} ${v}`),
+          ...rep.samples.map((x) => `  e.g. ${x.subject} ${x.predicate} ${x.object}`),
+        ]);
       },
     },
     {

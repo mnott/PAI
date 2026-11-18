@@ -27,6 +27,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai find`](find.md) | Search your prompt history for sessions |
 | [`pai freeze`](freeze.md) | Stop all running workers and the local model server to free the CPU/GPU now |
 | [`pai git`](git.md) | Link commits to the session that wrote them |
+| [`pai graph`](graph.md) | Relations across projects, notes and external documents |
 | [`pai handoff`](handoff.md) | Carry a session's work to a new one |
 | [`pai harness`](harness.md) | Sessions PAI can read from agent harnesses (Claude Code, Codex, ...) |
 | [`pai help`](help.md) | Explain a command (same as `pai <command> --help`) |
@@ -141,6 +142,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai code explore` | Answer a question about the code in one call |
 | `pai code impact` | What a change to a symbol could break |
 | `pai code index` | Index a repository |
+| `pai code relate` | Derive relations between projects and notes |
 | `pai code search` | Find symbols by name |
 | `pai code status` | Show what is indexed for a repository |
 | `pai config` | PAI settings: show, read, change |
@@ -181,6 +183,8 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai git notes` | Show the PAI note of a commit |
 | `pai git remove` | Remove the hook and restore the previous one |
 | `pai git setup` | Install the post-commit hook in the current repository |
+| `pai graph` | Relations across projects, notes and external documents |
+| `pai graph related` | Neighbours of a key, path or symbol |
 | `pai handoff` | Carry a session's work to a new one |
 | `pai handoff export` | Write the brief for a session (default: newest here) |
 | `pai handoff show` | Print a handoff brief |

@@ -16,7 +16,7 @@ import { CODEGRAPH_SQLITE_SQL } from "./schema-sqlite.js";
 import { symbolFtsText } from "./fts.js";
 import type {
   CodeGraphStore, CodeFileRow, CodeGraphStats, FileRecord, RefRow,
-  ResolvedRefRow, SymbolRow,
+  ResolvedRefRow, SymbolRow, TripleSpec, TripleRow,
 } from "./store.js";
 
 interface SymDbRow {
@@ -393,5 +393,58 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
       byLanguage: Object.fromEntries(byLang.map((r) => [r.language, r.n])),
       lastIndexedAt: last.n,
     };
+  }
+
+  async syncTriples(scope: string, desired: TripleSpec[]): Promise<{ added: number; closed: number; kept: number }> {
+    this.ensure();
+    const key = (t: { subject: string; predicate: string; object: string }) => `${t.subject}\u0000${t.predicate}\u0000${t.object}`;
+    const want = new Map(desired.map((t) => [key(t), t]));
+    const open = this.db
+      .prepare("SELECT id, subject, predicate, object FROM kg_triples WHERE source_session = ? AND valid_to IS NULL")
+      .all(scope) as Array<{ id: number; subject: string; predicate: string; object: string }>;
+    const have = new Set<string>();
+    const now = Date.now();
+    let added = 0, closed = 0, kept = 0;
+    const close = this.db.prepare("UPDATE kg_triples SET valid_to = ? WHERE id = ?");
+    const ins = this.db.prepare(
+      "INSERT INTO kg_triples (subject, predicate, object, project_id, source_session, valid_from, confidence, created_at) VALUES (?,?,?,?,?,?,?,?)",
+    );
+    this.db.transaction(() => {
+      for (const r of open) {
+        const k = key(r);
+        if (want.has(k) && !have.has(k)) { have.add(k); kept++; } else { close.run(now, r.id); closed++; }
+      }
+      for (const [k, t] of want) {
+        if (have.has(k)) continue;
+        ins.run(t.subject, t.predicate, t.object, t.projectId ?? null, scope, now, t.confidence, now);
+        added++;
+      }
+    })();
+    return { added, closed, kept };
+  }
+
+  async triplesTouching(keys: string[], opts?: { limit?: number; includeClosed?: boolean }): Promise<TripleRow[]> {
+    this.ensure();
+    if (keys.length === 0) return [];
+    const ph = keys.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM kg_triples WHERE (subject IN (${ph}) OR object IN (${ph}))${opts?.includeClosed ? "" : " AND valid_to IS NULL"}
+         AND source_session LIKE 'relate:%' ORDER BY id LIMIT ?`,
+      )
+      .all(...keys, ...keys, opts?.limit ?? 500) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r.id as number, subject: r.subject as string, predicate: r.predicate as string, object: r.object as string,
+      confidence: r.confidence as "EXTRACTED" | "INFERRED", projectId: (r.project_id as number | null) ?? null,
+      validFrom: r.valid_from as number, validTo: (r.valid_to as number | null) ?? null,
+    }));
+  }
+
+  async tripleCounts(): Promise<Record<string, { open: number; closed: number }>> {
+    this.ensure();
+    const rows = this.db
+      .prepare("SELECT predicate, SUM(valid_to IS NULL) AS open, SUM(valid_to IS NOT NULL) AS closed FROM kg_triples WHERE source_session LIKE 'relate:%' GROUP BY predicate")
+      .all() as Array<{ predicate: string; open: number; closed: number }>;
+    return Object.fromEntries(rows.map((r) => [r.predicate, { open: r.open, closed: r.closed }]));
   }
 }

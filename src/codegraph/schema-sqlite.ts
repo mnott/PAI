@@ -59,6 +59,23 @@ CREATE VIRTUAL TABLE IF NOT EXISTS code_symbols_fts USING fts5(
   tokenize="unicode61 remove_diacritics 2"
 );
 
+-- SQLite fallback of Postgres kg_triples (same columns; times are epoch ms).
+CREATE TABLE IF NOT EXISTS kg_triples (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject        TEXT NOT NULL,
+  predicate      TEXT NOT NULL,
+  object         TEXT NOT NULL,
+  project_id     INTEGER,
+  source_session TEXT,
+  valid_from     INTEGER NOT NULL,
+  valid_to       INTEGER,
+  confidence     TEXT DEFAULT 'EXTRACTED',
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kg_subject ON kg_triples(subject);
+CREATE INDEX IF NOT EXISTS idx_kg_object ON kg_triples(object);
+CREATE INDEX IF NOT EXISTS idx_kg_scope ON kg_triples(source_session);
+
 -- The FTS sync triggers are created by store-sqlite.ts ensure() with explicit
 -- sqlite_master guards: CREATE TRIGGER ... IF NOT EXISTS cannot run inside a
 -- multi-statement db.exec() through better-sqlite3's statement splitter.
