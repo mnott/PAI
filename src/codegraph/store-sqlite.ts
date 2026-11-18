@@ -90,11 +90,10 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     const indexes = CODEGRAPH_SQLITE_SQL.slice(CODEGRAPH_SQLITE_SQL.indexOf("CREATE INDEX"));
     // the doc-column migration below the index block is guarded here: SQLite has
     // no ADD COLUMN IF NOT EXISTS, and a plain ALTER would throw on every re-run
-    let migrate = "";
+    this.db.exec(CODEGRAPH_SQLITE_SQL.slice(0, cut) + indexes);
     if (!this.db.prepare("SELECT 1 FROM pragma_table_info('code_symbols') WHERE name='doc'").get()) {
-      migrate = "ALTER TABLE code_symbols ADD COLUMN doc TEXT NOT NULL DEFAULT '';";
+      this.db.exec("ALTER TABLE code_symbols ADD COLUMN doc TEXT NOT NULL DEFAULT ''");
     }
-    this.db.exec(CODEGRAPH_SQLITE_SQL.slice(0, cut) + indexes + migrate);
     for (const [name, sql] of [
       ["code_symbols_ai", `CREATE TRIGGER code_symbols_ai AFTER INSERT ON code_symbols BEGIN
         INSERT INTO code_symbols_fts (rowid, search_text) VALUES (new.id, new.search_text); END`],

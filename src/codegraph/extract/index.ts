@@ -263,9 +263,6 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
   const source = input.content;
   const symbols: SymbolRecord[] = [];
   const refs: RefRecord[] = [];
-  /** definition nodes already recorded, innermost last (for enclosing-symbol lookup) */
-  const defs: Array<{ end: number; index: number }> = [];
-
   // ---- local bindings per symbol -------------------------------------------
   // A function's parameters and its own locals are not callees: refs to them
   // stay unresolved and never resolve to a repo symbol (resolve.ts matches by
@@ -278,6 +275,10 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
   const enclosingAt = (start: number): number => {
     while (openDefs.length && openDefs[openDefs.length - 1].end <= start) openDefs.pop();
     return openDefs.length ? openDefs[openDefs.length - 1].id : -1;
+  };
+  const addAll = (n: Node, type: string): void => {
+    if (n.type === type) addLocal(n.startIndex, n.text);
+    for (const id of n.descendantsOfType(type)) if (id) addLocal(id.startIndex, id.text);
   };
   const addLocal = (start: number, name: string): void => {
     const id = enclosingAt(start);
@@ -293,7 +294,54 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
     const line = node.startPosition.row + 1;
     // walk order is document order: pop definitions this node has moved past
     const nodeStart = node.startIndex;
-    enclosingAt(nodeStart); // also advances the enclosing-definition cursor for localsOf
+    const enclosing = enclosingAt(nodeStart);
+    const fromSymbolIndex: number | undefined = enclosing >= 0 ? enclosing : undefined;
+
+    // ---------------- local bindings ----------------
+    // parameters and let/const/var declarations bind names inside their
+    // enclosing definition; refs to bound names are not calls of repo symbols.
+    if (lang === "typescript" || lang === "javascript") {
+      if (node.type === "formal_parameters") {
+        for (const p of named(node)) {
+          const pn = p.type === "required_parameter" || p.type === "optional_parameter" ? p.childForFieldName("pattern") : p;
+          if (!pn) continue;
+          if (pn.type === "identifier") addLocal(pn.startIndex, pn.text);
+          else addAll(pn, "identifier");
+        }
+      } else if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
+        for (const decl of named(node).filter((c) => c.type === "variable_declarator")) {
+          const dn = decl.childForFieldName("name");
+          if (!dn) continue;
+          if (dn.type === "identifier") addLocal(dn.startIndex, dn.text);
+          else addAll(dn, "identifier");
+        }
+      }
+    } else if (lang === "python") {
+      if (node.type === "parameters") {
+        for (const c of named(node)) {
+          const pn = c.type === "typed_parameter" || c.type === "typed_default_parameter" || c.type === "default_parameter" ? c.childForFieldName("name") : c;
+          const id = pn && (pn.type === "identifier" ? pn : pn?.descendantsOfType("identifier")[0]);
+          if (id) addLocal(id.startIndex, id.text);
+        }
+      } else if (node.type === "assignment") {
+        const left = node.childForFieldName("left");
+        if (left && ["identifier", "pattern_list", "tuple_pattern", "list_pattern"].includes(left.type)) {
+          addAll(left, "identifier");
+        }
+      }
+    } else if (lang === "swift") {
+      if (node.type === "function_value_parameters") {
+        for (const vp of named(node).filter((c) => c.type === "parameter")) {
+          const id = vp.descendantsOfType("simple_identifier").pop();
+          if (id) addLocal(id.startIndex, id.text);
+        }
+      } else if (node.type === "property_declaration" && enclosingAt(node.startIndex) >= 0) {
+        // a local let/var inside a function body (top-level ones are symbols)
+        const pat = node.childForFieldName("pattern") ?? node.descendantsOfType("pattern")[0];
+        const id = pat?.descendantsOfType("simple_identifier").pop();
+        if (id) addLocal(id.startIndex, id.text);
+      }
+    }
 
     // ---------------- definitions ----------------
     let kind: SymbolKind | null = null;
@@ -330,7 +378,7 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
           doc: docCommentOf(node, source),
           exported: isTsExported(node),
         });
-        openDefs.push({ end: node.endIndex, id: index });
+        if (isFn) openDefs.push({ end: node.endIndex, id: index });
       }
       // declarations still host refs (initialiser calls) — fall through below
     }
@@ -360,52 +408,6 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
         exported,
       });
       openDefs.push({ end: node.endIndex, id: index });
-    }
-
-    // ---------------- local bindings ----------------
-    // parameters and let/const/var declarations bind names inside their
-    // enclosing definition; refs to bound names are not calls of repo symbols.
-    if (lang === "typescript" || lang === "javascript") {
-      if (node.type === "formal_parameters") {
-        for (const p of named(node)) {
-          const pn = p.type === "required_parameter" || p.type === "optional_parameter" ? p.childForFieldName("pattern") : p;
-          if (!pn) continue;
-          if (pn.type === "identifier") addLocal(pn.startIndex, pn.text);
-          else for (const id of pn.descendantsOfType("identifier")) addLocal(id.startIndex, id.text);
-        }
-      } else if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
-        for (const decl of named(node).filter((c) => c.type === "variable_declarator")) {
-          const dn = decl.childForFieldName("name");
-          if (!dn) continue;
-          if (dn.type === "identifier") addLocal(dn.startIndex, dn.text);
-          else for (const id of dn.descendantsOfType("identifier")) addLocal(id.startIndex, id.text);
-        }
-      }
-    } else if (lang === "python") {
-      if (node.type === "parameters") {
-        for (const c of named(node)) {
-          const pn = c.type === "typed_parameter" || c.type === "typed_default_parameter" || c.type === "default_parameter" ? c.childForFieldName("name") : c;
-          const id = pn && (pn.type === "identifier" ? pn : pn?.descendantsOfType("identifier")[0]);
-          if (id) addLocal(id.startIndex, id.text);
-        }
-      } else if (node.type === "assignment") {
-        const left = node.childForFieldName("left");
-        if (left && ["identifier", "pattern_list", "tuple_pattern", "list_pattern"].includes(left.type)) {
-          for (const id of left.type === "identifier" ? [left] : left.descendantsOfType("identifier")) addLocal(id.startIndex, id.text);
-        }
-      }
-    } else if (lang === "swift") {
-      if (node.type === "function_value_parameters") {
-        for (const vp of named(node).filter((c) => c.type === "parameter")) {
-          const id = vp.descendantsOfType("simple_identifier").pop();
-          if (id) addLocal(id.startIndex, id.text);
-        }
-      } else if (node.type === "property_declaration" && enclosingAt(node.startIndex) >= 0) {
-        // a local let/var inside a function body (top-level ones are symbols)
-        const pat = node.childForFieldName("pattern") ?? node.descendantsOfType("pattern")[0];
-        const id = pat?.descendantsOfType("simple_identifier").pop();
-        if (id) addLocal(id.startIndex, id.text);
-      }
     }
 
     // ---------------- refs ----------------
