@@ -34,6 +34,8 @@ export interface RunOptions {
   queuePriority?: QueuePriority;
   /** --now: wait at the front of the provider's queue (capacity.ts). */
   priority?: "front";
+  /** --no-escalate: the stall rule never moves this run to the cloud (continuations keep it). */
+  noEscalate?: boolean;
   /** --model fast without a provider: the routed provider's fast model. */
   modelFast?: boolean;
   /** --model default without a provider: the routed provider's default model, not its worker_model. */
@@ -264,6 +266,7 @@ export interface ExecuteArgs {
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
   routeWhy?: string;
+  noEscalate?: boolean;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
   /** --orchestrate: PAI_WORKER_ORCHESTRATOR=1 in the env and the orchestrator addendum in the contract. */

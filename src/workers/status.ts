@@ -201,6 +201,10 @@ export interface WorkerStatus {
   lineAtProgressMs?: number;
   /** A read-only job (no Edit/Write grant, or a spec saying so): any successful tool call counts as progress for the stall escalation. */
   readOnly?: boolean;
+  /** --no-escalate (or a run that asked for local): the stall/queue escalation never moves this run; its continuations keep it. */
+  noEscalate?: boolean;
+  /** Set by the supervision tick while the session's escalation switch holds back a stalled run ("stalled 12m, escalation off for this session"). */
+  escalationHeld?: string;
   /** Copy of the task text (<id>.prompt), kept so the run can be started again elsewhere (reroute.ts). */
   promptFile?: string;
   /** The --class the run was started with. */

@@ -559,6 +559,7 @@ export function renderTable(
       ...(s.switchReason ? [s.switchReason] : []),
       ...(s.fallThroughOf ? [`fall-through of ${s.fallThroughOf}`] : []),
       ...(s.handoffNote ? [s.handoffNote] : s.fallThroughTo ? [`fell through to ${s.fallThroughTo}`] : []),
+      ...(s.escalationHeld ? [s.escalationHeld] : []),
       ...(s.escalated ? [s.escalated] : []),
       ...(s.escalatedTo ? [`escalated -> ${s.escalatedTo}`] : []),
     ];

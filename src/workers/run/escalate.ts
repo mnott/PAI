@@ -209,6 +209,7 @@ export async function rerunOn(a: RerunSource, wid: string, why: string, st: Work
     quiet: a.quiet,
     worktreeFlag: a.worktreeFlag,
     className: a.className,
+    ...(st.noEscalate ? { noEscalate: true } : {}),
     _route: { policy: a.route?.policy ?? "auto", reason: `${to === CLOUD ? "fall-through" : "rerouted"} (${why})`, local: false },
     _fallThroughOf: wid,
     ...(st.term ? { _hostTerm: st.term } : {}),

@@ -1418,6 +1418,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       "parallel_min: in batch fan-outs skip fallback targets whose concurrency cap is lower.",
       "max_parallel: most of this session's workers running at once, on any provider; 1 = one after the other, null/0 = parallel again.",
       "routes {class: [models]}: override routing rows for this session only (e.g. {implement: [\"anthropic/sonnet\"]}); null/[] for a class clears it, routes null clears all. Reason: cloud before local for context width and reasoning.",
+      "escalate on|off [+ until HH:MM]: off keeps this session's workers from being moved to the cloud by the stall rule until the time (or turned on).",
       "chat {provider, model}: the session's default chat model, applied when it next starts; apply_now sends /model into the running session.",
     ].join("\n"),
     {
@@ -1428,6 +1429,8 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       parallel_min: z.number().int().min(0).nullable().optional(),
       max_parallel: z.number().int().min(0).nullable().optional(),
       routes: z.record(z.string(), z.array(z.string()).nullable()).nullable().optional(),
+      escalate: z.enum(["on", "off"]).optional().describe("off: this session's workers are never moved to the cloud by the stall rule (stalls still show in ps); on (default) restores it."),
+      until: z.string().optional().describe("With escalate off: HH:MM (local time, next occurrence) when the switch expires by itself."),
       apply_now: z.boolean().optional().describe("With chat: also send /model <m> into the running session."),
     },
     async (args) => sessionProfileSet(args, await realSessionProfileDeps())
@@ -1520,6 +1523,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
             ...(args.no_pool ? ["--no-pool"] : []),
             ...(args.priority ? ["--priority", args.priority] : []),
             ...(args.topic ? ["--topic", args.topic] : []),
+            ...(args.escalate === false ? ["--no-escalate"] : []),
             ...(args.mcp ? ["--mcp", args.mcp] : []),
             ...(args.cwd ? ["--cwd", args.cwd] : []),
             ...(args.allowed_tools ? ["--allowedTools", args.allowed_tools] : []),
