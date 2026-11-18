@@ -15,6 +15,7 @@
  */
 
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { removeScratch } from "./scratch.js";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
@@ -30,6 +31,7 @@ import { loadConfig } from "../daemon/config.js";
 import { readMergeVerify } from "./workers-config.js";
 import { acquireTestSlotSync, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
+import { lowPriorityWrap } from "../builds/gate.js";
 import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
 import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 
@@ -1500,7 +1502,7 @@ const MERGE_KEEP = "merge in progress:";
 function mergeWorkerInner(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; cliRoot?: string | null; targetToplevel?: string | null } = {}
+  opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; cliRoot?: string | null; targetToplevel?: string | null; install?: DepInstaller } = {}
 ): string {
   const live = opts.force ? liveWorker(logDir, id) : assertWorkerEnded(logDir, id);
   // --force on a live worker: still run the configured verify gate unless the caller opted out
@@ -1612,6 +1614,7 @@ function mergeWorkerInner(
     throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
     }
   }
+  syncMergeDeps(st.cwd, oldHead, st.worktreeDir ?? undefined, opts.install);
   regenCommandDocs(st.cwd, oldHead);
   const verifyLine = gateLines(
     st.cwd,
@@ -1860,6 +1863,74 @@ function findRevertedMerge(cwd: string, branch: string): { merge: string; revert
   }
 }
 
+export type DepInstaller = (cwd: string, count: number) => void;
+
+/** Lockfile entries (`node_modules/x` -> version) of package-lock.json at a revision; {} when absent. */
+function lockPackages(cwd: string, rev: string): Record<string, { version?: string; optional?: boolean; os?: unknown; cpu?: unknown }> {
+  try {
+    return (JSON.parse(git(cwd, ["show", `${rev}:package-lock.json`])) as { packages?: Record<string, never> }).packages ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function installedVersion(dir: string): string | null {
+  try {
+    return (JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version?: string }).version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Default installer: npm at background priority, output on the merge's own terminal. */
+function npmInstallLowPriority(cwd: string, count: number): void {
+  console.log(`installing ${count} new packages for the merge (npm install at background priority)`);
+  const [cmd, ...args] = lowPriorityWrap(["npm", "install", "--no-audit", "--no-fund", "--prefer-offline"]);
+  spawnSync(cmd, args, { cwd, stdio: "inherit", timeout: 600_000 });
+}
+
+/**
+ * When the merge changed package-lock.json, bring the main checkout's node_modules up to date before the gate:
+ * every new or changed lockfile package the worker's worktree already has is APFS-cloned (`cp -c -R`, no CPU);
+ * only what is still missing goes through npm install at background priority. Best effort: a failed gate's
+ * revert leaves the extra packages in place (harmless).
+ */
+export function syncMergeDeps(cwd: string, oldHead: string, wtDir: string | undefined, install: DepInstaller = npmInstallLowPriority): number {
+  try {
+    if (!git(cwd, ["diff", "--name-only", oldHead, "HEAD", "--", "package.json", "package-lock.json"])) return 0;
+    if (!existsSync(join(cwd, "node_modules"))) return 0;
+    const before = lockPackages(cwd, oldHead);
+    const after = lockPackages(cwd, "HEAD");
+    let cloned = 0;
+    let missing = 0;
+    for (const [key, meta] of Object.entries(after)) {
+      if (!key.startsWith("node_modules/") || before[key]?.version === meta.version) continue;
+      const target = join(cwd, key);
+      if (meta.version && installedVersion(target) === meta.version) continue;
+      const src = wtDir ? join(wtDir, key) : "";
+      if (src && meta.version && installedVersion(src) === meta.version) {
+        try {
+          rmSync(target, { recursive: true, force: true });
+          mkdirSync(dirname(target), { recursive: true });
+          execFileSync("cp", platform() === "darwin" ? ["-c", "-R", src, target] : ["-R", src, target], { stdio: "ignore", timeout: 120_000 });
+          cloned++;
+          continue;
+        } catch {
+          rmSync(target, { recursive: true, force: true });
+        }
+      }
+      if (meta.optional || meta.os || meta.cpu) continue; // platform-specific extras npm would skip here too
+      missing++;
+    }
+    if (cloned) console.log(`merge dependencies: cloned ${cloned} packages from the worker's node_modules`);
+    if (missing) install(cwd, missing);
+    return cloned;
+  } catch (e) {
+    console.error(`merge dependency sync failed (${(e as Error).message.split("\n")[0]}); continuing`);
+    return 0;
+  }
+}
+
 /**
  * Regenerate docs/commands from the merged tree's command definitions when the merge touched src/cli,
  * and fold any change into the merge commit, so the full-suite docs-sync test never fails on drift.
@@ -1868,7 +1939,7 @@ function regenCommandDocs(cwd: string, oldHead: string): void {
   const script = join(cwd, "scripts", "regen-docs.ts");
   if (!existsSync(script)) return;
   if (!git(cwd, ["diff", "--name-only", oldHead, "HEAD", "--", "src/cli"])) return;
-  const r = spawnSync(process.execPath, ["--require", createRequire(import.meta.url).resolve("tsx/cjs"), script], { cwd, encoding: "utf8" });
+  const r = spawnSync(process.execPath, ["--import", pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href, script], { cwd, encoding: "utf8" });
   if (r.status !== 0) {
     console.error(`docs regeneration failed (${(r.stderr || r.stdout || "").trim().split("\n").pop()}); continuing without it`);
     return;

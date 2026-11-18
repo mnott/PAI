@@ -203,6 +203,42 @@ describe("merge gate traps", () => {
   });
 });
 
+describe("merge gate dependencies", () => {
+  const lock = (pkgs: Record<string, string>): string =>
+    JSON.stringify({ lockfileVersion: 3, packages: { "": {}, ...Object.fromEntries(Object.entries(pkgs).map(([k, v]) => [`node_modules/${k}`, { version: v }])) } });
+  const pkgJson = (v: string): string => JSON.stringify({ name: "x", version: v });
+
+  function depFixture(inWorktree: boolean): { repo: string; logDir: string; calls: number[] } {
+    const { repo, logDir } = fixture();
+    writeFileSync(join(repo, ".gitignore"), "node_modules\n");
+    writeFileSync(join(repo, "package-lock.json"), lock({}));
+    mkdirSync(join(repo, "node_modules"));
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-qm", "lock"]);
+    makeWorker(repo, logDir, "adds-dep", { extra: { "package-lock.json": lock({ foo: "1.0.0" }) } });
+    if (inWorktree) {
+      const d = join(worktreePath(logDir, "adds-dep"), "node_modules", "foo");
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "package.json"), pkgJson("1.0.0"));
+    }
+    return { repo, logDir, calls: [] };
+  }
+
+  it("a new dependency present in the worktree is cloned into main and npm is not run", () => {
+    const { repo, logDir, calls } = depFixture(true);
+    mergeWorker(logDir, "adds-dep", { verifyTests: false, rebuild: false, cliRoot: null, install: (_c, n) => void calls.push(n) });
+    expect(JSON.parse(readFileSync(join(repo, "node_modules", "foo", "package.json"), "utf8")).version).toBe("1.0.0");
+    expect(calls).toEqual([]);
+  });
+
+  it("a dependency the worktree lacks goes through the (mocked) low-priority install", () => {
+    const { repo, logDir, calls } = depFixture(false);
+    mergeWorker(logDir, "adds-dep", { verifyTests: false, rebuild: false, cliRoot: null, install: (_c, n) => void calls.push(n) });
+    expect(existsSync(join(repo, "node_modules", "foo"))).toBe(false);
+    expect(calls).toEqual([1]);
+  });
+});
+
 describe("merge of an escalated continuation", () => {
   it("keeps its worktree until the merge completes, then removes both trees and reaches the build step", () => {
     const { repo, logDir } = fixture();
