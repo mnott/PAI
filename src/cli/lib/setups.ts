@@ -74,18 +74,19 @@ export function setupWorkersLabel(cfg: Cfg, s: Setup): string {
 }
 
 /**
- * The profile a chosen setup writes: exactly the provider and model its row
- * displays, for chat and workers. The workers pin is marked implicit: a setup
- * pins workers for the launch, it is not the operator's standing choice, and
- * the resolver (session-profile.ts) never routes on an implicit pin.
+ * The profile a chosen setup writes: the chat's provider and model, exactly as
+ * its row displays them. Workers are never part of it: a setup pins workers for
+ * its launch through the session env only (root.ts), and a one-run choice must
+ * not become a standing profile pin — only `pai session profile set --workers`
+ * (or session_profile_set) writes that. A patch with no workers key changes no
+ * workers: an old implicit pin stays for `pai session profile repair` to clear
+ * (root.ts clears one it recognises as its own), and an explicit one must
+ * survive every launch.
  */
-export function setupProfile(cfg: Cfg, s: Setup): { chat: { provider: string; model?: string }; workers: { provider: string; model?: string }; workers_implicit: true } {
+export function setupProfile(cfg: Cfg, s: Setup): { chat: { provider: string; model?: string }; workers?: null } {
   const chatModel = s.orchestrator.model ?? getProviderOrNative(cfg, s.orchestrator.provider)?.models.default;
-  const wModel = s.workersModel ?? workersModel(cfg, s.workers);
   return {
     chat: { provider: s.orchestrator.provider, ...(chatModel ? { model: chatModel } : {}) },
-    workers: { provider: s.workers, ...(wModel ? { model: wModel } : {}) },
-    workers_implicit: true,
   };
 }
 

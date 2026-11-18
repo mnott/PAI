@@ -47,7 +47,7 @@ export function implicitPinProfiles(profiles: Profiles): ImplicitPinRepair[] {
  */
 export function clearImplicitLaunchPins(path?: string): string[] {
   const found = implicitPinProfiles(readProfiles(path));
-  for (const { name } of found) updateProfile(name, { workers: null }, path);
+  for (const { name } of found) updateProfile(name, { workers: null }, path, "repair");
   return found.map((r) => r.name);
 }
 
@@ -62,7 +62,7 @@ export async function repairSessionProfile(cwd: string = process.cwd(), sessionN
   const profiles = readProfiles(path);
   const p = profiles[sessionName];
   if (!p || !looksImplicitLaunchPin(p)) return [];
-  updateProfile(sessionName, { workers: null }, path);
+  updateProfile(sessionName, { workers: null }, path, "repair");
   return [sessionName];
 }
 
