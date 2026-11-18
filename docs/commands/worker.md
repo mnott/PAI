@@ -454,10 +454,14 @@ See also: `pai worker resume`, `pai worker priority`
 Alias of `pai freeze` (--all) and `pai thaw` (--resume)
 
 ```
-pai worker freeze [options]
+pai worker freeze [ID] [options]
 ```
 
-`pai worker freeze --all` is `pai freeze`; `--resume` is `pai thaw`; `--status` shows what is frozen.
+`pai worker freeze <id>` stops one worker's process tree (`pai worker thaw <id>` continues it); `pai worker freeze --all` is `pai freeze`; `--resume` is `pai thaw`; `--status` shows what is frozen.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | no | Freeze this one worker (in memory; lost on reboot) |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -474,9 +478,30 @@ pai worker freeze [options]
 ```sh
 pai worker freeze --all
 pai worker freeze --resume
+pai worker freeze 20261019-142851-84910
 ```
 
 See also: `pai freeze`, `pai thaw`
+
+### pai worker thaw
+
+Continue one frozen worker
+
+```
+pai worker thaw ID
+```
+
+Continues the process tree of one worker stopped with `pai worker freeze <id>`; nothing else is touched.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | yes | Worker id |
+
+```sh
+pai worker thaw 20261019-142851-84910
+```
+
+See also: `pai worker freeze`, `pai thaw`
 
 ### pai worker handoff
 
@@ -724,15 +749,16 @@ Show or reorder the workers waiting for a provider slot
 pai worker queue [VERB] [ID]
 ```
 
-No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). `queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.
+No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). No arguments prints the one table of the machine: running jobs first, then the waiting ones 1..n in admission order, with state, priority, session, model, task and time. `queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up, `queue down ID` one place back. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.
 
 | Argument | Required | Description |
 |---|---|---|
-| `VERB` | no | next (alias front) or up (default: list the queue) |
+| `VERB` | no | next (alias front), up or down (default: list the queue) |
 | `ID` | no | Worker id to pull forward (with next/up) |
 
 ```sh
 pai worker queue
+pai worker queue down 20261019-142851-84910
 pai worker queue next 20261019-142851-84910
 pai worker queue up 20261019-142851-84910
 ```
@@ -1963,6 +1989,7 @@ See also: `pai worker providers`
 | `pai worker reroute` | Move a queued or running worker to another provider |
 | `pai worker pause` | Park a worker's next engine request until resume |
 | `pai worker freeze` | Alias of `pai freeze` (--all) and `pai thaw` (--resume) |
+| `pai worker thaw` | Continue one frozen worker |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
 | `pai worker help` | From inside a worker: ask a stronger model to do one sub-task (budgeted) |
 | `pai worker merge` | Merge a worker's branch into your checkout |

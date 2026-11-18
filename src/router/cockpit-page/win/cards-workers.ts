@@ -8,64 +8,56 @@
  *  drag is active in a card that card is not repainted (WK_DRAG, the card.busyDrag of the spec). The `table`/`note` types
  *  are the generic types of win/types.ts; the cards here only carry views (wkTableView / wkLocalView / wkWtView). */
 
-export const WIN_WORKERS_JS = String.raw`var WK_INFO="Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use next / up) to reorder it; running workers are never interrupted.";
-var WK_BTN='<button type="button" data-q="next" data-id="@" title="runs next; the running worker is not interrupted">next</button> <button type="button" data-q="up" data-id="@" title="move one place up">up</button>';
+export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted. Every button acts on that one job (or on every job of a session) and the state column shows the effect at once.";
 var WK_LEVELS=["high","normal","low"];
-/** A running worker's engine controls: a priority switch (applies to its next request; no native select in the cockpit) and pause/resume. */
-function wkCtl(it){
- var id=esc(it.id),cur=it.priority||"normal",seg=WK_LEVELS.map(function(l){return'<button type="button" data-act="worker.priority" data-wp="'+l+'" data-id="'+id+'" aria-pressed="'+(cur===l)+'"'+(cur===l?' class="on" style="font-weight:700;text-decoration:underline"':'')+' title="'+l+' priority at the engine; applies to the next request">'+l+'</button>'}).join(" ");
- return seg+' <button type="button" data-act="worker.'+(it.paused?"resume":"pause")+'" data-wk="'+(it.paused?"resume":"pause")+'" data-id="'+id+'" title="'+(it.paused?"release the parked request":"park its next engine request; the running one finishes")+'">'+(it.paused?"resume":"pause")+'</button>';
+var WK_EXPLAIN="running = holds a slot; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs.";
+var WK_HEAD=["# .txt","state .txt","activity .txt","prio .txt","session .txt","model .txt","task .txt","time .txt","actions .txt"];
+var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
+var WK_FILTER=null;
+/** One row-level button of the queue table: data-qa = the action, data-id = the job. Deep-freeze is disabled until pai stop/resume exist. */
+function wkAct(id,a,label,tip,on){
+ var dis=(a==="deep-freeze"||a==="deep-resume")&&!WK_DEEP;
+ return'<button type="button" data-qa="'+a+'" data-id="'+esc(id)+'"'+(dis?' disabled title="coming with pai stop/resume"':' title="'+esc(tip)+'"')+(on?' aria-pressed="true" class="on" style="font-weight:700;text-decoration:underline"':'')+'>'+label+'</button>';
 }
-/** State text of a running row: paused, waiting for the engine, or running. */
-function wkState(it,idle){return it.paused?"paused":it.engineWaitSec?"waiting for engine "+wkDur(it.engineWaitSec):idle?"idle session":"running"}
+var WK_DEEP=false;
+var WK_LBL={"next":["next","runs next (front of the waiting jobs)"],"up":["up","one place earlier"],"down":["down","one place later"],"pause":["pause","park it; its slot goes to the next job"],"resume":["resume","continue it"],"freeze":["freeze","stop its processes in memory (lost on reboot)"],"thaw":["thaw","continue the frozen processes"],"deep-freeze":["deep-freeze","save its work and stop it; survives a reboot"],"deep-resume":["resume saved","continue from the saved stop"],"to-local":["to local","move the task to the local model"],"to-cloud":["to cloud","move the task to a cloud provider"],"stop":["stop","end this command"]};
+function wkTRow(r){
+ var acts=r.actions.filter(function(a){return a.indexOf("prio-")!==0}).map(function(a){var l=WK_LBL[a]||[a,a];return wkAct(r.id,a,l[0],l[1])}).join(" ");
+ var pr=r.kind==="command"?"":["low","normal","high","now"].map(function(l){return wkAct(r.id,"prio-"+l,l,l+": "+WK_PTIP[l],r.priority===l)}).join(" ");
+ var ses='<button type="button" data-qs="'+esc(r.session)+'" title="all jobs of this session: pause / freeze / deep-freeze / resume">'+esc(r.session)+'</button>';
+ return[r.slot==="running"?"run":String(r.slot),'<span style="display:inline-block;min-width:13em;white-space:nowrap" title="'+esc(r.detail||"")+'">'+esc(r.stateText)+'</span>','<span style="display:inline-block;min-width:6em;white-space:nowrap" title="'+esc(r.now||"")+'">'+esc(r.activity||"")+'</span>',esc(r.priority),ses,wkSpan(r.model),'<span title="'+esc(r.id+(r.detail?" · "+r.detail:""))+'">'+esc(r.task)+(r.detail?' <span class="dim">'+esc(r.detail)+'</span>':'')+'</span>',wkDur(r.seconds),acts+(pr?" "+pr:"")];
+}
+/** Session chips above the table + the global actions. */
+function wkBar(q){
+ var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return'<button type="button" data-qs="'+esc(r.session)+'"'+(WK_FILTER===r.session?' aria-pressed="true" class="on"':'')+' title="show only this session; click again for all">'+esc(r.session)+'</button>'}).join(" ");
+ var g=[["freeze","freeze all"],["thaw","thaw all"],["deep-freeze","deep-freeze all"],["deep-resume","resume all"]].map(function(x){var dis=x[0].indexOf("deep")===0;return'<button type="button" data-qg="'+x[0]+'"'+(dis?' disabled title="coming with pai stop/resume"':'')+'>'+x[1]+'</button>'}).join(" ");
+ var sa=WK_FILTER?' <span class="dim">'+esc(WK_FILTER)+' (all its jobs):</span> '+[["pause","pause"],["freeze","freeze"],["deep-freeze","deep-freeze"],["resume","resume"]].map(function(x){var dis=x[0]==="deep-freeze";return'<button type="button" data-qx="'+x[0]+'"'+(dis?' disabled title="coming with pai stop/resume"':'')+'>'+x[1]+'</button>'}).join(" "):"";
+ return'<div style="text-align:left">'+g+' <span class="dim">sessions:</span> '+chips+sa+'</div>';
+}
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
 var WQ=null,WK_BLOCKS={},WK_DRAG=null;
 function wkDur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
 function wkSpan(t){return' <span title="'+esc(t)+'">'+esc(t)+'</span>'}
-/** One provider/session row. serial = a cap-1 provider (its waiting rows drag). The row attrs ride on the first cell: table() builds the tr. */
-function wkRow(it,p,waiting,serial){
- var idle=!waiting&&it.ageSec>86400,mdl=p.provider+"/"+(it.model||"?");
- var cells=[waiting?String(it.position):"",(waiting&&serial?'<span class="grip" title="drag to reorder">&#8942;&#8942;</span>':'')+'<span title="'+esc(it.id+" · "+it.label)+'">'+esc(it.label||it.id)+'</span>'];
- cells.push(serial?wkSpan(it.session||"other"):wkSpan(mdl));
- cells.push(waiting?'waiting'+(it.priority&&it.priority!=='normal'?' ('+esc(it.priority)+')':''):esc(wkState(it,idle))+(it.priority&&it.priority!=='normal'?' ('+esc(it.priority)+')':''),wkDur(waiting?it.waitedSec:it.ageSec),waiting?'':esc(idle?"":it.now||""),waiting?WK_BTN.split("@").join(esc(it.id)):idle?"":wkCtl(it));
- var drag=waiting&&serial;
- cells[0]='<span class="'+(idle?'dim':'')+'"'+(drag?' data-qrow="1" data-id="'+esc(it.id)+'" data-prov="'+esc(p.provider)+'" data-pos="'+it.position+'"':"")+'>'+cells[0]+'</span>';
- return cells;
-}
 function wkCmp(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}
 function wkBuildRow(b,i){var l=wkSpan(b.label+(b.mode==="full"?" [full]":"")+(b.key?" ["+b.key+"]":""));return[b.state==="running"?"":String(i+1),l,wkSpan(b.session),b.state==="running"?"running":"waiting"+(b.why?" ("+esc(b.why)+")":""),wkDur(b.state==="running"?b.ageSec:b.waitedSec)]}
 /** The queue payload as blocks: [{id, title (plain text), head, rows}] in page order. */
 function wkBlocks(q){
- var out=[],sess={},ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length}),pl=q.plans||[],pv=q.paneViolations||[],pn=q.panes||[],bq=q.builds;
+ var out=[],sess={},pl=q.plans||[],pv=q.paneViolations||[],bq=q.builds;
  if(pl.length)out.push({id:"plans",title:"plans",head:["plan .txt","parts","phase .txt","in phase","running .txt","workers .txt"],rows:pl.map(function(p){return[wkSpan(p.job),p.merged+'/'+p.total,wkSpan(p.phase),wkDur(p.phaseSec),wkDur(p.ageSec),wkSpan((p.running||[]).join(", "))]})});
- if(pn.length)out.push({id:"panes",title:"panes",head:["label .txt","cwd .txt","running","log .txt"],rows:pn.map(function(p){return[wkSpan(p.label),wkSpan(p.cwd),wkDur(p.ageSec),wkSpan(p.log)]})});
  if(pv.length)out.push({id:"violations",title:"pane violations",head:["process .txt","mark .txt","why .txt"],rows:pv.map(function(p){return[wkSpan(p.id),wkSpan(p.mark),wkSpan(p.why||"")]})});
  if(bq&&(bq.running.length||bq.waiting.length))[["test","tests",bq.testSlots],["build","builds",bq.slots]].forEach(function(P){
   var run=bq.running.filter(function(b){return b.kind===P[0]}).map(function(b){b.state="running";return b}),wt=bq.waiting.filter(function(b){return b.kind===P[0]}).map(function(b){b.state="waiting";return b});
   if(!run.length&&!wt.length)return;
   out.push({id:P[1],title:P[1]+" ("+P[2]+" slot"+(P[2]===1?"":"s")+")",head:["pos","build .txt","session .txt","state","waited"],rows:run.concat(wt).map(wkBuildRow)});
  });
- ps.forEach(function(p){
-  if(p.cap===1){
-   var mods={};p.running.concat(p.waiting).forEach(function(x){if(x.model)mods[x.model]=1});
-   var ms=Object.keys(mods).join(", ");
-   out.push({id:"prov:"+p.provider,title:p.provider+(ms?": "+ms:"")+" (slots "+p.running.length+"/1"+(p.conversationSlots?", conversation slots "+p.conversationSlots:"")+")",head:["pos","worker .txt","session .txt","state","waited","now","move"],
-    rows:p.running.map(function(r){return wkRow(r,p,false,true)}).concat(p.waiting.map(function(w){return wkRow(w,p,true,true)})),foot:p.waiting.length?"":"nothing waiting"});
-   return}
-  p.running.forEach(function(r){(sess[r.session||"other"]=sess[r.session||"other"]||[]).push({k:p.provider+"/"+(r.model||"?"),h:wkRow(r,p,false,false)})});
-  p.waiting.forEach(function(w){(sess[w.session||"other"]=sess[w.session||"other"]||[]).push({k:p.provider+"/"+(w.model||"?"),h:wkRow(w,p,true,false)})});
- });
- Object.keys(sess).sort(wkCmp).forEach(function(s){
-  var it=sess[s].sort(function(a,b){return a.k<b.k?-1:a.k>b.k?1:0}),cnt={};
-  it.forEach(function(x){cnt[x.k]=(cnt[x.k]||0)+1});
-  out.push({id:"sess:"+s,title:s+((q.sessionMax||{})[s]?" · max "+q.sessionMax[s]+" at a time":"")+" · "+Object.keys(cnt).map(function(k){return k+" ×"+cnt[k]}).join(", "),head:["pos","worker .txt","model .txt","state","waited","now","move"],rows:it.map(function(x){return x.h})});
- });
+ if((q.table||[]).length||!out.length)out.unshift({id:"queue",title:"worker queue — "+(q.table||[]).length+" job(s)",head:WK_HEAD,rows:(q.table||[]).map(wkTRow),foot:WK_EXPLAIN,table:true});
  return out;
 }
 function wkBlockOf(id){return WK_BLOCKS[id]||null}
 /** A block's card html: the table (plus its footnote); a block that is gone says so. */
 function wkBlockHtml(b){
  if(!b)return WK_NONE;
+ if(b.table)return'<div class="dim" style="text-align:left">'+esc(b.foot)+'</div>'+wkBar(WQ||{})+table(b.head,b.rows.filter(function(r){return!WK_FILTER||r[4].indexOf(\'data-qs="\'+esc(WK_FILTER)+\'"\')>=0}));
  return table(b.head,b.rows)+(b.foot?'<div class="dim" style="text-align:left">'+esc(b.foot)+'</div>':"");
 }
 /** Make the waiting rows of a card draggable (after every repaint; the morph does not carry the attribute). */
@@ -88,6 +80,14 @@ function wkRowInfo(tr){var s=tr&&tr.querySelector("[data-qrow]");return s?{id:s.
 function wkWire(ctx){
  var body=ctx.body,from=null;
  body.addEventListener("click",function(e){
+  var qa=e.target&&e.target.closest?e.target.closest("button[data-qa]"):null;
+  if(qa){if(!qa.disabled)WinA.runAction(ctx.id,"queue.act",{action:qa.getAttribute("data-qa"),id:qa.getAttribute("data-id")},qa,wkHost());return}
+  var qg=e.target&&e.target.closest?e.target.closest("button[data-qg]"):null;
+  if(qg){if(!qg.disabled)(WQ&&WQ.table||[]).forEach(function(r){if(r.kind==="job"&&r.actions.indexOf(qg.getAttribute("data-qg"))>=0)WinA.runAction(ctx.id,"queue.act",{action:qg.getAttribute("data-qg"),id:r.id},qg,wkHost())});return}
+  var qs=e.target&&e.target.closest?e.target.closest("button[data-qs]"):null;
+  if(qs){var sn=qs.getAttribute("data-qs");WK_FILTER=WK_FILTER===sn?null:sn;if(WQ)Win.update("queue",WQ);return}
+  var qx=e.target&&e.target.closest?e.target.closest("button[data-qx]"):null;
+  if(qx){if(!qx.disabled)WinA.runAction(ctx.id,"queue.act",{action:qx.getAttribute("data-qx"),session:WK_FILTER},qx,wkHost());return}
   var cb=e.target&&e.target.closest?e.target.closest("button[data-wk]"):null;
   if(cb){wkCtlRun(ctx,"worker."+cb.getAttribute("data-wk"),cb.getAttribute("data-id"),undefined,cb);return}
   var pb=e.target&&e.target.closest?e.target.closest("button[data-wp]"):null;

@@ -41,6 +41,9 @@ import { processTreeRssMb } from "../workers/model-inventory.js";
 import { readLocalStatus } from "../workers/local-status.js";
 import { localTierOrder, pickLocal } from "../workers/local-provider.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
+import { readQueueTable, runRowAction, runSessionAction } from "../workers/queue-ops.js";
+import type { RowAction, TableRow } from "../workers/queue-table.js";
+import { rerouteWorker } from "../workers/reroute.js";
 import { ownerSessionName } from "../workers/scope.js";
 import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
 import { getProfile } from "../workers/session-profile-store.js";
@@ -1183,6 +1186,8 @@ function sessionGroup(s: WorkerStatus): string {
   return name.startsWith("tab ") || name === "?" ? basename(s.cwd || "") || "other" : name;
 }
 
+const ROW_ACTIONS = new Set<string>(["next", "up", "down", "pause", "resume", "freeze", "thaw", "deep-freeze", "deep-resume", "to-local", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now", "stop"]);
+
 /** The /cockpit/queue payload: every provider with a live or waiting worker. */
 export interface CockpitBuilds {
   slots: number;
@@ -1214,7 +1219,7 @@ export function cockpitQueue(
   workers: WorkersConfig,
   now = Date.now(),
   owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPidCached
-): { now: number; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; worktrees: string; localModel: string; localModelTitle: string } {
+): { now: number; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; table: TableRow[]; worktrees: string; localModel: string; localModelTitle: string } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const byProvider = new Map<string, QueueProvider>();
@@ -1275,7 +1280,7 @@ export function cockpitQueue(
   }
   for (const [id, name] of Object.entries(schedNames(logDir))) names.set(id, { ...(names.get(id) ?? {}), name });
   const sched = schedPlain(snap, Object.fromEntries([...names].map(([id, info]) => [id, info.name])));
-  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
+  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), table: readQueueTable(logDir, workers, now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 
 const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;
@@ -1381,6 +1386,19 @@ export function handleCockpit(
       (d) => (d ? send(200, "application/json", JSON.stringify(d)) : send(404, "application/json", '{"error":"no such session"}')),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/cockpit/queue/act") {
+    if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
+    readJsonObject(readBody, req).then(async (b) => {
+      const { action, id, session } = b as { action?: unknown; id?: unknown; session?: unknown };
+      if (typeof action !== "string" || !ROW_ACTIONS.has(action)) return send(400, "application/json", JSON.stringify({ ok: false, message: "unknown action" }));
+      if (typeof id === "string" ? !WORKER_ID_RE.test(id) && !/^pane-[\w.-]+$/.test(id) : typeof session !== "string") return send(400, "application/json", JSON.stringify({ ok: false, message: "id or session required" }));
+      const { workers } = readWorkersSection();
+      const d = { logDir: queueLogDir(workers), workers, by: "cockpit", reroute: async (wid: string, where: "cloud" | "local") => { const r = await rerouteWorker(wid, where, { logDir: queueLogDir(workers), by: "cockpit" }); return `moved to ${where === "cloud" ? "cloud" : "local"}: continues as ${r.id}`; } };
+      const r = typeof id === "string" ? await runRowAction(d, action as RowAction, id) : await runSessionAction(d, action as RowAction, session as string);
+      send(r.ok ? 200 : 409, "application/json", JSON.stringify(r));
+    }).catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message })));
     return true;
   }
   if (req.method === "POST" && (url.pathname === "/cockpit/queue/next" || url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {

@@ -29,11 +29,13 @@ import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } fro
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { checkPaneForWorker, closeEndedPanes, openFollowPane, paneMayClose, openPaneForWorker, resolveHostSession, workerEnded } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
-import { workerFreezeCommand } from "./freeze.js";
+import { workerFreezeCommand, workerThawCommand } from "./freeze.js";
 import { setWorkerPaused } from "../../workers/engine-control.js";
 import { resumeWorker } from "../../workers/preempt.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
-import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
+import { providerCap } from "../../workers/capacity.js";
+import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
+import { renderQueueTable } from "../../workers/queue-table.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
 import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile } from "../../workers/reroute.js";
@@ -1351,13 +1353,13 @@ const queueCommand: CommandDef = {
   summary: "Show or reorder the workers waiting for a provider slot",
   description:
     "No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). " +
-    "`queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. " +
+    "No arguments prints the one table of the machine: running jobs first, then the waiting ones 1..n in admission order, with state, priority, session, model, task and time. `queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up, `queue down ID` one place back. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. " +
     "The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.",
   args: [
-    { name: "VERB", summary: "next (alias front) or up (default: list the queue)" },
+    { name: "VERB", summary: "next (alias front), up or down (default: list the queue)" },
     { name: "ID", summary: "Worker id to pull forward (with next/up)" },
   ],
-  examples: ["pai worker queue", "pai worker queue next 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
+  examples: ["pai worker queue", "pai worker queue down 20261019-142851-84910", "pai worker queue next 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
   seeAlso: ["pai worker ps", "pai worker kill"],
   run: (ctx) =>
     guard("pai worker queue", async () => {
@@ -1366,34 +1368,17 @@ const queueCommand: CommandDef = {
       const dir = logDir();
       const { workers } = readWorkersSection();
       if (verb === "list") {
-        const rows = queueRows(dir, providerCaps(workers));
-        if (!rows.length) {
-          out("nothing waiting");
-          return;
-        }
-        let prov = "";
-        for (const r of rows) {
-          if (r.provider !== prov) {
-            prov = r.provider;
-            out(`${prov}${r.cap !== undefined ? ` (cap ${r.cap})` : ""}:`);
-          }
-          const s = r.status;
-          out(
-            `  ${r.position}. ${r.id}` +
-              (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${r.since === undefined ? ageOf(s.updated) : ageOf(nowStamp(new Date(r.since)))}` : "") +
-              `  position ${r.position} of ${r.queued}` +
-              (r.priority && r.priority !== "normal" ? `  ${r.priority} priority` : "")
-          );
-        }
+        for (const l of renderQueueTable(readQueueTable(dir, workers))) out(l);
         for (const l of schedulerLines(schedulerView(dir, workers))) out(l);
         return;
       }
       if (!id) throw new Error(`usage: pai worker queue ${verb} <id>`);
       const status = loadStatus(dir, id);
       if (!status) throw new Error(`no worker named "${id}"`);
-      if (verb !== "next" && verb !== "front" && verb !== "up") throw new Error(`unknown queue verb "${verb}" (expected next or up)`);
-      const order = reorderQueue(dir, status.provider, id, verb === "up" ? "up" : "front");
-      out(`${id} is now position ${order.indexOf(id) + 1} of ${order.length} on ${status.provider}`);
+      if (verb !== "next" && verb !== "front" && verb !== "up" && verb !== "down") throw new Error(`unknown queue verb "${verb}" (expected next, up or down)`);
+      const r = await runRowAction({ logDir: dir, workers, by: "cli" }, verb === "front" ? "next" : verb, id);
+      if (!r.ok) throw new Error(r.message);
+      out(`${id} is ${r.message} on ${status.provider}`);
     }),
 };
 
@@ -1427,6 +1412,7 @@ export const workerCommand: CommandDef = {
     rerouteCommand,
     pauseCommand,
     workerFreezeCommand,
+    workerThawCommand,
     handoffCommand,
     helpCommand,
     mergeCommand,
