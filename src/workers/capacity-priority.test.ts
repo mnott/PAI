@@ -73,6 +73,12 @@ describe("queue table", () => {
     expect(rows[1]).toMatchObject({ state: "paused", model: "cloud: opus", modelFull: "cloud: anthropic opus", session: "other", stateText: "paused (slot freed)" });
   });
 
+  it("a resumed worker waiting for a slot (paused + ticket) reads as waiting for a slot, not paused", () => {
+    const p = qst("p", { paused: true });
+    const rows = buildQueueTable(qin([p], [qrow(p, "lm", 1)]));
+    expect(rows[0]).toMatchObject({ state: "waiting", stateText: "waiting for a slot (resumed)" });
+  });
+
   it("marks frozen and deep-frozen rows and offers the matching action", () => {
     const rows = buildQueueTable(qin([qst("f"), qst("d")], [], { frozen: (id) => id === "f", deepFrozen: (id) => id === "d" }));
     const by = Object.fromEntries(rows.map((r) => [r.id, r]));

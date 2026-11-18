@@ -12,7 +12,7 @@ import { PassThrough } from "node:stream";
 import { applyScroll, PANE_ENTER, PANE_LEAVE, parseScrollInput, Viewport } from "./pane-viewport.js";
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
-import { reorderQueue } from "./capacity.js";
+import { reorderQueue, waitingForSlotText } from "./capacity.js";
 import { setWorkerPriority } from "./engine-control.js";
 import { escalationLine } from "./reroute.js";
 import { paneExecDir } from "./pane-exec.js";
@@ -233,7 +233,7 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
     if (!status) return id;
     const row = paneStatusRow(status, new Date(now()), d.columns());
     // the pause shows in the bar whether the status came from disk or from a test seam
-    return (status.paused === true || workerPaused(logDir, id)) ? `paused · ${row}` : row;
+    return (status.paused === true || workerPaused(logDir, id)) ? `${status.pausedBy ? "paused" : (waitingForSlotText(logDir, { id, provider: status.provider, paused: true }) ?? "paused")} · ${row}` : row;
   };
   // stdin goes through a filter: wheel reports and scroll keys move the viewport, the rest feeds readline
   const src = d.input;
