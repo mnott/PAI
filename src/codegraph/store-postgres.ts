@@ -12,7 +12,7 @@ import { ensureCodeGraphSchemaPostgres } from "./schema-postgres.js";
 import { symbolFtsText, splitIdentifierWords } from "./fts.js";
 import type {
   CodeGraphStore, CodeFileRow, CodeGraphStats, FileRecord, RefRow,
-  ResolvedRefRow, SymbolRow,
+  ResolvedRefRow, SymbolRow, TripleSpec, TripleRow,
 } from "./store.js";
 
 interface SymDbRow {
@@ -353,5 +353,69 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
       byLanguage: Object.fromEntries(byLang.rows.map((r) => [r.language, Number(r.n)])),
       lastIndexedAt: last.rows[0]?.n != null ? Number(last.rows[0].n) : null,
     };
+  }
+
+  async syncTriples(scope: string, desired: TripleSpec[]): Promise<{ added: number; closed: number; kept: number }> {
+    await this.ensure();
+    const key = (t: { subject: string; predicate: string; object: string }) => `${t.subject}\u0000${t.predicate}\u0000${t.object}`;
+    const want = new Map(desired.map((t) => [key(t), t]));
+    const open = await this.pool.query<{ id: number; subject: string; predicate: string; object: string }>(
+      "SELECT id, subject, predicate, object FROM kg_triples WHERE source_session = $1 AND valid_to IS NULL",
+      [scope],
+    );
+    const have = new Set<string>();
+    const closeIds: number[] = [];
+    let kept = 0;
+    for (const r of open.rows) {
+      const k = key(r);
+      if (want.has(k) && !have.has(k)) { have.add(k); kept++; } else closeIds.push(r.id);
+    }
+    const fresh = [...want].filter(([k]) => !have.has(k)).map(([, t]) => t);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (closeIds.length) await client.query("UPDATE kg_triples SET valid_to = NOW() WHERE id = ANY($1::int[])", [closeIds]);
+      for (let i = 0; i < fresh.length; i += 500) {
+        const c = fresh.slice(i, i + 500);
+        await client.query(
+          `INSERT INTO kg_triples (subject, predicate, object, project_id, source_session, confidence)
+           SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[], $6::text[])`,
+          [c.map((t) => t.subject), c.map((t) => t.predicate), c.map((t) => t.object), c.map((t) => t.projectId ?? null), c.map(() => scope), c.map((t) => t.confidence)],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+    return { added: fresh.length, closed: closeIds.length, kept };
+  }
+
+  async triplesTouching(keys: string[], opts?: { limit?: number; includeClosed?: boolean }): Promise<TripleRow[]> {
+    await this.ensure();
+    if (keys.length === 0) return [];
+    const r = await this.pool.query<Record<string, unknown>>(
+      `SELECT id, subject, predicate, object, project_id, confidence,
+              (EXTRACT(EPOCH FROM valid_from) * 1000)::float8 AS vf, (EXTRACT(EPOCH FROM valid_to) * 1000)::float8 AS vt
+       FROM kg_triples WHERE (subject = ANY($1::text[]) OR object = ANY($1::text[]))${opts?.includeClosed ? "" : " AND valid_to IS NULL"}
+         AND source_session LIKE 'relate:%' ORDER BY id LIMIT $2`,
+      [keys, opts?.limit ?? 500],
+    );
+    return r.rows.map((x) => ({
+      id: x.id as number, subject: x.subject as string, predicate: x.predicate as string, object: x.object as string,
+      confidence: x.confidence as "EXTRACTED" | "INFERRED", projectId: (x.project_id as number | null) ?? null,
+      validFrom: Number(x.vf), validTo: x.vt == null ? null : Number(x.vt),
+    }));
+  }
+
+  async tripleCounts(): Promise<Record<string, { open: number; closed: number }>> {
+    await this.ensure();
+    const r = await this.pool.query<{ predicate: string; open: string; closed: string }>(
+      `SELECT predicate, COUNT(*) FILTER (WHERE valid_to IS NULL)::text AS open, COUNT(*) FILTER (WHERE valid_to IS NOT NULL)::text AS closed
+       FROM kg_triples WHERE source_session LIKE 'relate:%' GROUP BY predicate`,
+    );
+    return Object.fromEntries(r.rows.map((x) => [x.predicate, { open: Number(x.open), closed: Number(x.closed) }]));
   }
 }

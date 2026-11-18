@@ -181,6 +181,29 @@ pai code impact resolveRoot --depth 3
 
 See also: `pai code callers`
 
+### pai code relate
+
+Derive relations between projects and notes
+
+```
+pai code relate [options]
+```
+
+Reads the code graphs of the indexed registered projects and writes relations to the knowledge graph (kg_triples): depends-on (manifests), calls-api (routes and MCP tools), shares-protocol (same message types), duplicates (near-identical functions) and, from the vault notes, mentions and cites. A relation that disappears gets an end date, never deleted. Index the projects first (pai code index).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--project SLUG` | string | — | Write only this project's relations (all projects are still read) |
+| `--all` | flag | — | All registered projects and the notes (the default) |
+| `--json` | flag | — | Output raw JSON |
+
+```sh
+pai code relate
+pai code relate --project my-app
+```
+
+See also: `pai graph related`, `pai code index`
+
 ### pai code status
 
 Show what is indexed for a repository
@@ -213,11 +236,12 @@ See also: `pai code index`
 | `pai code callers` | Who calls or uses a symbol |
 | `pai code callees` | What a symbol calls or uses |
 | `pai code impact` | What a change to a symbol could break |
+| `pai code relate` | Derive relations between projects and notes |
 | `pai code status` | Show what is indexed for a repository |
 
 ## See also
 
-[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai graph`](graph.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <command>` to read any of these in the terminal.
 

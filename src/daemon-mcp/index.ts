@@ -931,6 +931,17 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
     async (args) => proxyTool("code_callers", args)
   );
 
+  server.tool(
+    "graph_related",
+    "Neighbours of a code key, file path, symbol, note or external key across projects and domains (depends-on, calls-api, shares-protocol, duplicates, mentions, cites), grouped by predicate with file:line. Use it to see what else a change touches beyond this repo.",
+    {
+      key: z.string().min(1).describe("A typed key (code:<slug>:<path>#<symbol>, note:<vault>:<path>, caseleaf:..., cite:...), a path, a symbol name or a project slug."),
+      depth: z.number().int().min(1).max(3).optional().describe("Hops to follow. Default: 1."),
+      domains: z.array(z.enum(["code", "note", "external"])).optional().describe("Only neighbours in these domains."),
+    },
+    async (args) => proxyTool("graph_related", args)
+  );
+
   // Tool: audit_export — a tenant's firings, decisions and outcomes with a manifest (read-only, in-process)
   server.tool(
     "audit_export",

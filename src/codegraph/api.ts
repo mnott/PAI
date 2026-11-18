@@ -12,6 +12,8 @@ import { resolve } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
 import type { CodeGraphStore, SymbolRow } from "./store.js";
 import { indexRoot, reconcile } from "./indexer.js";
+import type { RelateProject } from "./relate.js";
+import { relatedElsewhere } from "./graph.js";
 
 export interface IndexStats {
   root: string;
@@ -246,7 +248,7 @@ export async function explore(
   backend: StorageBackend,
   root: string,
   query: string,
-  opts?: { budgetTokens?: number; depth?: number },
+  opts?: { budgetTokens?: number; depth?: number; projects?: RelateProject[] },
 ): Promise<ExploreResult> {
   await ensureFresh(backend, root);
   const store = backend.codeGraph();
@@ -326,6 +328,14 @@ export async function explore(
     const depFiles = imp.files.filter((f) => !byFile.has(f));
     push(`\n## Blast radius\n${depFiles.length} dependent file(s): ${depFiles.slice(0, 20).join(", ") || "none"}\n`);
     if (imp.symbols.length) push(`${imp.symbols.length} dependent symbol(s).\n`);
+  }
+
+  // other projects and notes that depend on / call / duplicate / mention the seed symbols
+  if (!truncated && opts?.projects?.length && symbols.length) {
+    try {
+      const rel = await relatedElsewhere(backend, opts.projects, rootAbs, symbols);
+      if (rel) push(rel);
+    } catch { /* relations are optional context */ }
   }
 
   return { text, symbols, truncated };

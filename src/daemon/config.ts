@@ -117,6 +117,17 @@ export interface ObsidianConfig {
   enabled: boolean;
 }
 
+export interface ExternalGraphConfig {
+  /** Default: false. */
+  enabled: boolean;
+  /** Name of the environment variable holding the Postgres connection string. */
+  connectionEnv: string;
+  /** Schema of the edge view. Default: "paperfull_dms". */
+  schema?: string;
+  /** Edge table or view. Default: "graph_edges". */
+  view?: string;
+}
+
 export interface VaultIndexConfig {
   /** Read-only indexing of `vaultPath` for memory search. Independent of `obsidian.enabled`. Default: true. */
   enabled: boolean;
@@ -251,6 +262,11 @@ export interface PaiDaemonConfig {
 
   /** Obsidian vault root path for zettelkasten indexing. If set, vault indexing runs alongside project indexing. */
   vaultPath?: string;
+
+  /** Optional read-only join of external document graphs into `pai graph related`. Off by default.
+   *  `connectionEnv` names an environment variable that holds the Postgres connection string;
+   *  the string itself never goes in this file. The view must expose src_key, dst_key, kind, page_hint, updated_at. */
+  externalGraph?: ExternalGraphConfig;
 
   /** Registry project_id to use for vault chunks in memory_chunks. Default: auto-detected. */
   vaultProjectId?: number;
