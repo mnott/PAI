@@ -168,7 +168,7 @@ export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, un
 }
 
 /** Internal WorkerProvider → the friendly on-disk plain object for writing. */
-function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
+export function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   const y: Record<string, unknown> = {};
   y.enabled = p.enabled;
   if (p.baseUrl) y.url = p.baseUrl;
@@ -515,7 +515,20 @@ function tiersForFile(before: TierDef[], after: TierDef[], rawTiers: unknown[]):
  * (and any comment above it) is never revisited.
  */
 function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: WorkersYamlData, rawTiers: unknown[] = []): void {
-  // providers: add/update changed, remove gone (never touch the builtin anthropic block)
+  // providers: add/update changed, remove gone (never touch the builtin anthropic block).
+  // A provider that exists in `before` but is gone from `after` while STILL in
+  // the file is a reader artifact (a config.yaml partial override that merged
+  // into it, or one dropped when workers.yaml gained the entry) — deleting it
+  // would rewrite the user's provider block as a side effect of an unrelated
+  // write, so leave it alone. Only entries absent from the file are true removals.
+  const fileProviderNames = new Set<string>();
+  const providersNode = doc.get("providers", true);
+  if (isMap(providersNode)) {
+    for (const item of providersNode.items) {
+      const k = item.key as Scalar | undefined;
+      if (isScalar(k)) fileProviderNames.add(String(k.value));
+    }
+  }
   for (const [name, p] of Object.entries(after.providers)) {
     const beforeP = before.providers[name];
     const changed = !beforeP || !shallowEqual(providerToYamlPlain(beforeP), providerToYamlPlain(p));
@@ -532,7 +545,9 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
     }
   }
   for (const name of Object.keys(before.providers)) {
-    if (!(name in after.providers)) doc.deleteIn(["providers", name]);
+    if (name in after.providers) continue;
+    if (fileProviderNames.has(name)) continue;
+    doc.deleteIn(["providers", name]);
   }
 
   // builtin anthropic models: only the capabilities that changed; the entry
@@ -688,7 +703,9 @@ export function writePrioritySessions(sessions: Record<string, QueuePriority>, y
  *  workers.yaml-specific validation (parseWorkersYamlDocument) lives here. */
 export function writeWorkersYamlText(yamlPath: string, text: string): void {
   // A worker never writes the live file (2026-10-18: a worker's inline-keys run replaced every key_file).
-  if (process.env.PAI_WORKER === "1" && resolve(yamlPath) === resolve(defaultWorkersYamlPath())) {
+  // PAI_WORKERS_YAML is an explicit redirect — the operator's own call from a
+  // redirected session (`pai config set workers.providers.*`) still goes through.
+  if (process.env.PAI_WORKER === "1" && !process.env.PAI_WORKERS_YAML && resolve(yamlPath) === resolve(defaultWorkersYamlPath())) {
     throw new WorkersConfigError(
       `refusing to write ${yamlPath}: workers never write live PAI config; set HOME=$(mktemp -d) or PAI_WORKERS_YAML=<copy> for state-changing checks`
     );

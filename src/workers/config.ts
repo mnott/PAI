@@ -25,14 +25,16 @@ import { join } from "node:path";
 import { CONFIG_FILE, expandHome, homeRel, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { paiHomePath } from "../config/pai-home.js";
-import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults, userWorkersYamlRaw } from "../config/shipped-defaults.js";
+import { deepMergeConfig, effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults, userWorkersYamlRaw } from "../config/shipped-defaults.js";
 import { contextWindowFromModelId, stripModelVariant, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { foldLegacyRoles, migrateClassPins, migrateClassRoutes, migrateLegacyChains, migrateToTiers, parseTiersValue, type TierDef } from "./route-lists.js";
 import {
   effectiveWorkersYamlData,
+  providerToYamlPlain,
   readWorkersYaml,
   workersYamlPath,
   writeWorkersYaml,
+  yamlProviderToRaw,
   type WorkersYamlData,
 } from "./workers-config.js";
 import { registerSecretValue } from "../utils/redact.js";
@@ -912,9 +914,13 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     if (typeof p.env !== "object" || p.env === null || Array.isArray(p.env)) {
       bad(`.providers.${name}.env`, "must be an object of string values");
     }
+    // env values are always strings: a YAML int written by hand or by an older
+    // `pai config set` (2026-11-17: CLAUDE_CODE_MAX_OUTPUT_TOKENS: 32768 landed
+    // as an int) is stringified, never rejected — the env an entry feeds a run
+    // with must be strings either way.
     for (const [k, v] of Object.entries(p.env as Record<string, unknown>)) {
-      if (typeof v !== "string") bad(`.providers.${name}.env.${k}`, "must be a string");
-      env[k] = v;
+      if (v === null || typeof v === "object") bad(`.providers.${name}.env.${k}`, "must be a string");
+      env[k] = typeof v === "string" ? v : String(v);
     }
   }
 
@@ -1247,13 +1253,21 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
   }
   const w = raw as Record<string, unknown>;
 
+  // When workers.yaml supplies the providers map, config.yaml's `providers` is
+  // NOT a set of full definitions: readWorkersSection deep-merges it onto the
+  // yaml providers (mergeConfigYamlProviderOverrides), so validating it here as
+  // standalone entries would fail a partial override — and on 2026-11-17 that
+  // is exactly what took the router down. Without a workers.yaml map, config's
+  // entries still stand alone and are validated as before.
   const providers: Record<string, WorkerProvider> = {};
   if (w.providers !== undefined) {
     if (typeof w.providers !== "object" || w.providers === null || Array.isArray(w.providers)) {
       bad(".providers", "must be an object keyed by provider name");
     }
-    for (const [name, p] of Object.entries(w.providers)) {
-      providers[name] = parseProvider(name, p);
+    if (!Object.keys(yamlProviders).length) {
+      for (const [name, p] of Object.entries(w.providers)) {
+        providers[name] = parseProvider(name, p);
+      }
     }
   }
 
@@ -1774,7 +1788,13 @@ export function readWorkersSection(
     // what this read saw on disk: the write diffs against it, so it changes only what the caller changed
     yamlBaselines.set(workers, structuredClone(yaml));
     workers.active = yaml.active;
-    workers.providers = yaml.providers;
+    // config.yaml may hold partial provider overrides (a `pai config set
+    // workers.providers.<name>.*` from before 2026-11-18): deep-merged onto the
+    // workers.yaml providers, never validated as standalone definitions.
+    workers.providers = mergeConfigYamlProviderOverrides(
+      yaml.providers,
+      (merged.workers as { providers?: Record<string, unknown> } | undefined)?.providers
+    );
     workers.tiers = yaml.tiers;
     workers.capabilities = yaml.capabilities;
     workers.nativeModels = yaml.nativeModels;
@@ -1806,6 +1826,44 @@ export function readWorkersSection(
   if (folded.length || moved.length)
     onWarn(`legacy routing migrated into the tier lists: ${[...folded, ...moved].join(", ")} (pai worker route)`);
   return { raw, workers };
+}
+
+/**
+ * The loader-side half of the provider fix (2026-11-17 incident): a
+ * `workers.providers.<name>` block in config.yaml is a partial OVERRIDE, not a
+ * full definition. readWorkersSection replaces the providers map wholesale with
+ * workers.yaml's, so such a block used to be parsed as a standalone provider —
+ * one without a url failed the whole load (`providers.<name>.baseUrl: is
+ * required`) and the router answered 500 to every worker. Now an entry naming a
+ * provider workers.yaml defines is deep-merged onto it (config.yaml values win;
+ * arrays replace), in the workers.yaml on-disk shape so snake_case keys land
+ * right, and re-validated through parseProvider. An entry naming no existing
+ * provider keeps the old full-definition semantics (and its error).
+ */
+export function mergeConfigYamlProviderOverrides(
+  yamlProviders: Record<string, WorkerProvider>,
+  configRawProviders: Record<string, unknown> | undefined
+): Record<string, WorkerProvider> {
+  if (!configRawProviders || typeof configRawProviders !== "object" || Array.isArray(configRawProviders)) {
+    return yamlProviders;
+  }
+  const out: Record<string, WorkerProvider> = {};
+  for (const [name, p] of Object.entries(yamlProviders)) out[name] = structuredClone(p);
+  for (const [name, raw] of Object.entries(configRawProviders)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
+    const base = out[name];
+    if (!base) {
+      // not a provider workers.yaml defines: config.yaml still defines it fully
+      out[name] = parseProvider(name, raw as Record<string, unknown>);
+      continue;
+    }
+    const merged = deepMergeConfig(
+      providerToYamlPlain(base),
+      structuredClone(raw) as Record<string, unknown>
+    );
+    out[name] = parseProvider(name, yamlProviderToRaw(merged));
+  }
+  return out;
 }
 
 let cachedWorkers: { key: string; workers: WorkersConfig } | null = null;

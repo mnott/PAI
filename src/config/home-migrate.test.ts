@@ -1,10 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync, readlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { paiHomeDir } from "./pai-home.js";
 import { applyHomeMigration, planHomeMigration, rewritePaiPaths, renderTable } from "./home-migrate.js";
 import { homeMigrateCmd } from "../cli/impl/home.js";
+import { setConfigValueOp, unsetConfigValueOp } from "./main-config-ops.js";
+import { readWorkersSection, writeWorkersSection } from "../workers/config.js";
 
 const dirs: string[] = [];
 function fakeHome(): string {
@@ -165,5 +167,138 @@ describe("applyHomeMigration", () => {
 
     // second run: nothing to do
     expect(planHomeMigration({ home: h, date: "20261019" }).skip).toMatch(/already/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `pai config set` provider overrides (the 2026-11-17 incident): a partial
+// workers.providers.<name>.* block written into config.yaml broke every load
+// ("workers.providers.gyro-l.baseUrl: is required") and the router answered
+// 500 to all workers; the same write reflowed unrelated long strings. Lives
+// here because this file already owns the temp-PAI-home pattern above.
+// ---------------------------------------------------------------------------
+
+const cfgDirs: string[] = [];
+const cfgSaved: Record<string, string | undefined> = {};
+
+/** A temp PAI home whose config.yaml carries one long line that must never
+ *  reflow, and a workers.yaml defining gyro-l. Never the live files. */
+function fakeCfgHome(workersYaml: string): string {
+  const h = mkdtempSync(join(tmpdir(), "pai-cfg-ops-"));
+  cfgDirs.push(h);
+  for (const k of ["PAI_HOME", "PAI_CONFIG_FILE", "PAI_WORKERS_YAML"]) cfgSaved[k] = process.env[k];
+  process.env.PAI_HOME = h;
+  process.env.PAI_CONFIG_FILE = join(h, "config.json");
+  process.env.PAI_WORKERS_YAML = join(h, "workers.yaml");
+  const LONG = "x".repeat(120);
+  writeFileSync(join(h, "config.yaml"), `# main config\nvaultPath: ${LONG}/${LONG}\nlogLevel: info\n`);
+  writeFileSync(join(h, "workers.yaml"), workersYaml);
+  return h;
+}
+
+afterEach(() => {
+  while (cfgDirs.length) rmSync(cfgDirs.pop()!, { recursive: true, force: true });
+  for (const [k, v] of Object.entries(cfgSaved)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
+
+// The test run's global sandbox config.yaml (test/setup-home-guard.ts) is a
+// sibling of the fixture homes: a provider set whose name workers.yaml does not
+// define would merge onto its provider and break every later readWorkersSection
+// in this file. Each case names providers nothing else uses, and cleans up.
+afterEach(() => {
+  try {
+    const guard = process.env.PAI_CONFIG_FILE;
+    if (!guard) return;
+    const guardYaml = join(dirname(guard), "config.yaml");
+    if (existsSync(guardYaml)) writeFileSync(guardYaml, readFileSync(guardYaml, "utf8").replace(/^workers:\n(?:[ \t].*\n)*\n?/m, ""));
+  } catch {
+    /* best effort */
+  }
+});
+
+const GYRO_YAML = `active: gyro-l
+providers:
+  anthropic:
+    builtin: true
+  gyro-l:
+    url: http://127.0.0.1:8791
+    models:
+      default: qwen3.8-flash-next-gyro-l
+`;
+
+describe("config set provider overrides (2026-11-17 incident)", () => {
+  it("the exact incident command lands in workers.yaml and the config still loads", () => {
+    const h = fakeCfgHome(GYRO_YAML);
+    const cfgBefore = readFileSync(join(h, "config.yaml"), "utf8");
+    setConfigValueOp("workers.providers.gyro-l.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "32768");
+
+    // config.yaml byte-identical: no partial provider block, no reflow.
+    expect(readFileSync(join(h, "config.yaml"), "utf8")).toBe(cfgBefore);
+    const w = readFileSync(join(h, "workers.yaml"), "utf8");
+    expect(w).toContain('CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32768"'); // a string, not an int
+
+    const { workers } = readWorkersSection();
+    expect(workers.providers["gyro-l"].baseUrl).toBe("http://127.0.0.1:8791"); // url kept
+    expect(workers.providers["gyro-l"].env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("32768");
+  });
+
+  it("an unrelated long string is byte-identical after a set", () => {
+    const h = fakeCfgHome(GYRO_YAML);
+    const LONG = "x".repeat(120);
+    const before = readFileSync(join(h, "config.yaml"), "utf8");
+    expect(before).toContain(`vaultPath: ${LONG}/${LONG}`); // plain, unquoted, one line
+    setConfigValueOp("logLevel", "debug");
+    const after = readFileSync(join(h, "config.yaml"), "utf8");
+    expect(after).toContain(`vaultPath: ${LONG}/${LONG}\n`); // the exact line survives
+    expect(after).toMatch(/^logLevel: debug$/m);
+  });
+
+  it("a write that would make the config unloadable is refused, both files unchanged", () => {
+    const h = fakeCfgHome(GYRO_YAML);
+    const cfgBefore = readFileSync(join(h, "config.yaml"), "utf8");
+    const wBefore = readFileSync(join(h, "workers.yaml"), "utf8");
+    // --force past the schema check: an active provider nobody defines would
+    // not load — the loader validation refuses the write, nothing touches disk.
+    expect(() => setConfigValueOp("active", "ghost", { force: true })).toThrow(/would not load/);
+    expect(readFileSync(join(h, "config.yaml"), "utf8")).toBe(cfgBefore);
+    expect(readFileSync(join(h, "workers.yaml"), "utf8")).toBe(wBefore);
+  });
+
+  it("an env value for a provider workers.yaml does not define still lands as a string", () => {
+    const h = fakeCfgHome(GYRO_YAML);
+    setConfigValueOp("workers.providers.newbie.env.FOO", "32768");
+    expect(readFileSync(join(h, "config.yaml"), "utf8")).toContain('FOO: "32768"');
+  });
+
+  it("a stray partial provider block in config.yaml deep-merges onto its workers.yaml provider", () => {
+    // the kaputt file from 2026-11-17 must load again without a restore
+    const h = fakeCfgHome(GYRO_YAML);
+    writeFileSync(
+      join(h, "config.yaml"),
+      readFileSync(join(h, "config.yaml"), "utf8") +
+        `workers:\n  providers:\n    gyro-l:\n      env:\n        CLAUDE_CODE_MAX_OUTPUT_TOKENS: 32768\n`
+    );
+    const { workers } = readWorkersSection();
+    expect(workers.providers["gyro-l"].baseUrl).toBe("http://127.0.0.1:8791");
+    expect(workers.providers["gyro-l"].env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe("32768");
+  });
+
+  it("unset of a provider env key removes it from workers.yaml, nothing else moves", () => {
+    const h = fakeCfgHome(GYRO_YAML);
+    setConfigValueOp("workers.providers.gyro-l.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "32768");
+    expect(unsetConfigValueOp("workers.providers.gyro-l.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS").existed).toBe(true);
+    expect(readFileSync(join(h, "workers.yaml"), "utf8")).toBe(GYRO_YAML); // scaffolding pruned
+  });
+
+  it("an unrelated workers-section write never rewrites the mode as a side effect", () => {
+    const h = fakeCfgHome(`mode: balanced\n${GYRO_YAML}`);
+    const wBefore = readFileSync(join(h, "workers.yaml"), "utf8");
+    const { raw, workers } = readWorkersSection();
+    workers.routing.cooldownMinutes = 17;
+    writeWorkersSection(raw, workers);
+    expect(readFileSync(join(h, "workers.yaml"), "utf8")).toBe(wBefore);
   });
 });

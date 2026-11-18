@@ -5,8 +5,8 @@
  * a change to masking or validation cannot drift between them.
  */
 
-import { existsSync } from "node:fs";
-import { Document } from "yaml";
+import { existsSync, readFileSync } from "node:fs";
+import { Document, isMap, isSeq, parseDocument, Scalar, type Node } from "yaml";
 import {
   defaults as loadConfigDefaults,
   loadConfig,
@@ -15,10 +15,30 @@ import {
   readMainConfigRaw,
   writeMainConfigRaw,
 } from "../daemon/config.js";
-import { readWorkersSection, defaultWorkersConfig, maskKey } from "../workers/config.js";
-import { workersYamlPath } from "../workers/workers-config.js";
+import {
+  defaultWorkersConfig,
+  maskKey,
+  mergeConfigYamlProviderOverrides,
+  parseProvider,
+  parseWorkersConfig,
+  readWorkersSection,
+  type WorkerProvider,
+} from "../workers/config.js";
+import {
+  parseWorkersYamlDocument,
+  providerToYamlPlain,
+  workersYamlPath,
+  writeWorkersYamlText,
+  yamlProviderToRaw,
+} from "../workers/workers-config.js";
+import {
+  deepMergeConfig,
+  mergeYamlUnderDefaults,
+  shippedMainDefaults,
+  shippedWorkersDefaultsPath,
+} from "./shipped-defaults.js";
 import { userWorkersYamlRaw } from "./shipped-defaults.js";
-import { MAIN_CONFIG_SECTION_COMMENTS, migrateMainConfigToYaml } from "./main-config.js";
+import { MAIN_CONFIG_SECTION_COMMENTS, migrateMainConfigToYaml, yamlSiblingPath } from "./main-config.js";
 import { writeYamlFileAtomic } from "./yaml-store.js";
 
 export class MainConfigOpsError extends Error {}
@@ -81,6 +101,156 @@ function deleteAtPath(root: Record<string, unknown>, segments: string[]): Record
   }
   delete cur[segments[segments.length - 1]];
   return clone;
+}
+
+// ---------------------------------------------------------------------------
+// Document-level edits (set/unset never reflow the file)
+// ---------------------------------------------------------------------------
+
+const isPlainObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** True when `node` is an empty collection (`{}` / `[]`). */
+function isEmptyCollection(node: unknown): boolean {
+  if (isMap(node)) return node.items.length === 0;
+  if (isSeq(node)) return node.items.length === 0;
+  return false;
+}
+
+/** Remove a mapping entry whose value became an empty `{}`/`[]`, walking up
+ *  so a `set`→`unset` round-trip leaves no empty-parent scaffolding behind. */
+function pruneEmptyParents(doc: Document, segments: string[]): void {
+  for (let depth = segments.length; depth > 0; depth--) {
+    const path = segments.slice(0, depth);
+    const node = doc.getIn(path, true);
+    if (!isEmptyCollection(node)) return;
+    doc.deleteIn(path);
+  }
+}
+
+/** True when a plain scalar's YAML form would re-parse as the wrong type or
+ *  shape (an all-digit token, "true", "null", an empty string, JSON-looking):
+ *  such values are written double-quoted. */
+function needsQuoting(v: unknown): boolean {
+  if (typeof v !== "string") return false;
+  if (v === "") return true;
+  if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(v)) return true; // int/float lookalike
+  if (/^(true|false|null|~|yes|no|on|off)$/i.test(v)) return true; // bool/null lookalikes
+  const t = v.trim();
+  if (t.startsWith("[") || t.startsWith("{")) return true; // flow collection lookalike
+  return false;
+}
+
+/**
+ * Set one leaf in a YAML Document with the Document API (`setIn`): every
+ * untouched line keeps its exact bytes (quotes, folding, comments). Scalars are
+ * written plain unless their form would re-parse as another type (see
+ * needsQuoting); `forceString` always writes a double-quoted string — an env
+ * value must be one even when it looks like an int. Objects/arrays are stored
+ * as plain values (the yaml lib styles them at stringify time).
+ */
+function setInYamlDoc(doc: Document, segments: string[], value: unknown, forceString = false): void {
+  if (typeof value === "object" && value !== null) {
+    doc.setIn(segments, value);
+    return;
+  }
+  const s = new Scalar(String(value));
+  if (forceString || needsQuoting(value)) s.type = Scalar.QUOTE_DOUBLE;
+  else s.type = Scalar.PLAIN;
+  doc.setIn(segments, s as Node);
+}
+
+/**
+ * Set one leaf in a plain JSON config (config.json era): same coercion rule —
+ * every value is stored as a string, so `pai config set` never writes an int
+ * the loader would reject.
+ */
+function setAtPathCoerced(root: Record<string, unknown>, segments: string[], value: unknown): Record<string, unknown> {
+  const clone = structuredClone(root);
+  let cur: Record<string, unknown> = clone;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg = segments[i];
+    const next = cur[seg];
+    if (next === null || typeof next !== "object" || Array.isArray(next)) cur[seg] = {};
+    cur = cur[seg] as Record<string, unknown>;
+  }
+  cur[segments[segments.length - 1]] = String(value);
+  return clone;
+}
+
+/** A config write that would not load is refused before anything touches disk;
+ *  the message names the loader error (the same read path the router serves from). */
+class ConfigWriteRejectedError extends MainConfigOpsError {}
+
+// ---------------------------------------------------------------------------
+// Provider overrides: workers.providers.<name>.* lives in workers.yaml
+// ---------------------------------------------------------------------------
+
+/**
+ * A `workers.providers…` path routes to workers.yaml when that file exists:
+ * providers are DEFINED there, and a partial entry written into config.yaml is
+ * not merged onto the workers.yaml provider — readWorkersSection replaces the
+ * whole providers map with workers.yaml's — so the write would make every
+ * config load fail (`workers.providers.<name>.baseUrl: is required`, 2026-11-17).
+ * A provider named nowhere, or no workers.yaml at all, stays in config.yaml.
+ */
+function providerOverrideTarget(segments: string[]): { yamlPath: string; rest: string[] } | null {
+  if (segments.length < 3 || segments[0] !== "workers" || segments[1] !== "providers") return null;
+  const name = segments[2];
+  // the builtin anthropic block is native models, not a provider entry — it never receives an override
+  if (!name || name === "anthropic") return null;
+  const yamlPath = workersYamlPath();
+  if (!existsSync(yamlPath)) return null;
+  // `active` (workers.providers.active) and the builtin block stay outside the
+  // providers map routing.
+  if (name === "active") return null;
+  let root: Record<string, unknown> | null;
+  try {
+    root = parseDocument(readFileSync(yamlPath, "utf8")).toJS() as Record<string, unknown> | null;
+  } catch {
+    return null; // an unloadable workers.yaml is not this path's error to route around
+  }
+  const providersRaw = root?.providers;
+  const providers: Record<string, unknown> = {};
+  if (isPlainObj(providersRaw)) {
+    for (const [k, v] of Object.entries(providersRaw)) {
+      // a builtin block is not an overridable provider entry either
+      if (isPlainObj(v) && v.builtin === true) continue;
+      providers[k] = v;
+    }
+  }
+  if (!(name in providers)) return null;
+  return { yamlPath, rest: segments.slice(2) };
+}
+
+/** The workers.yaml Document after applying a provider set/unset, or null
+ *  when nothing changed. `value === undefined` unsets the leaf. */
+function editedProviderYamlDoc(yamlPath: string, rest: string[], value: unknown | undefined): Document | null {
+  const text = readFileSync(yamlPath, "utf8");
+  const doc = parseDocument(text);
+  if (doc.errors.length) throw new MainConfigOpsError(`${yamlPath}: ${doc.errors[0].message}`);
+  const at = ["providers", ...rest];
+  if (value === undefined) {
+    const before = String(doc);
+    doc.deleteIn(at);
+    pruneEmptyParents(doc, at); // from `providers`, not from the document root
+    return String(doc) === before ? null : doc;
+  }
+  // The provider's own block receives the leaf directly — a top-level sibling
+  // mapping would parse as a second (invalid) provider.
+  if (!doc.hasIn(at)) {
+    const parentPath = at.slice(0, -1);
+    const parent = doc.getIn(parentPath, true);
+    if (parent !== undefined && !isMap(parent)) {
+      throw new MainConfigOpsError(
+        `workers.providers.${rest[0]}.${rest.slice(1).join(".")}: its parent is not a mapping — refusing to write`
+      );
+    }
+  }
+  // under `env` every value is a string; elsewhere plain unless ambiguous
+  const forceString = rest.length >= 2 && rest[1] === "env";
+  setInYamlDoc(doc, at, value, forceString);
+  return doc;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,10 +373,32 @@ function validateAgainstSchema(segments: string[], value: unknown, opts: { force
       throw new MainConfigOpsError(`maintenanceHour: expected an integer hour 0-23 (pass --force to override)`);
     }
   }
-  const { value: expected, found } = getAtPath(schema, segments);
+  // workers.providers.<name>.* is the provider's own file shape (workers.yaml
+  // snake_case), not config.yaml's internal camelCase — schemaRoot's map holds
+  // parsed WorkerProvider objects, so validate against the on-disk names.
+  const checkPath: string[] = [...segments];
+  if (segments.length >= 4 && segments[0] === "workers" && segments[1] === "providers") {
+    // under `env` every value is a string — no type expectation applies
+    if (segments[3] === "env") return;
+    const at = 3; // index of the field inside providers.<name>.<field>…
+    if (segments[at] === "url") checkPath[at] = "baseUrl";
+    else if (segments[at] === "key_file") checkPath[at] = "keyFile";
+    else if (segments[at] === "upstream_url") checkPath[at] = "upstreamUrl";
+    else if (segments[at] === "tier") checkPath[at] = "costTier";
+    else if (segments[at] === "quota_probe") checkPath[at] = "quotaProbe";
+    else if (segments[at] === "quota_skip_at") checkPath[at] = "quotaSkipAt";
+    else if (segments[at] === "worker_model") checkPath[at] = "workerModel";
+    else if (segments[at] === "context_window") checkPath[at] = "contextWindow";
+    else if (segments[at] === "model_tiers") checkPath[at] = "modelTiers";
+    else if (segments[at] === "max_concurrent") checkPath[at] = "maxConcurrent";
+    else if (segments[at] === "conversation_slots") checkPath[at] = "conversationSlots";
+  }
+  const { value: expected, found } = getAtPath(schema, checkPath);
   if (found && expected !== null && expected !== undefined) {
     const expectedType = Array.isArray(expected) ? "array" : typeof expected;
-    const actualType = Array.isArray(value) ? "array" : typeof value;
+    // a string passes any type expectation: `pai config set` can store it quoted,
+    // and the loader validates the parsed result before the write commits.
+    const actualType = Array.isArray(value) ? "array" : typeof value === "string" ? expectedType : typeof value;
     if (expectedType !== actualType && !opts.force) {
       throw new MainConfigOpsError(
         `${segments.join(".")}: expected ${expectedType}, got ${actualType} (pass --force to override)`
@@ -214,6 +406,10 @@ function validateAgainstSchema(segments: string[], value: unknown, opts: { force
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Value parsing (`pai config set <path> <value>`)
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Public ops
@@ -287,18 +483,34 @@ export interface SetConfigResult {
 
 /**
  * `pai config set <path> <value>` / `config_set`: parses `value`, validates
- * its type against the shipped defaults (refusable with `force`; `asString` stores `value` verbatim, no parsing), converts
- * config.json
- * to config.yaml first if neither exists yet, then writes through
- * writeMainConfigRaw (comment-preserving when config.yaml exists).
+ * its type against the shipped defaults (refusable with `force`; `asString` stores `value` verbatim, no parsing), routes a
+ * `workers.providers.<name>.*` key to workers.yaml when the provider is
+ * defined there (a partial provider block in config.yaml would break every
+ * load — readWorkersSection replaces the providers map wholesale), then writes
+ * through writeMainConfigRaw / writeWorkersYamlText. Every value is stored as
+ * a string (env and any scalar alike: a YAML int under `env` is not a valid
+ * env value). The resulting full config must pass the same loader the router
+ * reads with before anything touches disk: a write that would make the config
+ * unloadable is refused, both files left byte-identical.
  */
 export function setConfigValueOp(dottedPath: string, rawValue: string, opts: { force?: boolean; asString?: boolean } = {}): SetConfigResult {
   const segments = splitConfigPath(dottedPath);
   const value = opts.asString ? rawValue : parseConfigValueString(rawValue);
   validateAgainstSchema(segments, value, opts);
 
+  // provider override → workers.yaml (deep merge into the defined provider),
+  // validated before committing; config.yaml is not touched at all.
+  const target = providerOverrideTarget(segments);
+  if (target) {
+    const doc = editedProviderYamlDoc(target.yamlPath, target.rest, value);
+    if (!doc) return { yamlCreated: false, yamlPath: target.yamlPath, value };
+    validateResultingConfig(String(doc));
+    writeWorkersYamlText(target.yamlPath, String(doc));
+    return { yamlCreated: false, yamlPath: target.yamlPath, value };
+  }
+
   const jsonPath = paiConfigFilePath();
-  const yamlPath = paiConfigYamlFilePath();
+  const yamlPath = yamlSiblingPath(jsonPath);
   let yamlCreated = false;
   if (!existsSync(yamlPath)) {
     if (existsSync(jsonPath)) {
@@ -309,9 +521,144 @@ export function setConfigValueOp(dottedPath: string, rawValue: string, opts: { f
     yamlCreated = true;
   }
 
-  const raw = readMainConfigRaw();
-  writeMainConfigRaw(setAtPath(raw, segments, value));
+  // config.yaml exists (just created or migrated): edit the Document directly —
+  // only the changed leaf is touched, so unrelated lines keep their exact bytes.
+  const doc = parseDocument(readFileSync(yamlPath, "utf8"));
+  if (doc.errors.length) throw new MainConfigOpsError(`${yamlPath}: ${doc.errors[0].message}`);
+  // A provider block in config.yaml is a partial override the loader deep-merges
+  // onto its workers.yaml provider (mergeConfigYamlProviderOverrides), so it
+  // must arrive in the workers.yaml on-disk shape: providers.<name>.<snake_key>
+  // — `url`, not the parsed field name `baseUrl`.
+  // the doc path carries snake_case provider field names; `segments` is what the
+  // user typed (and what the env-leaf rule reads)
+  const at = isProviderOverrideSegments(segments) ? providerOverrideDocPath(segments) : segments;
+  const before = String(doc);
+  // env values are always strings (a YAML int under `env` is not a valid env
+  // value — the 2026-11-17 write landed CLAUDE_CODE_MAX_OUTPUT_TOKENS as an
+  // int); every other scalar keeps the type the user asked for, and any value
+  // whose plain form would re-parse as something else (an all-digit token,
+  // "true", "no") is forced to a quoted string.
+  const envLeaf = segments.length >= 4 && segments[0] === "workers" && segments[1] === "providers" && segments[3] === "env";
+  setInYamlDoc(doc, at, value, envLeaf);
+  validateResultingConfig(undefined, String(doc));
+  // no-op when the file already holds this exact quoted scalar (the write also
+  // skips its .bak-pai backup and the home commit)
+  // the write goes to jsonPath's sibling explicitly: every path in this seam is
+  // call-time resolved (tests re-point PAI_CONFIG_FILE after import)
+  if (String(doc) !== before) writeMainConfigRaw(doc.toJS() as Record<string, unknown>, jsonPath);
   return { yamlCreated, yamlPath, value };
+}
+
+/** True when `segments` reaches into config.yaml's `workers.providers.<name>.*`
+ *  tree — an override block the loader deep-merges onto its workers.yaml provider. */
+function isProviderOverrideSegments(segments: string[]): boolean {
+  return segments.length >= 3 && segments[0] === "workers" && segments[1] === "providers";
+}
+
+/** The on-disk snake_case key for a workers.providers.<name>.<field> path, so
+ *  the loader's deep merge lands it on the right provider field (camelCase
+ *  names like `baseUrl` are the PARSED shape and would merge nowhere). */
+function snakeProviderField(field: string): string {
+  const map: Record<string, string> = {
+    baseUrl: "url", keyFile: "key_file", upstreamUrl: "upstream_url", costTier: "tier",
+    quotaProbe: "quota_probe", quotaSkipAt: "quota_skip_at", workerModel: "worker_model",
+    contextWindow: "context_window", modelTiers: "model_tiers", maxConcurrent: "max_concurrent",
+    conversationSlots: "conversation_slots",
+  };
+  return map[field] ?? field;
+}
+
+/** workers.providers.<name>.<field>… → workers.providers.<name>.<snake_field>…. */
+function providerOverrideDocPath(segments: string[]): string[] {
+  if (segments.length < 4) return segments;
+  const out = [...segments];
+  out[3] = snakeProviderField(segments[3]);
+  return out;
+}
+
+/**
+ * Load the resulting full config with the router's own read path — loadConfig()
+ * plus readWorkersSection(), which throws `workers…: …` on a provider that
+ * would not parse (the 2026-11-17 failure) and deep-merges a partial config.yaml
+ * provider override onto its workers.yaml provider. The candidate text is
+ * validated IN MEMORY (`candidateYamlText` = the would-be workers.yaml,
+ * `candidateMainText` = the would-be config.yaml): nothing is staged to disk and
+ * no parse cache can go stale against a same-mtime temp file. Throws
+ * ConfigWriteRejectedError naming the load error; nothing has been written yet.
+ */
+function validateResultingConfig(candidateYamlText?: string, candidateMainText?: string): void {
+  const configPath = paiConfigFilePath();
+  try {
+    const mainRaw: Record<string, unknown> = candidateMainText !== undefined
+      ? (parseDocument(candidateMainText).toJS() as Record<string, unknown>) ?? {}
+      : readMainConfigRaw(configPath);
+    if (candidateMainText !== undefined && parseDocument(candidateMainText).errors.length) {
+      throw new MainConfigOpsError(`config.yaml: ${parseDocument(candidateMainText).errors[0].message}`);
+    }
+
+    // effectiveMainConfig's semantics with the candidate main text swapped in for
+    // the file: shipped defaults under the user's config.yaml (a broken candidate
+    // throws here, exactly as loadConfig would).
+    const merged = deepMergeConfig(shippedMainDefaults(), mainRaw);
+    // the workers section exactly as readWorkersSection builds it. The merged
+    // doc must carry the USER's providers node for the cross-checks (classes →
+    // provider names), so merge the candidate over the user file's own text
+    // rather than re-merging over the shipped defaults.
+    const yamlPath = workersYamlPath();
+    let yamlData: ReturnType<typeof parseWorkersYamlDocument> | null = null;
+    if (existsSync(yamlPath)) {
+      const defaultsText = readFileSync(shippedWorkersDefaultsPath(), "utf8");
+      const userText = readFileSync(yamlPath, "utf8");
+      // the shipped defaults merged under the candidate (= what the file will be)
+      const doc = mergeYamlUnderDefaults(defaultsText, candidateYamlText ?? userText);
+      if (candidateYamlText !== undefined) {
+        // a class the USER named but the candidate drops would otherwise fall
+        // back to the shipped table and dodge the cross-check: re-apply the
+        // user's classes/capabilities over the candidate, as effectiveWorkersYamlDoc
+        // merges them.
+        const user = parseDocument(userText);
+        const userClasses = user.get("classes");
+        if (!user.has("tiers") && isMap(userClasses) && userClasses.items.length) doc.delete("tiers");
+        for (const key of ["classes", "capabilities"]) {
+          const v = user.get(key, true);
+          if (v !== undefined) doc.set(key, structuredClone(v));
+        }
+      }
+      yamlData = parseWorkersYamlDocument(doc, yamlPath);
+    }
+    // the provider map exactly as readWorkersSection builds it: a config.yaml
+    // entry naming a workers.yaml provider is an override (deep-merged onto it,
+    // validated through the merge); one naming none is a full definition and is
+    // validated as such by parseWorkersConfig.
+    const workers = parseWorkersConfig(merged.workers, yamlData?.providers);
+    if (yamlData) {
+      workers.active = yamlData.active;
+      workers.providers = mergeConfigYamlProviderOverrides(
+        yamlData.providers,
+        (merged.workers as { providers?: Record<string, unknown> } | undefined)?.providers
+      );
+      workers.tiers = yamlData.tiers;
+      workers.capabilities = yamlData.capabilities;
+      workers.nativeModels = yamlData.nativeModels;
+      if (Object.keys(yamlData.classes).length) workers.classes = yamlData.classes;
+      if (Object.keys(yamlData.mcpSets).length) workers.mcpSets = yamlData.mcpSets;
+    }
+    // when workers.yaml supplies the map, config.yaml's `providers` are partial
+    // overrides — validated through the merge above, never as standalone entries.
+    if (!yamlData) {
+      for (const [name, p] of Object.entries(workers.providers)) {
+        if (p.native) continue;
+        parseProvider(name, yamlProviderToRaw(providerToYamlPlain(p)));
+      }
+    }
+    // the main config itself must still be a loadable mapping
+    loadConfig();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new ConfigWriteRejectedError(
+      `refusing to write: the resulting config would not load (${msg}) — no file was changed`
+    );
+  }
 }
 
 export interface UnsetConfigResult {
@@ -326,12 +673,43 @@ export function formatConfigSource(source: "user" | "defaults" | undefined): str
 }
 
 /** `pai config unset <path>` / `config_unset`: no-ops (existed=false) when
- *  the path was never set explicitly — defaults are never "unset". */
+ *  the path was never set explicitly — defaults are never "unset". A
+ *  `workers.providers.<name>.*` path unsets in workers.yaml when the provider
+ *  is defined there (the same routing `set` uses); a Document-level delete
+ *  leaves every other line byte-identical, and the result must still load. */
 export function unsetConfigValueOp(dottedPath: string): UnsetConfigResult {
   const segments = splitConfigPath(dottedPath);
-  const raw = readMainConfigRaw();
+
+  const target = providerOverrideTarget(segments);
+  if (target) {
+    const doc = editedProviderYamlDoc(target.yamlPath, target.rest, undefined);
+    if (!doc) return { existed: false };
+    validateResultingConfig(String(doc));
+    writeWorkersYamlText(target.yamlPath, String(doc));
+    return { existed: true };
+  }
+
+  const jsonPath = paiConfigFilePath();
+  const yamlPath = yamlSiblingPath(jsonPath);
+  if (existsSync(yamlPath)) {
+    const doc = parseDocument(readFileSync(yamlPath, "utf8"));
+    if (doc.errors.length) throw new MainConfigOpsError(`${yamlPath}: ${doc.errors[0].message}`);
+    const at = isProviderOverrideSegments(segments) ? providerOverrideDocPath(segments) : segments;
+    const found = doc.hasIn(at);
+    if (!found) return { existed: false };
+    const before = String(doc);
+    doc.deleteIn(at);
+    pruneEmptyParents(doc, at);
+    if (String(doc) === before) return { existed: true };
+    validateResultingConfig();
+    writeMainConfigRaw(doc.toJS() as Record<string, unknown>, jsonPath);
+    return { existed: true };
+  }
+
+  const raw = readMainConfigRaw(jsonPath);
   const { found } = getAtPath(raw, segments);
   if (!found) return { existed: false };
-  writeMainConfigRaw(deleteAtPath(raw, segments));
+  validateResultingConfig();
+  writeMainConfigRaw(deleteAtPath(raw, segments), jsonPath);
   return { existed: true };
 }
