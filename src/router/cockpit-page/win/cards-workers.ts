@@ -92,7 +92,7 @@ function wkDur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).pad
 function wkSpanT(t,full){return' <span title="'+esc(full||t)+'">'+esc(t)+'</span>'}
 function wkSpan(t){return' <span title="'+esc(t)+'">'+esc(t)+'</span>'}
 function wkCmp(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}
-function wkBuildRow(b,i){var l=wkSpan(b.label+(b.mode==="full"?" [full]":"")+(b.key?" ["+b.key+"]":""));return[b.state==="running"?"":String(i+1),l,wkSpan(b.session),b.state==="running"?"running":"waiting"+(b.why?" ("+esc(b.why)+")":""),wkDur(b.state==="running"?b.ageSec:b.waitedSec)]}
+function wkBuildRow(b,i){var l=wkSpan(b.label+(b.mode==="full"?" [full]":"")+(b.key?" ["+b.key+"]":""));return[b.state==="running"?"":String(i+1),l,wkSpan(b.session),b.state==="running"?"running":"waiting"+(b.why?" ("+esc(b.why)+")":""),b.chip?wkChip(b.chip,WK_FILTERS.indexOf(b.chip)>=0):'<span class="dim">–</span>',wkDur(b.state==="running"?b.ageSec:b.waitedSec)]}
 /** The queue payload as blocks: [{id, title (plain text), head, rows}] in page order. */
 function wkBlocks(q){
  var out=[],sess={},pl=q.plans||[],pv=q.paneViolations||[],bq=q.builds;
@@ -101,7 +101,7 @@ function wkBlocks(q){
  if(bq&&(bq.running.length||bq.waiting.length))[["test","tests",bq.testSlots],["build","builds",bq.slots]].forEach(function(P){
   var run=bq.running.filter(function(b){return b.kind===P[0]}).map(function(b){b.state="running";return b}),wt=bq.waiting.filter(function(b){return b.kind===P[0]}).map(function(b){b.state="waiting";return b});
   if(!run.length&&!wt.length)return;
-  out.push({id:P[1],title:P[1]+" ("+P[2]+" slot"+(P[2]===1?"":"s")+")",head:["pos","build .txt","session .txt","state","waited"],rows:run.concat(wt).map(wkBuildRow)});
+  out.push({id:P[1],title:P[1]+" ("+P[2]+" slot"+(P[2]===1?"":"s")+")",head:["pos","build .txt","session .txt","state","session chip","waited"],rows:run.concat(wt).map(wkBuildRow)});
  });
  if((q.table||[]).length||!out.length)out.unshift({id:"queue",title:"worker queue — "+(q.table||[]).length+" job(s)",head:[],rows:[],table:true});
  return out;
