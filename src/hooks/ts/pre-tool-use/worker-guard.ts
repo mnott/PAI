@@ -38,6 +38,7 @@ import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-s
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { isTestCommand, wrapTestCommand } from "../../../workers/hang-probe.js";
+import { capBashCommand } from "../../../workers/priority.js";
 import { type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
@@ -261,14 +262,32 @@ async function main(): Promise<void> {
     process.stdout.write(renderDecision({ decision: "deny", reason: decision.message! }) + "\n");
     return;
   }
+  const input_is_bash = input.tool_name === "Bash";
+  // a worker's Bash command runs under a CPU-time cap (workers.priority.cpuSecondsPerCommand); test/build doors uncapped
+  const capped = (input: Record<string, unknown>): Record<string, unknown> => {
+    const c = (input as { command?: unknown }).command;
+    if (input_is_bash && isWorkerSession() && typeof c === "string") {
+      try {
+        return { ...input, command: capBashCommand(c, readWorkersSection().workers.priority) };
+      } catch {
+        return input;
+      }
+    }
+    return input;
+  };
   if (decision.updatedInput) {
-    process.stdout.write(renderDecision({ decision: "allow", updatedInput: decision.updatedInput, ...(decision.message && { context: decision.message }) }) + "\n");
+    process.stdout.write(renderDecision({ decision: "allow", updatedInput: capped(decision.updatedInput), ...(decision.message && { context: decision.message }) }) + "\n");
     return;
   }
   // test runs (worker or main session) go through test-run: it takes the machine-wide test slot and probes a silent run
   const command = (input.tool_input as { command?: unknown } | undefined)?.command;
   if (input.tool_name === "Bash" && typeof command === "string" && process.env.PAI_WORKER_ALLOW_TESTS !== "1" && isTestCommand(command)) {
-    process.stdout.write(renderDecision({ decision: "allow", updatedInput: { ...(input.tool_input as object), command: wrapTestCommand(command) } }) + "\n");
+    process.stdout.write(renderDecision({ decision: "allow", updatedInput: capped({ ...(input.tool_input as Record<string, unknown>), command: wrapTestCommand(command) }) }) + "\n");
+    return;
+  }
+  if (input_is_bash && isWorkerSession() && typeof command === "string") {
+    const updated = capped({ ...(input.tool_input as Record<string, unknown>) });
+    if ((updated as { command?: string }).command !== command) process.stdout.write(renderDecision({ decision: "allow", updatedInput: updated }) + "\n");
   }
 }
 

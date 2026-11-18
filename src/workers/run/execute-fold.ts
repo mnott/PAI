@@ -72,6 +72,7 @@ import {
   runSucceeded,
   initContextWindow,
 } from "./stream.js";
+import { backgroundArgv } from "../priority.js";
 import { spawnOwned, preEventFailure, announcePane } from "./pane-handles.js";
 import {
   SIGNAL_SALVAGE_MS,
@@ -256,7 +257,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
 
   try {
     if (headless && !a.gated) await runGates(a, wid, status);
-    spawned = await spawnOwned(wid, cmd, {
+    spawned = await spawnOwned(wid, backgroundArgv(cmd, config.priority), {
       env,
       cwd: worktree?.dir ?? cwd,
       stdio: headless ? ["pipe", "pipe", "pipe"] : "inherit",
