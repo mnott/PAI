@@ -154,7 +154,7 @@ export function psOutput(
         ? `scope: session ${resolveSession(term)!.name}`
         : `scope: tab ${currentTabKey(env)} (this iTerm tab)`;
   const inbox = inboxCounts(logDir, scoped);
-  const parts = [renderTable(c, scoped, scopeLabel, new Date(), inbox)];
+  const parts = [renderTable(c, scoped, scopeLabel, new Date(), inbox, undefined, logDir)];
   try {
     // the runner of a plan has no worker of its own: its phase is a line under the plan's workers
     const plans = renderPlanLines(loadPlanStatuses(logDir));

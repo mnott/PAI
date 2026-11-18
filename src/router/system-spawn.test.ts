@@ -51,6 +51,18 @@ describe("cockpit page script", () => {
     expect(html).toContain('title="a very long task');
     expect(html).toContain("aria-label=");
   });
+  it("the activity word shows with its meaning in the tooltip", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
+    const mk = (activity: string, activityTip: string) => ({ slot: "running", kind: "job", id: "w1", state: "running", stateText: "running", priority: "normal", session: "mdf", model: "gyro-l", local: true, task: "t", seconds: 5, activity, activityTip, now: "Bash: npm test", detail: "", actions: [] });
+    (ctx as Record<string, unknown>).__a = mk("gen", "its request is open at the model — the engine is generating its reply");
+    (ctx as Record<string, unknown>).__b = mk("tool", "no request open at the model; a tool (build, test) is running");
+    const html = vm.runInContext("wkTRow(__a)", ctx) as string;
+    expect(html).toContain('<span class="wq-act" title="its request is open at the model — the engine is generating its reply">gen</span>');
+    expect(vm.runInContext("wkTRow(__b)", ctx)).toContain('title="no request open at the model; a tool (build, test) is running');
+  });
   it("queue view filters by the chosen sessions and sorts by session then position", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");

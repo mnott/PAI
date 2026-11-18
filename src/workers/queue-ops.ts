@@ -14,9 +14,12 @@ import { setWorkerPaused } from "./engine-control.js";
 import { applyPriority, resumeWorker, type PriorityLevel } from "./preempt.js";
 import { deepFreeze, deepResume, deepfrozenIds, realDeepFreezeDeps, realDeepResumeDeps, realRepoOf, type DeepSelect } from "./deepfreeze.js";
 import { buildQueueTable, type RowAction, type TableRow } from "./queue-table.js";
+import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 
-/** The table of the machine's workers right now. `deepFrozen` stays empty until `pai stop` records its jobs. */
-export function readQueueTable(logDir: string, workers: WorkersConfig, now = Date.now(), deepFrozen?: (id: string) => boolean, owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPidCached): TableRow[] {
+/** The table of the machine's workers right now. `deepFrozen` stays empty until `pai stop` records its jobs.
+ *  `sched` is the router's local-scheduler snapshot (the activity word reads it for in-flight / in-line);
+ *  absent = read from disk, null when the router cannot be reached (then the word falls back to the status file). */
+export function readQueueTable(logDir: string, workers: WorkersConfig, now = Date.now(), deepFrozen?: (id: string) => boolean, owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPidCached, sched: SchedSnapshot | null | undefined = readSchedFile(logDir, now)): TableRow[] {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const statuses = loadStatusesCached(logDir);
@@ -39,6 +42,7 @@ export function readQueueTable(logDir: string, workers: WorkersConfig, now = Dat
     },
     frozen: (id) => frozenSince(id) !== undefined,
     deepFrozen: deep,
+    sched,
   });
 }
 
