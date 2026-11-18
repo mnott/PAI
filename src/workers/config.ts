@@ -368,10 +368,6 @@ export const QUEUE_PRIORITIES: readonly QueuePriority[] = ["high", "normal", "lo
 export interface PriorityConfig {
   /** Named session -> priority of every run it starts; sessions not listed are normal. */
   sessions: Record<string, QueuePriority>;
-  /** Run every worker process tree at background OS priority (taskpolicy -b on macOS, nice -n 10 elsewhere); default true. */
-  background?: boolean;
-  /** CPU seconds one worker Bash command may use (ulimit -t); 0 = no cap; default 300. */
-  cpuSecondsPerCommand?: number;
 }
 
 /** workers.priority.sessions: a map of session name -> high|normal|low. */
@@ -1543,20 +1539,9 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
   }
   const priority: PriorityConfig = { sessions: { ...(d.priority?.sessions ?? {}) } };
-  if (d.priority?.background !== undefined) priority.background = d.priority.background;
-  if (d.priority?.cpuSecondsPerCommand !== undefined) priority.cpuSecondsPerCommand = d.priority.cpuSecondsPerCommand;
   if (w.priority !== undefined) {
     if (typeof w.priority !== "object" || w.priority === null || Array.isArray(w.priority)) bad(".priority", "must be an object");
-    const pr = w.priority as Record<string, unknown>;
-    Object.assign(priority.sessions, prioritySessions(pr.sessions, bad));
-    if (pr.background !== undefined) {
-      if (typeof pr.background !== "boolean") bad(".priority.background", "must be boolean");
-      priority.background = pr.background as boolean;
-    }
-    if (pr.cpuSecondsPerCommand !== undefined) {
-      if (typeof pr.cpuSecondsPerCommand !== "number" || !Number.isFinite(pr.cpuSecondsPerCommand) || pr.cpuSecondsPerCommand < 0) bad(".priority.cpuSecondsPerCommand", "must be a number >= 0 (0 = no cap)");
-      priority.cpuSecondsPerCommand = pr.cpuSecondsPerCommand as number;
-    }
+    Object.assign(priority.sessions, prioritySessions((w.priority as Record<string, unknown>).sessions, bad));
   }
   const urgency = { windowMinutes: d.urgency?.windowMinutes ?? 30 };
   if (w.urgency !== undefined) {

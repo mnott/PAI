@@ -106,10 +106,6 @@ model for one sub-task with `pai worker help` (budgeted).
 Unknown options (`--allowedTools`, ...) are handed to `claude`. Every option is
 in [../commands/worker.md](../commands/worker.md).
 
-## Priority and CPU limit
-
-Workers never take CPU from your own work. The worker's `claude` process, and so every Bash command and probe it starts, runs at background priority: `taskpolicy -b` on macOS (low CPU and IO priority, efficiency cores), `nice -n 10` elsewhere. Your sessions, the router, the daemon and the model server keep normal priority. Switch it off with `workers.priority.background: false`. Each Bash command of a worker also runs under `ulimit -S -t` (`workers.priority.cpuSecondsPerCommand`, default 300, 0 = no cap): a runaway loop dies on its own and the worker sees "CPU time limit exceeded" with a hint to fix the loop. Test runs and builds that go through their door (`pai build run`, the test wrapper) are exempt. `pai worker kill` ends the worker's whole process tree and prints what it ended; an id it cannot find or end is an error (exit 1).
-
 ## Reference
 
 [../worker.md](../worker.md) is the long reference (supervision, config,

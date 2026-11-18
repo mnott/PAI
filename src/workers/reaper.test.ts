@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { backgroundArgv, capBashCommand, withCpuLimit } from "./priority.js";
-import { killTree, killWorker } from "./kill-tree.js";
+import { execFileSync, spawn } from "node:child_process";
 import { findOrphans, reapWorkerProcesses } from "./reap.js";
 import { scratchDir } from "./scratch.js";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -258,60 +256,4 @@ describe("reapWorkerProcesses kills only the worker's own processes", () => {
     expect(pids).not.toContain(process.pid);
     expect(pids).not.toContain(process.ppid);
   });
-});
-
-describe("worker priority and kill", () => {
-  const MARK = `prio${process.pid}x${Date.now()}`;
-  const psLines = (): string[] => execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n").filter((l) => l.includes(MARK));
-  afterEach(() => {
-    for (const l of psLines()) try { process.kill(Number(l.trim().split(/\s+/)[0]), "SIGKILL"); } catch { /* gone */ }
-  });
-
-  it("the worker's command line gets the background-priority wrapper, off when disabled", () => {
-    expect(backgroundArgv(["claude", "-p"], undefined, "darwin")).toEqual(["taskpolicy", "-b", "claude", "-p"]);
-    expect(backgroundArgv(["claude", "-p"], { background: true }, "linux")).toEqual(["nice", "-n", "10", "claude", "-p"]);
-    expect(backgroundArgv(["claude", "-p"], { background: false }, "darwin")).toEqual(["claude", "-p"]);
-  });
-
-  it("a taskpolicy -b child really runs at background QoS", () => {
-    if (process.platform !== "darwin") return;
-    const [bin, ...args] = backgroundArgv(["sh", "-c", `ps -o pri= -p $$; : ${MARK}`], undefined, "darwin");
-    const out = execFileSync(bin, args, { encoding: "utf8", timeout: 20_000 });
-    expect(Number(out.trim())).toBeLessThan(10); // a normal process sits near 31, a background one at 4
-  });
-
-  it("a worker Bash command gets the ulimit prefix; test runs and build doors are uncapped", () => {
-    expect(capBashCommand("ls -la", { cpuSecondsPerCommand: 300 })).toMatch(/^ulimit -S -t 300 /);
-    expect(capBashCommand("ls -la")).toMatch(/^ulimit -S -t 300 /);
-    expect(capBashCommand("npx vitest run src/x.test.ts")).toMatch(/^ulimit -S -t unlimited/);
-    expect(capBashCommand("pai build run -- make")).toMatch(/^ulimit -S -t unlimited/);
-    expect(capBashCommand("ls", { cpuSecondsPerCommand: 0 })).toMatch(/^ulimit -S -t unlimited/);
-  });
-
-  it("a command that burns its CPU budget dies with the CPU-time message", () => {
-    const script = join(tmpdir(), `${MARK}.sh`);
-    writeFileSync(script, withCpuLimit(`perl -e '1 while 1' ${MARK}`, 1) + "\n");
-    const r = spawnSync("timeout", ["20", "bash", script], { encoding: "utf8" });
-    expect(r.stderr).toContain("CPU time limit exceeded");
-    expect(r.status).toBe(152);
-    rmSync(script, { force: true });
-  }, 25_000);
-
-  it("kill of a running fake worker ends its whole tree and reports it; an unknown id fails", async () => {
-    const logDir = fakeLogDir();
-    try {
-      const root = spawn("sh", ["-c", `perl -e 'alarm 20; sleep 20' ${MARK}-child & wait`], { detached: true, stdio: "ignore" });
-      root.unref();
-      for (let i = 0; i < 50 && !psLines().some((l) => l.includes("-child")); i++) await new Promise((r) => setTimeout(r, 100));
-      expect(psLines().some((l) => l.includes("-child"))).toBe(true);
-      putStatus(logDir, "kt-1", { pid: root.pid, state: "running" });
-      const lines = await killTree(logDir, "kt-1", { deps: { owns: () => true, request: () => undefined, waitTerminal: async () => null, graceMs: 300 } });
-      expect(lines.join("\n")).toMatch(/sent SIGTERM to worker kt-1 .*; ended \d+ process/);
-      for (let i = 0; i < 30 && psLines().some((l) => l.includes("-child")); i++) await new Promise((r) => setTimeout(r, 100));
-      expect(psLines().filter((l) => l.includes("-child"))).toEqual([]);
-      await expect(killWorker(logDir, "no-such-worker", {})).rejects.toThrow(/no worker named/);
-    } finally {
-      rmSync(logDir, { recursive: true, force: true });
-    }
-  }, 25_000);
 });
