@@ -27,6 +27,8 @@ import {
 import { ledgerPath } from "./paths.js";
 import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
 import { resumePreempted } from "./preempt.js";
+import { endProcesses, selectReapable } from "./reap.js";
+import { processTree } from "./wait-on.js";
 
 export interface KillTreeDeps {
   signal: (pid: number, sig: NodeJS.Signals) => void;
@@ -40,6 +42,10 @@ export interface KillTreeDeps {
   stopPooled: (s: WorkerStatus) => Promise<boolean>;
   /** Live pids of the pooled slot's claude process(es): cwd = the slot dir. */
   slotPids: (slot: string) => number[];
+  /** Pids of the worker's process tree right now (root first); taken before the signal, as the children reparent once the root is gone. */
+  treeOf: (pid: number) => number[];
+  /** End what the worker left running (its tree, group, orphans in its scratch/worktree); returns what was ended. */
+  reap: (s: WorkerStatus, rootPid: number, tree: number[]) => Promise<{ pid: number; cmd: string }[]>;
   /** Wait after SIGKILL is not needed; this is the grace between SIGTERM and SIGKILL. */
   graceMs: number;
 }
@@ -56,6 +62,17 @@ const defaultDeps = (): KillTreeDeps => ({
     return stopPooledTask(poolPort(readWorkersSection().workers), s.id);
   },
   slotPids: realSlotPids,
+  treeOf: (pid) => processTree(pid),
+  reap: async (s, rootPid, tree) => {
+    const dir = s.worktreeDir ?? undefined;
+    const found = selectReapable({ rootPid, dir, id: s.id });
+    const known = new Set(found.map((f) => f.pid));
+    // children that already reparented to init: the pre-signal tree still names them
+    const extra = tree.slice(1).filter((p) => !known.has(p) && p !== process.pid && pidAlive(p)).map((pid) => ({ pid, cmd: realCommands([pid]).get(pid) ?? "", reason: "descendant" }));
+    const procs = [...found, ...extra].filter((p) => p.cmd);
+    if (procs.length) await endProcesses(procs, () => undefined, 1000);
+    return procs;
+  },
   notifyOwner: async (session, text) => {
     const { sendToSession } = await import("../cli/lib/aibroker-client.js");
     await sendToSession(session, text, undefined, { noReply: true });
@@ -359,14 +376,15 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
   const clientPid = recorded.pool?.clientPid;
   const status: WorkerStatus = clientPid ? { ...recorded, pid: clientPid } : recorded;
   if (recorded.pool) return killPooled(logDir, recorded, status, d, stop);
-  if (!status.pid || status.pid <= 0) return `skipped worker ${id}: no pid recorded`;
+  if (!status.pid || status.pid <= 0) throw new Error(`worker ${id}: no pid recorded; nothing was ended`);
   if (!d.owns(status)) {
     recorded.state = "lost";
     recorded.last = `pid ${status.pid} no longer belongs to this worker (reused); marked lost`;
     recorded.rc = null;
     saveStatus(logDir, recorded);
-    return `worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`;
+    throw new Error(`worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`);
   }
+  const tree = d.treeOf(status.pid);
   d.request(logDir, ledgerPath(logDir), id, stop.forced, stop.by, stop.reason);
   appendStopEvent(logDir, id, { killed_by: stop.by, forced: stop.forced, reason: stop.reason });
   if (stop.foreign) {
@@ -384,7 +402,7 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
     d.signal(status.pid, "SIGTERM");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ESRCH" || String(e).includes("ESRCH")) {
-      return `worker ${id}: process ${status.pid} not found (already exited?)`;
+      throw new Error(`worker ${id}: process ${status.pid} not found (already exited?); nothing was ended`);
     }
     throw e;
   }
@@ -405,7 +423,10 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
   if (!selfReported) markKilled(logDir, recorded, stop, how, `killed by signal ${how}`);
   // a killed --now run must not leave its victims paused: end their preemption pause now (the supervision sweep is the backstop; idempotent when the run resumed them itself)
   try { resumePreempted(logDir, id); } catch { /* best effort */ }
-  return `sent ${how} to worker ${id} (pid ${status.pid})`;
+  // nothing the worker started outlives it: its Bash children, probes, detached leftovers
+  const ended = await d.reap(recorded, status.pid, tree).catch(() => []);
+  const tail = ended.length ? `; ended ${ended.length} process${ended.length === 1 ? "" : "es"}: ${ended.map((p) => `${p.pid} ${p.cmd.slice(0, 80)}`).join(", ")}` : "; no other process left";
+  return `sent ${how} to worker ${id} (pid ${status.pid})${tail}`;
 }
 
 /**
