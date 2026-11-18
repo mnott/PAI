@@ -17,6 +17,7 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/load-project-context.mjs" },
     { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/initialize-session.mjs" },
     { hookType: "SessionStart", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type SessionStart" },
+    { hookType: "SessionStart", matcher: "startup", command: "${ADAPTER_DIR}/Hooks/code-graph.mjs" },
     { hookType: "SessionStart", matcher: "compact", command: "${ADAPTER_DIR}/Hooks/post-compact-inject.mjs" },
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/cleanup-session-files.mjs" },
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/update-tab-titles.mjs" },
@@ -48,6 +49,8 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/update-tab-on-action.mjs" },
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
+    // Marks edited files dirty for the code graph (no parsing here; the next query re-reads them).
+    { hookType: "PostToolUse", matcher: "Edit|Write|MultiEdit|NotebookEdit", command: "${ADAPTER_DIR}/Hooks/code-graph-dirty.mjs" },
     // Failures that never reach PreToolUse (input validation) are counted by the loop guard here.
     { hookType: "PostToolUseFailure", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
     { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/stop-hook.mjs" },

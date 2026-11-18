@@ -945,6 +945,16 @@ const helpCommand: CommandDef = {
 // Taking the work back
 // ---------------------------------------------------------------------------
 
+/** The merged files are now on disk: an incremental background-priority index when the repo has a graph. Never fails the merge. */
+async function reindexAfterMerge(dir: string): Promise<void> {
+  try {
+    const [{ getStorageBackend }, { resolveRoot }, { incrementalIndexIfIndexed }] = await Promise.all([
+      import("../../storage/factory.js"), import("../../codegraph/api.js"), import("../../codegraph/session.js"),
+    ]);
+    await incrementalIndexIfIndexed(await getStorageBackend(), resolveRoot(dir));
+  } catch { /* best effort */ }
+}
+
 const mergeCommand: CommandDef = {
   name: "merge",
   summary: "Merge a worker's branch into your checkout",
@@ -967,7 +977,7 @@ const mergeCommand: CommandDef = {
   ],
   seeAlso: ["pai worker verify", "pai worker pending", "pai worker discard"],
   run: (ctx) =>
-    guard("pai worker pending", () => {
+    guard("pai worker pending", async () => {
       let verify = str(ctx.opts.verify);
       if (verify === undefined) {
         const configured = readMergeVerify();
@@ -976,7 +986,9 @@ const mergeCommand: CommandDef = {
         } else verify = configured;
       }
       try {
-        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, force: flag(ctx, "force"), verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: callerMergeTarget(logDir(), ctx.args.ID as string) }));
+        const target = callerMergeTarget(logDir(), ctx.args.ID as string);
+        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, force: flag(ctx, "force"), verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: target }));
+        await reindexAfterMerge(target ?? process.cwd());
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) throw new CliError(e.message, "the merge was kept; fix forward or revert it", 3);
         if (e instanceof WorkerRunningError) throw new CliError(e.message, `pai worker wait ${ctx.args.ID}   or: pai worker kill ${ctx.args.ID} --reason 'merge now'`, 3);

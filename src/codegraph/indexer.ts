@@ -205,3 +205,41 @@ export async function reconcile(store: CodeGraphStore, root: string): Promise<In
   await resolveAffected(store, rootAbs, changedPaths, brokenRefIds);
   return { changed, deleted: deleted.length };
 }
+
+/**
+ * Index exactly these repo-relative files (the dirty list, merged files): new and
+ * changed ones are extracted, vanished ones deleted. No directory listing.
+ */
+export async function indexFiles(store: CodeGraphStore, root: string, paths: string[]): Promise<IndexCounts> {
+  const rootAbs = resolve(root);
+  const stored = new Map((await store.listFiles(rootAbs)).map((f) => [f.path, f]));
+  const brokenRefIds: number[] = [];
+  const changedPaths: string[] = [];
+  let changed = 0;
+  let deleted = 0;
+  for (const path of [...new Set(paths)]) {
+    if (skipped(path)) continue;
+    const abs = join(rootAbs, path);
+    let st;
+    try { st = statSync(abs); } catch { st = null; }
+    if (!st || !st.isFile()) {
+      if (stored.has(path)) { brokenRefIds.push(...(await store.deleteFiles(rootAbs, [path])).brokenRefIds); deleted++; }
+      continue;
+    }
+    if (st.size > MAX_FILE_BYTES) continue;
+    const prev = stored.get(path);
+    if (prev && prev.mtime === Math.round(st.mtimeMs)) continue;
+    const content = readFileSync(abs);
+    const hash = hashOf(content);
+    if (prev && prev.contentHash === hash) { await store.touchFileMtime(rootAbs, path, Math.round(st.mtimeMs), st.size); continue; }
+    const extracted = await extractFile({ path, content: content.toString("utf8"), mtime: Math.round(st.mtimeMs), size: st.size });
+    const res = await store.upsertFile(rootAbs, extracted
+      ? { path, language: extracted.language, contentHash: hash, mtime: Math.round(st.mtimeMs), size: st.size, symbols: extracted.symbols, refs: extracted.refs }
+      : { path, language: "unknown", contentHash: hash, mtime: Math.round(st.mtimeMs), size: st.size, symbols: [], refs: [] });
+    brokenRefIds.push(...res.brokenRefIds);
+    if (extracted) changedPaths.push(path);
+    changed++;
+  }
+  if (changed || deleted) await resolveAffected(store, rootAbs, changedPaths, brokenRefIds);
+  return { changed, deleted };
+}

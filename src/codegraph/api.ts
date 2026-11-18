@@ -11,7 +11,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
 import type { CodeGraphStore, SymbolRow } from "./store.js";
-import { indexRoot, reconcile } from "./indexer.js";
+import { indexFiles, indexRoot, reconcile } from "./indexer.js";
+import { consumeDirty, readDirty, runningIndex } from "./session.js";
 
 export interface IndexStats {
   root: string;
@@ -94,7 +95,11 @@ export async function ensureFresh(backend: StorageBackend, root: string): Promis
   if (existing.files === 0) {
     return indexRepo(backend, rootAbs);
   }
-  const counts = await reconcile(store, rootAbs);
+  // files the Edit/Write hook marked dirty are re-read first (no parse happened in the hook)
+  const dirty = consumeDirty(rootAbs);
+  const direct = dirty.length ? await indexFiles(store, rootAbs, dirty) : { changed: 0, deleted: 0 };
+  const rec = await reconcile(store, rootAbs);
+  const counts = rec ? { changed: rec.changed + direct.changed, deleted: rec.deleted + direct.deleted } : direct.changed || direct.deleted ? direct : null;
   if (!counts) return null;
   const stats = await store.stats(rootAbs);
   return {
@@ -113,6 +118,7 @@ export async function ensureFresh(backend: StorageBackend, root: string): Promis
 export async function status(backend: StorageBackend, root: string): Promise<{
   root: string; backend: string; indexed: boolean; files: number; symbols: number;
   refs: number; resolvedRefs: number; byLanguage: Record<string, number>; lastIndexedAt: string | null;
+  dirty: number; indexing: { pid: number; root: string; startedAt: string } | null;
 }> {
   const store = backend.codeGraph();
   const rootAbs = resolve(root);
@@ -127,6 +133,8 @@ export async function status(backend: StorageBackend, root: string): Promise<{
     resolvedRefs: s.resolvedRefs,
     byLanguage: s.byLanguage,
     lastIndexedAt: s.lastIndexedAt != null ? new Date(s.lastIndexedAt).toISOString() : null,
+    dirty: readDirty(rootAbs).length,
+    indexing: ((l) => (l ? { pid: l.pid, root: l.root, startedAt: new Date(l.startedAt).toISOString() } : null))(runningIndex()),
   };
 }
 
