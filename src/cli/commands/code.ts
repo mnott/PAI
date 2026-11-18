@@ -3,6 +3,11 @@
 import { OPT, CliError, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { getStorageBackend } from "../../storage/factory.js";
 import * as cg from "../../codegraph/api.js";
+import { findSummary, localSummaryModel, summarizeRepo } from "../../codegraph/summaries.js";
+import { getRegistryBackend } from "../../storage/factory.js";
+import { reexecBackground } from "../../daemon/pass-priority.js";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
 
 const root: OptDef = { name: "root", type: "string", value: "DIR", summary: "Repository root (default: the repo around the current directory)" };
 const json: OptDef = { ...OPT.json, summary: "Output raw JSON" };
@@ -152,6 +157,72 @@ export const codeCommand: CommandDef = {
         await cg.ensureFresh(backend, r);
         const res = await cg.impact(backend, r, ctx.args.NAME as string, num(ctx.opts.depth));
         print(ctx, res, [`${res.files.length} files, ${res.symbols.length} symbols`, ...res.files.map((f) => `  ${f}`), ...res.symbols.map((s) => `  ${sym(s)}`)]);
+      },
+    },
+    {
+      name: "summarize",
+      summary: "Write module and repo summaries with the local model",
+      description:
+        "For every module (a directory with source files) and the repo, stores a short summary: purpose (written by the local model from signatures, doc comments and top references), entry points, what it depends on and what depends on it. " +
+        "Runs at background priority, one module at a time, and never uses a cloud model; it stops with an error when no local model is running. " +
+        "A module is regenerated only when its source changed (--force redoes all). Summaries are also stored as memory chunks, so the next embed pass makes them searchable with memory search.",
+      options: [
+        root,
+        { name: "project", type: "string", value: "SLUG", summary: "A registered project instead of the current repo" },
+        { name: "all", type: "boolean", default: false, summary: "Every registered project whose code graph is already indexed" },
+        { name: "changed", type: "boolean", default: true, summary: "Only modules whose source changed since their summary (default)" },
+        { name: "force", type: "boolean", default: false, summary: "Regenerate every summary" },
+        { name: "max-minutes", type: "number", value: "N", summary: "Start no new module after N minutes" },
+        json,
+      ],
+      examples: ["pai code summarize", "pai code summarize --project pai --changed", "pai code summarize --all --max-minutes 90"],
+      seeAlso: ["pai code summary", "pai code explore"],
+      run: async (ctx) => {
+        reexecBackground();
+        const backend = await getStorageBackend();
+        const registry = await getRegistryBackend();
+        const targets: Array<{ root: string; slug: string }> = [];
+        if (ctx.opts.all === true) {
+          for (const p of await registry.listProjects({ status: "active" })) {
+            if (existsSync(p.root_path) && (await cg.status(backend, p.root_path)).indexed) targets.push({ root: p.root_path, slug: p.slug });
+          }
+        } else if (typeof ctx.opts.project === "string") {
+          const p = await registry.getProjectBySlug(ctx.opts.project);
+          if (!p) throw new CliError(`No project with slug ${ctx.opts.project}`, "Run: pai project list");
+          targets.push({ root: p.root_path, slug: p.slug });
+        } else {
+          const r = rootOf(ctx);
+          const p = await registry.getProjectByRootPath(r);
+          targets.push({ root: r, slug: p?.slug ?? basename(r) });
+        }
+        if (!targets.length) throw new CliError("Nothing to summarize", "Run: pai code index");
+        const model = await localSummaryModel();
+        const maxMin = num(ctx.opts["max-minutes"]);
+        const t0 = Date.now();
+        const out = [];
+        for (const t of targets) {
+          await cg.ensureFresh(backend, t.root);
+          const left = maxMin === undefined ? undefined : Math.max(0, maxMin * 60_000 - (Date.now() - t0));
+          out.push(await summarizeRepo(backend, t.root, {
+            model, slug: t.slug, changed: ctx.opts.force !== true, maxMs: left,
+            log: (m) => { if (ctx.opts.json !== true) console.error(`[${t.slug}] ${m}`); },
+          }));
+        }
+        print(ctx, out, out.map((r) => `${r.slug}: ${r.modules} modules, ${r.summarized} summarized, ${r.unchanged} unchanged, ${r.failed} failed${r.budgetHit ? " (time budget reached)" : ""} in ${(r.ms / 1000).toFixed(1)} s`));
+      },
+    },
+    {
+      name: "summary",
+      summary: "Show the stored summary of a module or repo",
+      description: "Prints the summary for a key (code:<slug>:<path>), a directory or a file path; a path without its own summary falls back to the enclosing module, then the repo. Use . for the repo.",
+      args: [{ name: "TARGET", summary: "Key, directory or file path", required: true }],
+      options: [root, json],
+      examples: ["pai code summary src/codegraph", "pai code summary code:pai:src/router", "pai code summary ."],
+      seeAlso: ["pai code summarize", "pai code explore"],
+      run: async (ctx) => {
+        const row = await findSummary((await getStorageBackend()).codeGraph(), rootOf(ctx), ctx.args.TARGET as string);
+        if (!row) throw new CliError(`No summary stored for ${ctx.args.TARGET}`, "Run: pai code summarize");
+        print(ctx, row, [row.key, row.summary, "", `model ${row.model}, generated ${new Date(row.generatedAt).toISOString()}`]);
       },
     },
     {

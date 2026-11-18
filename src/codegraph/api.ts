@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
 import type { CodeGraphStore, SymbolRow } from "./store.js";
 import { indexRoot, reconcile } from "./indexer.js";
+import { findSummary } from "./summaries.js";
 
 export interface IndexStats {
   root: string;
@@ -279,6 +280,16 @@ export async function explore(
   };
 
   push(`# ${query}\n`);
+
+  // module and repo summaries (when generated) for the modules the symbols live in
+  const sumPaths = [...new Set([...symbols.map((s) => s.file.includes("/") ? s.file.slice(0, s.file.lastIndexOf("/")) : "."), "."])];
+  const seenSum = new Set<string>();
+  for (const p of sumPaths) {
+    const sm = await findSummary(store, rootAbs, p);
+    if (!sm || seenSum.has(sm.key)) continue;
+    seenSum.add(sm.key);
+    push(`\n## ${sm.kind === "repo" ? "Repo" : "Module"} summary: ${sm.path}\n${sm.summary.slice(0, 700)}\n`);
+  }
 
   // definitions grouped by file
   const byFile = new Map<string, SymbolHit[]>();

@@ -69,3 +69,17 @@ CREATE INDEX IF NOT EXISTS idx_code_refs_from ON code_refs(from_file_id);
 CREATE INDEX IF NOT EXISTS idx_code_refs_toname ON code_refs(repo_root, to_name);
 CREATE INDEX IF NOT EXISTS idx_code_refs_tosym ON code_refs(to_symbol_id);
 `;
+
+export const CODE_SUMMARIES_SQLITE_SQL = `
+CREATE TABLE IF NOT EXISTS code_summaries (
+  repo_root    TEXT NOT NULL,
+  key          TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  path         TEXT NOT NULL,
+  summary      TEXT NOT NULL,
+  model        TEXT NOT NULL,
+  source_hash  TEXT NOT NULL,
+  generated_at INTEGER NOT NULL,
+  PRIMARY KEY (repo_root, key)
+);
+`;

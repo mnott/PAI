@@ -931,6 +931,16 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
     async (args) => proxyTool("code_callers", args)
   );
 
+  server.tool(
+    "code_summary",
+    "Get the stored summary of a module or repo from the code graph: purpose, entry points, what it depends on and what depends on it. Pass a key (code:<slug>:<path>), a directory or a file path; the nearest enclosing module answers.",
+    {
+      target: z.string().min(1).describe("A summary key, a directory or a file path. Use '.' for the repo."),
+      root: z.string().optional().describe("Repository root. Default: the repo around the current directory."),
+    },
+    async (args) => proxyTool("code_summary", args)
+  );
+
   // Tool: audit_export — a tenant's firings, decisions and outcomes with a manifest (read-only, in-process)
   server.tool(
     "audit_export",

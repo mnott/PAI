@@ -12,7 +12,7 @@ import { ensureCodeGraphSchemaPostgres } from "./schema-postgres.js";
 import { symbolFtsText, splitIdentifierWords } from "./fts.js";
 import type {
   CodeGraphStore, CodeFileRow, CodeGraphStats, FileRecord, RefRow,
-  ResolvedRefRow, SymbolRow,
+  ResolvedRefRow, SymbolRow, SummaryRow,
 } from "./store.js";
 
 interface SymDbRow {
@@ -26,6 +26,14 @@ interface RefDbRow {
   t_name: string | null; t_qualified_name: string | null; t_kind: string | null;
   t_file: string | null; t_file_id: number | null; t_start_line: number | null;
   t_end_line: number | null; t_signature: string | null; t_exported: boolean | null;
+}
+
+interface SumDbRow {
+  key: string; kind: string; path: string; summary: string; model: string;
+  source_hash: string; generated_at: string | number;
+}
+function mapSummary(r: SumDbRow): SummaryRow {
+  return { key: r.key, kind: r.kind as SummaryRow["kind"], path: r.path, summary: r.summary, model: r.model, sourceHash: r.source_hash, generatedAt: Number(r.generated_at) };
 }
 
 function mapSymbol(r: SymDbRow): SymbolRow {
@@ -353,5 +361,34 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
       byLanguage: Object.fromEntries(byLang.rows.map((r) => [r.language, Number(r.n)])),
       lastIndexedAt: last.rows[0]?.n != null ? Number(last.rows[0].n) : null,
     };
+  }
+
+  async getSummary(repoRoot: string, key: string): Promise<SummaryRow | null> {
+    await this.ensure();
+    const r = await this.pool.query<SumDbRow>("SELECT * FROM code_summaries WHERE repo_root = $1 AND key = $2", [repoRoot, key]);
+    return r.rows[0] ? mapSummary(r.rows[0]) : null;
+  }
+
+  async upsertSummary(repoRoot: string, s: SummaryRow): Promise<void> {
+    await this.ensure();
+    await this.pool.query(
+      `INSERT INTO code_summaries (repo_root, key, kind, path, summary, model, source_hash, generated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (repo_root, key) DO UPDATE SET kind = EXCLUDED.kind, path = EXCLUDED.path, summary = EXCLUDED.summary,
+         model = EXCLUDED.model, source_hash = EXCLUDED.source_hash, generated_at = EXCLUDED.generated_at`,
+      [repoRoot, s.key, s.kind, s.path, s.summary, s.model, s.sourceHash, s.generatedAt],
+    );
+  }
+
+  async listSummaries(repoRoot: string): Promise<SummaryRow[]> {
+    await this.ensure();
+    const r = await this.pool.query<SumDbRow>("SELECT * FROM code_summaries WHERE repo_root = $1 ORDER BY key", [repoRoot]);
+    return r.rows.map(mapSummary);
+  }
+
+  async pruneSummaries(repoRoot: string, keep: string[]): Promise<number> {
+    await this.ensure();
+    const r = await this.pool.query("DELETE FROM code_summaries WHERE repo_root = $1 AND NOT (key = ANY($2::text[]))", [repoRoot, keep]);
+    return r.rowCount ?? 0;
   }
 }

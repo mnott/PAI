@@ -8,11 +8,11 @@
  */
 
 import type { Database } from "better-sqlite3";
-import { CODEGRAPH_SQLITE_SQL } from "./schema-sqlite.js";
+import { CODEGRAPH_SQLITE_SQL, CODE_SUMMARIES_SQLITE_SQL } from "./schema-sqlite.js";
 import { symbolFtsText } from "./fts.js";
 import type {
   CodeGraphStore, CodeFileRow, CodeGraphStats, FileRecord, RefRow,
-  ResolvedRefRow, SymbolRow,
+  ResolvedRefRow, SymbolRow, SummaryRow,
 } from "./store.js";
 
 interface SymDbRow {
@@ -30,6 +30,14 @@ interface RefDbRow {
   t_name?: string; t_qualified_name?: string; t_kind?: string;
   t_file?: string; t_file_id?: number; t_start_line?: number; t_end_line?: number;
   t_signature?: string; t_exported?: number;
+}
+
+interface SumDbRow {
+  key: string; kind: string; path: string; summary: string; model: string;
+  source_hash: string; generated_at: number;
+}
+function mapSummary(r: SumDbRow): SummaryRow {
+  return { key: r.key, kind: r.kind as SummaryRow["kind"], path: r.path, summary: r.summary, model: r.model, sourceHash: r.source_hash, generatedAt: Number(r.generated_at) };
 }
 
 function mapSymbol(r: SymDbRow): SymbolRow {
@@ -101,6 +109,7 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
       const has = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(name);
       if (!has) this.db.exec(sql);
     }
+    this.db.exec(CODE_SUMMARIES_SQLITE_SQL);
     this.ready = true;
   }
 
@@ -367,5 +376,35 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
       byLanguage: Object.fromEntries(byLang.map((r) => [r.language, r.n])),
       lastIndexedAt: last.n,
     };
+  }
+
+  async getSummary(repoRoot: string, key: string): Promise<SummaryRow | null> {
+    this.ensure();
+    const r = this.db.prepare("SELECT * FROM code_summaries WHERE repo_root = ? AND key = ?").get(repoRoot, key) as SumDbRow | undefined;
+    return r ? mapSummary(r) : null;
+  }
+
+  async upsertSummary(repoRoot: string, s: SummaryRow): Promise<void> {
+    this.ensure();
+    this.db.prepare(
+      `INSERT INTO code_summaries (repo_root, key, kind, path, summary, model, source_hash, generated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(repo_root, key) DO UPDATE SET kind = excluded.kind, path = excluded.path, summary = excluded.summary,
+         model = excluded.model, source_hash = excluded.source_hash, generated_at = excluded.generated_at`
+    ).run(repoRoot, s.key, s.kind, s.path, s.summary, s.model, s.sourceHash, s.generatedAt);
+  }
+
+  async listSummaries(repoRoot: string): Promise<SummaryRow[]> {
+    this.ensure();
+    return (this.db.prepare("SELECT * FROM code_summaries WHERE repo_root = ? ORDER BY key").all(repoRoot) as SumDbRow[]).map(mapSummary);
+  }
+
+  async pruneSummaries(repoRoot: string, keep: string[]): Promise<number> {
+    this.ensure();
+    const keepSet = new Set(keep);
+    const del = this.db.prepare("DELETE FROM code_summaries WHERE repo_root = ? AND key = ?");
+    let n = 0;
+    for (const r of await this.listSummaries(repoRoot)) if (!keepSet.has(r.key)) n += del.run(repoRoot, r.key).changes;
+    return n;
   }
 }

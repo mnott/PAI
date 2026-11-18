@@ -181,6 +181,61 @@ pai code impact resolveRoot --depth 3
 
 See also: `pai code callers`
 
+### pai code summarize
+
+Write module and repo summaries with the local model
+
+```
+pai code summarize [options]
+```
+
+For every module (a directory with source files) and the repo, stores a short summary: purpose (written by the local model from signatures, doc comments and top references), entry points, what it depends on and what depends on it. Runs at background priority, one module at a time, and never uses a cloud model; it stops with an error when no local model is running. A module is regenerated only when its source changed (--force redoes all). Summaries are also stored as memory chunks, so the next embed pass makes them searchable with memory search.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--root DIR` | string | — | Repository root (default: the repo around the current directory) |
+| `--project SLUG` | string | — | A registered project instead of the current repo |
+| `--all` | flag | — | Every registered project whose code graph is already indexed |
+| `--changed` | flag | true | Only modules whose source changed since their summary (default) |
+| `--force` | flag | — | Regenerate every summary |
+| `--max-minutes N` | number | — | Start no new module after N minutes |
+| `--json` | flag | — | Output raw JSON |
+
+```sh
+pai code summarize
+pai code summarize --project pai --changed
+pai code summarize --all --max-minutes 90
+```
+
+See also: `pai code summary`, `pai code explore`
+
+### pai code summary
+
+Show the stored summary of a module or repo
+
+```
+pai code summary TARGET [options]
+```
+
+Prints the summary for a key (code:<slug>:<path>), a directory or a file path; a path without its own summary falls back to the enclosing module, then the repo. Use . for the repo.
+
+| Argument | Required | Description |
+|---|---|---|
+| `TARGET` | yes | Key, directory or file path |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--root DIR` | string | — | Repository root (default: the repo around the current directory) |
+| `--json` | flag | — | Output raw JSON |
+
+```sh
+pai code summary src/codegraph
+pai code summary code:pai:src/router
+pai code summary .
+```
+
+See also: `pai code summarize`, `pai code explore`
+
 ### pai code status
 
 Show what is indexed for a repository
@@ -213,6 +268,8 @@ See also: `pai code index`
 | `pai code callers` | Who calls or uses a symbol |
 | `pai code callees` | What a symbol calls or uses |
 | `pai code impact` | What a change to a symbol could break |
+| `pai code summarize` | Write module and repo summaries with the local model |
+| `pai code summary` | Show the stored summary of a module or repo |
 | `pai code status` | Show what is indexed for a repository |
 
 ## See also
