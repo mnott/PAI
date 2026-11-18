@@ -135,12 +135,13 @@ export function parseCommand(raw: string): Segment[] {
       continue;
     }
     if (ch === "'" || ch === '"') {
+      if (!has && !seg.words.length && !seg.redirects.length) segStart = i; // a quoted word opening at the head of a segment
       quote = ch;
       has = true;
     } else if (ch === "\\" && i + 1 < command.length) {
+      if (!has && !seg.words.length && !seg.redirects.length) segStart = i;
       tok += command[++i];
       has = true;
-      if (!seg.words.length && !seg.redirects.length) segStart = i - 1; // an escaped word opening at the head of a segment
     } else if (/\s/.test(ch) && ch !== "\n") {
       flushTok();
     } else if (ch === ";" || ch === "\n" || ch === "|" || ch === "&") {
@@ -159,9 +160,9 @@ export function parseCommand(raw: string): Segment[] {
         target = "skip"; // fd duplication: `2>&1`
       } else target = ch === ">" ? "redir" : "skip";
     } else {
+      if (!has && !seg.words.length && !seg.redirects.length) segStart = i; // an unquoted word opening at the head of a segment
       tok += ch;
       has = true;
-      if (!seg.words.length && !seg.redirects.length) segStart = i; // an unquoted word opening at the head of a segment
     }
   }
   endSeg(command.length);
@@ -555,7 +556,6 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: s
     if (sedOperands(args).some(hasGnuSedRange)) {
       const rawSeg = st.raw.slice(seg.start, seg.end);
       const rewritten = args.length ? gnuSedRewrite(rawSeg, sedOperands(args)) : null;
-      console.error("[A]", JSON.stringify({ rawSeg, rewritten, next }));
       if (!rewritten || next !== undefined) return deny(GNU_SED_RANGE_REASON);
       // splice the rewritten segment back into the heredoc-blanked text (blanking preserves offsets, so these slice the original command too).
       // parseCommand starts a quoted first word one char late (the opening quote is swallowed before the offset is taken): realign the
