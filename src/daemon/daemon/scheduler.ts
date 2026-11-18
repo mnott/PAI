@@ -20,6 +20,7 @@ import { abortStuckPreemptions, endExpiredWindowNow, resumeOrphaned } from "../.
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
+import { freshLoadWatchState, liveLoadWatchDeps, loadWatchConfig, loadWatchTick, type LoadWatchState } from "../load-watch.js";
 import { batteryGuardTick, batteryGuardConfig, batteryPassRefusal, type BatteryGuardConfig } from "../battery-guard.js";
 import { buildsDir, listBuildsSync } from "../../builds/queue.js";
 import { stallMinutes, stallReleaseMinutes } from "../../builds/config.js";
@@ -84,6 +85,7 @@ import {
   setLastVaultIndexTime,
   setCacheKeepaliveTimer,
   setBatteryGuardTimer,
+  setLoadWatchTimer,
 } from "./state.js";
 
 // ---------------------------------------------------------------------------
@@ -974,6 +976,45 @@ export function startBatteryGuard(cfg: BatteryGuardConfig = batteryGuardConfig(d
       (process.platform === "darwin" ? "" : " (not macOS: no-op)") +
       "\n"
   );
+}
+
+// ---------------------------------------------------------------------------
+// Load watchdog
+// ---------------------------------------------------------------------------
+
+/** Start the runaway-load watchdog (src/daemon/load-watch.ts): one reading a minute, freeze + alert on sustained overload. */
+export function startLoadWatch(): void {
+  let workers: ReturnType<typeof readWorkersSection>["workers"];
+  try {
+    workers = readWorkersSection().workers;
+  } catch {
+    return;
+  }
+  const cfg = loadWatchConfig((daemonConfig as { workers?: unknown }).workers);
+  if (!cfg.enabled) {
+    process.stderr.write("[pai-daemon] Load watch: disabled (workers.loadWatch.enabled is false)\n");
+    return;
+  }
+  const deps = liveLoadWatchDeps(workersLogDir(workers));
+  let state: LoadWatchState = freshLoadWatchState();
+  let running = false;
+  const tick = () => {
+    if (running) return;
+    running = true;
+    void loadWatchTick(state, cfg, deps)
+      .then((s) => {
+        state = s;
+      })
+      .catch((e) => process.stderr.write(`[pai-daemon] Load watch tick error: ${e instanceof Error ? e.message : String(e)}\n`))
+      .finally(() => {
+        running = false;
+      });
+  };
+  tick();
+  const timer = setInterval(tick, cfg.intervalSecs * 1000);
+  if (timer.unref) timer.unref();
+  setLoadWatchTimer(timer);
+  process.stderr.write(`[pai-daemon] Load watch: every ${cfg.intervalSecs}s (limit ${cfg.maxLoadPerCore} x cores for ${cfg.minutes} min)\n`);
 }
 
 // ---------------------------------------------------------------------------

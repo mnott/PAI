@@ -96,6 +96,8 @@ export function setEmbedSchedulerTimer(v: ReturnType<typeof setInterval> | null)
 export function setVaultIndexInProgress(v: boolean): void { vaultIndexInProgress = v; }
 export function setLastVaultIndexTime(v: number): void { lastVaultIndexTime = v; }
 export function setCacheKeepaliveTimer(v: ReturnType<typeof setInterval> | null): void { cacheKeepaliveTimer = v; }
+export let loadWatchTimer: ReturnType<typeof setInterval> | null = null;
+export function setLoadWatchTimer(v: ReturnType<typeof setInterval> | null): void { loadWatchTimer = v; }
 export function setBatteryGuardTimer(v: ReturnType<typeof setInterval> | null): void { batteryGuardTimer = v; }
 
 // ---------------------------------------------------------------------------

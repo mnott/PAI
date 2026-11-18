@@ -45,8 +45,8 @@ import { startLoopLag } from "../event-loop-lag.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
-import { batteryGuardTimer, registryBackend } from "./state.js";
-import { startBatteryGuard } from "./scheduler.js";
+import { batteryGuardTimer, loadWatchTimer, registryBackend } from "./state.js";
+import { startLoadWatch, startBatteryGuard } from "./scheduler.js";
 import { migrateFtsConfig } from "../../storage/postgres/fts-migration.js";
 
 // ---------------------------------------------------------------------------
@@ -225,6 +225,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // Battery guard: pmset readings drive the local-work pause/stop (macOS only).
   startBatteryGuard();
 
+  // Load watchdog: sustained runaway load freezes the workers and alerts the operator directly.
+  startLoadWatch();
+
   // Model router: restart it whenever its port stops answering (opt-in).
   startRouterSupervisor();
 
@@ -293,6 +296,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
     if (embedSchedulerTimer) clearInterval(embedSchedulerTimer);
     if (cacheKeepaliveTimer) clearInterval(cacheKeepaliveTimer);
     if (batteryGuardTimer) clearInterval(batteryGuardTimer);
+    if (loadWatchTimer) clearInterval(loadWatchTimer);
 
     stopWorker();
 
