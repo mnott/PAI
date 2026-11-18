@@ -161,6 +161,18 @@ const autostartDeps = (log: Autolog, over: Partial<AutostartDeps> = {}): Autosta
 });
 
 describe("runtime autostart", () => {
+  it("a local_tiers model (apple-fm) with only autostart:true and no start command starts as a tier, up-check first", async () => {
+    const cfg = runtimeAutostartConfig({ "apple-fm": { autostart: true } }, [autostartTier("apple-fm", 8)]);
+    expect(cfg.enabled).toBe(true);
+    expect(cfg.tiers?.["apple-fm"]?.tier).toBe("apple-fm");
+    expect(cfg.memoryGb["apple-fm"]).toBe(8);
+    const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
+    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { isUp: async () => true, freeGb: async () => 1 }))).toEqual([]);
+    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { freeGb: async () => 4 }))).toEqual([{ kind: "skip-memory", runtime: "apple-fm", needGb: 8, freeGb: 4 }]);
+    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log))).toEqual([{ kind: "start", runtime: "apple-fm" }]);
+    expect(runtimeAutostartConfig({ nothing: { autostart: true } }, [autostartTier("apple-fm")]).enabled).toBe(false); // no start command, no tier: nothing to start
+  });
+
   it("starts a down autostart runtime once; one without autostart is never touched", async () => {
     const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
     let up = false;
