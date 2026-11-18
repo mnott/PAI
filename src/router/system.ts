@@ -70,12 +70,15 @@ export interface VmStat {
   compressed: number;
   used: number;
   free: number;
+  /** What a new allocation can take, bytes: free + inactive + speculative + purgeable — the same sum macOS calls "available". */
+  available: number;
 }
 
 /** `vm_stat` output → bytes; used = total - reclaimable (free+speculative+inactive). */
 export function parseVmStat(out: string, memTotal: number | undefined): VmStat | undefined {
   const pages = (label: string): number | undefined => {
-    const m = new RegExp(`${label}:\\s+(\\d+).`).exec(out);
+    // the trailing dot is consumed by [^0-9], not `.`: a real vm_stat line ends "123." and '.' would match any digit of a zero-padded page count (a 0-page line read as its first digit)
+    const m = new RegExp(`${label}:\\s+(\\d+)[^0-9]`).exec(out);
     return m ? Number(m[1]) : undefined;
   };
   const size = /page size of (\d+) bytes/.exec(out);
@@ -85,10 +88,12 @@ export function parseVmStat(out: string, memTotal: number | undefined): VmStat |
   const free = pages("Pages free");
   const speculative = pages("Pages speculative") ?? 0;
   const inactive = pages("Pages inactive") ?? 0;
+  const purgeable = pages("Pages purgeable") ?? 0;
   if (wired === undefined || compressed === undefined || free === undefined) return undefined;
   const reclaimable = (free + speculative + inactive) * pageSize;
+  const available = (free + inactive + speculative + purgeable) * pageSize;
   const used = memTotal !== undefined ? Math.max(0, memTotal - reclaimable) : undefined;
-  return { pageSize, wired: wired * pageSize, compressed: compressed * pageSize, used: used ?? 0, free: free * pageSize };
+  return { pageSize, wired: wired * pageSize, compressed: compressed * pageSize, used: used ?? 0, free: free * pageSize, available };
 }
 
 /** `sysctl vm.swapusage` → bytes: "total = 2048.00M  used = 1240.75M  free = ...". */
