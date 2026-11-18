@@ -56,8 +56,9 @@ function wkModel(r){if(!r.model)return'<span class="dim">–</span>';var up=!r.l
 var WK_LTIP={1:"L1 coordinates: splits the work, starts L2 workers, checks their results",2:"L2 does the work"};
 /** The level badge before the task text; an L2 under an L1 row of the table gets a "└" prefix. */
 function wkLevel(r,kid){return(kid?'<span class="wq-kid" aria-hidden="true">└</span>':'')+'<span class="wq-lv wq-l'+(r.level===1?1:2)+'" title="'+esc(WK_LTIP[r.level===1?1:2])+'">L'+(r.level===1?1:2)+'</span>'}
-var WK_ICO={"pause":"⏸","resume":"▶","stop":"■","next":"⤒","up":"↑","down":"↓","deep-resume":"▶"};
-function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic'+(a==="up"||a==="down"?" wq-sm":"")+'" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
+var WK_ICO={"pause":"⏸","resume":"▶","start-now":"▶","back-to-queue":"⤒","stop":"■","next":"⤒","up":"↑","down":"↓","deep-resume":"▶"};
+/** One icon button of a row: data-qa = the action, data-id = the job; label in the tooltip and the aria-label. A disabled one says why (disabled buttons carry no tooltip: the reason rides in the aria-label). */
+function wkIconBtn(id,a,why){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic'+(a==="up"||a==="down"?" wq-sm":"")+'" data-qa="'+a+'" data-id="'+esc(id)+'"'+(why?' disabled aria-disabled="true"':'')+' title="'+esc(why?l[0]+" — "+why:t)+'" aria-label="'+esc(why?l[0]+": "+why:l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
 function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯</button>'}
 /** Copy the full worker id to the clipboard (the queue never shows it in full); a prompt fallback when the clipboard API is absent. */
 function wkCopyId(id){var done=function(){WK_COPY=id;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_COPY=null},1600)};try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(String(id)).then(done,function(){window.prompt("worker id (copy it)",String(id))});return}}catch(e){}window.prompt("worker id (copy it)",String(id))}
