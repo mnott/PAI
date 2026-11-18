@@ -1084,6 +1084,24 @@ export function startRouterSupervisor(): void {
  * 3 until the next daemon start. Config is read once: a change needs a daemon
  * restart, like every other start* here.
  */
+/**
+ * Daemon start: a deep-freeze record (`pai stop`) means the machine was stopped on purpose. Wait until the router
+ * answers and the autostart models are up (5 min at most), resume every recorded worker in its original order and
+ * priority, tell the operator in one PAILot line and remove the record (workers/deepfreeze.ts).
+ */
+export async function startDeepfreezeResume(): Promise<void> {
+  try {
+    const { readDeepfreeze, setDeepResumeMode, deepResume, realDeepResumeDeps } = await import("../../workers/deepfreeze.js");
+    if (!readDeepfreeze()) return;
+    setDeepResumeMode(true); // this boot may start the autostart models again
+    process.stderr.write("[pai-daemon] Deep-freeze record found: resuming the recorded workers once router and models are up\n");
+    const r = await deepResume(workersLogDir(readWorkersSection().workers), await realDeepResumeDeps(), { wait: true });
+    for (const l of r.lines) process.stderr.write(`[pai-daemon] Deepfreeze: ${l}\n`);
+  } catch (e) {
+    process.stderr.write(`[pai-daemon] Deep-freeze resume failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+}
+
 export function startRuntimeAutostartSupervision(): void {
   try {
     startRuntimeAutostart();

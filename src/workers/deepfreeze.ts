@@ -1,0 +1,436 @@
+/**
+ * deepfreeze.ts — `pai stop` (= `pai freeze --deep`) and `pai resume`: preserve ALL worker work across a reboot.
+ *
+ * `pai freeze` is SIGSTOP; a reboot kills every stopped process and the work in flight is gone. A deep freeze
+ * instead (1) records every live worker in <PAI home>/state/deepfreeze.json (id, label, session/project, cwd/repo,
+ * branch, worktree, spec, class, provider, priority, parent/children, state running|queued), (2) commits any
+ * uncommitted work of each worktree on the worker's own branch as "wip: deepfreeze <timestamp>", (3) stops each
+ * worker through the normal teardown (kill-tree + reap) and marks its status "deepfrozen" — not killed or failed, so
+ * no failure alert, escalation or reroute ever sees it — then stops the local model servers.
+ *
+ * After the boot the daemon finds the record, waits until the router answers and the autostart models are up (or 5
+ * min) and resumes every recorded worker in its original order and priority through `pai worker resume` (a worker
+ * with a conversation) or `pai worker run --spec` (a queued one, or one without a session). A rerouted origin whose
+ * continuation already finished is not resumed. `pai resume` / `pai thaw` do the same at once; `--drop` discards.
+ */
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { paiHomePath } from "../config/pai-home.js";
+import { readFreeze, realFreezeDeps, thawAll } from "./freeze.js";
+import { appendLedger as ledgerLine } from "./ledger.js";
+import { ledgerPath } from "./paths.js";
+import { isChatPane, isLive, loadStatus, loadStatuses, ownsPid, saveStatus, type WorkerStatus } from "./status.js";
+
+export interface DeepWorker {
+  id: string;
+  label: string;
+  session?: string;
+  sessionKey?: string;
+  project: string;
+  cwd: string;
+  repo?: string;
+  branch?: string | null;
+  worktreeDir?: string | null;
+  spec?: string | null;
+  className?: string;
+  provider: string;
+  model?: string;
+  route?: string;
+  priority: "high" | "normal" | "low";
+  now?: boolean;
+  parent?: string;
+  children: string[];
+  state: "running" | "queued";
+  claudeSession?: string | null;
+  goals: string[];
+  outputFormat?: string;
+  /** Order of the original start (0 = first): resume replays in this order. */
+  order: number;
+  /** The WIP commit made in the worktree (sha), when there was uncommitted work. */
+  wip?: string;
+  /** Why the WIP commit could not be made; the worktree is left untouched then, nothing is lost. */
+  wipNote?: string;
+}
+
+export interface DeepRecord {
+  version: 1;
+  at: number;
+  by: string;
+  workers: DeepWorker[];
+  /** Local model runtimes stopped. */
+  models: string[];
+}
+
+export const deepfreezePath = (): string => process.env.PAI_DEEPFREEZE_FILE ?? paiHomePath("state", "deepfreeze.json");
+
+export function readDeepfreeze(): DeepRecord | null {
+  try {
+    const r = JSON.parse(readFileSync(deepfreezePath(), "utf8")) as DeepRecord;
+    return r && Array.isArray(r.workers) ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeRecord(r: DeepRecord): void {
+  const p = deepfreezePath();
+  mkdirSync(dirname(p), { recursive: true });
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(r, null, 2));
+  renameSync(tmp, p);
+}
+
+/** The ids a deep freeze is stopping (or has stopped): their own end paths write "deepfrozen", never "killed". */
+export function deepfrozenIds(): Set<string> {
+  return new Set(readDeepfreeze()?.workers.map((w) => w.id) ?? []);
+}
+
+/**
+ * True while a record waits and this daemon did not start after it (a running daemon stopped the work itself,
+ * only a boot resumes): the autostart manager must not bring the local models back before the operator wants them.
+ */
+let resumeMode = false;
+export const setDeepResumeMode = (v: boolean): void => {
+  resumeMode = v;
+};
+export const deepfreezeHold = (): boolean => !resumeMode && existsSync(deepfreezePath());
+
+const ts = (ms: number): string => new Date(ms).toISOString().replace(/[:.]/g, "-");
+
+export interface GitResult {
+  ok: boolean;
+  out: string;
+}
+
+export interface DeepFreezeDeps {
+  statuses: (logDir: string) => WorkerStatus[];
+  owns: (s: WorkerStatus) => boolean;
+  now: () => number;
+  git: (cwd: string, args: string[]) => GitResult;
+  /** Normal teardown of one worker (kill-tree + reap); must not throw for an already ended one. */
+  stop: (logDir: string, id: string) => Promise<void>;
+  /** Stop the local model servers; returns the names stopped. */
+  stopModels: () => Promise<string[]>;
+  /** Continue a plain `pai freeze` first: a SIGSTOPped process cannot run its teardown. */
+  unfreeze: (logDir: string) => void;
+  ledger: (logDir: string, event: string, kv: Record<string, string | number>) => void;
+}
+
+const priorityOf = (s: WorkerStatus): "high" | "normal" | "low" => s.priority ?? "normal";
+
+/** What a deep freeze would preserve, in original start order. Pure given its inputs. */
+export function planDeepFreeze(statuses: WorkerStatus[], owns: (s: WorkerStatus) => boolean, repoOf: (s: WorkerStatus) => string | undefined = () => undefined): DeepWorker[] {
+  const live = statuses
+    .filter((s) => (s.state === "running" || s.state === "queued") && !isChatPane(s) && s.origin !== "uhp" && isLive(s, (x) => owns(x as WorkerStatus)))
+    .sort((a, b) => (a.started < b.started ? -1 : a.started > b.started ? 1 : a.id < b.id ? -1 : 1));
+  return live.map((s, order) => ({
+    id: s.id,
+    label: s.label,
+    ...(s.session?.name ? { session: s.session.name } : {}),
+    ...(s.sessionKey ? { sessionKey: s.sessionKey } : {}),
+    project: (repoOf(s) ?? s.cwd).split("/").filter(Boolean).pop() ?? "",
+    cwd: s.cwd,
+    ...(repoOf(s) ? { repo: repoOf(s) } : {}),
+    branch: s.branch ?? null,
+    worktreeDir: s.worktreeDir ?? null,
+    spec: s.promptFile ?? s.spec ?? null,
+    ...(s.className ? { className: s.className } : {}),
+    provider: s.provider,
+    ...(s.model ? { model: s.model } : {}),
+    ...(s.routeWhy ? { route: s.routeWhy } : s.route ? { route: `${s.route.policy}: ${s.route.reason}` } : {}),
+    priority: priorityOf(s),
+    ...(s.now ? { now: true } : {}),
+    ...(s.parent ? { parent: s.parent } : {}),
+    children: statuses.filter((c) => c.parent === s.id).map((c) => c.id),
+    state: s.state as "running" | "queued",
+    claudeSession: s.claudeSession ?? null,
+    goals: (s.goals ?? []).map((g) => g.text),
+    ...(s.outputFormat ? { outputFormat: s.outputFormat } : {}),
+    order,
+  }));
+}
+
+/** Deepest first: a child before its parent, so no parent ever runs next to a stopped child. */
+function stopOrder(ws: DeepWorker[]): DeepWorker[] {
+  const depth = (w: DeepWorker, seen = new Set<string>()): number => {
+    const p = w.parent ? ws.find((x) => x.id === w.parent) : undefined;
+    return p && !seen.has(p.id) ? 1 + depth(p, new Set([...seen, w.id])) : 0;
+  };
+  return [...ws].sort((a, b) => depth(b) - depth(a) || b.order - a.order);
+}
+
+/** Commit everything uncommitted in the worker's worktree as "wip: deepfreeze <ts>"; hooks run (no --no-verify: the repo rules forbid skipping them). A failure leaves the files exactly where they are. */
+export function wipCommit(w: DeepWorker, d: Pick<DeepFreezeDeps, "git" | "now">): void {
+  const dir = w.worktreeDir;
+  if (!dir || !existsSync(dir)) return;
+  const st = d.git(dir, ["status", "--porcelain"]);
+  if (!st.ok) {
+    w.wipNote = `git status failed: ${st.out.slice(0, 120)}`;
+    return;
+  }
+  if (!st.out.trim()) return;
+  const add = d.git(dir, ["add", "-A"]);
+  if (!add.ok) {
+    w.wipNote = `git add failed: ${add.out.slice(0, 120)}`;
+    return;
+  }
+  const c = d.git(dir, ["commit", "-m", `wip: deepfreeze ${ts(d.now())}`]);
+  if (!c.ok) {
+    w.wipNote = `commit refused (files left staged in ${dir}): ${c.out.slice(0, 160)}`;
+    return;
+  }
+  const sha = d.git(dir, ["rev-parse", "HEAD"]);
+  if (sha.ok) w.wip = sha.out.trim();
+}
+
+export interface DeepFreezeReport {
+  lines: string[];
+  record: DeepRecord | null;
+}
+
+/** A subset of the workers: `pai stop <id>` / `--session <name>` (and the queue panel's row and session buttons). */
+export interface DeepSelect {
+  ids?: string[];
+  session?: string;
+}
+export const inSelect = (w: Pick<DeepWorker, "id" | "session">, sel: DeepSelect): boolean => (sel.ids?.includes(w.id) ?? false) || (sel.session !== undefined && w.session === sel.session);
+
+export async function deepFreeze(logDir: string, by: string, d: DeepFreezeDeps, opts: { dryRun?: boolean; repoOf?: (s: WorkerStatus) => string | undefined; only?: DeepSelect } = {}): Promise<DeepFreezeReport> {
+  if (process.env.PAI_WORKER === "1") throw new Error("a worker cannot stop its siblings (PAI_WORKER=1)");
+  const existing = readDeepfreeze();
+  const sel = opts.only;
+  const plan = planDeepFreeze(d.statuses(logDir), d.owns, opts.repoOf).filter((w) => !sel || inSelect(w, sel));
+  if (sel && !plan.length) throw new Error(`no live worker matches ${sel.session ? `session ${sel.session}` : (sel.ids ?? []).join(",")}`);
+  const lines = plan.map(
+    (w) => `${opts.dryRun ? "would preserve" : "preserving"} ${w.state} ${w.id} [${w.project}] ${w.label}${w.branch ? ` branch ${w.branch}` : ""}${w.priority !== "normal" ? ` ${w.priority}` : ""}${w.parent ? ` (child of ${w.parent})` : ""}`
+  );
+  if (opts.dryRun) {
+    lines.push(`dry run: ${plan.length} workers would be recorded in ${deepfreezePath()}, WIP-committed, stopped; local models stopped`);
+    return { lines, record: null };
+  }
+  if (existing && !sel) throw new Error(`already stopped since ${new Date(existing.at).toISOString()} (${existing.workers.length} workers recorded); \`pai resume\` or \`pai resume --drop\` first`);
+  d.unfreeze(logDir);
+  const record: DeepRecord = existing && sel ? { ...existing, workers: [...existing.workers, ...plan] } : { version: 1, at: d.now(), by, workers: plan, models: [] };
+  // the record exists before the first worker is touched: a crash anywhere below still leaves the way back
+  writeRecord(record);
+  for (const w of stopOrder(plan)) {
+    try {
+      await d.stop(logDir, w.id);
+    } catch (e) {
+      lines.push(`stop ${w.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const st = loadStatus(logDir, w.id);
+    if (st) {
+      st.state = "deepfrozen";
+      st.rc = null;
+      st.last = `deepfrozen ${ts(d.now())}: resumes after the boot (pai resume)`;
+      st.endReason = "deepfreeze";
+      st.endBy = by;
+      saveStatus(logDir, st, new Date(d.now()), true);
+    }
+    // after the stop: nothing writes into the tree any more
+    wipCommit(w, d);
+    if (w.wip) lines.push(`wip commit ${w.wip.slice(0, 8)} on ${w.branch ?? "?"} (${w.id})`);
+    if (w.wipNote) lines.push(`wip ${w.id}: ${w.wipNote}`);
+    writeRecord(record);
+  }
+  // a selective stop leaves the shared model servers running: other workers use them
+  if (!sel) record.models = await d.stopModels().catch(() => []);
+  writeRecord(record);
+  d.ledger(ledgerPath(logDir), "WORKERS-DEEPFREEZE", { by, workers: plan.length, models: record.models.length });
+  lines.push(`deep-frozen ${plan.length} workers, stopped models: ${record.models.join(", ") || "none"}; record ${deepfreezePath()}; \`pai resume\` restores (the daemon does it after the boot)`);
+  return { lines, record };
+}
+
+export interface DeepResumeDeps {
+  statuses: (logDir: string) => WorkerStatus[];
+  /** Start the continuation; returns its new worker id. */
+  start: (logDir: string, w: DeepWorker, text: string) => Promise<string>;
+  setPriority: (logDir: string, id: string, w: DeepWorker) => void;
+  /** Resolves true once the router answers and the autostart models are up. */
+  ready: () => Promise<boolean>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  /** One PAILot line to the operator. */
+  notify: (text: string) => Promise<void>;
+  ledger: (logDir: string, event: string, kv: Record<string, string | number>) => void;
+}
+
+/** Why a recorded worker must not be resumed, or undefined. */
+export function resumeSkip(w: DeepWorker, all: WorkerStatus[]): string | undefined {
+  const origin = all.find((s) => s.id === w.id);
+  if (origin?.continuedBy) return `continued by ${origin.continuedBy}`;
+  const ft = origin?.fallThroughTo ? all.find((s) => s.id === origin.fallThroughTo) : undefined;
+  // a rerouted origin whose continuation already finished (or still runs) is done with
+  if (ft && (ft.state === "done" || ft.state === "running" || ft.state === "queued")) return `rerouted to ${ft.id} (${ft.state})`;
+  const again = all.find((s) => s.resumedFrom === w.id || s.fallThroughOf === w.id);
+  if (again && again.state !== "failed" && again.state !== "lost") return `already resumed as ${again.id}`;
+  return undefined;
+}
+
+export function resumeText(w: DeepWorker): string {
+  const goals = w.goals.length ? `\n\nGoals given to you so far:\n${w.goals.map((g) => `- ${g}`).join("\n")}` : "";
+  return `The machine was stopped and restarted (pai stop / pai resume); nothing failed. Your branch ${w.branch ?? "(none)"} holds your work${w.wip ? ` (uncommitted files were saved as a "wip: deepfreeze" commit ${w.wip.slice(0, 8)})` : ""}. Continue where you left off on: ${w.label}.${goals}`;
+}
+
+/** The `pai worker run|resume` argv of one recorded worker is built by the starter; this is the replay loop. */
+export async function deepResume(logDir: string, d: DeepResumeDeps, opts: { drop?: boolean; wait?: boolean; waitMs?: number; only?: DeepSelect } = {}): Promise<{ lines: string[]; resumed: string[]; skipped: string[]; failed: string[] }> {
+  const rec = readDeepfreeze();
+  const none = { resumed: [], skipped: [], failed: [] };
+  if (!rec) return { lines: ["nothing recorded (no deep freeze)"], ...none };
+  if (opts.drop) {
+    rmSync(deepfreezePath(), { force: true });
+    d.ledger(ledgerPath(logDir), "WORKERS-DEEPFREEZE-DROP", { workers: rec.workers.length });
+    return { lines: [`dropped the deep-freeze record (${rec.workers.length} workers not resumed)`], ...none };
+  }
+  if (opts.wait) {
+    const end = d.now() + (opts.waitMs ?? 300_000);
+    while (!(await d.ready().catch(() => false)) && d.now() < end) await d.sleep(5_000);
+  }
+  const all = d.statuses(logDir);
+  const lines: string[] = [];
+  const resumed: string[] = [];
+  const skipped: string[] = [];
+  const failed: string[] = [];
+  const sel = opts.only;
+  const left: DeepWorker[] = sel ? rec.workers.filter((w) => !inSelect(w, sel)) : [];
+  if (sel && left.length === rec.workers.length) return { lines: [`nothing recorded matches ${sel.session ? `session ${sel.session}` : (sel.ids ?? []).join(",")}`], ...none };
+  for (const w of [...rec.workers].filter((w) => !sel || inSelect(w, sel)).sort((a, b) => a.order - b.order)) {
+    const why = resumeSkip(w, all);
+    if (why) {
+      skipped.push(w.id);
+      lines.push(`skipped ${w.id}: ${why}`);
+      continue;
+    }
+    try {
+      const id = await d.start(logDir, w, resumeText(w));
+      try {
+        d.setPriority(logDir, id, w);
+      } catch {
+        /* the continuation keeps its default priority */
+      }
+      resumed.push(`${w.id}->${id}`);
+      lines.push(`resumed ${w.id} as ${id} (${w.state}, ${w.priority}) ${w.label}`);
+    } catch (e) {
+      failed.push(w.id);
+      left.push(w);
+      lines.push(`resume ${w.id} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (left.length) writeRecord({ ...rec, workers: left });
+  else rmSync(deepfreezePath(), { force: true });
+  d.ledger(ledgerPath(logDir), "WORKERS-DEEPRESUME", { resumed: resumed.length, skipped: skipped.length, failed: failed.length });
+  const summary = `PAI resume after the stop: resumed ${resumed.length} workers${skipped.length ? `, skipped ${skipped.length} (already continued)` : ""}${failed.length ? `, ${failed.length} failed (record kept: pai resume)` : ""}${resumed.length ? `: ${rec.workers.filter((w) => resumed.some((r) => r.startsWith(`${w.id}->`))).map((w) => w.label.slice(0, 40)).join("; ")}` : ""}`;
+  lines.push(summary);
+  await d.notify(summary).catch(() => undefined);
+  return { lines, resumed, skipped, failed };
+}
+
+/** The recorded repo of a status: the git common dir's parent of its worktree. */
+export function realRepoOf(s: WorkerStatus, git: DeepFreezeDeps["git"]): string | undefined {
+  const dir = s.worktreeDir && existsSync(s.worktreeDir) ? s.worktreeDir : undefined;
+  if (!dir) return undefined;
+  const r = git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  return r.ok ? dirname(r.out.trim()) : undefined;
+}
+
+export async function realDeepFreezeDeps(): Promise<DeepFreezeDeps> {
+  const { execFileSync } = await import("node:child_process");
+  return {
+    statuses: (dir) => loadStatuses(dir),
+    owns: (s) => ownsPid(s),
+    now: () => Date.now(),
+    git: (cwd, args) => {
+      try {
+        return { ok: true, out: execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+      } catch (e) {
+        const x = e as { stdout?: string; stderr?: string; message?: string };
+        return { ok: false, out: `${x.stderr ?? ""}${x.stdout ?? ""}` || (x.message ?? "") };
+      }
+    },
+    stop: async (dir, id) => {
+      const { killTree } = await import("./kill-tree.js");
+      await killTree(dir, id, { only: true, by: "deepfreeze", reason: "deep freeze: resumes after the boot" });
+    },
+    stopModels: async () => {
+      const stopped: string[] = [];
+      try {
+        const { readRuntimeCommands } = await import("./model-runtimes.js");
+        const { liveAutostartDeps } = await import("../daemon/runtime-autostart.js");
+        const { defaultDeps, runtimeStartStop } = await import("../router/cockpit-actions.js");
+        const up = liveAutostartDeps();
+        for (const [name, c] of Object.entries(readRuntimeCommands())) {
+          if (!c.stop || !(await up.isUp(name).catch(() => false))) continue;
+          const r = await runtimeStartStop(name, "stop", defaultDeps());
+          if (r.ok) stopped.push(name);
+        }
+        if (!stopped.length) {
+          const { runningModelServers } = await import("./model-servers.js");
+          for (const m of await runningModelServers()) {
+            try {
+              process.kill(m.pid, "SIGTERM");
+              stopped.push(m.label);
+            } catch {
+              /* gone */
+            }
+          }
+        }
+      } catch {
+        /* models stay up; the workers are preserved regardless */
+      }
+      return stopped;
+    },
+    unfreeze: (dir) => {
+      if (readFreeze()) thawAll(dir, realFreezeDeps());
+    },
+    ledger: (p, e, kv) => {
+      try {
+        ledgerLine(p, e, kv);
+      } catch {
+        /* best effort */
+      }
+    },
+  };
+}
+
+/** Real resume deps: continuation via the detached `pai worker resume|run` (same path as the operator's). */
+export async function realDeepResumeDeps(): Promise<DeepResumeDeps> {
+  const { startDetachedWorker } = await import("./reroute.js");
+  const { setWorkerPriority } = await import("./engine-control.js");
+  return {
+    statuses: (dir) => loadStatuses(dir),
+    start: async (dir, w, text) => {
+      const resumable = w.state === "running" && !!w.claudeSession;
+      const args = resumable
+        ? ["resume", w.id, text, "--label", `↩ ${w.label}`]
+        : ["run", "--provider", w.provider, ...(w.model ? ["--model", w.model] : []), "--label", w.label, ...(w.spec ? ["--spec", w.spec] : []), ...(w.className ? ["--class", w.className] : []), ...(w.cwd ? ["--cwd", w.cwd] : [])];
+      if (!resumable && !(w.spec && existsSync(w.spec))) throw new Error("no spec file kept for this worker");
+      return startDetachedWorker(dir, args, { cwd: existsSync(w.cwd) ? w.cwd : process.cwd(), timeoutMs: 60_000 });
+    },
+    setPriority: (dir, id, w) => {
+      if (w.priority !== "normal") setWorkerPriority(dir, id, w.priority, "deepresume");
+    },
+    ready: async () => {
+      const { probeRouter } = await import("../router/supervisor.js");
+      if (!(await probeRouter())) return false;
+      const { liveRuntimeAutostartConfig, liveAutostartDeps } = await import("../daemon/runtime-autostart.js");
+      const up = liveAutostartDeps();
+      for (const name of Object.keys(liveRuntimeAutostartConfig().runtimes)) if (!(await up.isUp(name).catch(() => false))) return false;
+      return true;
+    },
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    now: () => Date.now(),
+    notify: async (text) => {
+      const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
+      await callAiBroker("pailot_send", { text }, 8_000);
+    },
+    ledger: (p, e, kv) => {
+      try {
+        ledgerLine(p, e, kv);
+      } catch {
+        /* best effort */
+      }
+    },
+  };
+}
+

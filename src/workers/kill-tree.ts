@@ -29,6 +29,7 @@ import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
 import { resumePreempted } from "./preempt.js";
 import { endProcesses, selectReapable } from "./reap.js";
 import { processTree } from "./wait-on.js";
+import { deepfrozenIds } from "./deepfreeze.js";
 
 export interface KillTreeDeps {
   signal: (pid: number, sig: NodeJS.Signals) => void;
@@ -288,7 +289,7 @@ interface Stop {
 function markKilled(logDir: string, recorded: WorkerStatus, stop: Stop, how: string, last: string): void {
   const latest = loadStatus(logDir, recorded.id) ?? recorded;
   if (latest.state !== "running" && latest.state !== "queued") return;
-  latest.state = "killed";
+  latest.state = deepfrozenIds().has(latest.id) ? "deepfrozen" : "killed";
   latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);
   latest.last = latest.last || last;
   latest.endReason = "pai-worker-kill";

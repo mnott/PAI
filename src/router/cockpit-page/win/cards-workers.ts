@@ -19,7 +19,7 @@ function wkAct(id,a,label,tip,on){
  var dis=(a==="deep-freeze"||a==="deep-resume")&&!WK_DEEP;
  return'<button type="button" data-qa="'+a+'" data-id="'+esc(id)+'"'+(dis?' disabled title="coming with pai stop/resume"':' title="'+esc(tip)+'"')+(on?' aria-pressed="true" class="on" style="font-weight:700;text-decoration:underline"':'')+'>'+label+'</button>';
 }
-var WK_DEEP=false;
+var WK_DEEP=true;
 var WK_LBL={"next":["next","runs next (front of the waiting jobs)"],"up":["up","one place earlier"],"down":["down","one place later"],"pause":["pause","park it; its slot goes to the next job"],"resume":["resume","continue it"],"freeze":["freeze","stop its processes in memory (lost on reboot)"],"thaw":["thaw","continue the frozen processes"],"deep-freeze":["deep-freeze","save its work and stop it; survives a reboot"],"deep-resume":["resume saved","continue from the saved stop"],"to-local":["to local","move the task to the local model"],"to-cloud":["to cloud","move the task to a cloud provider"],"stop":["stop","end this command"]};
 function wkTRow(r){
  var acts=r.actions.filter(function(a){return a.indexOf("prio-")!==0}).map(function(a){var l=WK_LBL[a]||[a,a];return wkAct(r.id,a,l[0],l[1])}).join(" ");
@@ -30,8 +30,8 @@ function wkTRow(r){
 /** Session chips above the table + the global actions. */
 function wkBar(q){
  var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return'<button type="button" data-qs="'+esc(r.session)+'"'+(WK_FILTER===r.session?' aria-pressed="true" class="on"':'')+' title="show only this session; click again for all">'+esc(r.session)+'</button>'}).join(" ");
- var g=[["freeze","freeze all"],["thaw","thaw all"],["deep-freeze","deep-freeze all"],["deep-resume","resume all"]].map(function(x){var dis=x[0].indexOf("deep")===0;return'<button type="button" data-qg="'+x[0]+'"'+(dis?' disabled title="coming with pai stop/resume"':'')+'>'+x[1]+'</button>'}).join(" ");
- var sa=WK_FILTER?' <span class="dim">'+esc(WK_FILTER)+' (all its jobs):</span> '+[["pause","pause"],["freeze","freeze"],["deep-freeze","deep-freeze"],["resume","resume"]].map(function(x){var dis=x[0]==="deep-freeze";return'<button type="button" data-qx="'+x[0]+'"'+(dis?' disabled title="coming with pai stop/resume"':'')+'>'+x[1]+'</button>'}).join(" "):"";
+ var g=[["freeze","freeze all","stop every worker's processes in memory (lost on reboot)"],["thaw","thaw all","continue all frozen processes"],["deep-freeze","deep-freeze all","pai stop: save all work and stop everything; survives a reboot"],["deep-resume","resume all","pai resume: restore everything saved"]].map(function(x){return'<button type="button" data-qg="'+x[0]+'" title="'+x[2]+'">'+x[1]+'</button>'}).join(" ");
+ var sa=WK_FILTER?' <span class="dim">'+esc(WK_FILTER)+' (all its jobs):</span> '+[["pause","pause"],["freeze","freeze"],["deep-freeze","deep-freeze"],["deep-resume","resume saved"],["resume","resume"]].map(function(x){return'<button type="button" data-qx="'+x[0]+'">'+x[1]+'</button>'}).join(" "):"";
  return'<div style="text-align:left">'+g+' <span class="dim">sessions:</span> '+chips+sa+'</div>';
 }
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
@@ -83,7 +83,7 @@ function wkWire(ctx){
   var qa=e.target&&e.target.closest?e.target.closest("button[data-qa]"):null;
   if(qa){if(!qa.disabled)WinA.runAction(ctx.id,"queue.act",{action:qa.getAttribute("data-qa"),id:qa.getAttribute("data-id")},qa,wkHost());return}
   var qg=e.target&&e.target.closest?e.target.closest("button[data-qg]"):null;
-  if(qg){if(!qg.disabled)(WQ&&WQ.table||[]).forEach(function(r){if(r.kind==="job"&&r.actions.indexOf(qg.getAttribute("data-qg"))>=0)WinA.runAction(ctx.id,"queue.act",{action:qg.getAttribute("data-qg"),id:r.id},qg,wkHost())});return}
+  if(qg){var gv=qg.getAttribute("data-qg");if(gv.indexOf("deep")===0){WinA.runAction(ctx.id,"queue.act",{action:gv,all:true},qg,wkHost());return}(WQ&&WQ.table||[]).forEach(function(r){if(r.kind==="job"&&r.actions.indexOf(qg.getAttribute("data-qg"))>=0)WinA.runAction(ctx.id,"queue.act",{action:qg.getAttribute("data-qg"),id:r.id},qg,wkHost())});return}
   var qs=e.target&&e.target.closest?e.target.closest("button[data-qs]"):null;
   if(qs){var sn=qs.getAttribute("data-qs");WK_FILTER=WK_FILTER===sn?null:sn;if(WQ)Win.update("queue",WQ);return}
   var qx=e.target&&e.target.closest?e.target.closest("button[data-qx]"):null;

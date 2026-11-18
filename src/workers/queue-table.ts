@@ -22,7 +22,7 @@ export type RowAction =
 
 export interface TableRow {
   /** "running" for a slot holder, else the waiting position 1..n. */
-  slot: "running" | number;
+  slot: "running" | "saved" | number;
   kind: "job" | "command";
   id: string;
   state: RowState;
@@ -105,11 +105,12 @@ export function activityOf(s: Pick<WorkerStatus, "updated">, waiting: boolean, n
 const prioOf = (s: WorkerStatus, ticket?: string): TableRow["priority"] => (s.now ? "now" : ((ticket ?? s.priority ?? "normal") as TableRow["priority"]));
 
 function actionsOf(state: RowState, local: boolean, waiting: boolean): RowAction[] {
+  if (state === "deep-frozen") return ["deep-resume"];
   const a: RowAction[] = [];
   if (waiting) a.push("next", "up", "down");
   a.push(state === "paused" ? "resume" : "pause");
   a.push(state === "frozen" ? "thaw" : "freeze");
-  a.push(state === "deep-frozen" ? "deep-resume" : "deep-freeze");
+  a.push("deep-freeze");
   a.push(local ? "to-cloud" : "to-local");
   a.push("prio-low", "prio-normal", "prio-high", "prio-now");
   return a;
@@ -130,7 +131,8 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   };
   const sec = (ms: number): number => Math.max(0, Math.floor((i.now - ms) / 1000));
   const ticket = new Map(i.queue.map((q) => [q.id, q]));
-  const live = i.statuses.filter((s) => s.state === "running" || s.state === "queued" || ticket.has(s.id));
+  const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
+  const live = i.statuses.filter((s) => deepIds.has(s.id) || s.state === "running" || s.state === "queued" || ticket.has(s.id));
   const gone = replacedIds(live);
   const row = (s: WorkerStatus, waiting: boolean, since: number, prio?: string): Omit<TableRow, "slot"> => {
     const local = i.isLocal(s.provider);
@@ -158,14 +160,15 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     };
   };
   const out: TableRow[] = [];
-  const runners = live.filter((s) => s.state === "running" && !ticket.has(s.id) && !gone.has(s.id)).sort((a, b) => stMs(a) - stMs(b) || (a.id < b.id ? -1 : 1));
+  const runners = live.filter((s) => s.state === "running" && !deepIds.has(s.id) && !ticket.has(s.id) && !gone.has(s.id)).sort((a, b) => stMs(a) - stMs(b) || (a.id < b.id ? -1 : 1));
   for (const s of runners) out.push({ slot: "running", ...row(s, false, stMs(s)) });
   for (const p of i.panes.filter((p) => p.state === "running").sort((a, b) => a.startedMs - b.startedMs)) {
     out.push({ slot: "running", kind: "command", id: p.id, state: i.frozen?.(p.id) ? "frozen" : "running", stateText: i.frozen?.(p.id) ? "frozen (in memory)" : "running", priority: "normal", session: p.session || "other", model: "", local: false, task: p.label, activity: "", now: "", seconds: sec(p.startedMs), detail: "command", actions: [i.frozen?.(p.id) ? "thaw" : "freeze", "stop"] });
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
-  const waiting = i.queue.filter((q) => !gone.has(q.id) && q.status).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
+  const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
   waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority) }));
+  for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
   return out;
 }
 
@@ -176,7 +179,7 @@ const clip = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1)
 export function renderQueueTable(rows: TableRow[]): string[] {
   if (!rows.length) return ["nothing running or waiting"];
   const head = ["#", "state", "activity", "prio", "session", "model", "task", "time", "id"];
-  const body = rows.map((r) => [r.slot === "running" ? "run" : String(r.slot), r.stateText, r.activity, r.priority, clip(r.session, 18), clip(r.model, 26), clip(r.task + (r.detail ? ` (${r.detail})` : ""), 50), fmtDur(r.seconds), r.id]);
+  const body = rows.map((r) => [r.slot === "running" ? "run" : r.slot === "saved" ? "-" : String(r.slot), r.stateText, r.activity, r.priority, clip(r.session, 18), clip(r.model, 26), clip(r.task + (r.detail ? ` (${r.detail})` : ""), 50), fmtDur(r.seconds), r.id]);
   const w = head.map((h, c) => Math.max(h.length, ...body.map((b) => b[c]!.length)));
   const fmt = (cells: string[]): string => cells.map((c, k) => c.padEnd(w[k]!)).join("  ").trimEnd();
   return [fmt(head), ...body.map(fmt), "", QUEUE_EXPLAIN];

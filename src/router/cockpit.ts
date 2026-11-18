@@ -41,7 +41,7 @@ import { processTreeRssMb } from "../workers/model-inventory.js";
 import { readLocalStatus } from "../workers/local-status.js";
 import { localTierOrder, pickLocal } from "../workers/local-provider.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
-import { readQueueTable, runRowAction, runSessionAction } from "../workers/queue-ops.js";
+import { readQueueTable, runGlobalDeep, runRowAction, runSessionAction } from "../workers/queue-ops.js";
 import type { RowAction, TableRow } from "../workers/queue-table.js";
 import { rerouteWorker } from "../workers/reroute.js";
 import { ownerSessionName } from "../workers/scope.js";
@@ -1391,8 +1391,13 @@ export function handleCockpit(
   if (req.method === "POST" && url.pathname === "/cockpit/queue/act") {
     if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
     readJsonObject(readBody, req).then(async (b) => {
-      const { action, id, session } = b as { action?: unknown; id?: unknown; session?: unknown };
+      const { action, id, session, all } = b as { action?: unknown; id?: unknown; session?: unknown; all?: unknown };
       if (typeof action !== "string" || !ROW_ACTIONS.has(action)) return send(400, "application/json", JSON.stringify({ ok: false, message: "unknown action" }));
+      if (all === true && (action === "deep-freeze" || action === "deep-resume")) {
+        const { workers: w0 } = readWorkersSection();
+        const r0 = await runGlobalDeep({ logDir: queueLogDir(w0), workers: w0, by: "cockpit" }, action === "deep-resume");
+        return send(r0.ok ? 200 : 409, "application/json", JSON.stringify(r0));
+      }
       if (typeof id === "string" ? !WORKER_ID_RE.test(id) && !/^pane-[\w.-]+$/.test(id) : typeof session !== "string") return send(400, "application/json", JSON.stringify({ ok: false, message: "id or session required" }));
       const { workers } = readWorkersSection();
       const d = { logDir: queueLogDir(workers), workers, by: "cockpit", reroute: async (wid: string, where: "cloud" | "local") => { const r = await rerouteWorker(wid, where, { logDir: queueLogDir(workers), by: "cockpit" }); return `moved to ${where === "cloud" ? "cloud" : "local"}: continues as ${r.id}`; } };

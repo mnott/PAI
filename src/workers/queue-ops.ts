@@ -10,6 +10,7 @@ import { ownerSessionName } from "./scope.js";
 import { frozenSince, freezeAll, thawSome, realFreezeDeps } from "./freeze.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { applyPriority, resumeWorker, type PriorityLevel } from "./preempt.js";
+import { deepFreeze, deepResume, deepfrozenIds, realDeepFreezeDeps, realDeepResumeDeps, realRepoOf, type DeepSelect } from "./deepfreeze.js";
 import { buildQueueTable, type RowAction, type TableRow } from "./queue-table.js";
 
 /** The table of the machine's workers right now. `deepFrozen` stays empty until `pai stop` records its jobs. */
@@ -21,7 +22,9 @@ export function readQueueTable(logDir: string, workers: WorkersConfig, now = Dat
     const prov = workers.providers[p];
     return !!prov && isLocalProvider(prov.baseUrl);
   };
-  const live = statuses.filter((s) => s.state === "queued" || (s.state === "running" && owns(s)));
+  const deep = deepFrozen ?? ((id: string) => deepFrozenSet.has(id));
+  const deepFrozenSet = deepfrozenIds();
+  const live = statuses.filter((s) => s.state === "queued" || (s.state === "running" && owns(s)) || (s.state === "deepfrozen" && deep(s.id)));
   return buildQueueTable({
     statuses: live,
     queue: queueRows(logDir, caps, undefined, statuses),
@@ -33,7 +36,7 @@ export function readQueueTable(logDir: string, workers: WorkersConfig, now = Dat
       return n.startsWith("tab ") || n === "?" ? "other" : n;
     },
     frozen: (id) => frozenSince(id) !== undefined,
-    deepFrozen,
+    deepFrozen: deep,
   });
 }
 
@@ -52,8 +55,19 @@ export interface OpsDeps {
   owns?: (s: { pid: number; started: string; id?: string }) => boolean;
   /** Moves a job to cloud/local (reroute); injected so tests and the router pick the starter. */
   reroute?: (id: string, where: "cloud" | "local") => Promise<string>;
-  /** Deep-freeze / resume: wired to `pai stop` / `pai resume` when they exist. */
-  deepFreeze?: (id: string, resume: boolean) => Promise<string>;
+  /** Deep-freeze / resume (default: the `pai stop` / `pai resume` engine, workers/deepfreeze.ts); injected by tests. */
+  deepFreeze?: (logDir: string, by: string, sel: DeepSelect | undefined, resume: boolean) => Promise<string>;
+}
+
+/** `pai stop [<id>|--session <name>]` / `pai resume [...]` itself; no selection = everything. */
+async function realDeep(logDir: string, by: string, sel: DeepSelect | undefined, resume: boolean): Promise<string> {
+  if (resume) {
+    const r = await deepResume(logDir, await realDeepResumeDeps(), { only: sel });
+    if (r.failed.length) throw new Error(r.lines.filter((l) => l.includes("failed")).join("; "));
+    return r.lines.join("; ");
+  }
+  const deps = await realDeepFreezeDeps();
+  return (await deepFreeze(logDir, by, deps, { repoOf: (s) => realRepoOf(s, deps.git), only: sel })).lines.join("; ");
 }
 
 const stateOf = (d: OpsDeps, id: string): string | undefined => readQueueTable(d.logDir, d.workers, Date.now(), undefined, d.owns).find((r) => r.id === id)?.stateText;
@@ -95,8 +109,7 @@ export async function runRowAction(d: OpsDeps, action: RowAction, id: string): P
         break;
       case "deep-freeze":
       case "deep-resume":
-        if (!d.deepFreeze) return { ok: false, message: "coming with pai stop/resume" };
-        message = await d.deepFreeze(id, action === "deep-resume");
+        message = await (d.deepFreeze ?? realDeep)(d.logDir, d.by, { ids: [id] }, action === "deep-resume");
         break;
       case "to-cloud":
       case "to-local":
@@ -131,6 +144,13 @@ export async function runRowAction(d: OpsDeps, action: RowAction, id: string): P
 
 /** One action on every job of a session (commands included where the action fits them). */
 export async function runSessionAction(d: OpsDeps, action: RowAction, session: string): Promise<ActionResult> {
+  if (action === "deep-freeze" || action === "deep-resume") {
+    try {
+      return { ok: true, message: await (d.deepFreeze ?? realDeep)(d.logDir, d.by, { session }, action === "deep-resume") };
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    }
+  }
   const rows = readQueueTable(d.logDir, d.workers, Date.now(), undefined, d.owns).filter((r) => r.session === session && r.kind === "job");
   if (!rows.length) return { ok: false, message: `no jobs of session ${session}` };
   const res: string[] = [];
@@ -141,4 +161,13 @@ export async function runSessionAction(d: OpsDeps, action: RowAction, session: s
     res.push(`${r.id}: ${x.message}`);
   }
   return { ok, message: `${session}: ${rows.length} job(s) — ${res.join("; ")}` };
+}
+
+/** Global deep freeze / resume: `pai stop` / `pai resume` for the whole machine. */
+export async function runGlobalDeep(d: OpsDeps, resume: boolean): Promise<ActionResult> {
+  try {
+    return { ok: true, message: await (d.deepFreeze ?? realDeep)(d.logDir, d.by, undefined, resume) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
 }

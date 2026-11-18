@@ -240,7 +240,7 @@ var WIN_VERBS={
  "worker.priority":{fields:["target","value"],build:function(a){return{action:"worker.priority",target:a.target,value:a.value}},doneRefresh:["queue"]},
  "worker.pause":{fields:["target"],build:function(a){return{action:"worker.pause",target:a.target}},doneRefresh:["queue"]},
  "worker.resume":{fields:["target"],build:function(a){return{action:"worker.resume",target:a.target}},doneRefresh:["queue"]},
- "queue.act":{fields:["action","id","session"],route:"/cockpit/queue/act",build:function(a){var b={};if(a.id)b.id=a.id;if(a.session)b.session=a.session;b.action=a.action;return{action:"queue.act",body:b}},doneRefresh:["queue"]},
+ "queue.act":{fields:["action","id","session","all"],route:"/cockpit/queue/act",build:function(a){var b={};if(a.all)b.all=true;if(a.id)b.id=a.id;if(a.session)b.session=a.session;b.action=a.action;return{action:"queue.act",body:b}},doneRefresh:["queue"]},
  "queue.next":{fields:["id"],route:"/cockpit/queue/next",build:function(a){return{action:"queue.next",body:{id:a.id}}},doneRefresh:["queue"]},
  "queue.up":{fields:["id"],route:"/cockpit/queue/up",build:function(a){return{action:"queue.up",body:{id:a.id}}},doneRefresh:["queue"]},
  "queue.front":{fields:["id"],route:"/cockpit/queue/front",build:function(a){return{action:"queue.front",body:{id:a.id}}},doneRefresh:["queue"]},

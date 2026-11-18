@@ -15,7 +15,7 @@ import { mcpCommand } from "./mcp.js";
 import { notifyCommand } from "./notify.js";
 import { nowCommand } from "./now.js";
 import { cleanCommand } from "./clean.js";
-import { freezeCommand, thawCommand } from "./freeze.js";
+import { deepfreezeCommand, freezeCommand, stopCommand, thawCommand } from "./freeze.js";
 import { projectAliasCommand, projectCommand } from "./project.js";
 import { registryCommand } from "./projects-registry.js";
 import { taskAliasCommand, taskCommand } from "./task.js";
@@ -23,7 +23,7 @@ import { topicCommand } from "./topic.js";
 import { uhpCommand } from "./uhp.js";
 
 export const BATCH_C: Partial<Record<GroupId, CommandDef[]>> = {
-  workers: [planCommand, queueCommand, nowCommand, cleanCommand, freezeCommand, thawCommand, uhpCommand, buildCommand, paneCommand],
+  workers: [planCommand, queueCommand, nowCommand, cleanCommand, freezeCommand, thawCommand, stopCommand, deepfreezeCommand, uhpCommand, buildCommand, paneCommand],
   memory: [projectCommand, projectAliasCommand, registryCommand, taskCommand, taskAliasCommand, issueCommand, identityCommand, topicCommand],
   daemon: [daemonCommand, configCommand, homeCommand, mcpCommand, notifyCommand, dbCommand],
 };

@@ -46,7 +46,7 @@ import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
 import { batteryGuardTimer, loadWatchTimer, registryBackend } from "./state.js";
-import { startLoadWatch, startBatteryGuard } from "./scheduler.js";
+import { startLoadWatch, startBatteryGuard, startDeepfreezeResume } from "./scheduler.js";
 import { migrateFtsConfig } from "../../storage/postgres/fts-migration.js";
 
 // ---------------------------------------------------------------------------
@@ -235,6 +235,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // at boot and after a crash — the router never routes to a provider that is down, so
   // nothing else ever starts them (2026-11-18: after a reboot gyro-l stayed down all day).
   startRuntimeAutostartSupervision();
+
+  // `pai stop` left a deep-freeze record: this boot restores the recorded workers (waits for router + models, 5 min at most).
+  void startDeepfreezeResume();
 
   // Cockpit jobs the previous daemon (or its router) was running died with it: say so, never resume.
   try {

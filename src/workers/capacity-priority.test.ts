@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { queueRows, writeTicket, type QueueRow } from "./capacity.js";
 import { buildQueueTable, plainWording, renderQueueTable, type TableInput } from "./queue-table.js";
-import { runRowAction, runSessionAction } from "./queue-ops.js";
+import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
 import { applyPriority } from "./preempt.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -138,14 +138,27 @@ describe("row and session actions", () => {
     expect((await runRowAction(d, "prio-low", "nope")).ok).toBe(false);
   });
 
-  it("deep-freeze is refused until pai stop/resume are wired; to-cloud calls the injected mover", async () => {
+  it("deep-freeze / resume call pai stop / pai resume with the row's id, the session or everything; to-cloud calls the mover", async () => {
     const d = qsetup();
     saveStatus(d.logDir, qst("j1", live));
-    expect(await runRowAction(d, "deep-freeze", "j1")).toMatchObject({ ok: false, message: "coming with pai stop/resume" });
     const calls: string[] = [];
-    const r = await runRowAction({ ...d, reroute: async (id, w) => (calls.push(`${id}>${w}`), "moved") }, "to-cloud", "j1");
-    expect(calls).toEqual(["j1>cloud"]);
+    const deepFreeze = async (_l: string, _b: string, sel: { ids?: string[]; session?: string } | undefined, resume: boolean): Promise<string> => (calls.push(`${resume ? "resume" : "stop"}:${sel?.ids?.join(",") ?? sel?.session ?? "all"}`), "ok");
+    await runRowAction({ ...d, deepFreeze }, "deep-freeze", "j1");
+    await runRowAction({ ...d, deepFreeze }, "deep-resume", "j1");
+    await runSessionAction({ ...d, deepFreeze }, "deep-freeze", "mdf");
+    await runGlobalDeep({ ...d, deepFreeze }, false);
+    await runGlobalDeep({ ...d, deepFreeze }, true);
+    expect(calls).toEqual(["stop:j1", "resume:j1", "stop:mdf", "stop:all", "resume:all"]);
+    const moves: string[] = [];
+    const r = await runRowAction({ ...d, reroute: async (id, w) => (moves.push(`${id}>${w}`), "moved") }, "to-cloud", "j1");
+    expect(moves).toEqual(["j1>cloud"]);
     expect(r.ok).toBe(true);
+  });
+
+  it("a deep-frozen job stays one row with only the resume action", () => {
+    const rows = buildQueueTable(qin([qst("d", { state: "deepfrozen" as WorkerStatus["state"] })], [], { deepFrozen: (id) => id === "d" }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ slot: "saved", state: "deep-frozen", actions: ["deep-resume"] });
   });
 
   it("a session action applies to all jobs of that session only", async () => {
