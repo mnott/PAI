@@ -79,7 +79,7 @@ Say "what did we do about X" or "search history"; `pai find "text"` searches you
 
 ### Memory tools for Claude
 
-Claude can call `memory_search`, `memory_get`, `memory_outline` (section-aware reading), `memory_kg_search`, `memory_wakeup`, `memory_taxonomy`, `memory_tunnels` and `memory_feedback` itself. See [memory](memory.md) and [search](search.md#section-aware-retrieval).
+Claude can call `memory_search`, `memory_get`, `memory_outline` (section-aware reading), `memory_kg_search`, `memory_wakeup`, `memory_taxonomy`, `memory_tunnels` and `memory_feedback` itself. For code, `code_explore`, `code_search` and `code_callers` map a repository in one call; see [code graph](code-graph.md). See [memory](memory.md) and [search](search.md#section-aware-retrieval).
 
 ### Lessons
 
