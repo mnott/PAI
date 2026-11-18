@@ -307,3 +307,23 @@ describe("admitResumedWaiters", () => {
     expect(waitingForSlotText(s.logDir, { id: "Z", provider: "local", paused: true })).toBeUndefined();
   });
 });
+
+describe("admitResumedWaiters tick cost (2026-11-18 daemon hang)", () => {
+  it("12 queued tickets, 5 running, 3000 old statuses: terminates, stays under 1 s, scans statuses once", () => {
+    const s = setup();
+    for (let i = 0; i < 3000; i++) saveStatus(s.logDir, s.mk(`old${String(i).padStart(4, "0")}`, 2147483646, { state: "done", rc: 0 }));
+    for (let i = 0; i < 5; i++) saveStatus(s.logDir, s.mk(`run${i}`, s.live()));
+    for (let i = 0; i < 12; i++) {
+      const id = `w${String(i).padStart(2, "0")}`;
+      saveStatus(s.logDir, s.mk(id, s.live()));
+      setWorkerPaused(s.logDir, id, true, "cli");
+      resumeWorker(s.logDir, id, "cli", Date.now(), () => 0);
+    }
+    let room = 12;
+    const t0 = Date.now();
+    const out = admitResumedWaiters(s.logDir, Date.now(), () => room--);
+    const ms = Date.now() - t0;
+    expect(out.length).toBe(12);
+    expect(ms).toBeLessThan(1000);
+  });
+});

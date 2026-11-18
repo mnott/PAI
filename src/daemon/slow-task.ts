@@ -57,6 +57,7 @@ export function createSlowTaskLimiter(windowMs = SLOW_TASK_LOG_WINDOW_MS): SlowT
 const defaultLimiter = createSlowTaskLimiter();
 
 interface Run {
+  name: string;
   /** longest stretch this run is credited with holding the loop */
   blocked: number;
 }
@@ -64,6 +65,17 @@ interface Run {
 const openRuns = new Set<Run>();
 let tickTimer: ReturnType<typeof setTimeout> | undefined;
 let expectedAt = 0;
+
+/** Names of the tasks running right now (the event-loop watchdog reports them when the loop stalls). */
+export function openTaskNames(): string[] {
+  return [...openRuns].map((r) => r.name);
+}
+
+/** Called whenever a task opens (the watchdog sends a fresh heartbeat naming it before the task can block). */
+let onOpen: (() => void) | undefined;
+export function setTaskOpenListener(fn: (() => void) | undefined): void {
+  onOpen = fn;
+}
 
 /** Credit the loop's overshoot since the last expected tick to the sole open run. */
 function creditLag(nowMs: number): void {
@@ -97,10 +109,11 @@ export function timedTask<T>(
   limiter: SlowTaskLimiter = defaultLimiter
 ): T {
   const t0 = now();
-  const run: Run = { blocked: 0 };
+  const run: Run = { name, blocked: 0 };
   // a tick armed by an earlier run may already be overdue: its lag is not ours
   if (tickTimer) { clearTimeout(tickTimer); tickTimer = undefined; }
   openRuns.add(run);
+  onOpen?.();
   armTick();
   const done = (): void => {
     creditLag(performance.now()); // a block just before settle: the next tick has not fired yet
