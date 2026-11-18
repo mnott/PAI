@@ -232,6 +232,8 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (noBrowser) env.PAI_WORKER_NO_BROWSER = "1";
   // --allow-tests: the worker Bash guard allows test runs despite `.pai/checks.yaml` `tests: operator`
   if (a.allowTests) env.PAI_WORKER_ALLOW_TESTS = "1";
+  // --allow-db-writes: the worker Bash guard allows SQL-client writes to databases
+  if (a.allowDbWrites) env.PAI_ALLOW_DB_WRITES = "1";
 
   const mcpFlag = noBrowser ? stripBrowserNames(a.mcpFlag ? [a.mcpFlag] : [])[0] : a.mcpFlag;
   const classMcp = noBrowser && target.classMcp ? stripBrowserNames(target.classMcp) : target.classMcp;

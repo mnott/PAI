@@ -24,7 +24,7 @@ import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
-import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
+import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptReason, tscFileArgReason, dbWriteReason, type DbWriteAllow } from "./worker-bash-rules.js";
 import { operatorTestsReason, projectTestsByOperator } from "./worker-test-rules.js";
 import { blankHeredocBodies } from "./heredoc.js";
 import { isScratchRootFile } from "./worker-scratch-name.js";
@@ -65,6 +65,8 @@ export interface WorkerGuardContext {
   testCommand?: (command: string) => string | null;
   /** This worker's own task text (its brief), for the child-routing rule; absent = unreadable, which denies an override. */
   taskText?: () => string | undefined;
+  /** workers `guard.dbWriteAllow` allowlist for the live-database write rule; absent = defaults (`*_test`, `*_scratch` dbs, no containers). */
+  dbWriteAllow?: DbWriteAllow;
 }
 
 interface Segment {
@@ -833,6 +835,10 @@ export function decideWorkerGuard(
       // a worker starts children on the mode chain: --model/--provider only when its own brief names one
       const route = childRouteReason(cmd, ctx().taskText?.());
       if (route) return deny(route);
+      // a SQL client whose SQL writes is denied unless read-only / a scratch-or-allowlisted target / --allow-db-writes (2026-11-18: a worker INSERTed into a live index through docker exec psql)
+      const gw = ctx();
+      const dbw = dbWriteReason(cmd, env, { cwd: gw.cwd, home: gw.home, worktreeRoot: gw.worktreeRoot, dbWriteAllow: gw.dbWriteAllow });
+      if (dbw) return deny(dbw);
       // the package's own test script (if it runs tsx) legitimises its node-based runner form in nodeOnTypeScriptReason
       const why = nodeOnTypeScriptReason(cmd, ctx().testScript()) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
       if (why) return deny(why);

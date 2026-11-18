@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths } from "./worker-bash-rules.js";
+import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths, dbWriteReason, type DbWriteContext } from "./worker-bash-rules.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
 
 describe("nodeOnTypeScriptReason", () => {
@@ -303,6 +303,87 @@ describe("worker guard heredoc bodies", () => {
     expect(denied("pkill -f foo")).toBe(true);
     expect(denied("cat > x <<EOF\nhello\nEOF\npkill foo")).toBe(true);
     expect(denied("cat > x <<EOF; pkill foo\nhello\nEOF")).toBe(true);
+  });
+});
+
+describe("dbWriteReason (live-database write rule)", () => {
+  const ctx: DbWriteContext = { cwd: "/w", home: "/h", worktreeRoot: "/w" };
+  const env = {} as Record<string, string | undefined>;
+  // the evidence command of 2026-11-18 (worker 20261118-072922-72328): a worker INSERTed into a project's LIVE index through docker exec psql; neutral names here
+  const EVIDENCE = 'docker exec app-pgvector psql -U appuser -d appdb -c "INSERT INTO session (id) VALUES (1)"';
+
+  it("denies the exact evidence command", () => {
+    const r = dbWriteReason(EVIDENCE, env, ctx);
+    expect(r).toContain("live database write blocked");
+    expect(r).toContain("INSERT");
+    // the message names the rule and all three ways to allow it
+    expect(r).toContain("SET default_transaction_read_only = on");
+    expect(r).toContain("guard.dbWriteAllow");
+    expect(r).toContain("--allow-db-writes");
+  });
+
+  it("allows the same command with SET default_transaction_read_only = on first", () => {
+    expect(dbWriteReason('docker exec app-pgvector psql -U appuser -d appdb -c "SET default_transaction_read_only = on; INSERT INTO session (id) VALUES (1)"', env, ctx)).toBeNull();
+  });
+
+  it("allows a SELECT whose string literal contains the word insert", () => {
+    expect(dbWriteReason(`psql -d appdb -c "SELECT 'please insert the row manually' FROM t"`, env, ctx)).toBeNull();
+  });
+
+  it("allows sqlite3 on a file in the scratch dir", () => {
+    const e = { TMPDIR: "/tmp/pai-scratch/w1" };
+    expect(dbWriteReason('sqlite3 /tmp/pai-scratch/w1/x.db "INSERT INTO t VALUES (1)"', e, ctx)).toBeNull();
+  });
+
+  it("denies docker compose exec mysql -e \"DROP TABLE x\"", () => {
+    expect(dbWriteReason('docker compose exec mysql -e "DROP TABLE x"', env, ctx)).toContain("live database write blocked");
+  });
+
+  it("allows a worker started with the --allow-db-writes flag (PAI_ALLOW_DB_WRITES=1)", () => {
+    expect(dbWriteReason(EVIDENCE, { PAI_ALLOW_DB_WRITES: "1" }, ctx)).toBeNull();
+  });
+
+  it("same db name: the trial container is allowed, the live container denied", () => {
+    const allow = { containers: ["*trial-pgvector"], databases: ["*_test", "*_scratch"] };
+    const c = { ...ctx, dbWriteAllow: allow };
+    expect(dbWriteReason('docker exec apptrial-pgvector psql -U appuser -d appdb -c "INSERT INTO session (id) VALUES (1)"', env, c)).toBeNull();
+    expect(dbWriteReason(EVIDENCE, env, c)).toContain("live database write blocked");
+  });
+
+  it("allows a *_test / *_scratch db name by default", () => {
+    expect(dbWriteReason('docker exec app-pgvector psql -d appdb_test -c "DROP TABLE t"', env, ctx)).toBeNull();
+    expect(dbWriteReason('psql -d scratch_index -c "DELETE FROM t"', env, ctx)).toContain("live database write blocked"); // a name merely containing "scratch" is not *_scratch
+  });
+
+  it("denies every write form: heredoc, <<<, piped echo/cat, kubectl exec, ssh, mongosh", () => {
+    expect(dbWriteReason("psql -d appdb <<'EOF'\nUPDATE t SET a = 1\nEOF", env, ctx)).toContain("blocked");
+    expect(dbWriteReason("psql -d appdb <<< 'TRUNCATE t'", env, ctx)).toContain("blocked");
+    expect(dbWriteReason("echo 'DELETE FROM t' | psql -d appdb", env, ctx)).toContain("blocked");
+    expect(dbWriteReason('kubectl exec db-0 -- psql -c "DROP TABLE t"', env, ctx)).toContain("blocked");
+    expect(dbWriteReason("ssh dbhost pg_restore -d proddb dump.gz", env, ctx)).toContain("blocked");
+    expect(dbWriteReason('mongosh appdb --eval "db.users.insertOne({a: 1})"', env, ctx)).toContain("blocked");
+  });
+
+  it("allows reads and comment-only SQL", () => {
+    expect(dbWriteReason("psql -d appdb -c 'SELECT count(*) FROM t'", env, ctx)).toBeNull();
+    expect(dbWriteReason('psql -d appdb -c "-- an INSERT would follow in prose\\nSELECT 1"', env, ctx)).toBeNull();
+    expect(dbWriteReason("docker exec pg pg_dump appdb > dump.sql", env, ctx)).toBeNull();
+  });
+
+  it("denies through the worker guard end to end, and allows the read-only form", () => {
+    const gctx = (): WorkerGuardContext => ({
+      cwd: "/repo/.workers/worktrees/abc",
+      home: "/home/u",
+      worktreeRoot: "/repo/.workers/worktrees/abc",
+      inWorktree: true,
+      mainCheckout: "/repo",
+      testScript: () => null,
+    });
+    const denied = (command: string, env2: Record<string, string | undefined> = { PAI_WORKER: "1" }) =>
+      JSON.stringify(decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, { PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir", ...env2 }, gctx)).includes("deny");
+    expect(denied(EVIDENCE)).toBe(true);
+    expect(denied('docker exec app-pgvector psql -d appdb -c "SET default_transaction_read_only = on; SELECT 1"')).toBe(false);
+    expect(denied(EVIDENCE, { PAI_WORKER: "1", PAI_ALLOW_DB_WRITES: "1" })).toBe(false);
   });
 });
 
