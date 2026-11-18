@@ -8,7 +8,7 @@
  * whose pid is gone and adopts a catalogue server that has no row.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { minOf } from "../utils/min-max.js";
 import { dirname, join } from "node:path";
@@ -77,17 +77,42 @@ export function portListeners(port: number): number[] {
   }
 }
 
-const LISTEN_TTL_MS = 5000;
-const listenMemo = new Map<number, { at: number; up: boolean }>();
+const LISTEN_TTL_MS = 30_000;
+let listenPorts: Set<number> | null = null;
+let listenAt = -Infinity;
+let listenRefresh: Promise<void> | null = null;
 
-/** portListeners as a yes/no, remembered for a few seconds: readLiveInstances runs on every cockpit poll and lsof is a synchronous child process. */
+/** TCP ports in the `n` lines of `lsof -nP -iTCP -sTCP:LISTEN -Fpn` output. */
+export function parseListenPorts(out: string): Set<number> {
+  const ports = new Set<number>();
+  for (const m of out.matchAll(/^n.*:(\d+)$/gm)) ports.add(Number(m[1]));
+  return ports;
+}
+
+/** Refreshes the listening-port set with ONE async lsof for all ports (at most one in flight). */
+function refreshListening(now: number): void {
+  if (listenRefresh) return;
+  listenAt = now;
+  listenRefresh = new Promise<void>((resolve) => {
+    execFile("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"], { encoding: "utf8", maxBuffer: 16 << 20, timeout: 20_000 }, (e, out) => {
+      if (!e || (e as { code?: number }).code === 1) listenPorts = parseListenPorts(String(out ?? ""));
+      listenRefresh = null;
+      resolve();
+    });
+  });
+}
+
+/** Whether a port listens, from a set refreshed asynchronously at most every 30 s; never blocks the caller. Unknown (before the first refresh) counts as listening: pidAlive decides until then. */
 function listeningCached(port: number): boolean {
   const now = Date.now();
-  const hit = listenMemo.get(port);
-  if (hit && now - hit.at < LISTEN_TTL_MS) return hit.up;
-  const up = portListeners(port).length > 0;
-  listenMemo.set(port, { at: now, up });
-  return up;
+  if (now - listenAt >= LISTEN_TTL_MS) refreshListening(now);
+  return listenPorts ? listenPorts.has(port) : true;
+}
+
+/** Test hook: forget the listening-port memo. */
+export function resetListeningMemo(): void {
+  listenPorts = null;
+  listenAt = -Infinity;
 }
 
 /** The recorded rows minus managed ones that are gone: the pid is dead (killed outside PAI) or, for a ready row, nothing listens on its port any more. Failed rows stay until dismissed. Readers that report or route use this; writers read the raw file. */
