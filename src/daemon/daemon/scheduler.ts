@@ -23,7 +23,7 @@ import { localIdleTick } from "../../workers/local-idle.js";
 import { batteryGuardTick, batteryGuardConfig, batteryPassRefusal, type BatteryGuardConfig } from "../battery-guard.js";
 import { buildsDir, listBuildsSync } from "../../builds/queue.js";
 import { stallMinutes, stallReleaseMinutes } from "../../builds/config.js";
-import { buildStallTick, realReleaseDeps } from "../../builds/stall.js";
+import { buildStallTick, directAlert, realReleaseDeps } from "../../builds/stall.js";
 import { appendLedger } from "../../workers/ledger.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
 import { probeRouter, routerSwapArgs, startHandover, routerIsStale, routerRunningPid, runRouterTick, spawnRouter, createRouterWatchdog } from "../../router/supervisor.js";
@@ -723,10 +723,8 @@ export function startWorkerSupervisor(): void {
         // through the model router, both of which starve first on a loaded machine (2026-11-17: the alert for
         // a held lock reached its session 10 h late). false = not delivered, the tick retries.
         const st = t.worker ? loadStatus(dir, t.worker) : null;
-        const target = originTarget({ iterm: st?.term || undefined, name: st?.session?.name || t.session });
-        if (!target) return false;
         const { sendToSession } = await import("../../cli/lib/aibroker-client.js");
-        return (await sendToSession(target, text, 10_000, { noReply: true })).ok;
+        return directAlert(originTarget({ iterm: st?.term || undefined, name: st?.session?.name || t.session }), text, sendToSession);
       }, listBuildsSync(buildsDir()), {
         release: realReleaseDeps(buildsDir(), stallReleaseMinutes(), (event, kv) => appendLedger(ledgerPath(dir), event, kv)),
       })

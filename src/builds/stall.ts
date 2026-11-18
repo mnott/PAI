@@ -220,6 +220,17 @@ export function realReleaseDeps(dir: string, minutes: number, ledger: StallRelea
   };
 }
 
+/** The daemon's stall alert: straight to the owner's AIBroker session (noReply), no router and no run-report
+ *  messenger chain (both starve first on a loaded machine). false = not delivered, the tick retries. */
+export async function directAlert(
+  target: string | undefined,
+  text: string,
+  send: (target: string, text: string, timeoutMs: number, opts: { noReply: boolean }) => Promise<{ ok: boolean }>
+): Promise<boolean> {
+  if (!target) return false;
+  return (await send(target, text, 10_000, { noReply: true })).ok;
+}
+
 const daemonState: StallState = new Map();
 
 /** Daemon tick: real files, ledger-less BUILD-STALL on stderr, owner told through `tell`. */
