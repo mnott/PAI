@@ -4,7 +4,7 @@
  * A worker's leftovers are (a) its live descendants and (b) detached processes
  * (nohup / setsid / disowned) that escaped the tree but keep their cwd inside
  * the worker's worktree. Both sets are ended: SIGTERM, a grace, SIGKILL.
- * Nothing outside that set is touched; the live router is always protected.
+ * Only what is provably the worker's is touched (see selectReapable); ancestors, foreign claude sessions and the live router are protected.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
@@ -76,13 +76,52 @@ export function pidsInGroupOf(pid: number, rootPid?: number): number[] {
   }
 }
 
-/** Live pids whose command line carries PAI_WORKER_ID=<id> (a wrapper env assignment survives exec; `ps eww` shows it when the process keeps its argv). The reliable identity is the scratch dir in cwd or argv — see pidsWithScratchDir. */
-export function pidsWithWorkerEnv(id: string): number[] {
+/** Never reaped, whatever matched: the live router, the PAI daemon, MCP servers, terminals, login shells, tmux. */
+export function isProtectedCmd(cmd: string): boolean {
+  if (isLiveRouter(cmd)) return true;
+  if (/\bpai\b.*\b(daemon|router)\b.*\brun\b|\bpai-daemon\b|\bpai daemon\b/.test(cmd)) return true;
+  if (/\bmcp\b|mcp-server|modelcontextprotocol/i.test(cmd)) return true;
+  if (/iTerm|\btmux\b/i.test(cmd)) return true;
+  if (/^-\w+/.test(cmd.trim()) || /(^|\/)login(\s|$)/.test(cmd.trim())) return true; // login shells: argv0 "-zsh", /usr/bin/login
+  return false;
+}
+
+/** An interactive Claude Code CLI (not a `pai worker` runner). */
+function isClaudeCli(cmd: string): boolean {
+  return /(^|[\s/])claude(\s|$)/.test(cmd) && !/\bpai worker\b/.test(cmd);
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+interface ProcTable {
+  ppid: Map<number, number>;
+  pgid: Map<number, number>;
+}
+
+function procTable(): ProcTable {
+  const t: ProcTable = { ppid: new Map(), pgid: new Map() };
+  try {
+    const raw = execFileSync("ps", ["-axo", "pid=,ppid=,pgid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 });
+    for (const l of raw.split("\n")) {
+      const [p, pp, g] = l.trim().split(/\s+/).map(Number);
+      if (Number.isInteger(p) && Number.isInteger(pp)) (t.ppid.set(p, pp), t.pgid.set(p, g));
+    }
+  } catch {
+    /* ps failed */
+  }
+  return t;
+}
+
+/** Pids whose `ps eww` line (argv + environment) has `needle` followed by whitespace, "/" (when `slash`) or end. Exact token, no prefix collisions. */
+function pidsMentioning(needle: string, slash: boolean): number[] {
   const out: number[] = [];
+  const re = new RegExp(escapeRe(needle) + (slash ? "(?:[\\s/]|$)" : "(?:\\s|$)"));
   try {
     const text = execFileSync("ps", ["eww", "-ax"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 });
     for (const line of text.split("\n")) {
-      if (!line.includes(`PAI_WORKER_ID=${id}`)) continue;
+      if (!line.includes(needle) || !re.test(line)) continue;
       const m = /^\s*(\d+)\b/.exec(line);
       if (m && Number(m[1]) !== process.pid) out.push(Number(m[1]));
     }
@@ -92,52 +131,58 @@ export function pidsWithWorkerEnv(id: string): number[] {
   return out;
 }
 
-/** Live pids whose cwd or argv contains `dir`: the escapees that left the tree and the group via setsid/nohup/disown but still carry their worker's scratch dir. */
-export function pidsWithScratchDir(dir: string): number[] {
-  const out = new Set<number>();
-  try {
-    for (const p of pidsWithCwdInside(dir)) out.add(p);
-  } catch {
-    /* lsof failed */
-  }
-  try {
-    // the argv half: `ps eww` lines carry pid + command + environment, so a child that inherited
-    // TMPDIR=<dir> is found even when its own argv does not mention it
-    const text = execFileSync("ps", ["eww", "-ax"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 });
-    for (const line of text.split("\n")) {
-      if (!line.includes(dir)) continue;
-      const m = /^\s*(\d+)\b/.exec(line);
-      if (m && Number(m[1]) !== process.pid) out.add(Number(m[1]));
-    }
-  } catch {
-    /* ps failed */
-  }
-  return [...out];
+type Reason = "descendant" | "group" | "orphan+scratch" | "orphan+worktree" | "orphan+env";
+export interface Reaped extends OrphanProc {
+  reason: string;
 }
 
-/** Processes belonging to a worker: descendants of `rootPid`, its process group (the backgrounded Bash children), anything with cwd inside `dir` or the worker's scratch dir, and anything whose argv names worker `id` — minus protected ones. */
-export function findOrphans(opts: { rootPid?: number; dir?: string; id?: string }): OrphanProc[] {
-  const pids = new Set<number>();
+/**
+ * Decide what of a worker is provably its own. Candidates: (a) descendants of rootPid, (b) members of the group rootPid led,
+ * (c) orphans (ppid 1) matching the scratch dir / worktree by cwd or argv/env, or PAI_WORKER_ID=<id> exactly.
+ * A look-alike with a live non-init parent is skipped (REAP-SKIP). Ancestors of this process, foreign claude CLIs and the protected set are never candidates.
+ */
+export function selectReapable(opts: { rootPid?: number; dir?: string; id?: string }, before?: Set<number>, among?: number[], log?: (line: string) => void): Reaped[] {
+  const table = procTable();
+  const ancestors = new Set<number>();
+  for (let p = process.pid; p > 1 && !ancestors.has(p); p = table.ppid.get(p) ?? 0) ancestors.add(p);
+  const fresh = (p: number) => !before || !before.has(p);
+  const reasons = new Map<number, Reason>();
+  const looks = new Map<number, string>();
+  const descendants = new Set<number>();
   if (opts.rootPid) {
-    for (const p of processTree(opts.rootPid).slice(1)) pids.add(p);
-    // the run leads its own group: a `while :; do :; done &` child shares it even after the runner dies
-    for (const p of pidsInGroupOf(opts.rootPid, opts.rootPid)) pids.add(p);
+    for (const p of processTree(opts.rootPid).slice(1)) if (fresh(p)) (reasons.set(p, "descendant"), descendants.add(p));
+    for (const p of pidsInGroupOf(opts.rootPid, opts.rootPid)) if (fresh(p) && !reasons.has(p)) reasons.set(p, "group");
   }
-  if (opts.dir) for (const p of pidsWithCwdInside(opts.dir)) pids.add(p);
-  // escapees that left the group via setsid/nohup but still carry their identity: the scratch dir in
-  // cwd/argv (TMPDIR is under it), or PAI_WORKER_ID visible in `ps eww`
+  const look = (p: number, why: Reason) => {
+    if (!fresh(p) || reasons.has(p) || p === opts.rootPid) return;
+    if (table.ppid.get(p) === 1) reasons.set(p, why);
+    else if (!looks.has(p)) looks.set(p, `${why.replace("orphan+", "")} match but parent ${table.ppid.get(p) ?? "?"} is live`);
+  };
+  if (opts.dir) for (const p of pidsWithCwdInside(opts.dir, among)) look(p, "orphan+worktree");
   if (opts.id) {
-    for (const p of pidsWithScratchDir(scratchDir(opts.id))) pids.add(p);
-    for (const p of pidsWithWorkerEnv(opts.id)) pids.add(p);
+    const sd = scratchDir(opts.id);
+    for (const p of pidsWithCwdInside(sd)) look(p, "orphan+scratch");
+    for (const p of pidsMentioning(sd, true)) look(p, "orphan+scratch");
+    for (const p of pidsMentioning(`PAI_WORKER_ID=${opts.id}`, false)) look(p, "orphan+env");
   }
-  pids.delete(process.pid);
-  const out: OrphanProc[] = [];
-  for (const pid of pids) {
+  const out: Reaped[] = [];
+  const skip = (pid: number, cmd: string, why: string) => log?.(`REAP-SKIP pid ${pid}: ${why}: ${cmd.slice(0, 200)}`);
+  for (const [pid, why] of looks) if (!reasons.has(pid)) skip(pid, commandOf(pid), why);
+  for (const [pid, reason] of reasons) {
+    if (pid === process.pid || pid === opts.rootPid) continue;
     const cmd = commandOf(pid);
-    if (!cmd || isLiveRouter(cmd)) continue; // gone already, or protected
-    out.push({ pid, cmd });
+    if (!cmd) continue; // gone already
+    if (ancestors.has(pid)) skip(pid, cmd, "ancestor of the reaper");
+    else if (isProtectedCmd(cmd)) skip(pid, cmd, "protected process");
+    else if (isClaudeCli(cmd) && !descendants.has(pid)) skip(pid, cmd, "claude CLI not started by this worker");
+    else out.push({ pid, cmd, reason });
   }
   return out;
+}
+
+/** Processes provably belonging to a worker — see selectReapable. */
+export function findOrphans(opts: { rootPid?: number; dir?: string; id?: string }, log?: (line: string) => void): Reaped[] {
+  return selectReapable(opts, undefined, undefined, log);
 }
 
 function alive(pid: number): boolean {
@@ -154,7 +199,7 @@ function alive(pid: number): boolean {
 }
 
 /** SIGTERM, wait `graceMs`, SIGKILL the rest; one log line per ended pid. Returns the pids signalled. */
-export async function endProcesses(procs: OrphanProc[], log: (line: string) => void = (l) => process.stderr.write(l + "\n"), graceMs = REAP_GRACE_MS): Promise<number[]> {
+export async function endProcesses(procs: (OrphanProc & { reason?: string })[], log: (line: string) => void = (l) => process.stderr.write(l + "\n"), graceMs = REAP_GRACE_MS): Promise<number[]> {
   const send = (sig: NodeJS.Signals, pids: number[]) => {
     for (const p of pids) {
       try {
@@ -169,14 +214,14 @@ export async function endProcesses(procs: OrphanProc[], log: (line: string) => v
   const until = Date.now() + graceMs;
   while (Date.now() < until && pids.some(alive)) await new Promise((r) => setTimeout(r, 100));
   send("SIGKILL", pids.filter(alive));
-  for (const p of procs) log(`pai worker: ended leftover pid ${p.pid}: ${p.cmd.slice(0, 200)}`);
+  for (const p of procs) log(`pai worker: ended leftover pid ${p.pid} (${p.reason ?? "?"}): ${p.cmd.slice(0, 200)}`);
   return pids;
 }
 
 /** Teardown of a worker: end everything it left running. Never throws. */
 export async function reapWorkerProcesses(opts: { rootPid?: number; dir?: string; id?: string }, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
   try {
-    const procs = findOrphans(opts);
+    const procs = findOrphans(opts, log ?? ((l) => process.stderr.write(l + "\n")));
     if (procs.length) await endProcesses(procs, log, graceMs);
     return procs;
   } catch {
@@ -202,23 +247,7 @@ export function snapshotWorkerPids(_opts?: { rootPid?: number; dir?: string }): 
 export async function reapNewSince(opts: { rootPid?: number; dir?: string; id?: string }, before: Set<number>, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
   try {
     const fresh = [...snapshotWorkerPids()].filter((p) => !before.has(p) && p !== process.pid && p !== opts.rootPid);
-    const pids = new Set<number>();
-    if (opts.rootPid) {
-      for (const p of processTree(opts.rootPid).slice(1)) if (!before.has(p)) pids.add(p);
-      for (const p of pidsInGroupOf(opts.rootPid, opts.rootPid)) if (!before.has(p)) pids.add(p);
-    }
-    if (opts.dir) for (const p of pidsWithCwdInside(opts.dir, fresh)) pids.add(p);
-    if (opts.id) {
-      for (const p of pidsWithScratchDir(scratchDir(opts.id))) if (!before.has(p)) pids.add(p);
-      for (const p of pidsWithWorkerEnv(opts.id)) if (!before.has(p)) pids.add(p);
-    }
-    pids.delete(process.pid);
-    if (opts.rootPid) pids.delete(opts.rootPid);
-    const procs: OrphanProc[] = [];
-    for (const pid of pids) {
-      const cmd = commandOf(pid);
-      if (cmd && !isLiveRouter(cmd)) procs.push({ pid, cmd });
-    }
+    const procs = selectReapable(opts, before, fresh, log ?? ((l) => process.stderr.write(l + "\n")));
     if (procs.length) await endProcesses(procs, log, graceMs);
     return procs;
   } catch {
@@ -227,7 +256,7 @@ export async function reapNewSince(opts: { rootPid?: number; dir?: string; id?: 
 }
 
 /** Processes parked in the worktree of a worker that is no longer live (or has no status), with the worktree they sit in. */
-export function findWorktreeOrphans(logDir: string): (OrphanProc & { dir: string })[] {
+export function findWorktreeOrphans(logDir: string): (Reaped & { dir: string })[] {
   const root = worktreesDir(logDir);
   if (!existsSync(root)) return [];
   const liveDirs = new Set(
@@ -237,7 +266,7 @@ export function findWorktreeOrphans(logDir: string): (OrphanProc & { dir: string
       .filter((d): d is string => !!d)
       .map((d) => resolve(d))
   );
-  const out: (OrphanProc & { dir: string })[] = [];
+  const out: (Reaped & { dir: string })[] = [];
   const seen = new Set<number>();
   for (const ent of readdirSync(root, { withFileTypes: true })) {
     const dir = join(root, ent.name);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
-import { reapWorkerProcesses } from "./reap.js";
+import { findOrphans, reapWorkerProcesses } from "./reap.js";
 import { scratchDir } from "./scratch.js";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -188,4 +188,72 @@ describe("reapWorkerProcesses ends the worker's whole process tree", () => {
     await waitFor(() => !psLines().some((l) => /-group|-scratch/.test(l)));
     expect(psLines().filter((l) => /-group|-scratch/.test(l))).toEqual([]);
   }, 20000);
+});
+
+describe("reapWorkerProcesses kills only the worker's own processes", () => {
+  const spawned: number[] = [];
+  const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const pidOf = (tag: string): number | undefined => {
+    const l = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n").find((x) => x.includes(tag) && !x.includes("sh -c"));
+    return l ? Number(l.trim().split(/\s+/)[0]) : undefined;
+  };
+  const waitPid = async (tag: string): Promise<number> => {
+    for (let i = 0; i < 50 && !pidOf(tag); i++) await new Promise((r) => setTimeout(r, 100));
+    const p = pidOf(tag)!;
+    expect(p).toBeGreaterThan(1);
+    spawned.push(p);
+    return p;
+  };
+  afterEach(() => { for (const p of spawned.splice(0)) try { process.kill(p, "SIGKILL"); } catch { /* gone */ } });
+  const noop = () => undefined;
+
+  it("a non-descendant with cwd in the worktree and a live parent survives", async () => {
+    const id = `reaps-${process.pid}-cwd`;
+    const dir = join(tmpdir(), `${id}-wt`);
+    mkdirSync(dir, { recursive: true });
+    const child = spawn("sleep", ["19"], { cwd: dir, stdio: "ignore" }); // parent: this test process, live
+    try {
+      const pid = await waitPid("sleep 19");
+      await reapWorkerProcesses({ dir, id }, noop, 200);
+      expect(alive(pid)).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  it("an orphan sitting in the scratch dir is killed", async () => {
+    const id = `reaps-${process.pid}-orph`;
+    const sd = scratchDir(id);
+    mkdirSync(sd, { recursive: true });
+    try {
+      execFileSync("sh", ["-c", `cd '${sd}' && (timeout 20 sleep 18 >/dev/null 2>&1 &)`]);
+      const pid = await waitPid("sleep 18");
+      const lines: string[] = [];
+      await reapWorkerProcesses({ id }, (l) => lines.push(l), 200);
+      for (let i = 0; i < 30 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+      expect(alive(pid)).toBe(false);
+      expect(lines.join("\n")).toContain("orphan+scratch");
+    } finally {
+      rmSync(sd, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  it("PAI_WORKER_ID=<id>X (prefix collision) survives while PAI_WORKER_ID=<id> orphan dies", async () => {
+    const id = `reaps-${process.pid}-env`;
+    execFileSync("sh", ["-c", `(PAI_WORKER_ID=${id}X timeout 20 sleep 17 >/dev/null 2>&1 &); (PAI_WORKER_ID=${id} timeout 20 sleep 16 >/dev/null 2>&1 &)`]);
+    const longer = await waitPid("sleep 17");
+    const exact = await waitPid("sleep 16");
+    await reapWorkerProcesses({ id }, noop, 200);
+    for (let i = 0; i < 30 && alive(exact); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(alive(longer)).toBe(true);
+    expect(alive(exact)).toBe(false);
+  }, 20000);
+
+  it("never signals its own ancestors", () => {
+    // rootPid = our parent: its whole tree (us, siblings) is "descendant", yet the reaper's ancestors must stay out
+    const pids = findOrphans({ rootPid: process.ppid, dir: process.cwd() }).map((p) => p.pid);
+    expect(pids).not.toContain(process.pid);
+    expect(pids).not.toContain(process.ppid);
+  });
 });
