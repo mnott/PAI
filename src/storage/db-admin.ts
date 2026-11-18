@@ -136,7 +136,7 @@ export async function cleanupTestDatabases(
       `SELECT d.datname FROM pg_database d
        WHERE d.datistemplate = false
          AND d.datname ~ $1
-         AND age(now(), pg_stat_file(format('%s/base/%s', current_setting('data_directory'), d.oid), true).modification)
+         AND age(now(), (pg_stat_file(format('%s/base/%s', current_setting('data_directory'), d.oid), true)).modification)
              > make_interval(secs => $2::double precision / 1000)
        ORDER BY d.datname`,
       [TEST_DB_PATTERN, minAgeMs],
