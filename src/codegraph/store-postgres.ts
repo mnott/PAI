@@ -109,23 +109,38 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
       );
       const fileId = ins.rows[0].id;
 
+      // multi-row INSERTs, chunked under the 65535 bind-parameter limit
       const symbolIds: number[] = [];
-      for (const s of file.symbols) {
+      for (let i = 0; i < file.symbols.length; i += 500) {
+        const chunk = file.symbols.slice(i, i + 500);
+        const params: unknown[] = [];
+        const rows = chunk.map((s, j) => {
+          const o = j * 10;
+          params.push(repoRoot, fileId, s.name, s.qualifiedName, s.kind, s.startLine, s.endLine, s.signature, s.exported,
+            symbolFtsText(s.name, s.qualifiedName, s.signature));
+          return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10})`;
+        });
         const r = await client.query<{ id: number }>(
           `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-          [repoRoot, fileId, s.name, s.qualifiedName, s.kind, s.startLine, s.endLine, s.signature, s.exported,
-           symbolFtsText(s.name, s.qualifiedName, s.signature)],
+           VALUES ${rows.join(",")} RETURNING id`,
+          params,
         );
-        symbolIds.push(r.rows[0].id);
+        // RETURNING follows VALUES order for a plain multi-row INSERT
+        for (const row of r.rows) symbolIds.push(row.id);
       }
 
-      for (const ref of file.refs) {
-        const fromSymbolId = ref.fromSymbolIndex != null ? symbolIds[ref.fromSymbolIndex] ?? null : null;
+      for (let i = 0; i < file.refs.length; i += 1000) {
+        const chunk = file.refs.slice(i, i + 1000);
+        const params: unknown[] = [];
+        const rows = chunk.map((ref, j) => {
+          const o = j * 6;
+          const fromSymbolId = ref.fromSymbolIndex != null ? symbolIds[ref.fromSymbolIndex] ?? null : null;
+          params.push(repoRoot, fileId, fromSymbolId, ref.toName, ref.kind, ref.line);
+          return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6})`;
+        });
         await client.query(
-          `INSERT INTO code_refs (repo_root, from_file_id, from_symbol_id, to_name, kind, line)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [repoRoot, fileId, fromSymbolId, ref.toName, ref.kind, ref.line],
+          `INSERT INTO code_refs (repo_root, from_file_id, from_symbol_id, to_name, kind, line) VALUES ${rows.join(",")}`,
+          params,
         );
       }
 
@@ -185,7 +200,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
   async resolveRefs(repoRoot: string, paths: string[]): Promise<ResolvedRefRow[]> {
     await this.ensure();
     if (paths.length === 0) return [];
-    const r = await this.pool.query(`${REF_SELECT} WHERE cr.repo_root = $1 AND cf.path = ANY($2::text[]) ORDER BY cr.id`, [repoRoot, paths]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cf.repo_root = $1 AND cf.path = ANY($2::text[]) ORDER BY cr.id`, [repoRoot, paths]);
     return r.rows.map(mapRef);
   }
 
@@ -247,13 +262,13 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
 
   async callers(symbolId: number): Promise<RefRow[]> {
     await this.ensure();
-    const r = await this.pool.query(`${REF_SELECT} WHERE cr.to_symbol_id = $1 ORDER BY cr.from_file, cr.line`, [symbolId]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cr.to_symbol_id = $1 ORDER BY cf.path, cr.line`, [symbolId]);
     return r.rows.map(mapRef);
   }
 
   async callersByName(repoRoot: string, name: string, limit = 50): Promise<ResolvedRefRow[]> {
     await this.ensure();
-    const r = await this.pool.query(`${REF_SELECT} WHERE cr.repo_root = $1 AND cr.to_name = $2 ORDER BY cr.from_file, cr.line LIMIT $3`, [repoRoot, name, limit]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cr.repo_root = $1 AND cr.to_name = $2 ORDER BY cf.path, cr.line LIMIT $3`, [repoRoot, name, limit]);
     return r.rows.map(mapRef);
   }
 
@@ -287,6 +302,18 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
   async setRefTarget(refId: number, symbolId: number | null): Promise<void> {
     await this.ensure();
     await this.pool.query("UPDATE code_refs SET to_symbol_id = $1 WHERE id = $2", [symbolId, refId]);
+  }
+
+  async setRefTargets(pairs: Array<{ refId: number; symbolId: number }>): Promise<void> {
+    if (pairs.length === 0) return;
+    await this.ensure();
+    for (let i = 0; i < pairs.length; i += 5000) {
+      const chunk = pairs.slice(i, i + 5000);
+      await this.pool.query(
+        "UPDATE code_refs SET to_symbol_id = v.sid FROM (SELECT unnest($1::int[]) AS rid, unnest($2::int[]) AS sid) v WHERE code_refs.id = v.rid",
+        [chunk.map((x) => x.refId), chunk.map((x) => x.symbolId)],
+      );
+    }
   }
 
   async unresolvedRefIds(repoRoot: string): Promise<number[]> {

@@ -73,11 +73,25 @@ export function langFromPath(path: string): string {
   return "unknown";
 }
 
-/** candidate symbols for a name ref: exact name, then qualified-name tail */
-function candidatesForName(symbols: SymbolRow[], name: string): SymbolRow[] {
-  const direct = symbols.filter((s) => s.name === name);
-  if (direct.length) return direct;
-  return symbols.filter((s) => s.qualifiedName === name || s.qualifiedName.endsWith(`.${name}`));
+/** name → symbols index: exact name first, qualified-name tail as fallback */
+class NameIndex {
+  private exact = new Map<string, SymbolRow[]>();
+  private tail = new Map<string, SymbolRow[]>();
+  constructor(symbols: SymbolRow[]) {
+    const add = (m: Map<string, SymbolRow[]>, k: string, s: SymbolRow) => {
+      const l = m.get(k);
+      if (l) l.push(s); else m.set(k, [s]);
+    };
+    for (const s of symbols) {
+      add(this.exact, s.name, s);
+      add(this.tail, s.qualifiedName, s);
+      const dot = s.qualifiedName.lastIndexOf(".");
+      if (dot >= 0) add(this.tail, s.qualifiedName.slice(dot + 1), s);
+    }
+  }
+  find(name: string): SymbolRow[] {
+    return this.exact.get(name) ?? this.tail.get(name) ?? [];
+  }
 }
 
 /**
@@ -98,6 +112,13 @@ export async function resolveRefs(store: CodeGraphStore, root: string, refs: Res
     list.push(s);
   }
   const symbolsOf = (file: string): SymbolRow[] => byFile.get(file) ?? [];
+  const fileIndexes = new Map<string, NameIndex>();
+  const indexOf = (file: string): NameIndex => {
+    let ix = fileIndexes.get(file);
+    if (!ix) { ix = new NameIndex(symbolsOf(file)); fileIndexes.set(file, ix); }
+    return ix;
+  };
+  const globalIndex = new NameIndex(all);
 
   // import edges per importing file: target repo paths (from resolved module paths)
   const importTargets = new Map<string, Set<string>>();
@@ -118,26 +139,24 @@ export async function resolveRefs(store: CodeGraphStore, root: string, refs: Res
     moduleByLine.set(ref.fromFile, lines);
   }
 
-  let linked = 0;
+  const links: Array<{ refId: number; symbolId: number }> = [];
   for (const ref of pending) {
     const lang = langFromPath(ref.fromFile);
-    let pool: SymbolRow[];
+    let candidates: SymbolRow[];
     if (lang === "swift") {
-      pool = all; // one module: any same-repo match counts
+      candidates = globalIndex.find(ref.toName); // one module: any same-repo match counts
     } else {
-      const own = symbolsOf(ref.fromFile);
-      const imported: SymbolRow[] = [];
-      for (const target of importTargets.get(ref.fromFile) ?? []) imported.push(...symbolsOf(target));
-      pool = [...own, ...imported];
+      // own file first, then imported files (exact matches beat tail matches per file set)
+      const files = [ref.fromFile, ...(importTargets.get(ref.fromFile) ?? [])];
+      candidates = [];
+      for (const f of files) for (const c of indexOf(f).find(ref.toName)) candidates.push(c);
     }
-
-    let candidates = candidatesForName(pool, ref.toName);
     // a name sitting on an import line follows that module's symbols
     if (candidates.length === 0 && ref.kind === "references") {
       const mod = moduleByLine.get(ref.fromFile)?.get(ref.line);
       if (mod) {
         const target = resolveModulePath(root, lang, ref.fromFile, mod);
-        if (target) candidates = candidatesForName(symbolsOf(target), ref.toName);
+        if (target) candidates = indexOf(target).find(ref.toName);
       }
     }
     if (candidates.length === 0) continue;
@@ -146,10 +165,10 @@ export async function resolveRefs(store: CodeGraphStore, root: string, refs: Res
       candidates.find((c) => c.file === ref.fromFile) ??
       candidates.find((c) => c.exported) ??
       candidates[0];
-    await store.setRefTarget(ref.id, best.id);
-    linked++;
+    links.push({ refId: ref.id, symbolId: best.id });
   }
-  return linked;
+  await store.setRefTargets(links);
+  return links.length;
 }
 
 /** Re-resolve refs affected by changed/deleted files: the unresolved refs of
@@ -161,7 +180,7 @@ export async function resolveAffected(
   brokenRefIds: number[],
 ): Promise<number> {
   const refs: ResolvedRefRow[] = [];
-  if (changedPaths.length > 0) refs.push(...(await store.unresolvedRefsInFiles(root, changedPaths)));
+  if (changedPaths.length > 0) for (const r of await store.unresolvedRefsInFiles(root, changedPaths)) refs.push(r);
   if (brokenRefIds.length > 0) {
     const broken = new Set(brokenRefIds);
     for (const r of await store.unresolvedRefsInFiles(root, [])) if (broken.has(r.id)) refs.push(r);

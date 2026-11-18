@@ -249,7 +249,7 @@ export const ORCHESTRATOR_CONTRACT =
 
 /** One guidance line: map an unfamiliar repo with the code graph before grepping. */
 export const CODE_EXPLORE_LINE =
-  "Before grepping or globbing an unfamiliar repo, call the code_explore tool (pai MCP) with your question or symbol names; it returns definitions, source, callers and blast radius in one answer and indexes the repo on first use.";
+  "Before grepping or globbing an unfamiliar repo, run `pai code explore <question or symbol names>` via Bash (or the code_explore tool where the pai MCP server is loaded); it returns definitions, source, callers and blast radius in one answer and indexes the repo on first use.";
 
 /**
  * The system prompt appended to every headless run, chosen by task class and

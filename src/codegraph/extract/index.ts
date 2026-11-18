@@ -29,7 +29,7 @@ import type { Node } from "web-tree-sitter";
 
 /** namedChildren is typed (Node|null)[]; this filters the nulls away */
 function named(node: Node): Node[] {
-  return named(node).filter((c): c is Node => c != null);
+  return node.namedChildren.filter((c): c is Node => c != null);
 }
 
 /** declaration text from the statement start up to (not including) its body */
@@ -82,6 +82,8 @@ const CONTAINERS: Record<Exclude<LanguageId, "unknown">, Set<string>> = {
   swift: new Set(["class_declaration", "struct_declaration", "protocol_declaration", "extension_declaration", "actor_declaration", "enum_declaration", "class_body", "protocol_body", "enum_class_body", "enum_body"]),
 };
 
+const ALL_CONTAINERS = new Set(Object.values(CONTAINERS).flatMap((c) => [...c]));
+
 function containerPrefix(parents: Array<{ type: string; name: string | null }>, lang: LanguageId): string | null {
   const containers = CONTAINERS[lang as Exclude<LanguageId, "unknown">];
   for (let i = parents.length - 1; i >= 0; i--) {
@@ -105,7 +107,7 @@ function defName(node: Node, lang: LanguageId): string | null {
   }
   if (lang === "python") return direct.type === "identifier" ? direct.text : null;
   // TS/JS: definitions name themselves with identifier/type_identifier only
-  return direct.type === "identifier" || direct.type === "type_identifier" ? direct.text : null;
+  return direct.type === "identifier" || direct.type === "type_identifier" || direct.type === "property_identifier" ? direct.text : null;
 }
 
 /** exported flag: TS/JS = export_statement ancestor; Python = top level; Swift = public/open */
@@ -208,26 +210,32 @@ function emitImportRefs(info: ImportInfo, line: number, refs: RefRecord[]): void
   for (const n of info.names) refs.push({ toName: n.imported, kind: "references", line });
 }
 
-/** cursor walk with a maintained parent chain */
+/** cursor walk with a maintained parent chain (cb gets the ancestors of node) */
 function walkTree(tree: Tree, cb: (node: Node, parents: Array<{ type: string; name: string | null }>) => void): void {
   const cursor = tree.walk();
   const parents: Array<{ type: string; name: string | null }> = [];
-  let reachedRoot = false;
+  // the name is only ever read for container types, so skip the WASM calls for every other node
+  const entry = () => {
+    const n = cursor.currentNode;
+    return { type: n.type, name: ALL_CONTAINERS.has(n.type) ? n.childForFieldName("name")?.text ?? null : null };
+  };
   cb(cursor.currentNode, parents);
-  while (!reachedRoot) {
+  let curEntry = entry();
+  for (;;) {
     if (cursor.gotoFirstChild()) {
-      parents.push({ type: cursor.currentNode.type, name: cursor.currentNode.childForFieldName("name")?.text ?? null });
-      cb(cursor.currentNode, parents.slice(0, -1));
+      // the node we leave becomes an ancestor
+      parents.push(curEntry);
+      cb(cursor.currentNode, parents);
+      curEntry = entry();
       continue;
     }
-    if (cursor.gotoNextSibling()) {
+    // leaf: move to the next sibling, climbing until one exists
+    while (!cursor.gotoNextSibling()) {
+      if (!cursor.gotoParent()) return;
       parents.pop();
-      parents.push({ type: cursor.currentNode.type, name: cursor.currentNode.childForFieldName("name")?.text ?? null });
-      cb(cursor.currentNode, parents.slice(0, -1));
-      continue;
     }
-    if (!cursor.gotoParent()) { reachedRoot = true; parents.pop(); continue; }
-    parents.pop();
+    cb(cursor.currentNode, parents);
+    curEntry = entry();
   }
 }
 
@@ -244,17 +252,16 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
   const symbols: SymbolRecord[] = [];
   const refs: RefRecord[] = [];
   /** definition nodes already recorded, innermost last (for enclosing-symbol lookup) */
-  const defs: Array<{ node: Node; index: number }> = [];
+  const defs: Array<{ end: number; index: number }> = [];
 
   walkTree(tree, (rawNode, parents) => {
     const node: Node = rawNode!;
     if (!node) return;
     const line = node.startPosition.row + 1;
-    let fromSymbolIndex: number | undefined;
-    for (let i = defs.length - 1; i >= 0; i--) {
-      const d = defs[i].node;
-      if (node.startIndex >= d.startIndex && node.endIndex <= d.endIndex) { fromSymbolIndex = defs[i].index; break; }
-    }
+    // walk order is document order: pop definitions this node has moved past
+    const nodeStart = node.startIndex;
+    while (defs.length && nodeStart >= defs[defs.length - 1].end) defs.pop();
+    const fromSymbolIndex: number | undefined = defs.length ? defs[defs.length - 1].index : undefined;
 
     // ---------------- definitions ----------------
     let kind: SymbolKind | null = null;
@@ -316,7 +323,7 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
         signature: signatureOf(node, source),
         exported,
       });
-      defs.push({ node, index });
+      defs.push({ end: node.endIndex, index });
     }
 
     // ---------------- refs ----------------

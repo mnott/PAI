@@ -84,8 +84,11 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
   private ensure(): void {
     if (this.ready) return;
     // Everything up to the first trigger (tables, FTS5 table, indexes — all IF NOT EXISTS).
-    const tables = CODEGRAPH_SQLITE_SQL.slice(0, CODEGRAPH_SQLITE_SQL.indexOf("CREATE TRIGGER"));
-    this.db.exec(tables);
+    // A comment mentioning CREATE TRIGGER sits between the tables and the index block; the old
+    // cut at that word silently dropped every index (a ref lookup took 88 ms instead of <1 ms).
+    const cut = CODEGRAPH_SQLITE_SQL.indexOf("-- The FTS sync triggers");
+    const indexes = CODEGRAPH_SQLITE_SQL.slice(CODEGRAPH_SQLITE_SQL.indexOf("CREATE INDEX"));
+    this.db.exec(CODEGRAPH_SQLITE_SQL.slice(0, cut) + indexes);
     for (const [name, sql] of [
       ["code_symbols_ai", `CREATE TRIGGER code_symbols_ai AFTER INSERT ON code_symbols BEGIN
         INSERT INTO code_symbols_fts (rowid, search_text) VALUES (new.id, new.search_text); END`],
@@ -203,7 +206,7 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     if (paths.length === 0) return [];
     const placeholders = paths.map(() => "?").join(",");
     const rows = this.db
-      .prepare(`${REF_SELECT} WHERE cr.repo_root = ? AND cf.path IN (${placeholders}) ORDER BY cr.id`)
+      .prepare(`${REF_SELECT} WHERE cf.repo_root = ? AND cf.path IN (${placeholders}) ORDER BY cr.id`)
       .all(repoRoot, ...paths) as RefDbRow[];
     return rows.map(mapRef);
   }
@@ -271,7 +274,7 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
   async callers(symbolId: number): Promise<RefRow[]> {
     this.ensure();
     const rows = this.db
-      .prepare(`${REF_SELECT} WHERE cr.to_symbol_id = ? ORDER BY cr.from_file, cr.line`)
+      .prepare(`${REF_SELECT} WHERE cr.to_symbol_id = ? ORDER BY cf.path, cr.line`)
       .all(symbolId) as RefDbRow[];
     return rows.map(mapRef);
   }
@@ -279,7 +282,7 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
   async callersByName(repoRoot: string, name: string, limit = 50): Promise<ResolvedRefRow[]> {
     this.ensure();
     const rows = this.db
-      .prepare(`${REF_SELECT} WHERE cr.repo_root = ? AND cr.to_name = ? ORDER BY cr.from_file, cr.line LIMIT ?`)
+      .prepare(`${REF_SELECT} WHERE cr.repo_root = ? AND cr.to_name = ? ORDER BY cf.path, cr.line LIMIT ?`)
       .all(repoRoot, name, limit) as RefDbRow[];
     return rows.map(mapRef);
   }
@@ -319,6 +322,12 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
   async setRefTarget(refId: number, symbolId: number | null): Promise<void> {
     this.ensure();
     this.db.prepare("UPDATE code_refs SET to_symbol_id = ? WHERE id = ?").run(symbolId, refId);
+  }
+
+  async setRefTargets(pairs: Array<{ refId: number; symbolId: number }>): Promise<void> {
+    this.ensure();
+    const stmt = this.db.prepare("UPDATE code_refs SET to_symbol_id = ? WHERE id = ?");
+    this.db.transaction(() => { for (const p of pairs) stmt.run(p.symbolId, p.refId); })();
   }
 
   async unresolvedRefIds(repoRoot: string): Promise<number[]> {

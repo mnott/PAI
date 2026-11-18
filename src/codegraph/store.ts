@@ -138,6 +138,9 @@ export interface CodeGraphStore {
   /** Set or clear (null) the resolved target of a ref. */
   setRefTarget(refId: number, symbolId: number | null): Promise<void>;
 
+  /** Batched setRefTarget: one statement per chunk, not one per ref. */
+  setRefTargets(pairs: Array<{ refId: number; symbolId: number }>): Promise<void>;
+
   /** Ids of refs with no resolved target (bare to_name kept). */
   unresolvedRefIds(repoRoot: string): Promise<number[]>;
 
