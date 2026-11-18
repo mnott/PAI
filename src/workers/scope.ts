@@ -24,7 +24,7 @@
 import { currentWorkerId } from "./worker-id.js";
 import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { loadStatus, type WorkerStatus } from "./status.js";
 import { topicChip } from "./topic.js";
 
@@ -134,6 +134,16 @@ export function ownerSessionName(
   }
   const tab = tabKey(s.term ?? "");
   return tab ? `tab ${tab}` : "?";
+}
+
+/**
+ * The block a worker belongs to: the session that started it (AIBroker name),
+ * else its project (cwd) name when a terminal is known, else "other" (a bare shell).
+ */
+export function sessionGroup(s: Pick<WorkerStatus, "session" | "term" | "cwd">): string {
+  if (!s.session?.name && !s.session?.id && !s.term) return "other";
+  const name = ownerSessionName(s);
+  return name.startsWith("tab ") || name === "?" ? basename(s.cwd || "") || "other" : name;
 }
 
 // ---------------------------------------------------------------------------

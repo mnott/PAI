@@ -414,8 +414,17 @@ export interface PoolSlots {
   test: number;
 }
 
+/** Session of a worker id (its status), undefined when unknown. */
+export type SessionOfWorker = (workerId: string) => string | undefined;
+
+/** The session behind a ticket: the requesting worker's session, else the session that asked directly ("worker <id>" names are not sessions), else undefined. */
+export function ticketSessionOf(t: Pick<BuildTicket, "worker" | "session">, sessionOf?: SessionOfWorker): string | undefined {
+  if (t.worker) return sessionOf?.(t.worker) || undefined;
+  return t.session.startsWith("worker ") ? undefined : t.session;
+}
+
 /** The text `pai build queue` and `pai worker ps` print: one block per pool. */
-export function renderBuildQueue(tickets: BuildTicket[], slots: number | PoolSlots, testSlots?: number, now = Date.now()): string {
+export function renderBuildQueue(tickets: BuildTicket[], slots: number | PoolSlots, testSlots?: number, now = Date.now(), sessionOf?: SessionOfWorker): string {
   const pools: PoolSlots = typeof slots === "number" ? { build: slots, test: testSlots ?? DEFAULT_TEST_SLOTS } : slots;
   const plural = (n: number): string => `${n} slot${n === 1 ? "" : "s"}`;
   const block = (kind: BuildKind, name: string, n: number): string => {
@@ -427,10 +436,11 @@ export function renderBuildQueue(tickets: BuildTicket[], slots: number | PoolSlo
     for (const t of mine) {
       const mode = t.mode === "full" ? " [full]" : "";
       const key = t.key ? ` [${t.key}]` : "";
-      if (t.state === "running") lines.push(`  running  ${t.label}${mode}${key} — ${t.session}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}${t.stalledAt ? `  STALLED ${mins(now - t.stalledAt)}` : ""}  ${t.id}`);
+      const sess = ` [${ticketSessionOf(t, sessionOf) ?? "–"}]`;
+      if (t.state === "running") lines.push(`  running  ${t.label}${mode}${key} — ${t.session}${sess}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}${t.stalledAt ? `  STALLED ${mins(now - t.stalledAt)}` : ""}  ${t.id}`);
       else {
         const why = waitReason(t, tickets);
-        lines.push(`  ${++pos}. waiting ${t.label}${mode}${key} — ${t.session}, ${mins(now - t.enqueuedAt)}${why ? `, ${why}` : ""}  ${t.id}`);
+        lines.push(`  ${++pos}. waiting ${t.label}${mode}${key} — ${t.session}${sess}, ${mins(now - t.enqueuedAt)}${why ? `, ${why}` : ""}  ${t.id}`);
       }
     }
     return lines.join("\n");

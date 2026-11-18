@@ -4,11 +4,13 @@
  */
 
 import { spawn } from "node:child_process";
-import { renderBuildQueue, buildNext, buildsDir, listBuilds, releaseBuild } from "../../builds/queue.js";
+import { type SessionOfWorker, renderBuildQueue, buildNext, buildsDir, listBuilds, releaseBuild } from "../../builds/queue.js";
 import { slotsFor, poolSlots, maxWaitMinutes } from "../../builds/config.js";
 import { beginBuildWait, endBuildWait } from "../../workers/active-time.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
+import { loadStatus } from "../../workers/status.js";
+import { sessionGroup } from "../../workers/scope.js";
 import { appendLedger } from "../../workers/ledger.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor, hookEventFindings } from "../../builds/doctor.js";
@@ -132,7 +134,17 @@ const queueCmd: CommandDef = {
   examples: ["pai build queue"],
   seeAlso: ["pai build next"],
   run: async () => {
-    out(renderBuildQueue(await listBuilds(buildsDir()), poolSlots()));
+    let sessionOf: SessionOfWorker | undefined;
+    try {
+      const logDir = workersLogDir(readWorkersSection().workers);
+      sessionOf = (id) => {
+        const w = loadStatus(logDir, id);
+        return w ? sessionGroup(w) : undefined;
+      };
+    } catch {
+      /* no workers config: sessions stay unknown */
+    }
+    out(renderBuildQueue(await listBuilds(buildsDir()), poolSlots(), undefined, Date.now(), sessionOf));
   },
 };
 
