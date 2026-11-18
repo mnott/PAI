@@ -17,7 +17,6 @@ import {
   clearLocalOnly,
   gatekeeperSession,
   isGatekeeperSession,
-  localOnlyBanner,
   parseLocalStamp,
   parseWindowDuration,
   readLocalOnly,
@@ -81,7 +80,9 @@ const localOnlyCommand: CommandDef = {
 const statusCommand: CommandDef = {
   name: "status",
   summary: "The local-only window and the gatekeeper session, as they stand now",
-  run: (ctx) => budgetGuard("pai budget status", async () => {
+  description: "Prints the open local-only window (\"local only until <time>\") or that it is off, and which session is the gatekeeper (config key budget.gatekeeper).",
+  examples: ["pai budget status"],
+  run: () => budgetGuard("pai budget status", async () => {
       const w = readLocalOnly();
       out(w ? `local only until ${w.label}` : "local-only window: off");
       out(`gatekeeper session: ${gatekeeperSession()}`);
