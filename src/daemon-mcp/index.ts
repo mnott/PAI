@@ -114,6 +114,7 @@ import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
 import { setWorkerPaused } from "../workers/engine-control.js";
+import { resumeWorker } from "../workers/preempt.js";
 import { resumePlan } from "../workers/resume-args.js";
 import { applyPriority, endExpiredWindowNow } from "../workers/preempt.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
@@ -1982,7 +1983,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
         const { workers } = readWorkersSection();
         const logDir = workersLogDir(workers);
         if (args.text === undefined) {
-          return workerText(setWorkerPaused(logDir, args.id, false, "mcp") ? `${args.id}: resumed` : `${args.id}: was not paused`);
+          return workerText(resumeWorker(logDir, args.id, "mcp") ? `${args.id}: resumed` : `${args.id}: was not paused`);
         }
         const text = args.text;
         const old = loadStatus(logDir, args.id);

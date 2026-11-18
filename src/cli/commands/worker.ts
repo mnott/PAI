@@ -31,6 +31,7 @@ import { checkPaneForWorker, closeEndedPanes, openFollowPane, paneMayClose, open
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
 import { workerFreezeCommand } from "./freeze.js";
 import { setWorkerPaused } from "../../workers/engine-control.js";
+import { resumeWorker } from "../../workers/preempt.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
@@ -464,7 +465,7 @@ const resumeCommand: CommandDef = {
       const text = ctx.args.TEXT as string | undefined;
       const dir = logDir();
       if (text === undefined) {
-        out(setWorkerPaused(dir, id, false) ? `${id}: resumed` : `${id}: was not paused`);
+        out(resumeWorker(dir, id, "cli") ? `${id}: resumed` : `${id}: was not paused`);
         return;
       }
       const old = loadStatus(dir, id);
