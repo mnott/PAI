@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 import { renderBuildQueue, buildNext, buildsDir, listBuilds, releaseBuild } from "../../builds/queue.js";
-import { slotsFor, poolSlots } from "../../builds/config.js";
+import { slotsFor, poolSlots, maxWaitMinutes } from "../../builds/config.js";
 import { beginBuildWait, endBuildWait } from "../../workers/active-time.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
@@ -84,6 +84,7 @@ async function gateImpl(ctx: RunContext, deps: BuildGateDeps = {}): Promise<numb
     label: typeof ctx.opts.label === "string" ? ctx.opts.label : undefined,
     key: typeof ctx.opts.key === "string" ? ctx.opts.key : undefined,
     slots: slotsFor(kind),
+    maxWaitMs: maxWaitMinutes() * 60_000,
     spawnWatcher,
     handleSignals: true,
     onWait: workerWaitSink(),

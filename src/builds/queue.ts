@@ -10,7 +10,7 @@
  * killed, so a SIGKILLed caller cannot keep the lock.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { minOf } from "../utils/min-max.js";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
@@ -41,7 +41,7 @@ export interface BuildTicket {
   seq: number;
   state: "waiting" | "running" | "superseded";
   /** Why a ticket left the queue before it ran: superseded by a newer same-key same-owner ticket, or released by the operator. */
-  goneReason?: "superseded" | "released";
+  goneReason?: "superseded" | "released" | "stalled";
   /** The new ticket id (superseded) or the actor (released). */
   goneBy?: string;
   enqueuedAt: number;
@@ -104,11 +104,41 @@ const ownerKey = (t: BuildTicket): string => t.worker ?? t.session;
  *  Neither is 3: 3 is a door's `--wait` "still running, call again", and a door must not poll a dead job. */
 export const SUPERSEDED_EXIT = 4;
 export const RELEASED_EXIT = 5;
+/** The gate waited longer than builds.maxWaitMinutes for a slot. */
+export const WAIT_TIMEOUT_EXIT = 6;
+
+/** One automatic stall release, kept so waiters queued behind the holder can print the reason. */
+export interface StallRelease {
+  id: string;
+  label: string;
+  minutes: number;
+  at: number;
+}
+const stallReleasesFile = (dir: string): string => join(dir, "stall-releases.jsonl");
+export const stallReleaseLine = (r: StallRelease): string => `build lock released: ${r.id} stalled ${r.minutes} min without output; retry`;
+
+export function recordStallRelease(dir: string, r: StallRelease): void {
+  mkdirSync(dir, { recursive: true });
+  appendFileSync(stallReleasesFile(dir), JSON.stringify(r) + "\n", "utf8");
+}
+
+/** Stall releases at or after `since` (a waiter reports the ones that happened while it queued). */
+export function stallReleasesSince(dir: string, since: number): StallRelease[] {
+  try {
+    return readFileSync(stallReleasesFile(dir), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as StallRelease)
+      .filter((r) => r.at >= since);
+  } catch {
+    return [];
+  }
+}
 
 /** Mark a ticket gone (superseded or operator-released) so its gate notices on its next poll.
  *  The file stays (state "superseded") until the gate has read the reason — a gate that is SIGKILLed
  *  never reads it, and prune() drops those files. */
-function markGone(dir: string, t: BuildTicket, reason: "superseded" | "released", by: string): void {
+function markGone(dir: string, t: BuildTicket, reason: "superseded" | "released" | "stalled", by: string): void {
   writeTicket(dir, { ...t, state: "superseded", goneReason: reason, goneBy: by });
 }
 
@@ -319,6 +349,19 @@ export async function releaseBuild(dir: string, id: string, d: Partial<QueueDeps
     markGone(dir, t, "released", `operator pid ${process.pid}`);
     if (state === "running") killTicket(t, deps, false); // gate exits RELEASED_EXIT on its next poll
     return { id: t.id, state };
+  });
+}
+
+/** Stall release: the running ticket leaves the queue at once (waiters can start) and its gate exits on its next poll
+ *  with the stall message. Killing the build tree is the caller's job (exact pids, see stall.ts). */
+export async function releaseStalled(dir: string, id: string, minutes: number, d: Partial<QueueDeps> = {}): Promise<BuildTicket | null> {
+  const deps = { ...defaultDeps(), ...d };
+  return withMutex(dir, () => {
+    const t = readTickets(dir).find((x) => x.id === id);
+    if (!t || t.state !== "running") return null;
+    markGone(dir, t, "stalled", `stall ${minutes}`);
+    recordStallRelease(dir, { id: t.id, label: t.label, minutes, at: deps.now() });
+    return t;
   });
 }
 

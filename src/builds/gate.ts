@@ -26,10 +26,14 @@ import {
   tryStart,
   RELEASED_EXIT,
   SUPERSEDED_EXIT,
+  WAIT_TIMEOUT_EXIT,
+  stallReleaseLine,
+  stallReleasesSince,
   type BuildKind,
   type BuildTicket,
   type QueueDeps,
 } from "./queue.js";
+import { lastOutputAt } from "./stall.js";
 import { jobPaths, reapJob, type ReapOptions } from "./reap.js";
 import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
 import { recordBuildDirs } from "../workers/clean.js";
@@ -55,6 +59,8 @@ export interface RunBuildOptions {
   onWait?: (waiting: boolean) => void;
   /** Poll interval while waiting for a slot. */
   pollMs?: number;
+  /** A waiter gives up after this long in the queue (builds.maxWaitMinutes; omitted: never). */
+  maxWaitMs?: number;
   /** Heartbeat line interval while waiting. */
   heartbeatMs?: number;
   out?: (line: string) => void;
@@ -211,8 +217,10 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   const timers: ReturnType<typeof setInterval>[] = [watch];
 
   try {
-    const started = Date.now();
-    let lastBeat = 0;
+    const nowMs = o.deps?.now ?? Date.now;
+    const started = nowMs();
+    const reported = new Set<string>();
+    let lastBeat = -Infinity;
     const poll = o.pollMs ?? 500;
     const beat = o.heartbeatMs ?? 30_000;
     o.onWait?.(true);
@@ -227,9 +235,20 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
         return cur.goneReason === "released" ? RELEASED_EXIT : SUPERSEDED_EXIT;
       }
       if (await tryStart(o.dir, ticket.id, o.slots, o.deps)) break;
-      if (Date.now() - lastBeat >= beat) {
-        lastBeat = Date.now();
-        out(await queuedLine(o.dir, ticket, started, o.deps));
+      // a lock released for stalling while this job queued: say so once (the slot is free, this job goes on)
+      for (const r of stallReleasesSince(o.dir, ticket.enqueuedAt)) {
+        if (reported.has(r.id)) continue;
+        reported.add(r.id);
+        out(`pai build: ${stallReleaseLine(r)}`);
+      }
+      const waited = nowMs() - started;
+      if (o.maxWaitMs !== undefined && waited >= o.maxWaitMs) {
+        out(await waitTimeoutLine(o.dir, ticket, waited, o.deps));
+        return WAIT_TIMEOUT_EXIT;
+      }
+      if (nowMs() - lastBeat >= beat) {
+        lastBeat = nowMs();
+        out(await queuedLine(o.dir, ticket, started, o.deps, nowMs()));
       }
       await new Promise((r) => setTimeout(r, poll));
     }
@@ -252,6 +271,10 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
       if (aborted) killChild();
     });
     const t = await getTicket(o.dir, ticket.id);
+    if (t?.state === "superseded" && t.goneReason === "stalled") {
+      out(`pai build: ${stallReleaseLine({ id: ticket.id, label, minutes: Number(t.goneBy?.replace(/\D+/g, "")) || 0, at: 0 })}`);
+      return RELEASED_EXIT;
+    }
     if (t?.state === "superseded" && t.goneReason === "released") return RELEASED_EXIT;
     return aborted ? 128 + (aborted === "SIGINT" ? 2 : aborted === "SIGHUP" ? 1 : 15) : code;
   } finally {
@@ -271,13 +294,25 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   }
 }
 
-async function queuedLine(dir: string, me: BuildTicket, since: number, deps?: Partial<QueueDeps>): Promise<string> {
+/** Why a waiter gave up: names the holder, its age and when it last wrote output. */
+export async function waitTimeoutLine(dir: string, me: BuildTicket, waitedMs: number, deps?: Partial<QueueDeps>): Promise<string> {
+  const now = (deps?.now ?? Date.now)();
+  const all = await listBuilds(dir, deps);
+  const holder = all.find((t) => t.state === "running" && t.id !== me.id && (!me.key || t.key === me.key)) ?? all.find((t) => t.state === "running" && t.id !== me.id);
+  const head = `pai build: gave up after waiting ${fmtWait(waitedMs)} for a slot (builds.maxWaitMinutes)`;
+  if (!holder) return `${head}; no holder is running (queue position lost?). Retry.`;
+  const age = now - (holder.startedAt ?? holder.enqueuedAt);
+  const out = lastOutputAt(holder);
+  return `${head}; held by ${holder.label} (${holder.id}, ${holder.session}) for ${fmtWait(age)}, last output ${out === null ? "never" : `${fmtWait(Math.max(0, now - out))} ago`}. Retry, or \`pai build release ${holder.id}\`.`;
+}
+
+async function queuedLine(dir: string, me: BuildTicket, since: number, deps?: Partial<QueueDeps>, now = Date.now()): Promise<string> {
   const all = await listBuilds(dir, deps);
   const idx = all.findIndex((t) => t.id === me.id);
   const waiting = all.filter((t) => t.state === "waiting");
   const pos = waiting.findIndex((t) => t.id === me.id) + 1;
   const behind = idx > 0 ? all[idx - 1] : null;
-  return `build queued: position ${pos || "?"}${behind ? `, behind ${behind.label} from ${behind.session}` : ""}, waiting ${fmtWait(Date.now() - since)}`;
+  return `build queued: position ${pos || "?"}${behind ? `, behind ${behind.label} from ${behind.session}` : ""}, waiting ${fmtWait(now - since)}`;
 }
 
 function exec(

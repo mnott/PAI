@@ -56,3 +56,27 @@ export function stallMinutes(env: NodeJS.ProcessEnv = process.env, read: () => R
     return DEFAULT_STALL_MINUTES;
   }
 }
+
+export const DEFAULT_STALL_RELEASE_MINUTES = 15;
+export const DEFAULT_MAX_WAIT_MINUTES = 30;
+
+function positive(envVar: string, key: string, dflt: number, env: NodeJS.ProcessEnv, read: () => Record<string, unknown>): number {
+  const n = Number(env[envVar]);
+  if (n > 0) return n;
+  try {
+    const v = Number((read().builds as Record<string, unknown> | undefined)?.[key]);
+    return v > 0 ? v : dflt;
+  } catch {
+    return dflt;
+  }
+}
+
+/** Minutes a held lock's build may produce no output (and use no CPU) before it is released and killed (`builds.stallReleaseMinutes`, default 15). */
+export function stallReleaseMinutes(env: NodeJS.ProcessEnv = process.env, read: () => Record<string, unknown> = readMainConfigRaw): number {
+  return positive("PAI_BUILD_STALL_RELEASE_MINUTES", "stallReleaseMinutes", DEFAULT_STALL_RELEASE_MINUTES, env, read);
+}
+
+/** Minutes a waiter may queue for a slot before it fails (`builds.maxWaitMinutes`, default 30). */
+export function maxWaitMinutes(env: NodeJS.ProcessEnv = process.env, read: () => Record<string, unknown> = readMainConfigRaw): number {
+  return positive("PAI_BUILD_MAX_WAIT_MINUTES", "maxWaitMinutes", DEFAULT_MAX_WAIT_MINUTES, env, read);
+}

@@ -7,14 +7,14 @@
 import { existsSync } from "node:fs";
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
-import { workersLogDir } from "../../workers/paths.js";
+import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { closeEndedPanes, loadRegistry, paneMayClose, workerEnded } from "../../workers/pane.js";
 import { isPaneRunId } from "../../workers/pane-run.js";
 import { isFrozen, readFreeze } from "../../workers/freeze.js";
 import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from "../../workers/reaper.js";
 import { alive, loadStatus, loadStatusCached, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
-import { sweepRuns } from "../../workers/run-events.js";
+import { originTarget, sweepRuns } from "../../workers/run-events.js";
 import { panePolicy } from "../../workers/pane-policy.js";
 import { abortStuckPreemptions, endExpiredWindowNow, resumeOrphaned } from "../../workers/preempt.js";
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
@@ -22,8 +22,9 @@ import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
 import { batteryGuardTick, batteryGuardConfig, batteryPassRefusal, type BatteryGuardConfig } from "../battery-guard.js";
 import { buildsDir, listBuildsSync } from "../../builds/queue.js";
-import { stallMinutes } from "../../builds/config.js";
-import { buildStallTick } from "../../builds/stall.js";
+import { stallMinutes, stallReleaseMinutes } from "../../builds/config.js";
+import { buildStallTick, directAlert, realReleaseDeps } from "../../builds/stall.js";
+import { appendLedger } from "../../workers/ledger.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
 import { probeRouter, routerSwapArgs, startHandover, routerIsStale, routerRunningPid, runRouterTick, spawnRouter, createRouterWatchdog } from "../../router/supervisor.js";
 import { restartRouter } from "../../router/restart.js";
@@ -716,12 +717,17 @@ export function startWorkerSupervisor(): void {
   const buildStall = setInterval(() => {
     if (isFrozen()) return;
     const dir = workersLogDir(readWorkersSection().workers);
-    const msg = runMessenger(dir);
     void timedTask("build-stall", () =>
       buildStallTick(buildsDir(), stallMinutes(), async (t, text) => {
+        // Direct to the owner's AIBroker session (noReply): not through the run-report messenger chain and not
+        // through the model router, both of which starve first on a loaded machine (2026-11-17: the alert for
+        // a held lock reached its session 10 h late). false = not delivered, the tick retries.
         const st = t.worker ? loadStatus(dir, t.worker) : null;
-        return msg.toSession({ iterm: st?.term || undefined, name: st?.session?.name || t.session }, text);
-      }, listBuildsSync(buildsDir()))
+        const { sendToSession } = await import("../../cli/lib/aibroker-client.js");
+        return directAlert(originTarget({ iterm: st?.term || undefined, name: st?.session?.name || t.session }), text, sendToSession);
+      }, listBuildsSync(buildsDir()), {
+        release: realReleaseDeps(buildsDir(), stallReleaseMinutes(), (event, kv) => appendLedger(ledgerPath(dir), event, kv)),
+      })
     ).catch(() => undefined);
   }, 30_000);
   buildStall.unref();
