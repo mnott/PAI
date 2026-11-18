@@ -453,6 +453,22 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
   };
   const start = (): Promise<void> | void => (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+  if (d.deferKill && old.state === "running") {
+    // least impact: the continuation joins the target's queue (it waits there, not running) and the old run keeps working;
+    // finishDeferredMoves stops the origin once the continuation holds a slot.
+    try {
+      await start();
+    } catch (e) {
+      unmark();
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
+      throw e;
+    }
+    const st = load(id) ?? old;
+    st.movingTo = target.provider;
+    saveStatus(d.logDir, st, new Date(), true);
+    appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-DEFERRED", { id, provider: target.provider, by });
+    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
+  }
   if (old.state === "running") {
     // a running origin is stopped FIRST (its commits are salvaged onto the branch): a continuation never runs beside it.
     // A stop that fails starts nothing and leaves the origin as it is.
@@ -487,14 +503,6 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     unmark();
     appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
     throw e;
-  }
-  if (d.deferKill && old.state === "running") {
-    // least impact: the old run keeps working until its continuation is admitted on the target
-    const st = load(id) ?? old;
-    st.movingTo = target.provider;
-    saveStatus(d.logDir, st, new Date(), true);
-    appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-DEFERRED", { id, provider: target.provider, by });
-    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
   }
   const wait = d.announceMs ?? (old.pane ? 1500 : 0);
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));

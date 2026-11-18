@@ -39,8 +39,9 @@ function wkChip(name,on){var h=wkHue(name);return'<button type="button" class="w
 /** Model as a chip: each local provider its own stable hue, cloud: violet (sonnet), amber (opus), other cloud families their own. */
 function wkModelHue(r){var m=r.model||"";if(r.local)return wkHue(m);return/opus/.test(m)?40:/sonnet/.test(m)?270:/haiku/.test(m)?200:/fable/.test(m)?320:290}
 function wkModel(r){if(!r.model)return'<span class="dim">–</span>';return'<span class="wq-chip wq-mc" style="--h:'+wkModelHue(r)+'" title="'+esc(r.modelFull||r.model)+'">'+esc(r.model)+'</span>'}
-function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic wq-tx" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0])+'">'+l[0]+'</button>'}
-function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic wq-tx'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯ more</button>'}
+var WK_ICO={"pause":"⏸","resume":"▶","stop":"■","next":"↑","deep-resume":"▶"};
+function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
+function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯</button>'}
 function wkTRow(r){
  var has=function(a){return r.actions.indexOf(a)>=0},main=r.kind==="command"?"stop":has("deep-resume")?"deep-resume":has("resume")?"resume":"pause";
  var acts=(has(main)?wkIconBtn(r.id,main):"")+(has("next")?wkIconBtn(r.id,"next"):"")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
