@@ -35,6 +35,22 @@ describe("cockpit page script", () => {
     expect(scripts.length).toBeGreaterThan(0);
     for (const src of scripts) expect(() => new Script(src)).not.toThrow();
   });
+  it("queue row renders as one line with at most three action buttons", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
+    const row = { slot: 1, kind: "job", id: "w1", state: "waiting", stateText: "waiting for a local slot", priority: "normal", session: "mdf", model: "gyro-l", modelFull: "local: qwen", local: true, task: "a very long task text ".repeat(20), seconds: 70, activity: "", now: "", detail: "", stale: true, actions: ["next", "up", "down", "pause", "freeze", "deep-freeze", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now"] };
+    (ctx as Record<string, unknown>).__r = row;
+    const html = vm.runInContext("wkTRow(__r)", ctx) as string;
+    expect(html.match(/<tr/g)).toHaveLength(1);
+    expect(html).not.toContain("<br");
+    expect((html.match(/<button/g) ?? []).length - (html.match(/class="wq-chip/g) ?? []).length).toBeLessThanOrEqual(3);
+    expect(html).toContain("waiting #1");
+    expect(html).toContain("stale waiter");
+    expect(html).toContain('title="a very long task');
+    expect(html).toContain("aria-label=");
+  });
   it("queue model column is a short name", async () => {
     const { shortModel } = await import("../workers/queue-table.js");
     expect(shortModel(true, "gyro-l", "gyro-l/qwen3.8-flash-next-gyro-l")).toBe("gyro-l");
