@@ -13,10 +13,10 @@
  * (active-time.ts preemptedMsOf).
  */
 
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getProviderOrNative, isLocalProvider, readWorkersSection } from "./config.js";
-import { capacityOf, queueDir, resolveCap, writeTicket } from "./capacity.js";
+import { DEFAULT_CAPACITY, capacityOf, liveQueue, queueDir, resolveCap, writeTicket } from "./capacity.js";
 import { readUrgencyFor } from "./urgency.js";
 import { setWorkerPaused, setWorkerPriority } from "./engine-control.js";
 import { appendLedger } from "./ledger.js";
@@ -71,20 +71,49 @@ function parkAtGate(logDir: string, s: WorkerStatus, by: string, now: number): b
 }
 
 /**
- * The one explicit resume of an operator pause (`pai worker resume`, the MCP tool, the cockpit/pane button). An operator-paused
- * worker released its slot, so it takes a free one when the cap has room and otherwise re-enters the gate's queue at the FRONT of
- * its priority class (never over the cap). Returns false when it was not paused.
+ * The one explicit resume of an operator pause (`pai worker resume`, the MCP tool, the cockpit/pane button). Least impact on other
+ * jobs: a resume never takes a slot a running job holds and never preempts. With a free slot and nobody waiting it runs at once;
+ * otherwise it re-enters the queue as a waiter (ahead of the others of its own priority class, behind everything that is already
+ * first by priority), stays paused until it is its turn and the next FREE slot opens (admitResumedWaiters). Only priority "now"
+ * (an explicit choice) may preempt. Returns false when it was not paused.
  */
-export function resumeWorker(logDir: string, id: string, who = "cli", now = Date.now(), roomFn: RoomFn = roomOn): boolean {
+export function resumeWorker(logDir: string, id: string, who = "cli", now = Date.now(), roomFn: RoomFn = roomOn, agingMs = DEFAULT_CAPACITY.agingMs): boolean {
   const s = loadStatus(logDir, id);
   if (!s?.paused) return false;
   if (s.pausedBy || s.state !== "running") return setWorkerPaused(logDir, id, false, who, undefined, now);
-  const room = roomFn(loadStatuses(logDir), s.provider);
-  if (room > 0) return setWorkerPaused(logDir, id, false, who, undefined, now);
   const dir = queueDir(logDir, s.provider);
+  const waiting = liveQueue(logDir, s.provider).filter((x) => x !== id).length;
+  if (roomFn(loadStatuses(logDir), s.provider) > 0 && waiting === 0) return setWorkerPaused(logDir, id, false, who, undefined, now);
   mkdirSync(dir, { recursive: true });
-  writeTicket(join(dir, s.id), `${s.runPid ?? s.pid} front @${now}`);
-  return setWorkerPaused(logDir, id, false, `${who} (queued at front: no free slot)`, undefined, now);
+  const prio = s.priority && s.priority !== "normal" ? ` p:${s.priority}` : "";
+  // an "aged" stamp puts it first among the waiters of its own priority class (capacity.ts fairOrder), never ahead of a higher class
+  writeTicket(join(dir, s.id), `${s.runPid ?? s.pid} @${now - agingMs - 1}${prio}`);
+  appendLedger(ledgerPath(logDir), "WORKER-RESUME-QUEUED", { by: who, who, id, provider: s.provider });
+  return true;
+}
+
+/**
+ * Supervision (daemon, 30 s): a resumed worker waiting in its provider's queue (paused, ticket present) is released when it is the
+ * head and a slot is FREE. Never takes a held slot. Returns the ids released.
+ */
+export function admitResumedWaiters(logDir: string, now = Date.now(), roomFn: RoomFn = roomOn): string[] {
+  const out: string[] = [];
+  let provs: string[];
+  try {
+    provs = readdirSync(join(logDir, "queue"));
+  } catch {
+    return out;
+  }
+  for (const prov of provs) {
+    const head = liveQueue(logDir, prov)[0];
+    if (!head) continue;
+    const s = loadStatus(logDir, head);
+    if (!s?.paused || s.pausedBy || s.state !== "running") continue;
+    if (roomFn(loadStatuses(logDir), s.provider) <= 0) continue;
+    rmSync(join(queueDir(logDir, s.provider), head), { force: true });
+    if (setWorkerPaused(logDir, head, false, "queue", undefined, now)) out.push(head);
+  }
+  return out;
 }
 
 /** Whether the preemption pause of `s` (paused with pausedBy set) has ended: its preemptor is gone from the ledger or no longer live. */

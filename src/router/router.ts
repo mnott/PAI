@@ -801,6 +801,7 @@ export function routerHandler(
       const rulesNow = (): readonly import("./tool-call-rules.js").Rule[] =>
         activeRules((options?.toolCallRules ?? sharedRulesStore(log)).get(prov, target.model));
       // Local 200 answers are held until complete so a damaged tool call never reaches the client as text.
+      let upstreamTiming: { ttftMs?: number; decodeMs?: number } | undefined;
       const gate = (ures0: http.IncomingMessage): void => {
         const ct = String(ures0.headers["content-type"] ?? "");
         if (!(retryOn || parseOn) || ures0.statusCode !== 200 || ures0.headers["content-encoding"]) return respond(ures0);
@@ -817,10 +818,17 @@ export function routerHandler(
           gatePings = pings;
         }
         const bits: Buffer[] = [];
-        ures0.on("data", (c: Buffer) => bits.push(c));
+        // timing is taken here, on the engine's own stream: the reply is held and re-sent below, so the downstream clock says nothing
+        const upSniff = new UsageSniffer(ct);
+        ures0.on("data", (c: Buffer) => {
+          bits.push(c);
+          upSniff.push(c);
+        });
         ures0.on("error", () => {});
         ures0.on("end", () => {
           const first = Buffer.concat(bits);
+          upSniff.finish();
+          upstreamTiming = upSniff.timing(started, Date.now());
           const deliver = (status: number, headers: http.IncomingHttpHeaders, raw: Buffer) => {
             if (pings) clearInterval(pings);
             const h = { ...headers };
@@ -858,7 +866,10 @@ export function routerHandler(
             const again2 = readAnswer(raw.toString("utf8"), String(headers["content-type"] ?? ""));
             const ok = status === 200 && !isDamaged(again2) && !isDegenerate(again2, up.body);
             log(`${new Date().toISOString()} ${what} retried provider=${prov} ${ok ? "ok" : "again"}`);
-            if (ok) deliver(status, headers, raw);
+            if (ok) {
+              upstreamTiming = undefined; // the answer is the retry's; the first attempt's clock does not describe it
+              deliver(status, headers, raw);
+            }
             else deliver(200, ures0.headers, first);
           });
         });
@@ -934,7 +945,7 @@ export function routerHandler(
                 const first = sniff?.firstContentAt;
                 const usage = sniff ? sniff.finish() : emptyUsage();
                 release(sniff ? usage : undefined, sniff?.buildCall ? { gate: true } : undefined);
-                record(ures.statusCode ?? 502, usage, { ...(sniff && first !== undefined && (ures.statusCode ?? 502) < 400 ? sniff.timing(started, ended) : {}), ...sniff?.serverTimings });
+                record(ures.statusCode ?? 502, usage, { ...(upstreamTiming ?? (sniff && first !== undefined && (ures.statusCode ?? 502) < 400 ? sniff.timing(started, ended) : {})), ...sniff?.serverTimings });
               });
               return;
             }
@@ -1019,7 +1030,7 @@ export function routerHandler(
               ures.statusCode ?? 502,
               usage,
               {
-                ...(sniff && first !== undefined && (ures.statusCode ?? 502) < 400 ? sniff.timing(started, ended) : {}),
+                ...(upstreamTiming ?? (sniff && first !== undefined && (ures.statusCode ?? 502) < 400 ? sniff.timing(started, ended) : {})),
                 ...sniff?.serverTimings,
               }
             );

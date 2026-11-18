@@ -16,6 +16,7 @@
  *   lessons.ts       — memory_lessons (approved, review-gated lessons)
  *   taxonomy.ts      — memory_taxonomy (structural overview of stored memory)
  *   tunnels.ts       — memory_tunnels (cross-project concept connections)
+ *   code.ts          — code_explore, code_search, code_callers (code graph)
  */
 
 export * from "./types.js";
@@ -34,3 +35,4 @@ export * from "./taxonomy.js";
 export * from "./tunnels.js";
 export * from "./feedback.js";
 export * from "./kg-search.js";
+export * from "./code.js";

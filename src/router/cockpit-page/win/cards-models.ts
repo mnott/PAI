@@ -64,6 +64,18 @@ function wmdModel(id){
  for(i=0;i<list.length;i++)if("models.model:"+list[i].name===id)return list[i];
  return null;
 }
+/** A managed endpoint (a router instance, "gyro-l#1") whose model already has a card: its instance is listed inside that card, not as a second row. */
+function wmdNested(e){
+ if(e.origin!=="managed"||!WMD||!WMD.inv)return false;
+ var inv=WMD.inv;
+ if((inv.registryModels||[]).some(function(m){return m.tier===e.model||m.name===e.model}))return true;
+ return wmdCards(inv).some(function(c){return c.r.name===e.provider||(c.tier&&c.tier.name===e.model)});
+}
+/** "1 instance · healthy": the live instances of a card's tier and how many are ready. */
+function wmdInstText(t){
+ var n=t.live.length,ok=t.live.filter(function(x){return x.state==="ready"}).length;
+ return n+(n===1?" instance":" instances")+(n?" · "+(ok===n?"healthy":ok+" of "+n+" healthy"):"");
+}
 /** The card list of an inventory: [{id,title,r,rt,m,users,tier,state,stopped,down,idle,loaded,cmds,consumers}]. */
 function wmdCards(inv){
  var out=[],consumers=inv.consumers||[],cmds=inv.runtimeCommands||{};
@@ -188,7 +200,7 @@ Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
   var r=e.r;
   ctx.html("badges",(e.m.model?'<span class="mid" title="'+esc(e.m.model)+'">'+esc(shortModel(e.m.model))+"</span> ":"")+
    (r.kind===r.name?"":'<span class="badge">'+esc(r.kind)+"</span> ")+'<span class="badge"'+(e.cmds.note?' title="'+esc(e.cmds.note)+'"':"")+">"+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span> <span class="badge mstate'+(e.down?" bad":r.slow?" warn":"")+'">'+esc(r.slow&&!e.down?"slow":e.state)+"</span>"+
-   (e.tier?' <span class="num" title="running instances'+(e.tier.max?" (max "+e.tier.max+")":"")+'">instances '+e.tier.live.length+(e.tier.max?" / "+e.tier.max:"")+"</span>":"")+
+   (e.tier?' <span class="num" title="running instances'+(e.tier.max?" (max "+e.tier.max+")":"")+'">'+esc(wmdInstText(e.tier))+(e.tier.max?" / max "+e.tier.max:"")+"</span>":"")+
    (e.tier&&e.tier.starting?' <span class="'+(e.tier.starting.state==="failed"?"bad":"warn")+'">'+(e.tier.starting.state==="failed"?esc(e.tier.starting.message):"loading "+e.tier.starting.sinceSec+" s")+"</span>":""));
   ctx.html("cells",wmdCells(e,inv));
   ctx.html("ctx",wmdCtx(e,inv));
@@ -256,6 +268,7 @@ Win.registerType("eplist",{minW:260,minH:44,defaultH:90,
  update:function(ctx,d){
   var eps=d&&d.routing&&d.routing.endpoints;
   if(!eps)return;
+  eps=eps.filter(function(e){return!wmdNested(e)});
   ctx.text("none",eps.length?"":"no endpoints registered");
   ctx.list("rows",eps,function(e){return e.id},function(){var x=document.createElement("div");x.className="eprow";return x},function(x,e){
    var cls=e.healthy?"ok":e.enabled?"bad":"dim",tags=(e.tags||[]).concat((e.classes||[]).map(function(c){return"class:"+c})).join(" · ");

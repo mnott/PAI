@@ -40,14 +40,14 @@ describe("cockpit page script", () => {
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
     const ctx = vm.createContext({});
     vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
-    const row = { slot: 1, kind: "job", id: "w1", state: "waiting", stateText: "waiting for a local slot", priority: "normal", session: "mdf", model: "gyro-l", modelFull: "local: qwen", local: true, task: "a very long task text ".repeat(20), seconds: 70, activity: "", now: "", detail: "", stale: true, actions: ["next", "up", "down", "pause", "freeze", "deep-freeze", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now"] };
+    const row = { slot: 1, kind: "job", id: "w1", state: "waiting", stateText: "waiting for a local slot", priority: "normal", session: "mdf", model: "gyro-l", modelFull: "local: qwen", local: true, task: "a very long task text ".repeat(20), seconds: 70, activity: "", now: "", detail: "", restarting: true, actions: ["next", "up", "down", "pause", "freeze", "deep-freeze", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now"] };
     (ctx as Record<string, unknown>).__r = row;
     const html = vm.runInContext("wkTRow(__r)", ctx) as string;
     expect(html.match(/<tr/g)).toHaveLength(1);
     expect(html).not.toContain("<br");
     expect((html.match(/<button/g) ?? []).length - (html.match(/class="wq-chip/g) ?? []).length).toBeLessThanOrEqual(3);
     expect(html).toContain("waiting #1");
-    expect(html).toContain("stale waiter");
+    expect(html).toContain("restarting on new version");
     expect(html).toContain('title="a very long task');
     expect(html).toContain("aria-label=");
   });
@@ -70,6 +70,18 @@ describe("cockpit page script", () => {
     expect(html).toContain("▲");
     vm.runInContext("WK_SORT=null", ctx);
     expect(vm.runInContext("wkQTable(wkView(__rows))", ctx)).toContain(">waiting</td>");
+  });
+  it("models card: a managed endpoint of a carded model is nested, not a second row; the card says 1 instance healthy", async () => {
+    const vm = await import("node:vm");
+    const { WIN_MODELS_JS } = await import("./cockpit-page/win/cards-models.js");
+    const ctx = vm.createContext({ Win: { registerType() {} } });
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\nfunction shortModel(s){return s}\nfunction gbm(s){return s}\nfunction gb(s){return s}\nfunction pct(s){return s}\n` + WIN_MODELS_JS, ctx);
+    (ctx as Record<string, unknown>).__inv = { runtimes: [{ name: "gyro-l", kind: "strata", tier: "gyro-l", models: [], status: "up" }], tiers: [{ tier: "gyro-l", maxInstances: 2 }], instances: [{ id: "gyro-l#1", model: "gyro-l", state: "ready", inflight: 0 }], registryModels: [], consumers: [], runtimeCommands: {} };
+    vm.runInContext("WMD={inv:__inv}", ctx);
+    expect(vm.runInContext('wmdNested({id:"gyro-l#1",origin:"managed",model:"gyro-l",provider:"gyro-l"})', ctx)).toBe(true);
+    expect(vm.runInContext('wmdNested({id:"x",origin:"registered",model:"gyro-l",provider:"gyro-l"})', ctx)).toBe(false);
+    expect(vm.runInContext('wmdNested({id:"o#1",origin:"managed",model:"other",provider:"other"})', ctx)).toBe(false);
+    expect(vm.runInContext("wmdInstText(wmdCards(__inv)[0].tier)", ctx)).toBe("1 instance · healthy");
   });
   it("model is a coloured chip and destructive actions confirm inline", async () => {
     const vm = await import("node:vm");
