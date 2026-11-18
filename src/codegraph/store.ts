@@ -31,6 +31,8 @@ export interface SymbolRecord {
   startLine: number;
   endLine: number;
   signature: string;
+  /** doc comment (/// or /** …) attached to the definition, when any */
+  doc?: string;
   exported: boolean;
 }
 
@@ -63,6 +65,8 @@ export interface SymbolRow {
   startLine: number;
   endLine: number;
   signature: string;
+  /** doc comment attached to the definition ("" when none is stored) */
+  doc: string;
   exported: boolean;
 }
 

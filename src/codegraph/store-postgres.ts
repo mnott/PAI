@@ -18,7 +18,7 @@ import type {
 interface SymDbRow {
   id: number; name: string; qualified_name: string; kind: string;
   file: string; file_id: number; start_line: number; end_line: number;
-  signature: string; exported: boolean;
+  signature: string; exported: boolean; doc?: string;
 }
 interface RefDbRow {
   id: number; kind: string; line: number; to_name: string; to_symbol_id: number | null;
@@ -32,7 +32,7 @@ function mapSymbol(r: SymDbRow): SymbolRow {
   return {
     id: r.id, name: r.name, qualifiedName: r.qualified_name, kind: r.kind,
     file: r.file, fileId: r.file_id, startLine: r.start_line, endLine: r.end_line,
-    signature: r.signature, exported: r.exported,
+    signature: r.signature, doc: r.doc ?? "", exported: r.exported,
   };
 }
 
@@ -43,7 +43,7 @@ function mapRef(r: RefDbRow): ResolvedRefRow {
       : {
           id: r.to_symbol_id, name: r.t_name, qualifiedName: r.t_qualified_name!, kind: r.t_kind!,
           file: r.t_file!, fileId: r.t_file_id!, startLine: r.t_start_line!, endLine: r.t_end_line!,
-          signature: r.t_signature!, exported: !!r.t_exported,
+          signature: r.t_signature!, doc: "", exported: !!r.t_exported,
         };
   return {
     id: r.id, kind: r.kind, line: r.line, toName: r.to_name, toSymbolId: r.to_symbol_id,
@@ -115,13 +115,13 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
         const chunk = file.symbols.slice(i, i + 500);
         const params: unknown[] = [];
         const rows = chunk.map((s, j) => {
-          const o = j * 10;
+          const o = j * 11;
           params.push(repoRoot, fileId, s.name, s.qualifiedName, s.kind, s.startLine, s.endLine, s.signature, s.exported,
-            symbolFtsText(s.name, s.qualifiedName, s.signature));
-          return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10})`;
+            symbolFtsText(s.name, s.qualifiedName, s.signature), s.doc ?? "");
+          return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10},$${o + 11})`;
         });
         const r = await client.query<{ id: number }>(
-          `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text)
+          `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text, doc)
            VALUES ${rows.join(",")} RETURNING id`,
           params,
         );
@@ -222,7 +222,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     if (!tsQuery) return [];
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND s.fts_vector @@ to_tsquery('simple', $2)
@@ -237,7 +237,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND (s.name = $2 OR s.qualified_name = $2)
@@ -251,7 +251,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND cf.path = $2 ORDER BY s.start_line`,
@@ -326,7 +326,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
-              s.start_line, s.end_line, s.signature, s.exported
+              s.start_line, s.end_line, s.signature, s.exported, s.doc
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 ORDER BY cf.path, s.start_line`,

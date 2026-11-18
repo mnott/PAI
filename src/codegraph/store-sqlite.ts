@@ -18,7 +18,7 @@ import type {
 interface SymDbRow {
   id: number; repo_root: string; file_id: number; name: string;
   qualified_name: string; kind: string; start_line: number; end_line: number;
-  signature: string; exported: number;
+  signature: string; exported: number; doc?: string;
 }
 interface FileDbRow {
   id: number; path: string; language: string; content_hash: string;
@@ -37,7 +37,7 @@ function mapSymbol(r: SymDbRow): SymbolRow {
     id: r.id, name: r.name, qualifiedName: r.qualified_name, kind: r.kind,
     file: (r as unknown as { file: string }).file, fileId: r.file_id,
     startLine: r.start_line, endLine: r.end_line, signature: r.signature,
-    exported: r.exported === 1,
+    doc: r.doc ?? "", exported: r.exported === 1,
   };
 }
 
@@ -45,7 +45,7 @@ function mapRef(r: RefDbRow): ResolvedRefRow {
   const target: SymbolRow | null = r.to_symbol_id == null ? null : {
     id: r.to_symbol_id, name: r.t_name!, qualifiedName: r.t_qualified_name!, kind: r.t_kind!,
     file: r.t_file!, fileId: r.t_file_id!, startLine: r.t_start_line!, endLine: r.t_end_line!,
-    signature: r.t_signature!, exported: r.t_exported === 1,
+    signature: r.t_signature!, doc: "", exported: r.t_exported === 1,
   };
   return {
     id: r.id, kind: r.kind, line: r.line, toName: r.to_name, toSymbolId: r.to_symbol_id,
@@ -88,7 +88,13 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     // cut at that word silently dropped every index (a ref lookup took 88 ms instead of <1 ms).
     const cut = CODEGRAPH_SQLITE_SQL.indexOf("-- The FTS sync triggers");
     const indexes = CODEGRAPH_SQLITE_SQL.slice(CODEGRAPH_SQLITE_SQL.indexOf("CREATE INDEX"));
-    this.db.exec(CODEGRAPH_SQLITE_SQL.slice(0, cut) + indexes);
+    // the doc-column migration below the index block is guarded here: SQLite has
+    // no ADD COLUMN IF NOT EXISTS, and a plain ALTER would throw on every re-run
+    let migrate = "";
+    if (!this.db.prepare("SELECT 1 FROM pragma_table_info('code_symbols') WHERE name='doc'").get()) {
+      migrate = "ALTER TABLE code_symbols ADD COLUMN doc TEXT NOT NULL DEFAULT '';";
+    }
+    this.db.exec(CODEGRAPH_SQLITE_SQL.slice(0, cut) + indexes + migrate);
     for (const [name, sql] of [
       ["code_symbols_ai", `CREATE TRIGGER code_symbols_ai AFTER INSERT ON code_symbols BEGIN
         INSERT INTO code_symbols_fts (rowid, search_text) VALUES (new.id, new.search_text); END`],
@@ -136,14 +142,15 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
       const fileId = Number(info.lastInsertRowid);
 
       const insertSym = db.prepare(
-        `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO code_symbols (repo_root, file_id, name, qualified_name, kind, start_line, end_line, signature, exported, search_text, doc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       const symbolIds: number[] = [];
       for (const s of file.symbols) {
         const r = insertSym.run(
           repoRoot, fileId, s.name, s.qualifiedName, s.kind, s.startLine, s.endLine,
           s.signature, s.exported ? 1 : 0, symbolFtsText(s.name, s.qualifiedName, s.signature),
+          s.doc ?? "",
         );
         symbolIds.push(Number(r.lastInsertRowid));
       }
