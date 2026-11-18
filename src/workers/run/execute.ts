@@ -353,7 +353,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
       /* already gone */
     }
     // the engine's tree goes with it (finaliseRun, which reaps, never runs on this path)
-    void reapRunTree(worktree?.dir).finally(() => process.exit(143));
+    void reapRunTree(worktree?.dir, wid).finally(() => process.exit(143));
     setTimeout(() => process.exit(143), 2000).unref();
   };
   const sigHandlers = (["SIGTERM", "SIGINT", "SIGHUP"] as const).map((sig) => [sig, () => onEngineSignal(sig)] as const);
@@ -368,7 +368,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     } catch {
       /* already gone */
     }
-    await reapRunTree(worktree?.dir);
+    await reapRunTree(worktree?.dir, wid);
     if (worktree) {
       salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
       try {

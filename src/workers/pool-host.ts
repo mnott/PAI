@@ -1271,7 +1271,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       ? `${pooledUnitPrompt(unitSpec, wtNote)}${scratchPromptLine(taskScratch)}\n${noteTokenSentence(session.noteToken)}\n\n${task.trailer}`
       : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer, session.noteToken, taskScratch);
     // the slot process and its earlier children outlive the task; whatever the task started does not
-    const reapOpts = { rootPid: session.pid, ...(prep ? { dir: prep.dir } : {}) };
+    const reapOpts = { rootPid: session.pid, id: wid, ...(prep ? { dir: prep.dir } : {}) };
     const beforeTask = snapshotWorkerPids(reapOpts);
     const feeding = session.feed(text, onEvent);
     // the replacement starts once the task is on its way, not when it ends: back-to-back tasks find the next spare ready

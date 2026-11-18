@@ -216,7 +216,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       /* already gone */
     }
     // the worker's process tree, build lock and tree go with it (finaliseRun, which reaps, never runs on this path)
-    void reapRunTree(worktree?.dir)
+    void reapRunTree(worktree?.dir, wid)
       .then(() => releaseBuildsOf(buildsDir(), wid))
       .catch(() => [])
       .finally(() => process.exit(143));
@@ -243,7 +243,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     } catch {
       /* already gone */
     }
-    await reapRunTree(worktree?.dir);
+    await reapRunTree(worktree?.dir, wid);
     if (worktree) {
       salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
       try {

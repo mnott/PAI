@@ -187,8 +187,9 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   removeRunSettings(logDir, wid);
   // a keyless run's placeholder dies with it
   await revokeRunToken(wid);
-  // nothing the worker started outlives it: descendants and detached processes parked in its worktree
-  await reapWorkerProcesses({ rootPid: process.pid, dir: f.worktree?.dir });
+  // nothing the worker started outlives it: descendants, its process group (the backgrounded Bash
+  // children), detached processes parked in its worktree, and escapees whose env still names this id
+  await reapWorkerProcesses({ rootPid: process.pid, dir: f.worktree?.dir, id: wid });
   // first, whatever the outcome (rc 143 included): uncommitted edits in the
   // worktree must reach the branch before anything can drop the worktree
   const salvaged = f.worktree
