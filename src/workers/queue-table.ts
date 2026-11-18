@@ -52,8 +52,8 @@ export interface TableRow {
   now: string;
   /** "continues <old id>" and plain notes. */
   detail: string;
-  /** Set while the job is being restarted by the daemon (older PAI release); the row reads "restarting on new version". */
-  restarting?: boolean;
+  /** A waiter of an older build (shown as a small red tag). */
+  stale?: boolean;
   actions: RowAction[];
 }
 
@@ -117,14 +117,10 @@ export function activityOf(s: Pick<WorkerStatus, "updated">, waiting: boolean, n
 
 const prioOf = (s: WorkerStatus, ticket?: string): TableRow["priority"] => (s.now ? "now" : ((ticket ?? s.priority ?? "normal") as TableRow["priority"]));
 
-/** Up/next/down only for a waiting row, and only the moves that change something: not "up"/"next" on the first row, not "down" on the last. */
-function actionsOf(state: RowState, local: boolean, waiting: boolean, place?: { first: boolean; last: boolean }): RowAction[] {
+function actionsOf(state: RowState, local: boolean, waiting: boolean): RowAction[] {
   if (state === "deep-frozen") return ["deep-resume"];
   const a: RowAction[] = [];
-  if (waiting && state === "waiting") {
-    if (!place?.first) a.push("next", "up");
-    if (!place?.last) a.push("down");
-  }
+  if (waiting) a.push("next", "up", "down");
   a.push(state === "paused" ? "resume" : "pause");
   a.push(state === "frozen" ? "thaw" : "freeze");
   a.push("deep-freeze");
@@ -137,7 +133,7 @@ function actionsOf(state: RowState, local: boolean, waiting: boolean, place?: { 
 function replacedIds(live: WorkerStatus[]): Set<string> {
   const ids = new Set(live.map((s) => s.id));
   const out = new Set<string>();
-  for (const s of live) if (s.fallThroughOf && ids.has(s.fallThroughOf) && !live.find((o) => o.id === s.fallThroughOf)?.movingTo) out.add(s.fallThroughOf);
+  for (const s of live) if (s.fallThroughOf && ids.has(s.fallThroughOf)) out.add(s.fallThroughOf);
   return out;
 }
 
@@ -151,14 +147,14 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
   const live = i.statuses.filter((s) => deepIds.has(s.id) || s.state === "running" || s.state === "queued" || ticket.has(s.id));
   const gone = replacedIds(live);
-  const row = (s: WorkerStatus, waiting: boolean, since: number, prio?: string, place?: { first: boolean; last: boolean }, moving?: string): Omit<TableRow, "slot"> => {
+  const row = (s: WorkerStatus, waiting: boolean, since: number, prio?: string, stale?: boolean): Omit<TableRow, "slot"> => {
     const local = i.isLocal(s.provider);
     const deep = i.deepFrozen?.(s.id) === true;
     const fr = !deep && i.frozen?.(s.id) === true;
-    const state: RowState = deep ? "deep-frozen" : fr ? "frozen" : s.paused && !(waiting && s.state === "running") ? "paused" : waiting ? "waiting" : "running";
+    const state: RowState = deep ? "deep-frozen" : fr ? "frozen" : s.paused ? "paused" : waiting ? "waiting" : "running";
     const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? ""].filter(Boolean);
     const stateText =
-      state === "waiting" ? (s.restarting ? "restarting on new version" : `waiting for a ${local ? "local" : "cloud"} slot`) : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : moving ?? "running";
+      state === "waiting" ? `waiting for a ${local ? "local" : "cloud"} slot` : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : "running";
     return {
       kind: "job",
       id: s.id,
@@ -174,26 +170,19 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       now: waiting ? "" : (s.last ?? "").slice(0, 120),
       seconds: sec(since),
       detail: notes.map(plainWording).join("; "),
-      ...(s.restarting ? { restarting: true } : {}),
-      actions: actionsOf(state, local, waiting, place),
+      ...(stale ? { stale: true } : {}),
+      actions: actionsOf(state, local, waiting),
     };
   };
   const out: TableRow[] = [];
   const runners = live.filter((s) => s.state === "running" && !deepIds.has(s.id) && !ticket.has(s.id) && !gone.has(s.id)).sort((a, b) => stMs(a) - stMs(b) || (a.id < b.id ? -1 : 1));
-  // a running job moving to a slot-limited provider keeps running; its continuation waits in the target's queue and is shown on this row
-  const moverOf = (id: string) => i.queue.find((q) => q.status?.fallThroughOf === id);
-  const movers = new Set(runners.filter((x) => x.movingTo).map((x) => x.id));
-  for (const s of runners.filter((x) => !pausedFree(x))) {
-    const q = s.movingTo ? moverOf(s.id) : undefined;
-    const moving = s.movingTo ? `running (${i.isLocal(s.provider) ? "local" : "cloud"}) · moving to ${i.isLocal(s.movingTo) ? "local" : "cloud"}, waiting #${q ? q.position : "?"}` : undefined;
-    out.push({ slot: "running", ...row(s, false, stMs(s), undefined, undefined, moving) });
-  }
+  for (const s of runners.filter((x) => !pausedFree(x))) out.push({ slot: "running", ...row(s, false, stMs(s)) });
   for (const p of i.panes.filter((p) => p.state === "running").sort((a, b) => a.startedMs - b.startedMs)) {
     out.push({ slot: "running", kind: "command", id: p.id, state: i.frozen?.(p.id) ? "frozen" : "running", stateText: i.frozen?.(p.id) ? "frozen (in memory)" : "running", priority: "normal", session: p.session || "other", model: "", local: false, task: p.label, activity: "", now: "", seconds: sec(p.startedMs), detail: "command", actions: [i.frozen?.(p.id) ? "thaw" : "freeze", "stop"] });
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
-  const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status && !(q.status.fallThroughOf && movers.has(q.status.fallThroughOf))).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
-  waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, { first: q.position === 1, last: q.position === q.queued }) }));
+  const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
+  waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, q.stale) }));
   for (const s of runners.filter((x) => pausedFree(x))) out.push({ slot: "freed", ...row(s, false, stMs(s)) });
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
   // one order: running, then waiting, then paused/frozen (stable inside each group)
@@ -230,7 +219,7 @@ export function renderQueueTable(rows: TableRow[]): string[] {
   const body = rows.map((r) => [
     `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity : ""}`,
     clip(r.session, 18),
-    clip(r.task, 50),
+    clip(r.task, 50) + (r.stale ? " [stale waiter]" : ""),
     clip(r.model, 26),
     r.priority,
     fmtDur(r.seconds),
