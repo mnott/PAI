@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { freshLoadWatchState, loadWatchConfig, loadWatchTick, selectSuspects, stepLoadWatch, type LoadWatchDeps, type PsRow } from "./load-watch.js";
 import {
+  lowPriorityConfig,
+  lowPriorityKeeperTick,
+  lowPriorityStatusLine,
+  freshKeeperState,
+  type KeeperDeps,
+} from "./low-priority-keeper.js";
+import {
   AUTOSTART_MAX_FAILURES,
   AUTOSTART_RETRY_MS,
   freshAutostartStates,
@@ -229,5 +236,77 @@ describe("runtime autostart", () => {
     now += 2;
     expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // out of it: retried, never in a tight loop
     expect(log.starts).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Low-priority keeper (src/daemon/low-priority-keeper.ts) — the daemon keeps
+// listed background apps (seaf-daemon) at background CPU priority after every
+// restart of theirs (2026-11-18: seaf-daemon scanned all libraries at ~90-100%
+// for minutes after each reboot and each PAI merge).
+// ---------------------------------------------------------------------------
+
+const keeperCfg = lowPriorityConfig({ lowPriority: { processes: ["seaf-daemon"] } });
+
+interface KeeperLog { pgreps: string[]; policies: number[]; lines: string[] }
+
+/** Injected pgrep/taskpolicy: `prios` is pid -> pri, a missing entry reads gone. */
+const keeperDeps = (log: KeeperLog, prios: Map<number, number>, unchangeable: number[] = []): KeeperDeps => ({
+  pgrep: async (name) => {
+    log.pgreps.push(name);
+    return [...prios.keys()].join("\n");
+  },
+  psPri: async (pid) => (prios.has(pid) ? `  ${prios.get(pid)}\n` : ""),
+  taskpolicy: async (pid) => {
+    if (unchangeable.includes(pid)) throw new Error("Operation not permitted");
+    log.policies.push(pid);
+    prios.set(pid, 4); // the real command lands a process at scheduler pri 4
+  },
+  log: (l) => void log.lines.push(l),
+  write: () => undefined,
+  now: () => 0,
+});
+
+describe("low priority keeper", () => {
+  it("only exact names are looked up; default config lists nothing", () => {
+    expect(lowPriorityConfig(undefined).processes).toEqual([]); // default: off by emptiness
+    const log: KeeperLog = { pgreps: [], policies: [], lines: [] };
+    const prios = new Map([[1468, 31]]);
+    void lowPriorityKeeperTick(keeperCfg, freshKeeperState(), keeperDeps(log, prios));
+    expect(log.pgreps).toEqual(["seaf-daemon"]); // pgrep -x takes the exact name as given, never a pattern
+  });
+
+  it("a normal-priority pid is lowered once and logged once; an already-background pid is not touched again", async () => {
+    const log: KeeperLog = { pgreps: [], policies: [], lines: [] };
+    const prios = new Map([[1468, 31], [2000, 4]]); // 2000 came up background already
+    const states = freshKeeperState();
+    const d = keeperDeps(log, prios);
+    await lowPriorityKeeperTick(keeperCfg, states, d);
+    expect(log.policies).toEqual([1468]); // the normal one lowered, the background one untouched
+    expect(log.lines.filter((l) => l.includes("pid 1468"))).toHaveLength(1);
+    for (let i = 0; i < 3; i++) await lowPriorityKeeperTick(keeperCfg, states, d);
+    expect(log.policies).toEqual([1468]); // still one apply: it reads background now
+    expect(log.lines.filter((l) => l.includes("pid 1468"))).toHaveLength(1); // and still one log line
+    expect(log.lines.filter((l) => l.includes("pid 2000"))).toEqual([]); // never touched, never logged
+  });
+
+  it("an unchangeable pid is skipped with exactly one log line across later passes", async () => {
+    const log: KeeperLog = { pgreps: [], policies: [], lines: [] };
+    const prios = new Map([[900, 31]]); // root-owned: taskpolicy refuses it
+    const states = freshKeeperState();
+    const d = keeperDeps(log, prios, [900]);
+    await lowPriorityKeeperTick(keeperCfg, states, d);
+    expect(log.policies).toEqual([]);
+    for (let i = 0; i < 4; i++) await lowPriorityKeeperTick(keeperCfg, states, d);
+    expect(log.lines.filter((l) => l.includes("pid 900"))).toHaveLength(1); // skipped, logged once
+    expect(log.lines[0]).toContain("skipped");
+  });
+
+  it("the status line names each tracked pid the way `pai daemon status` prints it", async () => {
+    const log: KeeperLog = { pgreps: [], policies: [], lines: [] };
+    const prios = new Map([[1468, 31]]);
+    const status = await lowPriorityKeeperTick(keeperCfg, freshKeeperState(), keeperDeps(log, prios));
+    expect(lowPriorityStatusLine(status)).toBe("Low priority: seaf-daemon (pid 1468, background)");
+    expect(lowPriorityStatusLine(null)).toBeNull();
   });
 });

@@ -328,6 +328,8 @@ export interface PaiDaemonConfig {
   workers?: {
     /** Runaway-load watchdog (src/daemon/load-watch.ts). */
     loadWatch?: { enabled?: boolean; maxLoadPerCore?: number; minutes?: number; thawMinutes?: number; intervalSecs?: number };
+    /** Low-priority keeper (src/daemon/low-priority-keeper.ts): exact process names kept at background CPU priority. */
+    lowPriority?: { enabled?: boolean; processes?: string[]; intervalSecs?: number };
     merge?: {
       /** Globs of generated paths: a conflict only in these is resolved by regenerating. */
       generated?: string[];

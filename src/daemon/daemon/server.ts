@@ -37,7 +37,7 @@ import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sy
 import { interruptStaleJobs } from "../../router/cockpit-job-recovery.js";
 import { paiHomeDir } from "../../config/pai-home.js";
 import { startOrphanCheck } from "../orphan-check.js";
-import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch, startRuntimeAutostartSupervision } from "./scheduler.js";
+import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch, startRuntimeAutostartSupervision, startLowPriorityKeeperSupervision } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
@@ -235,6 +235,10 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // at boot and after a crash — the router never routes to a provider that is down, so
   // nothing else ever starts them (2026-11-18: after a reboot gyro-l stayed down all day).
   startRuntimeAutostartSupervision();
+
+  // workers.lowPriority.processes: keep listed background apps (seaf-daemon) at background CPU
+  // priority — taskpolicy -b survives nothing, the client loses it on every restart of its own.
+  startLowPriorityKeeperSupervision();
 
   // `pai stop` left a deep-freeze record: this boot restores the recorded workers (waits for router + models, 5 min at most).
   void startDeepfreezeResume();

@@ -40,6 +40,7 @@ import { runStalePassDaily } from "../stale-pass.js";
 import { startWorktreeGc } from "../worktree-gc.js";
 import { startBuildReapSweep } from "../build-reap.js";
 import { startRuntimeAutostart } from "../runtime-autostart.js";
+import { lowPriorityConfig, startLowPriorityKeeper } from "../low-priority-keeper.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
 // tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
@@ -1108,6 +1109,35 @@ export function startRuntimeAutostartSupervision(): void {
   } catch (e) {
     process.stderr.write(
       `[pai-daemon] Runtime autostart: not started (${e instanceof Error ? e.message : String(e)})\n`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Low-priority keeper
+// ---------------------------------------------------------------------------
+
+/**
+ * Start the low-priority keeper (src/daemon/low-priority-keeper.ts): every exact
+ * name in `workers.lowPriority.processes` is looked up with `pgrep -x` each
+ * minute and put at background CPU priority with `taskpolicy -b -p <pid>` where
+ * it is not there yet (2026-11-18: seaf-daemon scanned all libraries at ~90-100%
+ * for minutes after every reboot and every PAI merge). All commands run async;
+ * nothing here touches the event loop synchronously. Config read once: a change
+ * needs a daemon restart, like every other start* here.
+ */
+export function startLowPriorityKeeperSupervision(): void {
+  try {
+    let workers: unknown;
+    try {
+      workers = readWorkersSection().workers;
+    } catch {
+      workers = undefined; // no workers config: the keeper reads its defaults (empty list, off)
+    }
+    startLowPriorityKeeper(lowPriorityConfig(daemonConfig.workers ?? workers));
+  } catch (e) {
+    process.stderr.write(
+      `[pai-daemon] Low priority keeper: not started (${e instanceof Error ? e.message : String(e)})\n`
     );
   }
 }
