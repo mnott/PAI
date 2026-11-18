@@ -59,8 +59,10 @@ describe("cockpit page script", () => {
     const html = vm.runInContext("wkQTable([])", ctx) as string;
     const cols = [...html.matchAll(/<col(?!group)([^>]*)>/g)].map((m) => m[1]!);
     expect(cols).toHaveLength(7);
-    expect(cols[2]).toBe("");
-    expect(cols.filter((c) => c.includes("width:"))).toHaveLength(6);
+    expect(cols[2]).toMatch(/width:\d+%/);
+    cols.forEach((c, i) => {
+      if (i !== 2) expect(c).toMatch(/width:\d+px/);
+    });
   });
   it("queue model column is a short name", async () => {
     const { shortModel } = await import("../workers/queue-table.js");
