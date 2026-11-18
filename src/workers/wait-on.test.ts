@@ -256,7 +256,7 @@ describe("worker wait follows rerouted workers", () => {
   const origin = (over: Partial<WorkerStatus> = {}): WorkerStatus =>
     ({ id: "o1", pid: 4321, label: "l", cwd: "/", term: "", provider: "local", model: "m", state: "killed", started: "", updated: "", turns: 0, tools: 0, last: "rerouted: anthropic: queued 15m", rc: 143, secs: null, rerouted: "anthropic: queued 15m", fallThroughTo: "c1", ...over }) as WorkerStatus;
   const cont = (over: Partial<WorkerStatus> = {}): WorkerStatus =>
-    ({ id: "c1", pid: 9999, label: "l", cwd: "/", term: "", provider: "anthropic", model: "m", state: "running", started: "", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null, ...over }) as WorkerStatus;
+    ({ id: "c1", pid: process.pid, label: "l", cwd: "/", term: "", provider: "anthropic", model: "m", state: "running", started: "", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null, ...over }) as WorkerStatus;
 
   it("a killed origin with fallThroughTo reports the continuation's result under the asked id + followed", async () => {
     const wd = wdir();
