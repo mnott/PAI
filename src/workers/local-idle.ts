@@ -19,7 +19,7 @@ import { ledgerPath } from "./paths.js";
 import { eventLine, type Messenger } from "./run-events.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { readLocalStatus, type LocalStatus } from "./local-status.js";
-import { isChatPane, isLive, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
+import { holdsSlot, isChatPane, isLive, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
 
 export interface LocalIdleConfig {
   enabled: boolean;
@@ -57,6 +57,8 @@ export interface LocalProviderSample {
   cap: number;
   workers: LocalWorker[];
   queued: number;
+  /** Running but parked by pause (slot not held): shown apart from the slot count. */
+  paused?: number;
 }
 
 export interface LocalSample {
@@ -126,16 +128,19 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
     if (!isLocalProvider(p.baseUrl)) continue;
     const cap = providerCap(workers, name);
     if (cap === undefined) continue;
-    const mine = statuses.filter((s) => s.provider === name);
+    const onProv = statuses.filter((s) => s.provider === name);
+    const mine = onProv.filter((s) => holdsSlot(s, now));
+    const paused = onProv.filter((s) => !!s.paused).length;
     const queued = queue.filter((q) => q.provider === name).length;
     // only a provider that is a local candidate (enabled or tier-launched) and served (the daemon's local-status names it) or has work is worth a line
     const served = (status?.running ?? []).some((r) => r.provider === name);
-    if (!(isLocalCandidate(p, name, tiers) && served) && !mine.length && !queued) continue;
+    if (!(isLocalCandidate(p, name, tiers) && served) && !onProv.length && !queued) continue;
     providers.push({
       provider: name,
       cap,
       workers: mine.map((s) => ({ id: s.id, activity: activityOf(s, tickets), ...ownerOf(s) })),
       queued,
+      paused,
     });
   }
   return { at: now, gpuPct: await gpu(), providers };
@@ -189,7 +194,7 @@ export interface LocalIdleFile {
   gpuPct: number | null;
   idleSince: number | null;
   lastNudge: Record<string, number>;
-  providers: Array<{ provider: string; cap: number; running: number; free: number; queued: number; activity: Record<string, number> }>;
+  providers: Array<{ provider: string; cap: number; running: number; free: number; queued: number; paused?: number; activity: Record<string, number> }>;
 }
 
 const stateFile = (logDir: string): string => join(logDir, "local-idle.json");
@@ -225,9 +230,10 @@ export function setMuted(logDir: string, session: string, muted: boolean): strin
 /** The `ps` / cockpit line: "local model: GPU 63% busy · gyro-m 2/4 running, 2 free"; "" with no reading. */
 export function localIdleLine(f: LocalIdleFile | null, now = Date.now()): string {
   if (!f || now - Date.parse(f.at) > 120_000) return "";
-  const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}% ${f.gpuPct < defaultWorkersConfig().localIdle.gpuBelowPct ? "idle" : "busy"}`;
-  const provs = f.providers.map((p) => `${p.provider} ${p.running}/${p.cap} running, ${p.free} free${p.queued ? `, ${p.queued} queued` : ""}`);
-  return `local model: ${[gpu, ...provs].join(" · ")}`;
+  const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}%`;
+  // same accounting as the slot gate: running = slot holders / cap; paused and waiting are counted apart
+  const provs = f.providers.map((p) => [`${p.provider}: ${p.running} of ${p.cap} slots busy`, p.paused ? `${p.paused} paused` : "", p.queued ? `${p.queued} waiting` : ""].filter(Boolean).join(" · "));
+  return [...provs, gpu].join(" · ");
 }
 
 export interface LocalIdleDeps {
@@ -253,7 +259,7 @@ export async function localIdleTick(logDir: string, workers: WorkersConfig, msg:
     providers: sample.providers.map((p) => {
       const activity: Record<string, number> = {};
       for (const w of p.workers) activity[w.activity] = (activity[w.activity] ?? 0) + 1;
-      return { provider: p.provider, cap: p.cap, running: p.workers.length, free: Math.max(0, p.cap - p.workers.length), queued: p.queued, activity };
+      return { provider: p.provider, cap: p.cap, running: p.workers.length, free: Math.max(0, p.cap - p.workers.length), queued: p.queued, paused: p.paused ?? 0, activity };
     }),
   };
   try {

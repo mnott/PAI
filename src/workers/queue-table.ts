@@ -52,6 +52,8 @@ export interface TableRow {
   now: string;
   /** "continues <old id>" and plain notes. */
   detail: string;
+  /** A waiter of an older build (shown as a small red tag). */
+  stale?: boolean;
   actions: RowAction[];
 }
 
@@ -150,7 +152,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     const deep = i.deepFrozen?.(s.id) === true;
     const fr = !deep && i.frozen?.(s.id) === true;
     const state: RowState = deep ? "deep-frozen" : fr ? "frozen" : s.paused ? "paused" : waiting ? "waiting" : "running";
-    const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? "", stale ? "stale waiter (older build)" : ""].filter(Boolean);
+    const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? ""].filter(Boolean);
     const stateText =
       state === "waiting" ? `waiting for a ${local ? "local" : "cloud"} slot` : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : "running";
     return {
@@ -168,6 +170,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       now: waiting ? "" : (s.last ?? "").slice(0, 120),
       seconds: sec(since),
       detail: notes.map(plainWording).join("; "),
+      ...(stale ? { stale: true } : {}),
       actions: actionsOf(state, local, waiting),
     };
   };
@@ -182,18 +185,38 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, q.stale) }));
   for (const s of runners.filter((x) => pausedFree(x))) out.push({ slot: "freed", ...row(s, false, stMs(s)) });
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
-  return out;
+  // one order: running, then waiting, then paused/frozen (stable inside each group)
+  return out.map((r, n) => ({ r, n })).sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n).map((x) => x.r);
+}
+
+/** 0 = running, 1 = waiting, 2 = paused / frozen / deep-frozen. */
+export function rowGroup(r: Pick<TableRow, "state">): number {
+  return r.state === "running" ? 0 : r.state === "waiting" ? 1 : 2;
+}
+export const GROUP_LABEL = ["running", "waiting", "paused / frozen"] as const;
+
+/** Badge text of a row: "running", "waiting #2", "paused", "frozen", "deep-frozen". */
+export function stateBadge(r: Pick<TableRow, "state" | "slot">): string {
+  return r.state === "waiting" && typeof r.slot === "number" ? `waiting #${r.slot}` : r.state;
 }
 
 const fmtDur = (s: number): string => (s < 90 ? `${s}s` : s < 5400 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`);
 const clip = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
-/** The CLI rendering of the table (same columns as the cockpit; the actions are the verbs of the commands). */
+/** The CLI rendering of the table: same columns and order as the cockpit (state, session, task, model, prio, time) plus the id. */
 export function renderQueueTable(rows: TableRow[]): string[] {
   if (!rows.length) return ["nothing running or waiting"];
-  const head = ["#", "state", "activity", "prio", "session", "model", "task", "time", "id"];
-  const body = rows.map((r) => [r.slot === "running" ? "run" : r.slot === "saved" || r.slot === "freed" ? "-" : String(r.slot), r.stateText, r.activity, r.priority, clip(r.session, 18), clip(r.model, 26), clip(r.task + (r.detail ? ` (${r.detail})` : ""), 50), fmtDur(r.seconds), r.id]);
+  const head = ["state", "session", "task", "model", "prio", "time", "id"];
+  const body = rows.map((r) => [
+    `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity : ""}`,
+    clip(r.session, 18),
+    clip(r.task, 50) + (r.stale ? " [stale waiter]" : ""),
+    clip(r.model, 26),
+    r.priority,
+    fmtDur(r.seconds),
+    r.id,
+  ]);
   const w = head.map((h, c) => Math.max(h.length, ...body.map((b) => b[c]!.length)));
-  const fmt = (cells: string[]): string => cells.map((c, k) => c.padEnd(w[k]!)).join("  ").trimEnd();
+  const fmt = (cells: string[]): string => cells.map((c, k) => (k === 5 ? c.padStart(w[k]!) : c.padEnd(w[k]!))).join("  ").trimEnd();
   return [fmt(head), ...body.map(fmt), "", QUEUE_EXPLAIN];
 }

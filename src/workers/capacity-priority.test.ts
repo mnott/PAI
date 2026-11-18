@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { capacityGate, queueRows, writeTicket, type QueueRow } from "./capacity.js";
+import { localIdleLine } from "./local-idle.js";
 import { buildQueueTable, plainWording, renderQueueTable, type TableInput } from "./queue-table.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
@@ -97,6 +98,21 @@ describe("queue table", () => {
     expect(rows[0]!.now).toContain("Bash:");
     expect(rows.find((r) => r.id === "b")!.activity).toBe("idle 10m");
     expect(renderQueueTable(rows).join("\n")).not.toContain("Bash:");
+  });
+});
+
+describe("queue header and order", () => {
+  it("counts slots like the gate: paused apart from busy, waiting separate", () => {
+    const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 2, free: 1, queued: 2, paused: 3, activity: {} }] };
+    expect(localIdleLine(f, QNOW)).toBe("gyro-l: 2 of 3 slots busy · 3 paused · 2 waiting · GPU 100%");
+  });
+  it("groups running, waiting, paused/frozen; the CLI has the cockpit columns", () => {
+    const r = qst("r"), w = qst("w", { state: "queued" }), p = qst("p", { paused: true }), fz = qst("fz");
+    const rows = buildQueueTable(qin([p, fz, w, r], [qrow(w, "lm", 1)], { frozen: (id) => id === "fz" }));
+    expect(rows.map((x) => x.id)).toEqual(["r", "w", "fz", "p"]);
+    const text = renderQueueTable(rows);
+    expect(text[0]).toMatch(/^state\s+session\s+task\s+model\s+prio\s+time\s+id$/);
+    expect(text[2]).toContain("[waiting #1]");
   });
 });
 
