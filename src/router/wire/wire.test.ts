@@ -477,3 +477,81 @@ describe("router loopback and tailnet bind (boot before Tailscale, 2026-11-18)",
     await scenario("192.0.2.77", () => addr, () => (addr = "127.0.0.1"));
   });
 });
+
+describe("router vs engine resets and concurrency (2026-11-18)", () => {
+  const OK = JSON.stringify({ id: "x", object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }] });
+  async function run(handler: http.RequestListener, n: number) {
+    const up = http.createServer(handler);
+    const upPort = await listen(up);
+    const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: `http://127.0.0.1:${upPort}`, models: { default: "gyro-m" } } } }).providers;
+    const logs: string[] = [];
+    const r = createRouter(() => prov, "http://127.0.0.1:1", (l) => logs.push(l), undefined, undefined, { instances: () => [] });
+    const port = await listen(r);
+    const body = JSON.stringify({ model: "gyro-m", stream: false, messages: [{ role: "user", content: "hi" }] });
+    const one = () =>
+      new Promise<{ status: number; text: string }>((resolve) => {
+        const q = http.request({ port, host: "127.0.0.1", path: "/p/gyro/v1/chat/completions", method: "POST", headers: { "content-type": "application/json" } }, (x) => {
+          const bits: Buffer[] = [];
+          x.on("data", (c) => bits.push(c));
+          const fin = () => resolve({ status: x.statusCode ?? 0, text: Buffer.concat(bits).toString() });
+          x.on("end", fin);
+          x.on("close", fin);
+          x.on("error", () => {});
+        });
+        q.on("error", () => resolve({ status: 0, text: "" }));
+        q.end(body);
+      });
+    const results = await Promise.all(Array.from({ length: n }, one));
+    r.close();
+    up.close();
+    return { results, logs };
+  }
+
+  it("reset before the first byte is retried and succeeds", async () => {
+    let calls = 0;
+    const { results, logs } = await run((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        if (++calls === 1) return req.socket.destroy();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(OK);
+      });
+    }, 1);
+    expect(results[0]!.status).toBe(200);
+    expect(calls).toBe(2);
+    expect(logs.join("\n")).toMatch(/upstream reset, retried 1x, ok/);
+  });
+
+  it("reset after the first byte is not retried", async () => {
+    let calls = 0;
+    const { results } = await run((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        calls++;
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("data: {}\n\n");
+        setTimeout(() => req.socket.destroy(), 50);
+      });
+    }, 1);
+    expect(calls).toBe(1);
+    expect(results[0]!.status).not.toBe(502);
+  }, 15000);
+
+  it("never more requests in flight to one engine than its cap", async () => {
+    let now = 0;
+    let max = 0;
+    const { results } = await run((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        max = Math.max(max, ++now);
+        setTimeout(() => {
+          now--;
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(OK);
+        }, 40);
+      });
+    }, 6);
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 200]);
+    expect(max).toBe(1);
+  }, 15000);
+});
