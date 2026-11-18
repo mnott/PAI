@@ -64,6 +64,7 @@ import {
   isCompactBoundary,
   bashCommand,
   isProgressTool,
+  isReadOnlyJob,
   toolResultText,
   toolResultFailed,
   adoptInitModel,
@@ -90,6 +91,7 @@ import {
 import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
+import { readSchedFile } from "../../router/scheduler.js";
 import { unparsedCallPrompt } from "./unparsed-call.js";
 import { evaluate } from "../../guard/evaluate.js";
 import type { PreparedRun } from "./execute-prepare.js";
@@ -356,6 +358,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     stopHandoff?.();
   };
 
+  const readOnly = isReadOnlyJob(parsed.allowedTools, parsed.prompt ?? "");
+  if (readOnly) status.readOnly = true;
   const toolFold = createToolFold({
     logDir,
     worker: wid,
@@ -423,7 +427,12 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           }
           toolFold.onToolResult(block);
           const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
-          if (use && !toolResultFailed(block) && isProgressTool(use.name, use.input)) status.progressAt = nowStamp();
+          if (use && !toolResultFailed(block) && (isProgressTool(use.name, use.input) || readOnly)) {
+            status.progressAt = nowStamp();
+            const sched = readSchedFile(logDir);
+            const a = sched?.workers[wid];
+            if (a) status.lineAtProgressMs = a.waitMsTotal + (a.waitingSince ? Math.max(0, Date.now() - a.waitingSince) : 0);
+          }
         }
         if (sawResult) saveStatus(logDir, status);
       }

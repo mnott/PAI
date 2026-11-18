@@ -27,6 +27,7 @@ import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
 import { loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
+import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { markHandover } from "./run/follow-reroute.js";
 
 export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
@@ -57,7 +58,7 @@ const stampMs = (stamp: string | undefined): number | null => {
  * Every elapsed-time threshold runs on the active clock: freeze AND paused minutes never count, so after a
  * thaw or resume the overdue spell restarts from its end.
  */
-export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy()): string | null {
+export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy(), sched: SchedSnapshot | null = null): string | null {
   if (s.rerouted || s.continuedBy || s.origin === "chat" || s.paused || providerPinned(s)) return null;
   if (frozenSince(s.id) !== undefined) return null; // frozen by the operator: no escalation verdict
   if (!s.spec && !s.promptFile) return null;
@@ -73,8 +74,15 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
   if (s.state !== "running") return null;
   if ((s.consecFails ?? 0) >= p.stallFailedCalls) return `${s.consecFails} failed tool calls in a row`;
   const last = stampMs(s.progressAt) ?? stampMs(s.started);
-  const min = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause) / 60_000;
-  return min >= p.stallMaxMin ? `no edit or commit for ${Math.floor(min)}m` : null;
+  const wallMs = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause);
+  // a local job's requests wait their turn at the model: that time is not the job's own (starved, not stuck)
+  const a = sched?.workers[s.id];
+  const lineNow = a ? a.waitMsTotal + (a.waitingSince ? Math.max(0, nowMs - a.waitingSince) : 0) : 0;
+  const lineMs = Math.min(wallMs, Math.max(0, lineNow - (s.lineAtProgressMs ?? 0)));
+  const ownMin = (wallMs - lineMs) / 60_000;
+  if (ownMin < p.stallMaxMin) return null;
+  const what = s.readOnly ? "no successful tool call" : "no edit or commit";
+  return lineMs > 0 ? `${what} for ${Math.floor(ownMin)}m of own time (${Math.floor(wallMs / 60_000)}m wall, ${Math.floor(lineMs / 60_000)}m in line)` : `${what} for ${Math.floor(ownMin)}m`;
 }
 
 /** A finished fall-through still blocks another reroute of its origin this long. */
@@ -536,8 +544,9 @@ export async function escalateOverdue(
   policy: ReroutePolicy = reroutePolicy()
 ): Promise<Escalation[]> {
   const done: Escalation[] = [];
+  const sched = readSchedFile(d.logDir, nowMs);
   for (const s of statuses) {
-    const reason = escalationReason(s, nowMs, policy);
+    const reason = escalationReason(s, nowMs, policy, sched);
     if (!reason) continue;
     try {
       const r = await rerouteWorker(s.id, "cloud", { ...d, by: "escalation", reason });
