@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   // main-session git, build doors, model servers, background and sleep-poll: decided by evaluate()
   const d = evaluate(
     { kind: "tool_call", tool: input.tool_name ?? "Bash", input: input.tool_input, cwd: (input as { cwd?: string }).cwd ?? process.cwd() },
-    { env: process.env, gates: { bash: { localAnswer: cachedLocalAnswer } } },
+    { env: process.env, gates: { browserAutomation: true, bash: { localAnswer: cachedLocalAnswer } } },
   );
   if (d.action === "deny") return deny(d.message!);
   if (d.updatedInput) process.stdout.write(renderDecision({ decision: "allow", updatedInput: d.updatedInput }) + "\n");

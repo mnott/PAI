@@ -176,3 +176,20 @@ describe("git grep option order denial", () => {
     expect(g('git grep -n "x" -- src')).toBeNull();
   });
 });
+
+describe("headless-browser automation is denied in the interactive session hook layer", () => {
+  const g = { browserAutomation: true, bash: { localAnswer: () => "" } };
+  const w = (tool: string, input: unknown) => decidePreGates({ tool, input, cwd: "/w/tree", env: {} }, g);
+  it("denies Bash runs and installs with the operator message", () => {
+    for (const command of ["npx playwright test", "npm install puppeteer", "pip install selenium", "chromium --headless --dump-dom x"]) {
+      const d = w("Bash", { command });
+      expect(d?.action).toBe("deny");
+      expect(d?.message).toContain("No headless browsers (operator rule)");
+    }
+    expect(w("Bash", { command: "grep playwright package.json" })?.action).not.toBe("deny");
+  });
+  it("denies an Edit/Write import of playwright", () => {
+    expect(w("Write", { file_path: "/nonexistent-ba/x.ts", content: `import { chromium } from "playwright";` })?.action).toBe("deny");
+    expect(w("Edit", { file_path: "/nonexistent-ba/x.ts", new_string: "const a = 1;" })?.action).not.toBe("deny");
+  });
+});

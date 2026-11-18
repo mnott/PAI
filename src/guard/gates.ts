@@ -25,6 +25,7 @@ import { decideEditGate, decideOrchestratorBash, decideOrchestratorEdit, decideP
 import { decideTestGovernance } from "../hooks/ts/lib/test-governance.js";
 import { checkCredentialLiteral } from "../hooks/ts/lib/credential-guard.js";
 import { dropDataHeredocBodies } from "../hooks/ts/lib/heredoc.js";
+import { browserAutomationBashReason, browserAutomationEditReason, addedText } from "../hooks/ts/lib/browser-automation-gate.js";
 import type { Decision } from "./evaluate.js";
 
 export interface GateSet {
@@ -42,6 +43,8 @@ export interface GateSet {
   edit?: { isExemptPrefix: (abs: string) => boolean; isGitWorkTree: (abs: string) => boolean };
   /** Test governance: a new test file is one-time and lives in .pai-scratch/ unless promoted in tests/KEPT.md. */
   testGovernance?: boolean;
+  /** Operator rule: no headless-browser automation (Bash runs/installs, Edit/Write imports). */
+  browserAutomation?: boolean;
   /** Worker write-time check for literal credentials in test files. */
   credential?: boolean;
   /** `pai worker kill <id>` by a worker: the state of <id> when it is that worker's own child, else undefined. A queued child may not be killed. */
@@ -95,6 +98,15 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
     for (const m of command.matchAll(/(?:^|[;&|(]\s*)pai\s+worker\s+kill\s+(?:--?\S+\s+(?:"[^"]*"|'[^']*'|\S+)\s+)*?([A-Za-z0-9][\w.-]*)/g)) {
       if (g.ownChildState(m[1]) === "queued") return deny(QUEUED_CHILD_RULE, "queued-child-kill");
     }
+  }
+  if (g.browserAutomation) {
+    const ti = c.input as { file_path?: unknown; command?: unknown } | undefined;
+    const why = isBash
+      ? (command ? browserAutomationBashReason(command, c.cwd, c.env.TMPDIR) : null)
+      : typeof ti?.file_path === "string"
+        ? browserAutomationEditReason(resolve(c.cwd, ti.file_path), addedText(c.input as never))
+        : null;
+    if (why) return deny(why, "browser-automation", { category: "browser_automation" });
   }
   if (g.credential) {
     const why = checkCredentialLiteral({ tool_name: c.tool, tool_input: c.input as never }, c.env);
