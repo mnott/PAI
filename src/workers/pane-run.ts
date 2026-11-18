@@ -33,6 +33,15 @@ export interface PaneRunStatus {
   log: string;
   /** The caller's session name (PAI_SESSION_NAME) at pane start: the queue table's session column. */
   session?: string;
+  /** The command line as started (`$ <command>` in the run's log): lets the queue match a waiter to the job it waits on. */
+  command?: string;
+}
+
+/** The worker id a `pai pane run` command waits on: its first `pai worker wait[-on] <id>` argument (none = not a waiter). */
+export function paneWaitsOn(command?: string): string | undefined {
+  if (!command) return undefined;
+  const m = command.match(/\bpai\s+worker\s+wait(?:-on)?\s+(?:(?:--\S+\s+)*)(\S+)/);
+  return m?.[1];
 }
 
 /** The env marker of a command running under `pai pane run`: nested pane/build runs then stay in it. */
@@ -201,8 +210,9 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
     log: logFile,
     ...((env.PAI_SESSION_NAME || env.AIBROKER_SESSION_NAME || env.AIBROKER_SESSION) ? { session: env.PAI_SESSION_NAME || env.AIBROKER_SESSION_NAME || env.AIBROKER_SESSION } : {}),
   };
-  writeFileSync(logFile, `$ ${o.command.join(" ")}\n`, "utf8");
-  writePaneRunStatus(o.logDir, status);
+  const commandLine = o.command.join(" ");
+  writeFileSync(logFile, `$ ${commandLine}\n`, "utf8");
+  writePaneRunStatus(o.logDir, { ...status, command: commandLine });
   let pane: OwnedPane | null;
   try {
     pane = await o.launch(id);
