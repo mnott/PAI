@@ -157,4 +157,23 @@ describe("explore ranking and callees", () => {
     expect(c.map((h) => h.name)).toContain("moveTo");
     for (const p of ["logDir", "id", "tmp"]) expect(c.map((h) => h.name)).not.toContain(p);
   }, 30000);
+
+  it("callees drops own parameters even when stored refs predate the extractor fix", async () => {
+    const root = tmp();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/front.ts"),
+      "export function moveTo(b: string){ return b; }\nexport function setFront(logDir: string, id: string){ moveTo(logDir); return id; }\n");
+    const raw = openFederation(join(tmp(), "db2.sqlite"));
+    const backend = new SQLiteBackend(raw);
+    await indexRepo(backend, root);
+    // simulate rows stored by a pre-1.2.81 index: refs to the parameters
+    const sym = raw.prepare("SELECT id, repo_root, file_id FROM code_symbols WHERE name = 'setFront'").get() as { id: number; repo_root: string; file_id: number };
+    for (const n of ["logDir", "id"]) {
+      raw.prepare("INSERT INTO code_refs (repo_root, from_file_id, from_symbol_id, to_name, to_symbol_id, kind, line) VALUES (?,?,?,?,NULL,'call',2)")
+        .run(sym.repo_root, sym.file_id, sym.id, n);
+    }
+    const c = await callees(backend, root, "setFront");
+    expect(c.map((h) => h.name)).toContain("moveTo");
+    for (const p of ["logDir", "id"]) expect(c.map((h) => h.name)).not.toContain(p);
+  }, 30000);
 });

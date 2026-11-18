@@ -165,6 +165,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai daemon stop` | Stop the daemon service |
 | `pai daemon uninstall` | Remove the daemon service |
 | `pai db` | Look into the PAI database (read only) |
+| `pai db cleanup-test-dbs` | Drop leaked pai_test_* scratch databases older than an hour |
 | `pai db migrate-to-postgres` | One-time copy of the data from SQLite to PostgreSQL |
 | `pai db query` | Run a SQL query |
 | `pai db schema` | Show the columns of a table |

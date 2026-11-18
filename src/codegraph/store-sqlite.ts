@@ -8,6 +8,10 @@
  */
 
 import type { Database } from "better-sqlite3";
+
+/** Paths per delete statement in deleteFiles (same bound as the Postgres store). */
+const DELETE_BATCH = 500;
+
 import { CODEGRAPH_SQLITE_SQL } from "./schema-sqlite.js";
 import { symbolFtsText } from "./fts.js";
 import type {
@@ -167,23 +171,39 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     })();
   }
 
+  /** Batched like the Postgres store's: one statement per DELETE_BATCH paths. */
   async deleteFiles(repoRoot: string, paths: string[]): Promise<{ brokenRefIds: number[] }> {
     this.ensure();
     if (paths.length === 0) return { brokenRefIds: [] };
     const db = this.db;
     return db.transaction(() => {
-      const selectBroken = db.prepare(
-        `SELECT cr.id FROM code_refs cr
-         JOIN code_symbols s ON s.id = cr.to_symbol_id
-         WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = ? AND path = ?)`
-      );
-      const deleteFile = db.prepare("DELETE FROM code_files WHERE repo_root = ? AND path = ?");
       const broken: number[] = [];
-      for (const p of paths) {
-        for (const r of selectBroken.all(repoRoot, p) as Array<{ id: number }>) broken.push(r.id);
-        deleteFile.run(repoRoot, p);
+      for (let i = 0; i < paths.length; i += DELETE_BATCH) {
+        const batch = paths.slice(i, i + DELETE_BATCH);
+        const placeholders = batch.map(() => "?").join(",");
+        const rows = db
+          .prepare(
+            `SELECT cr.id FROM code_refs cr
+             JOIN code_symbols s ON s.id = cr.to_symbol_id
+             WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = ? AND path IN (${placeholders}))`
+          )
+          .all(repoRoot, ...batch) as Array<{ id: number }>;
+        for (const r of rows) broken.push(r.id);
+        db.prepare(`DELETE FROM code_files WHERE repo_root = ? AND path IN (${placeholders})`).run(repoRoot, ...batch);
       }
       return { brokenRefIds: broken };
+    })();
+  }
+
+  /** Three set-based deletes in one transaction; the cascade + FTS triggers do
+   *  the rest (foreign_keys is on for the federation db — see federation-db). */
+  async clearRepo(repoRoot: string): Promise<void> {
+    this.ensure();
+    const db = this.db;
+    db.transaction(() => {
+      db.prepare("DELETE FROM code_refs WHERE repo_root = ?").run(repoRoot);
+      db.prepare("DELETE FROM code_symbols WHERE repo_root = ?").run(repoRoot);
+      db.prepare("DELETE FROM code_files WHERE repo_root = ?").run(repoRoot);
     })();
   }
 
