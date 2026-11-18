@@ -70,7 +70,7 @@ export interface WorkerStatus {
   term: string;
   provider: string;
   model: string;
-  state: "queued" | "running" | "done" | "failed" | "killed" | "lost";
+  state: "queued" | "running" | "done" | "failed" | "killed" | "lost" | "deepfrozen";
   started: string;
   updated: string;
   turns: number;
@@ -410,7 +410,7 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
   }
   // The one owner of "an ended worker holds no claims" (like its pane, below): every end path saves through here.
   // "queued" is not ended: a run parked at the capacity gate keeps its claims.
-  if (status.state !== "running" && status.state !== "queued" && status.claims?.length && !status.claimsContinue) {
+  if (status.state !== "running" && status.state !== "queued" && status.state !== "deepfrozen" && status.claims?.length && !status.claimsContinue) {
     const errors = releaseClaims(status.cwd, status.claims);
     status.claims = [];
     if (errors.length) {

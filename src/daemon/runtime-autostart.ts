@@ -31,6 +31,7 @@ import { readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommand
 import { workersYamlPath } from "../workers/workers-config.js";
 import { freeMemoryGb } from "../workers/local-memory.js";
 import { isFrozen } from "../workers/freeze.js";
+import { deepfreezeHold } from "../workers/deepfreeze.js";
 import { appendLedger } from "../workers/ledger.js";
 import { guardedPailot } from "../workers/pailot-guard.js";
 
@@ -195,7 +196,7 @@ export function liveAutostartDeps(): AutostartDeps {
       if (!cmd?.ready) return false; // no readiness configured: a start is attempted once per backoff, the ledger tells
       return readyIsUrl(cmd.ready) ? liveRuntimeOpDeps.getUrl(cmd.ready) : (await liveRuntimeOpDeps.runCmd(cmd.ready)) === 0;
     },
-    frozen: () => isFrozen(),
+    frozen: () => isFrozen() || deepfreezeHold(),
     freeGb: () => freeMemoryGb(),
     async start(runtime) {
       const { defaultDeps, runtimeStartStop } = await import("../router/cockpit-actions.js");

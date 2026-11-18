@@ -41,7 +41,7 @@ export interface WaitOptions {
   owns?: (s: Pick<WorkerStatus, "pid" | "started">) => boolean;
 }
 
-const TERMINAL: readonly WorkerStatus["state"][] = ["done", "failed", "killed", "lost"];
+const TERMINAL: readonly WorkerStatus["state"][] = ["done", "failed", "killed", "lost", "deepfrozen"];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

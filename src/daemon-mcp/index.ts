@@ -1023,6 +1023,13 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
     content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }],
     isError: true as const,
   });
+  /** workers_stop / workers_freeze deep:true — the deep freeze of `pai stop`. */
+  const deepStopText = async (dryRun: boolean) => {
+    const { deepFreeze, realDeepFreezeDeps, realRepoOf } = await import("../workers/deepfreeze.js");
+    const deps = await realDeepFreezeDeps();
+    const r = await deepFreeze(workersLogDir(readWorkersSection().workers), "mcp", deps, { dryRun, repoOf: (s) => realRepoOf(s, deps.git) });
+    return workerText(r.lines.join("\n"));
+  };
 
   server.tool(
     "worker_status",
@@ -1924,10 +1931,13 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       models: z.boolean().optional().describe("With only: also freeze the local model server(s) (off by default; a plain freeze always takes them)."),
       except: z.string().optional().describe("Freeze everything except these worker ids (comma list) and their children."),
       session: z.string().optional().describe("Freeze everything except this session's workers (and their children)."),
+      deep: z.boolean().optional().describe("Deep freeze (= workers_stop): record, WIP-commit and cleanly stop every worker and the local models; survives a reboot."),
+      dry_run: z.boolean().optional().describe("With deep: list what would be preserved, change nothing."),
     },
     async (args) => {
       try {
         if (process.env.PAI_WORKER === "1") return workerError(new Error("a worker cannot freeze its siblings"));
+        if (args.deep) return await deepStopText(args.dry_run === true);
         const { freezeAll, parseDuration, realFreezeDeps } = await import("../workers/freeze.js");
         const csv = (v?: string) => (v ? v.split(",").map((x) => x.trim()).filter(Boolean) : undefined);
         const deps = realFreezeDeps();
@@ -1935,6 +1945,35 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
         const only = csv(args.only);
         if (only && args.models !== true) deps.servers = async () => [];
         const r = await freezeAll(workersLogDir(readWorkersSection().workers), "mcp", args.for ? parseDuration(args.for) : undefined, deps, only, args.except || args.session ? { ids: csv(args.except), session: args.session } : undefined);
+        return workerText(r.lines.join("\n"));
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "workers_stop",
+    "Deep freeze (`pai stop`): record every live worker in state/deepfreeze.json, commit uncommitted worktree work as `wip: deepfreeze <ts>`, stop each worker cleanly (status deepfrozen, no alerts) and the local models. Survives a reboot; the daemon resumes everything after the boot. Refused from inside a worker.",
+    { dry_run: z.boolean().optional().describe("List what would be preserved, change nothing.") },
+    async (args) => {
+      try {
+        if (process.env.PAI_WORKER === "1") return workerError(new Error("a worker cannot stop its siblings"));
+        return await deepStopText(args.dry_run === true);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "workers_resume",
+    "Restore everything workers_stop recorded (`pai resume`): every recorded worker resumed on its branch in its original order and priority. drop=true discards the record and resumes nothing.",
+    { drop: z.boolean().optional().describe("Discard the record, resume nothing.") },
+    async (args) => {
+      try {
+        const { deepResume, realDeepResumeDeps } = await import("../workers/deepfreeze.js");
+        const r = await deepResume(workersLogDir(readWorkersSection().workers), await realDeepResumeDeps(), { drop: args.drop === true });
         return workerText(r.lines.join("\n"));
       } catch (e) {
         return workerError(e);

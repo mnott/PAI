@@ -20,6 +20,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai config`](config.md) | PAI settings: show, read, change |
 | [`pai daemon`](daemon.md) | The background service: status, start, stop, restart, logs |
 | [`pai db`](db.md) | Look into the PAI database (read only) |
+| [`pai deepfreeze`](deepfreeze.md) | Alias of `pai stop` (= `pai freeze --deep`) |
 | [`pai doc`](doc.md) | Write the Markdown command reference |
 | [`pai end`](end.md) | Finish the current session |
 | [`pai find`](find.md) | Search your prompt history for sessions |
@@ -62,7 +63,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai reload`](reload.md) | Restart daemon, router and worker pool host onto the code on disk |
 | [`pai rename`](rename.md) | Give a session a new name |
 | [`pai restore`](restore.md) | Restore PAI data from a backup |
-| [`pai resume`](resume.md) | Open a session by name or id (same as `pai open`) |
+| [`pai resume`](resume.md) | Restore everything `pai stop` recorded (no NAME), or open a session by name or id |
 | [`pai router`](router.md) | Local model router: start, stop, restart, status, run, stats |
 | [`pai rules`](rules.md) | Security rules: list them, lint their fixtures |
 | [`pai session`](session.md) | Work with sessions: list, open, new, rename, profile |
@@ -71,6 +72,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai setups`](setups.md) | Orchestrator + worker combinations (save your own) |
 | [`pai shell-init`](shell-init.md) | Print the shell integration code |
 | [`pai skill`](skill.md) | How your skills are used |
+| [`pai stop`](stop.md) | Deep freeze: record, WIP-commit and stop all workers and local models; restored after a reboot |
 | [`pai task`](task.md) | Cross-session task list: list, add, dispatch, done |
 | [`pai tasks`](tasks.md) | Same as task |
 | [`pai tests`](tests.md) | Test governance: audit a repo's tests, prune them to the governed core |
@@ -158,6 +160,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai db query` | Run a SQL query |
 | `pai db schema` | Show the columns of a table |
 | `pai db tables` | List the tables |
+| `pai deepfreeze` | Alias of `pai stop` (= `pai freeze --deep`) |
 | `pai doc` | Write the Markdown command reference |
 | `pai end` | Finish the current session |
 | `pai find` | Search your prompt history for sessions |
@@ -357,7 +360,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai reload` | Restart daemon, router and worker pool host onto the code on disk |
 | `pai rename` | Give a session a new name |
 | `pai restore` | Restore PAI data from a backup |
-| `pai resume` | Open a session by name or id (same as `pai open`) |
+| `pai resume` | Restore everything `pai stop` recorded (no NAME), or open a session by name or id |
 | `pai router` | Local model router: start, stop, restart, status, run, stats |
 | `pai router restart` | Restart the router without refusing connections |
 | `pai router run` | Run the router in the foreground |
@@ -413,6 +416,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai shell-init` | Print the shell integration code |
 | `pai skill` | How your skills are used |
 | `pai skill telemetry` | Which skills were used, when, and where |
+| `pai stop` | Deep freeze: record, WIP-commit and stop all workers and local models; restored after a reboot |
 | `pai task` | Cross-session task list: list, add, dispatch, done |
 | `pai task add` | Add a task to the list |
 | `pai task archive` | Save a task's discussion into the project notes |
