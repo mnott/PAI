@@ -96,6 +96,23 @@ export interface ResolvedRefRow extends RefRow {
   target: SymbolRow | null;
 }
 
+/** A relation between two typed keys (see relate.ts for the key grammar and predicates). */
+export interface TripleSpec {
+  subject: string;
+  predicate: string;
+  object: string;
+  confidence: "EXTRACTED" | "INFERRED";
+  projectId?: number | null;
+}
+
+export interface TripleRow extends TripleSpec {
+  id: number;
+  /** epoch ms */
+  validFrom: number;
+  /** epoch ms; null while the relation holds */
+  validTo: number | null;
+}
+
 export interface CodeGraphStore {
   /** Insert or replace a file with its symbols+refs in one transaction.
    *  Returns the file row id. Symbols/refs of the previous version are removed
@@ -159,4 +176,14 @@ export interface CodeGraphStore {
   allSymbols(repoRoot: string): Promise<SymbolRow[]>;
 
   stats(repoRoot: string): Promise<CodeGraphStats>;
+
+  /** Make the open triples owned by `scope` equal `desired`: new ones are inserted, ones that
+   *  vanished get valid_to set (never deleted). Rows live in kg_triples (source_session = scope). */
+  syncTriples(scope: string, desired: TripleSpec[]): Promise<{ added: number; closed: number; kept: number }>;
+
+  /** Open triples (or all, with includeClosed) whose subject or object is one of `keys`. */
+  triplesTouching(keys: string[], opts?: { limit?: number; includeClosed?: boolean }): Promise<TripleRow[]>;
+
+  /** Triple counts per predicate for relations written by relate (source_session 'relate:*'). */
+  tripleCounts(): Promise<Record<string, { open: number; closed: number }>>;
 }

@@ -17,6 +17,7 @@ import { BATCH_C } from "./commands/batch-c.js";
 import { memoryCommand } from "./commands/memory.js";
 import { kgCommand } from "./commands/kg.js";
 import { codeCommand } from "./commands/code.js";
+import { graphCommand } from "./commands/graph.js";
 import { zettelCommand } from "./commands/zettel.js";
 import { observationCommand } from "./commands/observation.js";
 import { obsidianCommand } from "./commands/obsidian.js";
@@ -77,7 +78,7 @@ export const GROUPS: GroupDef[] = [
 ];
 
 // Memory, knowledge and audit commands (one file per group in ./commands).
-GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, codeCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand, lessonsCommand);
+GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, codeCommand, graphCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand, lessonsCommand);
 GROUPS.find((g) => g.id === "workers")!.commands.push(modelsCommand, benchCommand);
 GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand, harnessCommand, reloadCommand, rulesCommand, antipatternsCommand, releaseCmd, testsCommand, powerCommand);
 GROUPS.find((g) => g.id === "memory")!.commands.push(gitCommand);
