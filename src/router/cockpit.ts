@@ -1260,6 +1260,7 @@ export function cockpitQueue(
     });
   }
   const snap = readSchedFile(logDir, now);
+  const table = readQueueTable(logDir, workers, now, undefined, owns, snap);
   // a worker whose request waits at the local engine: how long (router scheduler snapshot)
   for (const p of byProvider.values()) {
     for (const r of p.running) {
@@ -1280,7 +1281,7 @@ export function cockpitQueue(
   }
   for (const [id, name] of Object.entries(schedNames(logDir))) names.set(id, { ...(names.get(id) ?? {}), name });
   const sched = schedPlain(snap, Object.fromEntries([...names].map(([id, info]) => [id, info.name])));
-  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), table: readQueueTable(logDir, workers, now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
+  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 
 const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;

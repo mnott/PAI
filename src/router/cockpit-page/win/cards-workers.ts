@@ -10,6 +10,7 @@
 
 export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted, then the paused and frozen ones. Every button acts on that one job (or on every job of a session) and the state badge shows the effect at once.";
 var WK_EXPLAIN="running = holds a slot; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs.";
+var WK_ACT="Activity: gen = its request is open at the model, the engine is generating its reply; in line = its request waits in the local scheduler queue behind other workers; tool = no request open, a tool (build, test) is running; waiting = waiting for a slot, no request has gone to the model yet; idle Nm = no request at the model and no tool running for N minutes, it may be stuck.";
 var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%"],["model","model",110],["prio","prio",90],["time","time r",80],["actions","actions",210]];
 var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
 var WK_GROUPS=["running","waiting","paused / frozen"];
@@ -50,7 +51,7 @@ function wkTRow(r){
  var has=function(a){return r.actions.indexOf(a)>=0},main=has("deep-resume")?"deep-resume":has("resume")?"resume":"pause";
  var acts=(has(main)?wkIconBtn(r.id,main):"")+(has("next")?wkIconBtn(r.id,"next"):"")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
  var badge=r.state==="waiting"&&typeof r.slot==="number"?"waiting #"+r.slot:r.state;
- var st='<span class="wq-b '+(WK_BADGE[r.state]||"")+'" title="'+esc(r.stateText+(r.detail?" · "+r.detail:""))+'">'+esc(badge)+'</span>'+(r.activity&&r.state==="running"?' <span class="wq-act" title="'+esc(r.now||"")+'">'+esc(r.activity)+'</span>':"");
+ var st='<span class="wq-b '+(WK_BADGE[r.state]||"")+'" title="'+esc(r.stateText+(r.detail?" · "+r.detail:""))+'">'+esc(badge)+'</span>'+(r.activity&&r.state==="running"?' <span class="wq-act" title="'+esc(r.activityTip||r.now||"")+'">'+esc(r.activity)+'</span>':"");
  var tip=r.task;if(r.summary)tip+="\n\n"+r.summary;tip+="\nid: "+r.id;if(r.waits&&r.waits.length){for(var wi=0;wi<r.waits.length;wi++)tip+="\na session waits for this job: "+r.waits[wi].label}
  var task='<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
@@ -79,7 +80,7 @@ function wkMenuHtml(){
 /** Title row: (i) legend tooltip, the session chips as filters, and the All jobs menu at the right. */
 function wkBar(q){
  var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)}).join(" "),n=(q.table||[]).length,sh=WK_FILTERS.length?wkView(q.table).length:n,cnt=WK_FILTERS.length?'<span class="wq-cnt dim" title="active session filter">showing '+sh+' of '+n+'</span>':"";
- return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" title="'+esc(WK_INFO+" "+WK_EXPLAIN)+'" aria-label="legend">(i)</span><span class="wq-chips">'+chips+'</span>'+cnt+'<button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
+ return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" title="'+esc(WK_INFO+" "+WK_EXPLAIN+" "+WK_ACT)+'" aria-label="legend">(i)</span><span class="wq-chips">'+chips+'</span>'+cnt+'<button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
 }
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
 var WQ=null,WK_BLOCKS={},WK_DRAG=null;

@@ -5,11 +5,54 @@
  * that uses it is session-profile.ts.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { paiHomePath } from "../config/pai-home.js";
 import { migrateSessionRoutes } from "./route-lists.js";
+
+/**
+ * Who wrote the profile. Every write names its caller and lands in the routing
+ * ledger as a PROFILE-WRITE line (time, caller, session, fields), so a pin that
+ * appears unasked is traceable to the code path that wrote it.
+ */
+export type ProfileCaller = "session-profile-set" | "launch-setup" | "route-set" | "route-clear" | "repair" | "rename" | "legacy-migration";
+
+/** The routing ledger a profile write logs to; tests override. */
+let profileLedgerPath: (() => string) | undefined;
+export function setProfileLedger(fn: (() => string) | undefined): void {
+  profileLedgerPath = fn;
+}
+
+/** Debug aid: why the last PROFILE-WRITE could not be logged (never thrown). */
+let lastProfileLogError: string | undefined;
+export const lastProfileWriteLogError = (): string | undefined => lastProfileLogError;
+
+/**
+ * One PROFILE-WRITE line appended at once (the caller's next read sees it). The
+ * same shape ledger.ts appends — stamp, tag, k=v — written inline: the store is
+ * a leaf module and must not reach back into config or paths. The path resolves
+ * through PAI_HOME (same rule as the profile file itself), so a test home never
+ * writes the real machine's ledger.
+ */
+function logProfileWrite(caller: ProfileCaller, name: string, fields: string): void {
+  let path: string | undefined;
+  try {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    // the caller's own seam wins; else PAI_HOME/logs/workers/ledger.log (the
+    // same rule as the profile file itself, so a test home never writes the
+    // real machine's ledger)
+    path = profileLedgerPath?.() ?? join(paiHomePath("logs", "workers"), "ledger.log");
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${stamp} PROFILE-WRITE caller=${caller} session=${name.replace(/\s+/g, " ")} fields=${fields}\n`, "utf8");
+    lastProfileLogError = undefined;
+  } catch (e) {
+    // the ledger is evidence, not a gate: an unwritable log dir must not block the write it documents
+    lastProfileLogError = `${path ?? "path?"}: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
 
 export const SESSION_NAME_ENV = "PAI_SESSION_NAME";
 /** Set by queue/plan runners (and --batch) on spawns that are part of a fan-out. */
@@ -104,6 +147,7 @@ function migrateLegacy(path: string, profiles: Profiles): boolean {
   }
   writeAtomic(path, profiles);
   unlinkSync(legacy);
+  logProfileWrite("legacy-migration", "*", "workers from session-workers.json");
   return true;
 }
 
@@ -144,7 +188,13 @@ export interface ProfilePatch {
   route_notes?: Record<string, string> | null;
 }
 
-export function updateProfile(name: string, patch: ProfilePatch, path: string = profilesPath()): SessionProfile {
+/**
+ * Partial update through the caller named. A `workers` value is the operator's
+ * explicit pin (it clears any launch-written mark); a launch must never pass
+ * one — its own env pin (root.ts) applies to that session only. The write and
+ * its caller land in the ledger as PROFILE-WRITE.
+ */
+export function updateProfile(name: string, patch: ProfilePatch, path: string = profilesPath(), caller: ProfileCaller = "session-profile-set"): SessionProfile {
   const profiles = readProfiles(path);
   const next: SessionProfile = { ...(profiles[name] ?? {}) };
   for (const k of ["chat", "workers", "workers_implicit", "fallback", "parallel_min", "max_parallel", "routes", "route_notes"] as const) {
@@ -155,8 +205,13 @@ export function updateProfile(name: string, patch: ProfilePatch, path: string = 
     else if (k === "workers") { delete next.workers_implicit; (next as Record<string, unknown>)[k] = v; }
     else (next as Record<string, unknown>)[k] = v;
   }
+  const before = JSON.stringify(profiles[name] ?? {});
   profiles[name] = cleanProfile(next);
+  // a patch that changes nothing writes nothing: the store keeps its shape and
+  // the ledger only ever shows real changes
+  if (JSON.stringify(profiles[name]) === before) return profiles[name];
   writeAtomic(path, profiles);
+  logProfileWrite(caller, name, Object.keys(patch).join(","));
   return profiles[name];
 }
 
@@ -172,5 +227,6 @@ export function renameProfile(from: string, to: string, path: string = profilesP
   profiles[to] = profiles[from];
   delete profiles[from];
   writeAtomic(path, profiles);
+  void logProfileWrite("rename", to, `from=${from}`);
   return true;
 }

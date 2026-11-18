@@ -12,8 +12,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { QueueRow } from "./capacity.js";
-import { pausedFree, type WorkerStatus } from "./status.js";
+import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
 import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
+import type { SchedSnapshot } from "../router/scheduler.js";
 
 /** Short id of a worker or pane run: the last dash-part of its id (a queue row never prints the full id). */
 export const shortId = (id: string): string => id.slice(id.lastIndexOf("-") + 1);
@@ -80,8 +81,10 @@ export interface TableRow {
   local: boolean;
   task: string;
   seconds: number;
-  /** Fixed-width activity cell: "working" | "thinking" | "idle 2m" | "waiting" | "" (never the live tool text). */
+  /** Fixed-width activity cell: "gen" | "in line" | "tool" | "idle 2m" | "waiting" | "" — real state, never a guess (see ACT_TIP). */
   activity: string;
+  /** Plain sentence of what the activity word means, for its tooltip. */
+  activityTip: string;
   /** The live last tool call, for a tooltip only (it changes every second and must not move the table). */
   now: string;
   /** "continues <old id>" and plain notes. */
@@ -111,6 +114,16 @@ export interface TableInput {
   frozen?: (id: string) => boolean;
   /** Ids stopped durably (`pai stop`); none until that exists. */
   deepFrozen?: (id: string) => boolean;
+  /** The router's local-scheduler snapshot (readSchedFile): whose request is in flight at the model, whose waits in line. Absent = the router cannot be reached: the activity word falls back to the status file only. */
+  sched?: SchedSnapshot | null;
+}
+
+/** What a worker's request does at the model engine, from the router's scheduler snapshot (the one truth of in flight / in line). */
+export interface RequestState {
+  /** The worker's request is open at the model: it is generating its reply. */
+  inflight?: boolean;
+  /** The worker's request waits in the local scheduler queue: it is in line for the engine. */
+  queued?: boolean;
 }
 
 /** The one line above the table (also the CLI footer): states and priorities in plain words. */
@@ -147,13 +160,37 @@ export function plainWording(text: string): string {
   return t;
 }
 
-/** A short activity word from the age of the last status write; idle shows whole minutes/seconds, never the tool text. */
-export function activityOf(s: Pick<WorkerStatus, "updated">, waiting: boolean, now: number): string {
+/** The short word of each activity, shown fixed-width in the cell; ACT_TIP carries the sentence for its tooltip. */
+export const ACT_TIP: Record<"gen" | "in line" | "tool" | "waiting", string> = {
+  gen: "its request is open at the model — the engine is generating its reply",
+  "in line": "its request waits in the local scheduler queue, behind other workers at the engine",
+  tool: "no request open at the model; a tool (build, test) is running",
+  waiting: "waiting for a slot: no request has gone to the model yet",
+};
+
+/**
+ * The activity word of a RUNNING job, from real state — never the age of the last status write:
+ * "gen" its request is open at the model; "in line" it waits in the router's local scheduler queue;
+ * "tool" no request open and a tool runs (a Bash the worker waits on); else "idle Nm" past 90 s.
+ * Without `req` (the router cannot be reached) only the status file speaks: "tool" / "idle", never a guess.
+ */
+export function activityOf(s: Pick<WorkerStatus, "updated" | "toolWaitSince">, waiting: boolean, now: number, req?: RequestState): string {
   if (waiting) return "waiting";
+  if (req?.inflight) return "gen";
+  if (req?.queued) return "in line";
+  // a tool running: the PreToolUse hook stamped the wait and the result has not cleared it yet
+  if (s.toolWaitSince !== undefined || slotLent(s, now)) return "tool";
   const t = Date.parse((s.updated ?? "").replace(" ", "T"));
-  if (!Number.isFinite(t)) return "working";
-  const age = Math.max(0, Math.floor((now - t) / 1000));
-  return age < 20 ? "working" : age < 90 ? "thinking" : `idle ${age < 3600 ? Math.floor(age / 60) + "m" : Math.floor(age / 3600) + "h"}`;
+  const age = Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : Infinity;
+  if (age < 90) return "";
+  return `idle ${age < 3600 ? Math.floor(age / 60) + "m" : Math.floor(age / 3600) + "h"}`;
+}
+
+/** The tooltip sentence of an activity word: the fixed meaning, plus the live last event when there is one. Every word has one, "idle Nm" included. */
+export function activityTip(activity: string, nowText?: string): string {
+  const m = activity.match(/^idle (\d+)(m|h)$/);
+  const base = ACT_TIP[activity as keyof typeof ACT_TIP] ?? (m ? `no request at the model and no tool running for ${m[1]} ${m[2] === "m" ? "minutes" : "hours"}; it may be stuck` : "");
+  return nowText ? `${base} — last: ${nowText}` : base;
 }
 
 const prioOf = (s: WorkerStatus, ticket?: string): TableRow["priority"] => (s.now ? "now" : ((ticket ?? s.priority ?? "normal") as TableRow["priority"]));
@@ -189,6 +226,11 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   };
   const sec = (ms: number): number => Math.max(0, Math.floor((i.now - ms) / 1000));
   const ticket = new Map(i.queue.map((q) => [q.id, q]));
+  // the request state per worker from the router's snapshot: in flight at the model, or waiting in line (absent snapshot = the router cannot be reached)
+  const reqOf = (id: string): RequestState | undefined => {
+    const a = i.sched?.workers[id];
+    return a ? { inflight: a.activeSince > 0, queued: a.waitingSince > 0 } : undefined;
+  };
   const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
   const live = i.statuses.filter((s) => deepIds.has(s.id) || s.state === "running" || s.state === "queued" || ticket.has(s.id));
   const gone = replacedIds(live);
@@ -220,7 +262,8 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       modelFull: `${local ? "local" : "cloud"}: ${local ? s.model || s.provider : `${s.provider} ${s.model || ""}`.trim()}`,
       local,
       task: s.label || s.id,
-      activity: state === "running" ? activityOf(s, false, i.now) : "",
+      activity: state === "running" ? activityOf(s, false, i.now, reqOf(s.id)) : "",
+      activityTip: "",
       now: waiting ? "" : (s.last ?? "").slice(0, 120),
       seconds: sec(since),
       detail: notes.map(plainWording).join("; "),
@@ -253,7 +296,10 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     if (r) (r.waits ??= []).push({ id: p.id, label: p.label });
   }
   // one order: running, then waiting, then paused/frozen (stable inside each group)
-  return out.map((r, n) => ({ r, n })).sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n).map((x) => x.r);
+  return out
+    .map((r, n) => ({ r, n }))
+    .sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n)
+    .map(({ r }) => ({ ...r, activityTip: r.activity ? activityTip(r.activity, r.now) : "" }));
 }
 
 /** 0 = running, 1 = waiting, 2 = paused / frozen / deep-frozen. */
@@ -284,7 +330,8 @@ export function renderQueueTable(rows: TableRow[]): string[] {
   if (!rows.length) return ["nothing running or waiting"];
   const head = ["state", "session", "task", "model", "prio", "time", "id"];
   const body = rows.map((r) => [
-    `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity : ""}`,
+    // the activity word is fixed 7 chars so the state column never moves (full meaning in the cockpit tooltip)
+    `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity.padEnd(7).trimEnd() : ""}`,
     clip(r.session, 18),
     clip(r.task, 50),
     clip(r.model, 26),
@@ -293,6 +340,7 @@ export function renderQueueTable(rows: TableRow[]): string[] {
     shortId(r.id),
   ]);
   const w = head.map((h, c) => Math.max(h.length, ...body.map((b) => b[c]!.length)));
+  // the activity word keeps its fixed 7-char width even when no row needs more (the column never moves)
   const fmt = (cells: string[]): string => cells.map((c, k) => (k === 5 ? c.padStart(w[k]!) : c.padEnd(w[k]!))).join("  ").trimEnd();
   return [fmt(head), ...body.map(fmt), "", QUEUE_EXPLAIN];
 }

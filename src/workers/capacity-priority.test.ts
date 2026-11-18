@@ -2,12 +2,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { capacityGate, currentBuildId, isStaleBuild, liveQueue, queueRows, writeTicket, type QueueRow } from "./capacity.js";
+import { capacityGate, currentBuildId, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, writeTicket, type QueueRow } from "./capacity.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
 import { localIdleLine } from "./local-idle.js";
 import { filterBySession, sortBySession, buildQueueTable, plainWording, readTaskText, renderQueueTable, taskSummary, type TableInput } from "./queue-table.js";
+import type { SchedSnapshot } from "../router/scheduler.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
 import { admitResumedWaiters, applyPriority, resumeWorker } from "./preempt.js";
@@ -121,10 +122,49 @@ describe("queue table", () => {
 
   it("the live tool call is a tooltip, the activity cell is a short word", () => {
     const rows = buildQueueTable(qin([qst("a", { last: "Bash: cat > x <<EOF very long", updated: "2026-11-18 11:59:50" }), qst("b", { updated: "2026-11-18 11:50:00" })]));
-    expect(rows[0]!.activity).toBe("working");
+    expect(rows[0]!.activity).toBe(""); // fresh status write, no request and no tool known: no word, never a guess
     expect(rows[0]!.now).toContain("Bash:");
     expect(rows.find((r) => r.id === "b")!.activity).toBe("idle 10m");
     expect(renderQueueTable(rows).join("\n")).not.toContain("Bash:");
+  });
+
+  // the activity word is real state, never the age of the last status write (no time-only "thinking")
+  const qsched = (w: Record<string, Partial<{ activeSince: number; waitingSince: number }>>): SchedSnapshot =>
+    ({ at: QNOW, engines: {}, workers: Object.fromEntries(Object.entries(w).map(([id, a]) => [id, { requests: 1, waitMsTotal: 0, lastWaitMs: 0, serviceMsTotal: 0, lastServiceMs: 0, waitingSince: 0, activeSince: 0, lastEnd: 0, session: "s", engine: "e", ...a }])) }) as SchedSnapshot;
+
+  it("activity 'gen': its request is open at the model (the router's scheduler snapshot)", () => {
+    const rows = buildQueueTable(qin([qst("g")], [], { sched: qsched({ g: { activeSince: QNOW - 4000 } }) }));
+    expect(rows[0]!.activity).toBe("gen");
+    expect(rows[0]!.activityTip).toContain("its request is open at the model");
+  });
+  it("activity 'in line': its request waits in the local scheduler queue", () => {
+    const rows = buildQueueTable(qin([qst("q")], [], { sched: qsched({ q: { waitingSince: QNOW - 30_000 } }) }));
+    expect(rows[0]!.activity).toBe("in line");
+    expect(rows[0]!.activityTip).toContain("waits in the local scheduler queue");
+  });
+  it("activity 'tool': no request open, a tool runs (the worker waits on its Bash)", () => {
+    const rows = buildQueueTable(qin([qst("t", { toolWaitSince: QNOW - 5000 })], [], { sched: qsched({ t: {} }) }));
+    expect(rows[0]!.activity).toBe("tool");
+    expect(rows[0]!.activityTip).toContain("a tool (build, test) is running");
+  });
+  it("activity 'idle Nm': none of the above for over 90 s", () => {
+    const rows = buildQueueTable(qin([qst("i", { updated: "2026-11-18 11:50:00" })], [], { sched: qsched({ i: {} }) }));
+    expect(rows[0]!.activity).toBe("idle 10m");
+    expect(rows[0]!.activityTip).toContain("no request at the model and no tool running for 10 minutes; it may be stuck");
+  });
+  it("without the router only the status file speaks: 'tool' or 'idle', never a guess", () => {
+    const rows = buildQueueTable(qin([qst("t2", { toolWaitSince: QNOW - 5000, updated: "2026-11-18 11:59:55" }), qst("f", { updated: "2026-11-18 11:59:55" })], [], { sched: null }));
+    expect(rows.find((r) => r.id === "t2")!.activity).toBe("tool");
+    expect(rows.find((r) => r.id === "f")!.activity).toBe(""); // a fresh write with no request and no tool is not 'working'
+  });
+  it("the activity word is at most 7 characters, so the state column never moves", () => {
+    const rows = buildQueueTable(qin([qst("g"), qst("q"), qst("t", { toolWaitSince: QNOW - 5000 }), qst("i", { updated: "2026-11-18 11:40:00" })], [], { sched: qsched({ g: { activeSince: QNOW }, q: { waitingSince: QNOW }, t: {} }) }));
+    // the state words are short; idle adds its own width as it always did
+    for (const r of rows) if (!r.activity.startsWith("idle")) expect(r.activity.length).toBeLessThanOrEqual(7);
+    const lines = renderQueueTable(rows);
+    // rows sort by id (g, i, q, t): the words keep their fixed 7-char field, so every column lines up
+    expect(lines[1]).toMatch(/^\[running\] gen    /);
+    expect(lines[3]).toMatch(/^\[running\] in line/);
   });
 });
 
@@ -408,5 +448,29 @@ describe("least-impact queue controls", () => {
       expect(await finishDeferredMoves(dir, async () => undefined)).toEqual([]);
       expect(loadStatus(dir, "old")!.movingTo).toBeUndefined();
     });
+  });
+});
+
+describe("pull-forward among front tickets without rank", () => {
+  const front = (): void => {
+    mkdirSync(join(dir, "queue", "fakeA"), { recursive: true });
+    for (const [id, t] of [["19344", 1000], ["55574", 2000], ["84703", 3000]] as const) writeTicket(join(dir, "queue", "fakeA", id), `${process.pid} front @${t}`);
+  };
+
+  it("next on the second puts it first", () => {
+    front();
+    expect(liveQueue(dir, "fakeA")).toEqual(["19344", "55574", "84703"]);
+    expect(reorderQueue(dir, "fakeA", "55574", "front")).toEqual(["55574", "19344", "84703"]);
+  });
+
+  it("next on the job already first keeps the order", () => {
+    front();
+    expect(reorderQueue(dir, "fakeA", "19344", "front")).toEqual(["19344", "55574", "84703"]);
+  });
+
+  it("up on #2 makes it #1", () => {
+    front();
+    expect(moveUp(dir, "fakeA", "55574")).toBe(true);
+    expect(liveQueue(dir, "fakeA")).toEqual(["55574", "19344", "84703"]);
   });
 });
