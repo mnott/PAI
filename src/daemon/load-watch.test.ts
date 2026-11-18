@@ -174,9 +174,9 @@ describe("runtime autostart", () => {
     expect(cfg.tiers?.["apple-fm"]?.tier).toBe("apple-fm");
     expect(cfg.memoryGb["apple-fm"]).toBe(8);
     const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
-    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { isUp: async () => true, alive: async () => true, freeGb: async () => 1 }))).toEqual([]);
-    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log, { alive: async () => false, freeGb: async () => 4 }))).toEqual([{ kind: "skip-memory", runtime: "apple-fm", needGb: 8, freeGb: 4 }]);
-    expect(await runtimeAutostartTick(cfg, freshAutostartStates(), autostartDeps(log))).toEqual([{ kind: "start", runtime: "apple-fm" }]);
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, freshAutostartStates(), autostartDeps(log, { isUp: async () => true, alive: async () => true, freeGb: async () => 1 }))).toEqual([]);
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, freshAutostartStates(), autostartDeps(log, { alive: async () => false, freeGb: async () => 4 }))).toEqual([{ kind: "skip-memory", runtime: "apple-fm", needGb: 8, freeGb: 4 }]);
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, freshAutostartStates(), autostartDeps(log))).toEqual([{ kind: "start", runtime: "apple-fm" }]);
     expect(runtimeAutostartConfig({ nothing: { autostart: true } }, [autostartTier("apple-fm")]).enabled).toBe(false); // no start command, no tier: nothing to start
   });
 
@@ -256,7 +256,7 @@ describe("runtime autostart", () => {
     expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
     expect(log.starts).toHaveLength(AUTOSTART_MAX_FAILURES);
     // a fresh manager (a daemon start) resets the count and tries again
-    expect(await runtimeAutostartTick(autostartCfg, freshAutostartStates(), d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, freshAutostartStates(), d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     expect(log.starts).toHaveLength(AUTOSTART_MAX_FAILURES + 1);
   });
 
@@ -305,7 +305,7 @@ describe("runtime autostart", () => {
 
     const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
     const d = autostartDeps(log, { freeGb: () => freeMemoryGb(0, memDeps(roomy, total)) });
-    expect(await runtimeAutostartTick(autostartCfg, freshAutostartStates(), d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // 90 GB available ≥ 48 GB need: started (old code: skipped)
+    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, freshAutostartStates(), d)).toEqual([{ kind: "start", runtime: "gyro-l" }]); // 90 GB available ≥ 48 GB need: started (old code: skipped)
     expect(log.starts).toEqual(["gyro-l"]);
     expect(log.alerts).toEqual([]);
 
@@ -333,7 +333,7 @@ describe("runtime autostart", () => {
         return 10; // far below the 48 GB need — must never be consulted for an up runtime
       },
     });
-    expect(await runtimeAutostartTick(autostartCfgBoth, freshAutostartStates(), d)).toEqual([{ kind: "start", runtime: "ollama" }]); // only the down one acts
+    expect(await runtimeAutostartTick({ ...autostartCfgBoth, downConfirmMs: 0 }, freshAutostartStates(), d)).toEqual([{ kind: "start", runtime: "ollama" }]); // only the down one acts
     expect(log.starts).toEqual(["ollama"]);
     expect(freeCalls).toBe(0); // the readiness probe is the first word per runtime
     expect(log.alerts).toEqual([]);
@@ -355,7 +355,7 @@ describe("runtime autostart", () => {
       now: () => now,
     });
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick(autostartCfgBoth, states, d)).toEqual([
+    expect(await runtimeAutostartTick({ ...autostartCfgBoth, downConfirmMs: 0 }, states, d)).toEqual([
       { kind: "start", runtime: "gyro-l" },
       { kind: "start", runtime: "ollama" },
     ]);
@@ -369,15 +369,15 @@ describe("runtime autostart", () => {
     expect(states.get("ollama")).toMatchObject({ attempts: 0, gaveUp: false });
     expect(log.ledger.some((x) => x.includes("runtime=ollama result=ok"))).toBe(true);
     now += MIN; // gyro-l is inside its backoff; ollama is retried every tick — a refusal never starts one
-    await runtimeAutostartTick(autostartCfgBoth, states, d);
+    await runtimeAutostartTick({ ...autostartCfgBoth, downConfirmMs: 0 }, states, d);
     expect(log.starts.filter((x) => x === "gyro-l")).toHaveLength(1);
     expect(log.starts.filter((x) => x === "ollama")).toHaveLength(2);
     expect(log.alerts).toHaveLength(1); // still one: ollama's repeated refusal never alerts
     now += AUTOSTART_RETRY_MS;
-    await runtimeAutostartTick(autostartCfgBoth, states, d); // gyro-l failure 2: still one alert
+    await runtimeAutostartTick({ ...autostartCfgBoth, downConfirmMs: 0 }, states, d); // gyro-l failure 2: still one alert
     expect(log.alerts).toHaveLength(1);
     now += AUTOSTART_RETRY_MS;
-    await runtimeAutostartTick(autostartCfgBoth, states, d); // failure 3 = the give-up: one final alert
+    await runtimeAutostartTick({ ...autostartCfgBoth, downConfirmMs: 0 }, states, d); // failure 3 = the give-up: one final alert
     expect(states.get("gyro-l")).toMatchObject({ gaveUp: true });
     expect(log.alerts).toHaveLength(2);
     expect(log.alerts[1]).toContain("giving up");
@@ -426,18 +426,18 @@ describe("runtime autostart", () => {
     let now = 0;
     const d = autostartDeps(log, { isUp: async () => false, alive: async () => false, now: () => now }); // health fails AND the port refuses, twice
     const states = freshAutostartStates();
-    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]); // probe 1 refused: suspected, not started yet
+    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]); // probe 1 refused: suspected, not started yet
     expect(states.get("gyro-l")?.suspectedDownAt).toBe(0);
     expect(log.starts).toEqual([]);
     now += DOWN_CONFIRM_MS - 1; // still inside the window: no start on a second refusal this close
-    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([]);
+    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([]);
     expect(log.starts).toEqual([]);
     now = DOWN_CONFIRM_MS; // probe 2 refused 10 s after probe 1: down — the autostart runs
-    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(await runtimeAutostartTick(autostartCfg, states, d)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
     expect(log.starts).toEqual(["gyro-l"]);
     // and once it answers again the suspicion clears: a later slow health check reads busy, not down
     const up = autostartDeps(log, { isUp: async () => true });
-    expect(await runtimeAutostartTick({ ...autostartCfg, downConfirmMs: 0 }, states, up)).toEqual([]);
+    expect(await runtimeAutostartTick(autostartCfg, states, up)).toEqual([]);
     expect(states.get("gyro-l")?.suspectedDownAt).toBeUndefined();
   });
 
