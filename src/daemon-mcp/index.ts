@@ -889,48 +889,6 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
     async (args) => proxyTool("memory_tunnels", args)
   );
 
-  // -------------------------------------------------------------------------
-  // Tools: code_explore, code_search, code_callers (code graph)
-  // -------------------------------------------------------------------------
-
-  server.tool(
-    "code_explore",
-    [
-      "Map an unfamiliar repository in ONE call: definitions, source, callers and blast radius.",
-      "Use this INSTEAD of grep/glob/read when you need to understand how code fits together.",
-      "Pass a question or symbol names. The repo is indexed on first use and kept fresh.",
-    ].join("\n"),
-    {
-      query: z.string().min(1).describe("A question or symbol names, e.g. 'how are sessions routed' or 'resolveRoot indexRepo'."),
-      root: z.string().optional().describe("Repository root. Default: the repo around the current directory."),
-      budget_tokens: z.number().int().min(200).max(32000).optional().describe("Output budget in tokens. Default: 4000."),
-      depth: z.number().int().min(0).max(5).optional().describe("How far to follow calls. Default: server choice."),
-    },
-    async (args) => proxyTool("code_explore", args)
-  );
-
-  server.tool(
-    "code_search",
-    "Find symbol definitions (functions, classes, types) by name in the code graph. Prefer this to grep for locating a definition.",
-    {
-      query: z.string().min(1).describe("Part of a symbol name."),
-      root: z.string().optional().describe("Repository root. Default: the repo around the current directory."),
-      limit: z.number().int().min(1).max(100).optional().describe("Maximum results. Default: 20."),
-    },
-    async (args) => proxyTool("code_search", args)
-  );
-
-  server.tool(
-    "code_callers",
-    "List where a symbol is called or used, from the code graph. Prefer this to grep when checking what a change could affect.",
-    {
-      name: z.string().min(1).describe("Symbol name."),
-      root: z.string().optional().describe("Repository root. Default: the repo around the current directory."),
-      limit: z.number().int().min(1).max(100).optional().describe("Maximum results. Default: 20."),
-    },
-    async (args) => proxyTool("code_callers", args)
-  );
-
   // Tool: audit_export — a tenant's firings, decisions and outcomes with a manifest (read-only, in-process)
   server.tool(
     "audit_export",

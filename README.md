@@ -123,10 +123,6 @@ Without the plugin, from a clone, or for a one-session plugin load: [docs/instal
 
 The full index, including memory, search and developer docs, is [docs/README.md](docs/README.md).
 
-### Code graph
-
-`pai code index` maps a repo's symbols and references into PAI's own database (Postgres, SQLite fallback); agents call `code_explore` to understand unfamiliar code in one step. See [docs/code-graph.md](docs/code-graph.md).
-
 ## Daily use
 
 ```bash

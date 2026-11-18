@@ -58,7 +58,7 @@ Deeper worker material: [worker reference (long)](worker.md) · [workers.yaml](w
 
 PAI keeps session memory in a local database (SQLite, or PostgreSQL with pgvector for semantic search). A background daemon indexes your Claude Code projects and session notes about every five minutes, and Claude searches the index by keyword, meaning, or both.
 
-- [Memory](memory.md) · [Search](search.md) · [Code graph](code-graph.md)
+- [Memory](memory.md) · [Search](search.md)
 - [Observations](observations.md) · [Session notes](session-notes.md)
 - [Context preservation](context-preservation.md) · [Auto-compact](auto-compact.md)
 - [Session management](session-management.md) · [Zettelkasten](zettelkasten.md) · [Rules and privacy](rules-and-privacy.md)
