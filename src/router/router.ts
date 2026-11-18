@@ -56,7 +56,6 @@ import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { monitorOpenAiReply, type Decision, type GuardContext, type GuardEvent } from "./proxy-guard.js";
 import { sharedParker } from "./parking.js";
 import { createUpstreamStreak } from "./preflight.js";
-import { acquireEngine, engineAgent, isResetError, RESET_BACKOFF_MS } from "./engine-limit.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
@@ -775,21 +774,7 @@ export function routerHandler(
       const mod = up.url.protocol === "https:" ? https : http;
       // Preemption (scheduled local requests only): `yielded` polls whether a --now run paused this worker;
       // `onYield` frees the engine and parks the same request again (see the abort below).
-      const forward = (release0: (u?: Usage, opts?: { gate?: boolean }) => void, preempt?: { yielded: () => boolean; onYield: () => void }): void => {
-        // a local engine takes a bounded number of requests at once; the rest wait here, whichever path they came by
-        if (target.kind !== "provider" || isCount || !isLocal(up.url)) return forwardRaw(release0, preempt);
-        let gone0 = false;
-        res.on("close", () => (gone0 = true));
-        void acquireEngine(up.url.origin).then((done) => {
-          res.on("close", done);
-          if (gone0) return done();
-          forwardRaw((u, opts) => {
-            done();
-            release0(u, opts);
-          }, preempt);
-        });
-      };
-      const forwardRaw = (release: (u?: Usage, opts?: { gate?: boolean }) => void, preempt?: { yielded: () => boolean; onYield: () => void }): void => {
+      const forward = (release: (u?: Usage, opts?: { gate?: boolean }) => void, preempt?: { yielded: () => boolean; onYield: () => void }): void => {
       let aborted = false;
       // true once upstream bytes went to the client: a replay would duplicate them
       let streamed = false;
@@ -907,13 +892,6 @@ export function routerHandler(
           delete rh["keep-alive"];
           const sniff = (onUsage || scheduled) && !isCount ? new UsageSniffer(ures.headers["content-type"]) : undefined;
           if (sniff) ures.on("data", (c: Buffer) => sniff.push(c));
-          // engine dropped mid-answer: bytes already went out so no retry; free the engine slot and cut the client
-          ures.on("close", () => {
-            if (ures.complete || res.writableEnded) return;
-            log(`${new Date().toISOString()} ${target.model} ${prov} upstream closed mid-answer`);
-            release(sniff ? sniff.finish() : undefined);
-            res.destroy();
-          });
           if (res.headersSent && (ures.statusCode ?? 502) !== 200) {
             // queued stream: 200 + keepalives already went out, so an upstream failure travels as an error
             const bits: Buffer[] = [];
@@ -1058,23 +1036,9 @@ export function routerHandler(
             );
           });
       };
-      const localEngine = target.kind === "provider" && !isCount && isLocal(up.url) && up.url.protocol === "http:";
-      let ureq!: http.ClientRequest;
-      let resets = 0;
-      const send = (): void => {
-      ureq = mod.request(up.url, { method: "POST", headers: up.headers, ...(localEngine ? { agent: engineAgent(up.url.origin) } : {}) }, (ures0) => {
-        if (resets) log(`${new Date().toISOString()} ${target.model} ${prov} upstream reset, retried ${resets}x, ok`);
-        gate(ures0);
-      });
+      const ureq = mod.request(up.url, { method: "POST", headers: up.headers }, gate);
       ureq.on("error", (e: NodeJS.ErrnoException) => {
         if (aborted) return;
-        // engine reset before any response byte reached the client: wait and send again
-        if (localEngine && isResetError(e) && !streamed && !res.headersSent && !res.destroyed && resets < RESET_BACKOFF_MS.length) {
-          const wait = RESET_BACKOFF_MS[resets++];
-          setTimeout(() => (aborted || res.destroyed ? undefined : send()), wait).unref();
-          return;
-        }
-        if (resets) log(`${new Date().toISOString()} ${target.model} ${prov} upstream reset, retried ${resets}x, failed ${e.code ?? e.message}`);
         release();
         record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());
         if (!isLocal(up.url)) upstreamStreak().failure(e.code);
@@ -1093,11 +1057,9 @@ export function routerHandler(
           prov
         );
       });
-      ureq.end(up.body);
-      };
       res.on("close", () => {
         release();
-        ureq?.destroy();
+        ureq.destroy();
       });
       if (preempt) {
         // A --now run paused this worker: abort the request in flight so the engine frees at once; the client
@@ -1114,9 +1076,9 @@ export function routerHandler(
           preempt.onYield();
         }, 100);
         watch.unref();
-        res.on("close", () => clearInterval(watch));
+        ureq.on("close", () => clearInterval(watch));
       }
-      send();
+      ureq.end(up.body);
       };
       // Local engine: one request in flight, the rest wait here (scheduler.ts). Any scheduler fault forwards directly.
       let scheduled = false;
