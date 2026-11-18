@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths, dbWriteReason, type DbWriteContext } from "./worker-bash-rules.js";
+import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths, dbWriteReason, liveContainerReason, type DbWriteContext } from "./worker-bash-rules.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
 
 describe("nodeOnTypeScriptReason", () => {
@@ -404,4 +404,42 @@ describe("worker guard backgrounded busy loops", () => {
     it(`denies ${c}`, () => expect(denied(c)).toBe(true));
   for (const c of ["timeout 20 sh -c 'while :; do :; done' &", "while read l; do echo $l; done < f", "timeout 5 yes > /dev/null &"])
     it(`allows ${c}`, () => expect(denied(c)).toBe(false));
+});
+
+describe("liveContainerReason (live-container rule)", () => {
+  const ctx: DbWriteContext = { cwd: "/w", home: "/h", worktreeRoot: "/w", liveContainers: ["app-live", "app-jobs", "app-pgvector"], dbWriteAllow: { containers: ["apptrial-*"], databases: [] } };
+  const env = {} as Record<string, string | undefined>;
+  const r = (c: string, e = env) => liveContainerReason(c, e, ctx);
+
+  it("denies docker cp into a live container, names container, rule and routes", () => {
+    const m = r("docker cp x.py app-live:/tmp/x.py");
+    expect(m).toContain("app-live");
+    expect(m).toContain("guard.liveContainers");
+    expect(m).toContain("trial container");
+    expect(m).toContain("--allow-db-writes");
+  });
+  it("allows docker cp out of a live container", () => {
+    expect(r("docker cp app-live:/data/x.csv ./x.csv")).toBeNull();
+  });
+  it("denies docker exec of an interpreter in a live container", () => {
+    expect(r("docker exec app-live python x.py")).toContain("app-live");
+    expect(r("docker exec -i app-jobs sh -c 'rm -rf /data'")).toContain("app-jobs");
+    expect(r("docker compose exec app-live python x.py")).toContain("app-live");
+  });
+  it("allows read-only commands and SQL clients in a live container", () => {
+    expect(r("docker exec app-live ls /data")).toBeNull();
+    expect(r("docker exec app-live find /data -name x")).toBeNull();
+    expect(r("docker exec app-live find /data -delete")).toContain("blocked");
+    expect(r('docker exec app-pgvector psql -c "SELECT 1"')).toBeNull();
+  });
+  it("allows the trial container", () => {
+    expect(r("docker exec apptrial-app python x.py")).toBeNull();
+    expect(r("docker cp x.py apptrial-app:/tmp/x.py")).toBeNull();
+  });
+  it("denies docker run --volumes-from a live container", () => {
+    expect(r("docker run --rm --volumes-from app-live alpine sh")).toContain("app-live");
+  });
+  it("allows everything on a --allow-db-writes run", () => {
+    expect(r("docker exec app-live python x.py", { PAI_ALLOW_DB_WRITES: "1" })).toBeNull();
+  });
 });

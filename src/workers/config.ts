@@ -641,7 +641,7 @@ export interface WorkersConfig {
   /** Loop guard echo size (workers.loopGuard); see hooks/ts/lib/loop-guard.ts. */
   loopGuard: LoopGuardConfig;
   /** Live-database write allowlist for the worker Bash guard (workers.guard.dbWriteAllow); see hooks/ts/lib/worker-bash-rules.ts. */
-  guard: { dbWriteAllow: DbWriteAllow };
+  guard: { dbWriteAllow: DbWriteAllow; liveContainers: string[] };
   /** FAIL ledger (workers.failLedger), per-run override PAI_FAIL_LEDGER=1. */
   failLedger: FailLedgerConfig;
   /** Throwaway bench clones live under this dir (workers.benchTreesDir, ~ expanded); a standalone clone there is not a shared checkout. */
@@ -782,6 +782,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     benchTreesDir: typeof w.benchTreesDir === "string" ? w.benchTreesDir : "~/.cache/pai/realtask-trees",
     guard: {
       dbWriteAllow: { containers: strArr(dbWriteAllow.containers), databases: strArr(dbWriteAllow.databases) },
+      liveContainers: strArr(guard.liveContainers),
     },
     loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000), echoRunnerLines: num(loopGuard.echoRunnerLines, 40) },
     failLedger: { enabled: bool(failLedger.enabled, false), maxEntries: num(failLedger.maxEntries, 5) },
@@ -1574,6 +1575,11 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
         if (!Array.isArray(t[k]) || (t[k] as unknown[]).some((v) => typeof v !== "string")) bad(`.guard.dbWriteAllow.${k}`, "must be an array of glob strings");
         guard.dbWriteAllow[k] = [...(t[k] as string[])];
       }
+    }
+    const lc = (w.guard as Record<string, unknown>).liveContainers;
+    if (lc !== undefined) {
+      if (!Array.isArray(lc) || lc.some((v) => typeof v !== "string")) bad(".guard.liveContainers", "must be an array of container-name globs");
+      guard.liveContainers = [...(lc as string[])];
     }
   }
   const loopGuard = { ...d.loopGuard };

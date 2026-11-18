@@ -196,6 +196,11 @@ workers:
     dbWriteAllow:
       containers: []
       databases: ["*_test", "*_scratch"]
+    # Live containers (globs, set in the main config.yaml workers.guard, never here):
+    # a worker may not `docker cp` into, or `docker exec` anything but a SQL client or
+    # a read-only inspection command (ls, cat, ps, grep, …) in, a matching container
+    # unless it also matches dbWriteAllow.containers. --allow-db-writes lifts it.
+    liveContainers: []
   # Loop guard: a denied repeat of a read-only call (Bash read, Read, Grep,
   # Glob) gets the call's last output back, trimmed to these sizes, so the
   # model stops asking for it again. Secret-looking lines are masked.
