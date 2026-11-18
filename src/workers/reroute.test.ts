@@ -10,6 +10,7 @@ import { resolveTarget, type TargetDeps } from "./target.js";
 import { sessionProfileSet, type SessionProfileDeps } from "../daemon-mcp/tools/session-profile.js";
 import { parseLedger } from "./ledger.js";
 import { stopOriginFirst } from "./run/escalate.js";
+import { isReadOnlyJob } from "./run/stream.js";
 import { carryGoals } from "./note-delivery.js";
 
 let dir: string;
@@ -515,6 +516,22 @@ describe("escalationReason: time in line at the local model", () => {
   it("read-only worker with steady successful calls is not escalated; silent one is", () => {
     expect(escalationReason(run({ readOnly: true, progressAt: min(1) }), NOW, pol(0))).toBeNull();
     expect(escalationReason(run({ readOnly: true, progressAt: min(12) }), NOW, pol(0))).toBe("no successful tool call for 12m");
+  });
+});
+
+// 2026-11-18: a code-fix spec whose text contained "(read-only)" describing a dry-run
+// command was read as a read-only job (the old rule matched spec wording) and escalated
+// on "no successful tool call" instead of the edit rule. The tool set is the only signal.
+describe("isReadOnlyJob: the tool set, never the spec text", () => {
+  const tools = (...entries: string[]) => entries.map((e) => `${e}(.*)`); // the CLI's own grant spelling
+  it("a spec saying read-only with Edit allowed is an editing job", () => {
+    expect(isReadOnlyJob(tools("Read", "Edit", "Write", "Bash", "Grep", "Glob"))).toBe(false);
+  });
+  it("no editing tool granted is read-only, whatever the spec says", () => {
+    expect(isReadOnlyJob(tools("Read", "Bash", "Grep", "Glob"))).toBe(true);
+  });
+  it("an empty tool set is not read-only (the run's default grants cover edits)", () => {
+    expect(isReadOnlyJob([])).toBe(false);
   });
 });
 

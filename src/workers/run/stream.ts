@@ -102,12 +102,15 @@ export function isProgressTool(name: string, input: unknown): boolean {
   return name === "Bash" && /\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(bashCommand(input));
 }
 
-/** A read-only job never edits or commits by design: no Edit/Write-class tool granted, or a task that says so. */
-export function isReadOnlyJob(allowedTools: string[], prompt: string): boolean {
+/**
+ * A read-only job never edits by design: no Edit/Write-class tool granted. The spec's
+ * wording plays no part — a code-fix task that mentions "(read-only)" describing some
+ * dry-run command is still an editing job when Edit stands in its tool set
+ * (2026-11-18: such a spec was read as read-only and escalated on the wrong rule).
+ */
+export function isReadOnlyJob(allowedTools: string[]): boolean {
   const names = allowedTools.flatMap((e) => e.split(",")).map((s) => s.trim().replace(/\(.*$/, "")).filter(Boolean);
-  if (names.length && !names.some((n) => ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(n))) return true;
-  const task = prompt.replace(/change nothing and report \"nothing to do\"/g, ""); // the continuation note's own wording
-  return /change nothing|read-only|read only|\baudit\b/i.test(task);
+  return names.length > 0 && !names.some((n) => ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(n));
 }
 
 export function toolResultText(content: unknown): string {

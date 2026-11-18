@@ -359,7 +359,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     stopHandoff?.();
   };
 
-  const readOnly = isReadOnlyJob(parsed.allowedTools, parsed.prompt ?? "");
+  const readOnly = isReadOnlyJob(parsed.allowedTools);
   if (readOnly) status.readOnly = true;
   const toolFold = createToolFold({
     logDir,
