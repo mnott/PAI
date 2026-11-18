@@ -176,6 +176,8 @@ export interface RerouteDeps {
   spawn?: (s: SpawnSpec) => void | Promise<void>;
   /** Wait before the kill so the old pane can print its line (default 1500 when the worker has a pane, tests pass 0). */
   announceMs?: number;
+  /** A running job keeps running until its continuation holds a slot on the target (move to a slot-limited provider); finishDeferredMoves stops it then. A queued job is not deferred. */
+  deferKill?: boolean;
   /** Who asked, for the ledger and the kill reason. */
   by?: string;
   /** Why (escalation reason); absent for an operator's command. */
@@ -451,6 +453,22 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
   };
   const start = (): Promise<void> | void => (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+  if (d.deferKill && old.state === "running") {
+    // least impact: the continuation joins the target's queue (it waits there, not running) and the old run keeps working;
+    // finishDeferredMoves stops the origin once the continuation holds a slot.
+    try {
+      await start();
+    } catch (e) {
+      unmark();
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
+      throw e;
+    }
+    const st = load(id) ?? old;
+    st.movingTo = target.provider;
+    saveStatus(d.logDir, st, new Date(), true);
+    appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-DEFERRED", { id, provider: target.provider, by });
+    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
+  }
   if (old.state === "running") {
     // a running origin is stopped FIRST (its commits are salvaged onto the branch): a continuation never runs beside it.
     // A stop that fails starts nothing and leaves the origin as it is.
@@ -541,3 +559,31 @@ export const escalationMessage = (e: Escalation): string => `S|i=${e.id}|z=${e.l
 
 /** The pane's one line for an escalation. */
 export const escalationLine = (rerouted: string): string => `» escalated to ${rerouted}`;
+
+/**
+ * Supervision pass (daemon tick): a running job that is moving to a slot-limited provider (status.movingTo) keeps running
+ * until its continuation holds a slot there; only then it is stopped the normal way. A continuation that ended without
+ * running leaves the job where it was (its marker is cleared). Returns the ids stopped.
+ */
+export async function finishDeferredMoves(logDir: string, kill?: (id: string, reason: string) => Promise<unknown>, by = "reroute"): Promise<string[]> {
+  const all = loadStatuses(logDir);
+  const done: string[] = [];
+  for (const s of all) {
+    if (!s.movingTo || s.state !== "running") continue;
+    const cont = all.find((x) => x.fallThroughOf === s.id && x.id !== s.id);
+    if (cont?.state === "queued") continue;
+    const fresh = loadStatus(logDir, s.id);
+    if (!fresh?.movingTo) continue;
+    if (cont?.state === "running") {
+      markHandover(logDir, s.id, fresh.rerouted ?? `rerouted to ${s.movingTo}`);
+      await (kill ?? ((x, r) => defaultKill(logDir, x, r, by)))(s.id, `rerouted to ${s.movingTo} (${by}: slot free)`);
+      done.push(s.id);
+    } else if (!cont || cont.state !== "done") {
+      // the continuation is gone or failed: stay where we are
+      delete fresh.movingTo;
+      delete fresh.rerouted;
+      saveStatus(logDir, fresh, new Date(), true);
+    }
+  }
+  return done;
+}
