@@ -76,6 +76,9 @@ interface Segment {
   words: string[];
   /** Redirection targets (`> f`, `>> f`, `2>f`). */
   redirects: string[];
+  /** Offsets of this segment's text in blankHeredocBodies(command), which parseCommand ran on: a rule that rewrites the command splices by these (the blanking preserves offsets). */
+  start: number;
+  end: number;
 }
 
 const deny = (reason: string): GateDecision => ({ decision: "deny", reason });
@@ -101,7 +104,8 @@ export function waitWhilePreempted(logDir: string, wid: string, maxMs: number, p
 export function parseCommand(raw: string): Segment[] {
   const command = blankHeredocBodies(raw);
   const segs: Segment[] = [];
-  let seg: Segment = { words: [], redirects: [] };
+  let seg: Segment = { words: [], redirects: [], start: 0, end: 0 };
+  let segStart = 0; // offset in `command` where the next segment's text begins
   let tok = "";
   let has = false; // a token is in progress (covers empty quoted "")
   let quote: string | null = null;
@@ -115,10 +119,11 @@ export function parseCommand(raw: string): Segment[] {
     tok = "";
     has = false;
   };
-  const endSeg = (): void => {
+  const endSeg = (upto: number): void => {
     flushTok();
-    if (seg.words.length || seg.redirects.length) segs.push(seg);
-    seg = { words: [], redirects: [] };
+    if (seg.words.length || seg.redirects.length) segs.push({ ...seg, start: segStart, end: upto });
+    seg = { words: [], redirects: [], start: 0, end: 0 };
+    segStart = upto;
   };
 
   for (let i = 0; i < command.length; i++) {
@@ -130,17 +135,20 @@ export function parseCommand(raw: string): Segment[] {
       continue;
     }
     if (ch === "'" || ch === '"') {
+      if (!has && !seg.words.length && !seg.redirects.length) segStart = i; // a quoted word opening at the head of a segment
       quote = ch;
       has = true;
     } else if (ch === "\\" && i + 1 < command.length) {
+      if (!has && !seg.words.length && !seg.redirects.length) segStart = i;
       tok += command[++i];
       has = true;
     } else if (/\s/.test(ch) && ch !== "\n") {
       flushTok();
     } else if (ch === ";" || ch === "\n" || ch === "|" || ch === "&") {
       if (ch === "&" && command[i + 1] === ">") continue; // `&>` redirects
-      endSeg();
+      endSeg(i);
       if ((ch === "|" || ch === "&") && command[i + 1] === ch) i++;
+      segStart = i + 1;
     } else if (ch === ">" || ch === "<") {
       if (has && /^\d+$/.test(tok)) {
         tok = "";
@@ -152,11 +160,12 @@ export function parseCommand(raw: string): Segment[] {
         target = "skip"; // fd duplication: `2>&1`
       } else target = ch === ">" ? "redir" : "skip";
     } else {
+      if (!has && !seg.words.length && !seg.redirects.length) segStart = i; // an unquoted word opening at the head of a segment
       tok += ch;
       has = true;
     }
   }
-  endSeg();
+  endSeg(command.length);
   return segs;
 }
 
@@ -412,6 +421,8 @@ const SED_ADDR = String.raw`(?:\d+|/[^\n]*?/\\?|\|[^|\n]+\|\\?|%|\$)(?:[+-]\d+)?
 const SED_ADDR_SUBST = String.raw`(?:\$\([^)]*\)|` + "`[^`]*`" + `)`;
 /** `<addr>,+N<p>`: the GNU-only relative end line, with or without spaces (`, +8p`). */
 const GNU_SED_RANGE = new RegExp(String.raw`^(?:${SED_ADDR}|${SED_ADDR_SUBST}),\s*\+\d+\s*[pned]`);
+/** The same range where BOTH addresses are plain line numbers (`120,+40p`, `5, +3 p`): the form a rewrite can make BSD-valid. */
+const GNU_SED_RANGE_NUMERIC = /^(\d+),\s*\+(\d+)\s*([pn])/;
 
 /**
  * True when a sed script starts with a GNU `,+N` address range (`18,+8p`, `$(…),+8p`).
@@ -421,6 +432,50 @@ const GNU_SED_RANGE = new RegExp(String.raw`^(?:${SED_ADDR}|${SED_ADDR_SUBST}),\
  */
 export function hasGnuSedRange(script: string): boolean {
   return GNU_SED_RANGE.test(script);
+}
+
+/**
+ * The rewrite for one sed script carrying a numeric GNU `,+N` range: `120,+40p` → `120,160p`.
+ * Null when the script carries no such range, or its start address is not a plain line number
+ * (`$`, `/re/`, `$(…)`): those stay denied. Only the head of the script is rewritten — that is
+ * where GNU_SED_RANGE matches — which keeps an s/// body containing `,N` out of reach.
+ */
+export function rewriteGnuSedRange(script: string): string | null {
+  const m = GNU_SED_RANGE_NUMERIC.exec(script);
+  if (!m) return null;
+  const [x, n] = [Number(m[1]), Number(m[2])];
+  // m[3] is the command letter (`p`): only the `,+N` part becomes the absolute end line
+  return script.replace(GNU_SED_RANGE_NUMERIC, (_m, start: string, _n: string, cmd: string) => `${start},${x + n}${cmd}`);
+}
+
+/** One sed script word as the shell sees it: a quoted word (single or double), else an unquoted run without spaces. */
+const SED_SCRIPT_WORD = /(["'])((?:\\.|(?!\1).)*)\1|\S+/g;
+
+/**
+ * A command's GNU sed ranges rewritten to BSD `X,Y` form, at the positions parseCommand read as this
+ * sed call's script words (`sedOperands(args)`): each such word that is a numeric `,+N` print range
+ * becomes its rewrite, re-quoted as it was (parseCommand strips quotes, so the check runs on parsed
+ * words but the rewrite must edit the raw text). Null when no script word carries a rewritable range
+ * — including a command whose GNU-only ranges are not numeric or mutate (`d`), which keeps the deny.
+ */
+export function gnuSedRewrite(command: string, scripts: string[]): string | null {
+  const want = new Set<string>();
+  for (const s of scripts) {
+    const w = hasGnuSedRange(s) ? rewriteGnuSedRange(s) : null;
+    if (w !== null) want.add(w);
+  }
+  if (!want.size) return null;
+  let changed = false;
+  const out = command.replace(SED_SCRIPT_WORD, (whole, q: string | undefined, inner?: string) => {
+    // unquoted scripts stay denied; a double-quoted script must survive re-quoting unchanged (no backtick or `"`).
+    // whole.slice(1,-1) is the word's own text: /"/ on the quoted form always matches its own delimiters.
+    if (!q || (q === '"' && /[`"]/.test(whole.slice(1, -1)))) return whole;
+    const r = rewriteGnuSedRange(inner as string);
+    if (r === null || !want.has(r)) return whole;
+    changed = true;
+    return q === "'" ? `'${r.replace(/'/g, `'\\''`)}'` : `"${r.replace(/[$\\]/g, "\\$&")}"`;
+  });
+  return changed ? out : null;
 }
 
 /** The sed args after the program options that take a separate value (`-e 'script'`, `-f file`). */
@@ -467,7 +522,7 @@ function rootWalkReason(cmd: string, args: string[], cwd: string, home: string):
 }
 
 /** Decide one segment; `st.cwd` is the tracked working directory. The segments come from parseCommand (heredoc bodies blanked), and `st.raw` — what a git commit message check reads — has them blanked too: heredoc text is data, not commands. */
-function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
+function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
   const words = stripPrefix(seg.words);
   const [cmd, ...args] = words;
   const boundary = ctx.worktreeRoot ?? ctx.cwd;
@@ -494,9 +549,27 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   if (cmd === "sed" && process.platform === "darwin") {
     const i = args.indexOf("-i");
     const next = i >= 0 ? args[i + 1] : undefined;
+    // BSD sed rejects every GNU `,+N` range (`sed -n "18,+8p" f`): it fails with `invalid command code ,`, every time.
+    // A numeric print range is translated instead of denied (the intent is unambiguous, and denials burned workers turns):
+    // the command goes on with `X,+N` rewritten to `X,<X+N>`; anything else GNU-only (non-numeric start, `$(…)`, a mutating
+    // command like `d`, or `-i`) stays denied.
+    if (sedOperands(args).some(hasGnuSedRange)) {
+      const rawSeg = st.raw.slice(seg.start, seg.end);
+      const rewritten = args.length ? gnuSedRewrite(rawSeg, sedOperands(args)) : null;
+      if (!rewritten || next !== undefined) return deny(GNU_SED_RANGE_REASON);
+      // splice the rewritten segment back into the heredoc-blanked text (blanking preserves offsets, so these slice the original command too).
+      // parseCommand starts a quoted first word one char late (the opening quote is swallowed before the offset is taken): realign the
+      // window from the right end — the rewrite never touches anything after the last script word, so `end` is exact.
+      const spliced = st.raw.slice(0, seg.start) + rewritten + st.raw.slice(seg.end);
+      const tail = st.raw.slice(seg.end);
+      const winStart = Math.max(0, seg.end - rewritten.length - 2);
+      if (spliced.slice(winStart, seg.end) !== rewritten || spliced.slice(seg.end) !== tail) return deny(GNU_SED_RANGE_REASON);
+      // nothing else in the command may carry a GNU range the splice left untouched
+      if (parseCommand(spliced).some((s) => { const w = stripPrefix(s.words); return w[0] === "sed" && process.platform === "darwin" && sedOperands(w.slice(1)).some(hasGnuSedRange); })) return deny(GNU_SED_RANGE_REASON);
+      st.rewrite = spliced;
+      return { decision: "allow", context: `rewrote sed X,+N to X,Y (BSD sed): ${spliced}` };
+    }
     if (next !== undefined && next !== "" && (isFlag(next) || /^[sy]$/.test(next) || /^[a-zA-Z][/|#,]/.test(next) || /^[\d$/\\]/.test(next) || /[;\s/{]/.test(next))) return deny(SED_INPLACE_REASON);
-    // BSD sed rejects every GNU `,+N` range (`sed -n "18,+8p" f`): it fails with `invalid command code ,`, every time
-    if (sedOperands(args).some(hasGnuSedRange)) return deny(GNU_SED_RANGE_REASON);
   }
 
   const chrome = chromeStartReason(cmd, args);
@@ -687,7 +760,7 @@ function longWaitReason(command: string, segs: Segment[]): string | null {
 
 function decideCommand(command: string, ctx: WorkerGuardContext, detached = false): GateDecision {
   // one pass over the text: heredoc bodies blanked for every rule below (parseCommand segments, the sleep scan, the commit message)
-  const st = { cwd: ctx.cwd, raw: blankHeredocBodies(command) };
+  const st: { cwd: string; raw: string; rewrite?: string } = { cwd: ctx.cwd, raw: blankHeredocBodies(command) };
   const segs = parseCommand(command);
   // the busy-loop check reads raw text (parseCommand's `&` splitting loses which loop was backgrounded),
   // and runs at every depth including inside `nohup … &` / `bash -c '…' &` payloads
@@ -698,6 +771,13 @@ function decideCommand(command: string, ctx: WorkerGuardContext, detached = fals
   for (const seg of segs) {
     const d = decideSegment(seg, st, ctx, seg.words[0] === "nohup");
     if (d.decision === "deny") return d;
+  }
+  // a segment rule that translated the command (the GNU sed range rewrite): re-decide the rewritten text so no other rule misses it, and hand the new command up
+  if (st.rewrite && st.rewrite !== command) {
+    const redone = decideCommand(st.rewrite, ctx, detached);
+    if (redone.decision !== "allow") return redone;
+    // one note only, on the decision that carries the new command: a nested rewrite's note already names the final command
+    return { decision: "allow", updatedInput: { command: st.rewrite }, ...(redone.context ? {} : { context: `rewrote sed X,+N to X,Y (BSD sed): ${st.rewrite}` }) };
   }
   return ALLOW;
 }
@@ -823,7 +903,8 @@ export function decideWorkerGuard(
   if (tool === "Bash") {
     const d = typeof ti.command === "string" ? decideCommand(ti.command, { ...ctx(), benchGo: env.PAI_BENCH_GO === "1" }) : ALLOW;
     if (d.decision === "allow" && typeof ti.command === "string") {
-      const cmd = ti.command as string;
+      // a translated command (the GNU sed range rewrite) is what runs: every rule below checks that text, not the original
+      const cmd = (d.updatedInput?.command as string | undefined) ?? (ti.command as string);
       // tests: operator (.pai/checks.yaml) — the operator runs the tests; --allow-tests (PAI_WORKER_ALLOW_TESTS=1) allows them
       if (env.PAI_WORKER_ALLOW_TESTS !== "1") {
         const c = ctx();
@@ -855,12 +936,13 @@ export function decideWorkerGuard(
       }
     }
     if (d.decision === "allow") {
-      const raised = raiseWaitTimeout(ti);
-      if (raised) return { decision: "allow", updatedInput: raised };
+      const eff = d.updatedInput ? { ...ti, ...d.updatedInput } : ti;
+      const raised = raiseWaitTimeout(eff);
+      if (raised) return { decision: "allow", updatedInput: raised, ...(d.context && { context: d.context }) };
     }
     // A too-long tool timeout alone is clamped, not refused: models re-issued the same call and burned turns on denials.
     if (d.decision === "allow" && typeof ti.timeout === "number" && ti.timeout > MAX_FOREGROUND_SECS * 1000) {
-      return { decision: "allow", updatedInput: { ...ti, timeout: MAX_FOREGROUND_SECS * 1000 }, context: CLAMP_NOTE };
+      return { decision: "allow", updatedInput: { ...ti, ...(d.updatedInput ?? {}), timeout: MAX_FOREGROUND_SECS * 1000 }, context: d.context ? `${d.context} ${CLAMP_NOTE}` : CLAMP_NOTE };
     }
     return d;
   }
