@@ -1177,7 +1177,7 @@ function schedNames(logDir: string): Record<string, string> {
 }
 
 
-const ROW_ACTIONS = new Set<string>(["next", "up", "down", "pause", "resume", "freeze", "thaw", "deep-freeze", "deep-resume", "to-local", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now", "stop"]);
+const ROW_ACTIONS = new Set<string>(["next", "up", "down", "pause", "resume", "back-to-queue", "start-now", "freeze", "thaw", "deep-freeze", "deep-resume", "to-local", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now", "stop"]);
 
 /** The /cockpit/queue payload: every provider with a live or waiting worker. */
 export interface CockpitBuilds {

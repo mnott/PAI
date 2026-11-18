@@ -11,7 +11,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { QueueRow } from "./capacity.js";
+import { DEFAULT_CAPACITY, type QueueRow } from "./capacity.js";
 import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
 import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
@@ -60,7 +60,8 @@ export function shortModel(local: boolean, provider: string, model?: string): st
 export type RowState = "running" | "waiting" | "paused" | "frozen" | "deep-frozen";
 export type RowAction =
   | "next" | "up" | "down"
-  | "pause" | "resume" | "freeze" | "thaw" | "deep-freeze" | "deep-resume"
+  | "pause" | "resume" | "back-to-queue" | "start-now"
+  | "freeze" | "thaw" | "deep-freeze" | "deep-resume"
   | "to-local" | "to-cloud"
   | "prio-low" | "prio-normal" | "prio-high" | "prio-now"
   | "stop";
@@ -106,6 +107,8 @@ export interface TableRow {
   waits?: Array<{ id: string; label: string }>;
   /** Set while the job is being restarted by the daemon (older PAI release); the row reads "restarting on new version". */
   restarting?: boolean;
+  /** Why "start now" cannot admit this waiting job ("the limit of started jobs (cap + 3) is reached"); absent = it can. The button shows the reason in its tooltip and stays disabled. */
+  startNowWhy?: string;
   actions: RowAction[];
 }
 
@@ -127,6 +130,12 @@ export interface TableInput {
   deepFrozen?: (id: string) => boolean;
   /** The router's local-scheduler snapshot (readSchedFile): whose request is in flight at the model, whose waits in line. Absent = the router cannot be reached: the activity word falls back to the status file only. */
   sched?: SchedSnapshot | null;
+  /** Provider name -> its admission cap (providerCap); undefined = uncapped. With it the waiting rows learn whether "start now" could still admit one more over the cap. */
+  caps?: Record<string, number | undefined>;
+  /** Hard ceiling of started jobs above the cap ("start now" and engine-idle admission may reach: cap + this; default idleExtraMax = 3). */
+  idleExtraMax?: number;
+  /** Test seam: whether a running status's process is alive (the started-jobs count for "start now"; default trusts every live-looking status, like the gate's own readers). */
+  isAlive?: (pid: number) => boolean;
 }
 
 /** What a worker's request does at the model engine, from the router's scheduler snapshot (the one truth of in flight / in line). */
@@ -139,7 +148,7 @@ export interface RequestState {
 
 /** The one line above the table (also the CLI footer): states and priorities in plain words. */
 export const QUEUE_EXPLAIN =
-  "running = holds a slot, or started and waiting to take its slot back; waiting = next in line; paused = parked, slot freed for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives reboot. " +
+  "running = holds a slot, or started and waiting to take its slot back; waiting = next in line; paused = parked, slot freed for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives reboot. Actions: ▶ one step toward running (paused → waiting at the front of the line, waiting → started now, over the cap up to the ceiling), ⏸ one step toward paused (running → parked with its work kept, waiting → leaves the line); stop and more in … " +
   "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: \"N of M slots busy\" counts jobs holding a slot; \"K lent\" = started jobs waiting on a long tool (or to get their slot back, \"slot back?\"): busy + lent = the running rows; \"engine idle: admitted K extra\" = jobs started above the cap because the model had nothing to do.";
 
 /** Plain-words tooltip of each priority. */
@@ -233,15 +242,22 @@ export function activityTip(activity: string, nowText?: string): string {
 
 const prioOf = (s: WorkerStatus, ticket?: string): TableRow["priority"] => (s.now ? "now" : ((ticket ?? s.priority ?? "normal") as TableRow["priority"]));
 
-/** Up/next/down only for a waiting row, and only the moves that change something: not "up"/"next" on the first row, not "down" on the last. */
-function actionsOf(state: RowState, local: boolean, waiting: boolean, place?: { first: boolean; last: boolean }): RowAction[] {
+/** The two inline buttons carry the same meaning on every row: ▶ one step toward running (Paused → resume to the front of the line; Waiting → start now, over the cap up to the ceiling), ⏸ one step away from running (Running → pause, frees its slot and keeps its work; Waiting → pause, leaves the line). Everything else — stop, back-to-queue, freeze, deep-freeze, move to local/cloud, priority, up/down/next — lives in the … menu. */
+function actionsOf(state: RowState, local: boolean, waiting: boolean, place?: { first: boolean; last: boolean }, startNowBlocked = false): RowAction[] {
   if (state === "deep-frozen") return ["deep-resume"];
   const a: RowAction[] = [];
+  if (state === "paused") a.push("resume");
+  else if (state === "waiting") a.push("pause");
+  else a.push("pause");
+  // the … menu's queue moves: only where they change something (never "up"/"next" on the first row, never "down" on the last)
   if (waiting && state === "waiting") {
     if (!place?.first) a.push("next", "up");
     if (!place?.last) a.push("down");
   }
-  a.push(state === "paused" ? "resume" : "pause");
+  // ▶ start now: one step toward running for a waiting row; absent when the ceiling of started jobs is reached (the reason rides in startNowWhy)
+  if (state === "waiting" && !startNowBlocked) a.push("start-now");
+  // running → front of its provider's waiting list, slot freed, work kept (the … menu)
+  if (state === "running" && !waiting) a.push("back-to-queue");
   a.push(state === "frozen" ? "thaw" : "freeze");
   a.push("deep-freeze");
   a.push(local ? "to-cloud" : "to-local");
@@ -270,6 +286,24 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     return a ? { inflight: a.activeSince > 0, queued: a.waitingSince > 0 } : undefined;
   };
   const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
+  // started jobs per provider (the same accounting the capacity gate uses: running, not an operator pause that freed its slot, live): "start now" admits over the cap only up to cap + idleExtraMax of these
+  const extraMax = i.idleExtraMax ?? DEFAULT_CAPACITY.idleExtraMax;
+  const startedByProvider = new Map<string, number>();
+  if (i.caps) {
+    for (const s of i.statuses) {
+      if (deepIds.has(s.id) || s.state !== "running" || pausedFree(s)) continue;
+      if (i.isAlive && !i.isAlive(s.pid)) continue;
+      startedByProvider.set(s.provider, (startedByProvider.get(s.provider) ?? 0) + 1);
+    }
+  }
+  /** Why "start now" cannot admit this waiting job: the hard ceiling of started jobs (cap + idleExtraMax, the same one engine-idle admission stops at). Undefined = it can. */
+  const startNowWhy = (provider: string): string | undefined => {
+    if (!i.caps) return undefined;
+    const cap = i.caps[provider];
+    if (cap === undefined || cap <= 0) return undefined;
+    const started = startedByProvider.get(provider) ?? 0;
+    return started >= cap + extraMax ? `the limit of started jobs on ${provider} is reached (${started} of ${cap} slots + ${extraMax} over)` : undefined;
+  };
   // a started job (running, not parked, not restarting) that holds a queue ticket lent its slot during a long tool run and waits to take one back: it RUNS, it is not a waiting job
   const startedWaiting = (s: WorkerStatus): boolean => s.state === "running" && !s.paused && !s.restarting && ticket.has(s.id);
   const live = i.statuses.filter((s) => deepIds.has(s.id) || s.state === "running" || s.state === "queued" || ticket.has(s.id));
@@ -313,7 +347,8 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       detail: notes.map(plainWording).join("; "),
       ...(summaryOf(s) ? { summary: summaryOf(s) } : {}),
       ...(s.restarting ? { restarting: true } : {}),
-      actions: actionsOf(state, local, waiting, place),
+      ...(state === "waiting" && startNowWhy(s.provider) ? { startNowWhy: startNowWhy(s.provider) } : {}),
+      actions: actionsOf(state, local, waiting, place, state === "waiting" && startNowWhy(s.provider) !== undefined),
     };
   };
   const out: TableRow[] = [];
@@ -324,7 +359,8 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   for (const s of runners.filter((x) => !pausedFree(x))) {
     const q = s.movingTo ? moverOf(s.id) : undefined;
     const moving = s.movingTo ? `running (${i.isLocal(s.provider) ? "local" : "cloud"}) · moving to ${i.isLocal(s.movingTo) ? "local" : "cloud"}, waiting #${q ? q.position : "?"}` : undefined;
-    const r: TableRow = { slot: "running", ...row(s, false, stMs(s), undefined, undefined, moving) };
+    // a job admitted over the cap by "start now" says so in its state text, so the slot line reads honestly
+    const r: TableRow = { slot: "running", ...row(s, false, stMs(s), undefined, undefined, moving ?? (s.overCapBy ? `running · started over the limit${s.overCapBy === "you" ? " by you" : ` by ${s.overCapBy}`}` : undefined)) };
     if (startedWaiting(s) && r.state === "running") r.activity = SLOT_BACK;
     out.push(r);
   }
@@ -372,7 +408,7 @@ export function nestChildren(rows: TableRow[]): TableRow[] {
 export function rowGroup(r: Pick<TableRow, "state">): number {
   return r.state === "running" ? 0 : r.state === "waiting" ? 1 : 2;
 }
-export const GROUP_LABEL = ["running", "waiting", "paused / frozen"] as const;
+export const GROUP_LABEL = ["running", "waiting", "paused"] as const;
 
 /** Rows of the chosen sessions only (none chosen = all), keeping their order. */
 export function filterBySession<T extends Pick<TableRow, "session">>(rows: T[], sessions: string[]): T[] {
