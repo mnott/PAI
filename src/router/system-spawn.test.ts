@@ -40,7 +40,7 @@ describe("cockpit page script", () => {
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
     const ctx = vm.createContext({});
     vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
-    const row = { slot: 1, kind: "job", id: "w-20261118-120000-55574", sid: "55574", state: "waiting", stateText: "waiting for a local slot", priority: "normal", session: "mdf", model: "gyro-l", modelFull: "local: qwen", local: true, task: "a very long task text ".repeat(20), summary: "Fix the queue. It lists pane runs as jobs.", seconds: 70, activity: "", now: "", detail: "", restarting: true, waits: [{ id: "pane-1", label: "wait: right pane fix (local)" }], actions: ["next", "up", "down", "pause", "freeze", "deep-freeze", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now"] };
+    const row = { slot: 1, kind: "job", id: "w1", state: "waiting", stateText: "waiting for a local slot", priority: "normal", session: "mdf", model: "gyro-l", modelFull: "local: qwen", local: true, task: "a very long task text ".repeat(20), seconds: 70, activity: "", now: "", detail: "", restarting: true, actions: ["next", "up", "down", "pause", "freeze", "deep-freeze", "to-cloud", "prio-low", "prio-normal", "prio-high", "prio-now"] };
     (ctx as Record<string, unknown>).__r = row;
     const html = vm.runInContext("wkTRow(__r)", ctx) as string;
     expect(html.match(/<tr/g)).toHaveLength(1);
@@ -48,27 +48,8 @@ describe("cockpit page script", () => {
     expect((html.match(/<button/g) ?? []).length - (html.match(/class="wq-chip/g) ?? []).length).toBeLessThanOrEqual(3);
     expect(html).toContain("waiting #1");
     expect(html).toContain("restarting on new version");
-    // the task tooltip: the task, the plain-prose summary and the full worker id
     expect(html).toContain('title="a very long task');
-    expect(html).toContain("Fix the queue. It lists pane runs as jobs.");
-    expect(html).toContain("id: w-20261118-120000-55574");
-    // the short id in grey under the task; the waiting-session eye with its tooltip
-    expect(html).toContain('<div class="wq-id"');
-    expect(html).toContain(">55574<");
-    expect(html).toContain('class="wq-eye"');
-    expect(html).toContain("a session waits for this job: wait: right pane fix (local)");
     expect(html).toContain("aria-label=");
-  });
-  it("the row … menu carries copy id; a pane run is never drawn as a queue row", async () => {
-    const vm = await import("node:vm");
-    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
-    const ctx = vm.createContext({});
-    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
-    const row = { slot: "running", kind: "job", id: "w-1", sid: "1", state: "running", stateText: "running", priority: "normal", session: "mdf", model: "", local: false, task: "t", seconds: 5, activity: "", now: "", detail: "", actions: ["pause"] };
-    (ctx as Record<string, unknown>).__rows = [row];
-    vm.runInContext("WQ={table:__rows};WK_MENU={key:'row:w-1',x:0,y:0}", ctx);
-    expect(vm.runInContext("wkMenuHtml()", ctx)).toContain('data-copy="copy"');
-    expect(vm.runInContext("wkMenuHtml()", ctx)).toContain("copy id");
   });
   it("the activity word shows with its meaning in the tooltip", async () => {
     const vm = await import("node:vm");
@@ -81,12 +62,6 @@ describe("cockpit page script", () => {
     const html = vm.runInContext("wkTRow(__a)", ctx) as string;
     expect(html).toContain('<span class="wq-act" title="its request is open at the model — the engine is generating its reply">gen</span>');
     expect(vm.runInContext("wkTRow(__b)", ctx)).toContain('title="no request open at the model; a tool (build, test) is running');
-    // every word has a tooltip, idle included
-    (ctx as Record<string, unknown>).__c = mk("idle 10m", "no request at the model and no tool running for 10 minutes; it may be stuck");
-    expect(vm.runInContext("wkTRow(__c)", ctx)).toContain('title="no request at the model and no tool running for 10 minutes; it may be stuck');
-    // the (i) legend carries the activity words with their one-line meanings
-    const bar = vm.runInContext("wkBar({table:[]})", ctx) as string;
-    for (const w of ["gen =", "in line =", "tool =", "waiting =", "idle Nm ="]) expect(bar).toContain(w);
   });
   it("queue view filters by the chosen sessions and sorts by session then position", async () => {
     const vm = await import("node:vm");
@@ -134,12 +109,8 @@ describe("cockpit page script", () => {
   it("queue table colgroup leaves the task column the free width", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
-    const { readFileSync } = await import("node:fs");
-    const cssSrc = readFileSync("src/router/cockpit-page/css.ts", "utf8");
     const ctx = vm.createContext({});
     vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
-    // the short id and the eye ride inside the clipped task cell: the table never widens
-    expect(cssSrc).toContain(".wq-tc{position:relative}");
     const html = vm.runInContext("wkQTable([])", ctx) as string;
     const cols = [...html.matchAll(/<col(?!group)([^>]*)>/g)].map((m) => m[1]!);
     expect(cols).toHaveLength(7);

@@ -7,7 +7,7 @@ import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
 import { localIdleLine } from "./local-idle.js";
-import { filterBySession, sortBySession, buildQueueTable, plainWording, readTaskText, renderQueueTable, taskSummary, type TableInput } from "./queue-table.js";
+import { filterBySession, sortBySession, buildQueueTable, plainWording, renderQueueTable, type TableInput } from "./queue-table.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
@@ -90,34 +90,10 @@ describe("queue table", () => {
     expect(rows[0]!.detail).toBe("continues job old; moved to cloud: no progress for 10 min");
   });
 
-  it("a pane run is never a row (model jobs only); one that waits on a job shows as an eye on that job's row", () => {
+  it("panes are rows of kind command with the caller's session and only stop/freeze/thaw", () => {
     const rows = buildQueueTable(qin([], [], { panes: [{ id: "pane-1", label: "npm run build", state: "running", startedMs: QNOW - 65_000, session: "pai" }] }));
-    expect(rows).toHaveLength(0);
-    const a = qst("w-20261118-120000-55574");
-    const rows2 = buildQueueTable(qin([a], [], { panes: [{ id: "pane-1", label: "wait: right pane fix (local)", state: "running", startedMs: QNOW - 65_000, session: "pai", command: "pai worker wait w-20261118-120000-55574 --max 590" }] }));
-    expect(rows2.map((r) => r.id)).toEqual(["w-20261118-120000-55574"]); // the job it waits for still shows once
-    expect(rows2[0]!.waits).toEqual([{ id: "pane-1", label: "wait: right pane fix (local)" }]);
-    // a waiter of a job that is gone, and a plain command, attach to nothing
-    const rows3 = buildQueueTable(qin([a], [], { panes: [{ id: "p2", label: "x", state: "running", startedMs: QNOW, command: "pai worker wait w-9" }, { id: "p3", label: "y", state: "running", startedMs: QNOW, command: "sleep 5" }] }));
-    expect(rows3[0]!.waits).toBeUndefined();
-  });
-
-  it("the row carries the plain-prose summary of the prompt copy (readTaskText + taskSummary, no model call)", () => {
-    writeFileSync(join(dir, "w-20261118-120000-55574.prompt"), "Repo: /home/me/proj.\nTask: Fix the queue. It lists pane runs as jobs, which is wrong. They use no slot at all.", "utf8");
-    const rows = buildQueueTable(qin([qst("w-20261118-120000-55574")], [], { summaryOf: (s) => taskSummary(readTaskText(dir, s)) }));
-    expect(rows[0]!.summary).toBe("Fix the queue. It lists pane runs as jobs, which is wrong. They use no slot at all.");
-    expect(renderQueueTable(rows)[1]).toContain("55574"); // the id column shows the short id
-  });
-
-  it("taskSummary: skips a leading Repo/Directory line and a Task: prefix, cuts at a sentence end within ~300", () => {
-    expect(taskSummary("Directory: /x\nTask: Hello. World.")).toBe("Hello. World.");
-    expect(taskSummary("One. Two. Three. Four.")).toBe("One. Two. Three.");
-    const long = "S1. ".repeat(80) + "S2."; // way past 300
-    const s = taskSummary(long);
-    expect(s.length).toBeLessThanOrEqual(300);
-    expect(s.endsWith(".")).toBe(true);
-    expect(taskSummary("")).toBe("");
-    expect(readTaskText(dir, { id: "nope" })).toBe(""); // no prompt copy: no summary
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "command", session: "pai", task: "npm run build", seconds: 65, actions: ["freeze", "stop"] });
   });
 
   it("the live tool call is a tooltip, the activity cell is a short word", () => {
@@ -150,7 +126,7 @@ describe("queue table", () => {
   it("activity 'idle Nm': none of the above for over 90 s", () => {
     const rows = buildQueueTable(qin([qst("i", { updated: "2026-11-18 11:50:00" })], [], { sched: qsched({ i: {} }) }));
     expect(rows[0]!.activity).toBe("idle 10m");
-    expect(rows[0]!.activityTip).toContain("no request at the model and no tool running for 10 minutes; it may be stuck");
+    expect(rows[0]!.activityTip).toContain("nothing for over 90 s");
   });
   it("without the router only the status file speaks: 'tool' or 'idle', never a guess", () => {
     const rows = buildQueueTable(qin([qst("t2", { toolWaitSince: QNOW - 5000, updated: "2026-11-18 11:59:55" }), qst("f", { updated: "2026-11-18 11:59:55" })], [], { sched: null }));
@@ -287,9 +263,9 @@ describe("paused workers free their slot (one accounting)", () => {
     expect(rows.find((r) => r.id === "h")).toMatchObject({ slot: "running", stateText: "paused (holds its slot)" });
     expect(rows.find((r) => r.id === "w1")!.slot).toBe(1);
   });
-  it("a pane command is no row at all (pane runs stay in pai pane ps, not the queue)", () => {
+  it("a pane command shows the caller's session", () => {
     const rows = buildQueueTable(qin([], [], { panes: [{ id: "pane-1", label: "build", state: "running", startedMs: QNOW - 5000, session: "gyro-sess" }] }));
-    expect(rows).toHaveLength(0);
+    expect(rows[0]).toMatchObject({ kind: "command", session: "gyro-sess" });
   });
 });
 
