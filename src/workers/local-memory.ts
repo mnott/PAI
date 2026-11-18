@@ -21,6 +21,8 @@ export interface MemoryDeps {
   vmStat: () => Promise<string | undefined>;
   /** `sysctl -n hw.memsize` in bytes. */
   memTotal: () => Promise<number | undefined>;
+  /** `sysctl -n kern.memorystatus_level`, percent of memory free under the system's own pressure accounting; undefined when unavailable. */
+  pressureLevel: () => Promise<number | undefined>;
 }
 
 function run(cmd: string, args: string[]): Promise<string | undefined> {
@@ -35,22 +37,31 @@ export const realMemoryDeps: MemoryDeps = {
     const n = Number((await run("sysctl", ["-n", "hw.memsize"]))?.trim());
     return n > 0 ? n : undefined;
   },
+  pressureLevel: async () => {
+    const n = Number((await run("sysctl", ["-n", "kern.memorystatus_level"]))?.trim());
+    return n >= 0 && n <= 100 ? n : undefined;
+  },
 };
 
 /**
- * Memory a new server can take, GB: reclaimable (free + speculative + inactive)
- * minus the reserve. Undefined when it cannot be measured.
+ * Memory a new server can take, GB: the AVAILABLE memory the way macOS counts
+ * it — vm_stat free + inactive + speculative + purgeable (all reclaimed on
+ * demand), or `kern.memorystatus_level` x hw.memsize when that reads lower;
+ * minus the reserve. Counting only "free" skipped a 60 GB model on a 128 GB
+ * machine with ~90 GB reclaimable (incident 2026-11-18: gyro-l refused at
+ * boot, started fine by hand). Undefined when it cannot be measured.
  */
 export async function freeMemoryGb(
   reserveGb: number = DEFAULT_RESERVE_GB,
   deps: MemoryDeps = realMemoryDeps,
 ): Promise<number | undefined> {
-  const [out, total] = await Promise.all([deps.vmStat(), deps.memTotal()]);
+  const [out, total, level] = await Promise.all([deps.vmStat(), deps.memTotal(), deps.pressureLevel()]);
   if (!out || total === undefined) return undefined;
   const vm = parseVmStat(out, total);
   if (!vm) return undefined;
-  const reclaimable = total - vm.used;
-  return Math.max(0, reclaimable / GB - reserveGb);
+  // the system's own pressure figure counts what a fresh allocation may really take (purgeable and speculative included), so take the lower of the two
+  const available = level !== undefined ? Math.min(vm.available, (level / 100) * total) : vm.available;
+  return Math.max(0, available / GB - reserveGb);
 }
 
 /** Size of a model directory (or file) in GB, 0 when it does not exist. */

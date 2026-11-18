@@ -6,7 +6,11 @@
  * running, nothing ever started it — no launchd job exists for it, and the
  * "idle loads on first request" path never fires because the router does not
  * route to a provider that is down. The routing hint read "local: none
- * running" and balanced mode sent every new worker to the cloud. `pai models
+ * running" and balanced mode sent every new worker to the cloud. The memory
+ * guard also refused gyro-l at boot ("needs ~60 GB, free 25 GB") while only
+ * ~24 GB was in use: it counted vm_stat FREE pages alone; available memory is
+ * free + inactive + speculative + purgeable (see workers/local-memory.ts).
+ * `pai models
  * start gyro-l` brought it up at once, so this runs exactly that path from
  * the daemon: on daemon start and afterwards every tick, an autostart runtime
  * that is not up is started through the same code path as `pai models start`
@@ -15,13 +19,22 @@
  *
  * The guards, in order per runtime:
  *   - a frozen machine (`pai freeze`) starts nothing at all;
- *   - free memory first: below the provider's `memoryGb` from workers.yaml
- *     `local_tiers` the start is skipped with one clear log line and ONE
- *     operator alert (a skip is not a failure: no backoff, retried next tick);
+ *   - up first: the runtime's readiness answers → nothing at all (2026-11-18
+ *     13:46: gyro-l was already up and still got a skip-memory line, an alert
+ *     and a failed start — the probe must be the FIRST word per runtime);
+ *   - available memory next: below the provider's `memoryGb` from workers.yaml
+ *     `local_tiers` the start is skipped with one clear log line; the operator
+ *     alert fires only after a real failed start (see below), never for a skip
+ *     alone (a skip is not a failure: no backoff, retried next tick);
  *   - failures back off every AUTOSTART_RETRY_MS (10 min) and stop after
  *     AUTOSTART_MAX_FAILURES (3) until the next daemon start.
  * A runtime that dies again later is restarted with the same backoff; its
  * failure count carries over, so a crash loop gives up too.
+ * Two answers read success, not failure: `ok`, and an "already running"/
+ * "already starting" refusal from the start path (the runtime IS up — 13:46:
+ * `ollama serve` refused with "ollama is already running" and burned a failure
+ * attempt). One operator alert goes out after the FIRST real failed start,
+ * then at most once more per give-up; a memory skip alone never alerts.
  */
 
 import { readWorkersSection } from "../workers/config.js";
@@ -83,7 +96,8 @@ export interface AutostartRuntimeState {
   attempts: number;
   lastAttempt: number;
   gaveUp: boolean;
-  memoryAlerted: boolean;
+  /** An operator alert went out for this runtime's failures (first failure, and once more at give-up). */
+  alerted: boolean;
 }
 
 /** The autostart state of every configured runtime, including the ones that never needed a pass (up). */
@@ -104,7 +118,7 @@ export interface AutostartDeps {
   isUp: (runtime: string) => Promise<boolean>;
   /** True while the machine is frozen (`pai freeze`): nothing starts. */
   frozen: () => boolean;
-  /** Free memory after the reserve, GB; undefined = unmeasurable (a short-memory skip cannot be made). */
+  /** Available memory (reclaimable counted) after the reserve, GB; undefined = unmeasurable (a short-memory skip cannot be made). */
   freeGb: () => Promise<number | undefined>;
   /** The start through `pai models start`'s own path; resolves when ready or failed. */
   start: (runtime: string) => Promise<{ ok: boolean; message: string }>;
@@ -115,17 +129,23 @@ export interface AutostartDeps {
   now: () => number;
 }
 
+/** The start path refused because the runtime is already there: that IS success, not a failure attempt. */
+export const isAlreadyUp = (message: string): boolean => /already (running|starting)/i.test(message);
+
+const fmtGb = (n: number): number => Math.round(n * 10) / 10;
+
 /** One tick over the autostart runtimes; mutates `states` (the daemon's per-runtime bookkeeping). */
 export async function runtimeAutostartTick(cfg: AutostartConfig, states: AutostartStates, d: AutostartDeps): Promise<AutostartAction[]> {
   const actions: AutostartAction[] = [];
   if (!cfg.enabled) return actions;
   // a frozen machine starts nothing — not even the probes
   if (d.frozen()) return actions;
-  let free: number | undefined;
+  let avail: number | undefined;
   for (const [runtime, cmd] of Object.entries(cfg.runtimes)) {
     if (!cmd.start) continue;
-    const st = states.get(runtime) ?? { attempts: 0, lastAttempt: -Infinity, gaveUp: false, memoryAlerted: false };
+    const st = states.get(runtime) ?? { attempts: 0, lastAttempt: -Infinity, gaveUp: false, alerted: false };
     states.set(runtime, st);
+    // the readiness probe FIRST: an up runtime gets no memory check, no start and no alert (13:46: gyro-l answered 200 on its ready URL and was still skipped + alerted)
     let up = false;
     try {
       up = await d.isUp(runtime);
@@ -136,24 +156,16 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
       // back up: a runtime that came up on its own resets its failure count
       st.attempts = 0;
       st.gaveUp = false;
-      st.memoryAlerted = false;
+      st.alerted = false;
       continue;
     }
     if (st.gaveUp) continue;
     const needGb = cfg.memoryGb[runtime] ?? 0;
-    if (needGb > 0 && free === undefined) free = await d.freeGb();
-    if (free !== undefined && free < needGb) {
-      // not enough memory: skip, alert once, and keep trying on later ticks (a skip is not a failure)
-      actions.push({ kind: "skip-memory", runtime, needGb, freeGb: free });
-      d.log(`autostart ${runtime}: skipped, needs ~${needGb} GB, free ${Math.round(free * 10) / 10} GB`);
-      if (!st.memoryAlerted) {
-        st.memoryAlerted = true;
-        try {
-          await d.alert(`PAI autostart: local model ${runtime} is down and needs ~${needGb} GB, only ${Math.round(free * 10) / 10} GB free — not started (retried each tick until memory frees).`);
-        } catch {
-          /* the alert is best effort; the log line stands */
-        }
-      }
+    if (needGb > 0 && avail === undefined) avail = await d.freeGb();
+    if (avail !== undefined && avail < needGb) {
+      // not enough memory: skip and keep trying on later ticks — a skip is not a failure, and it never alerts by itself
+      actions.push({ kind: "skip-memory", runtime, needGb, freeGb: avail });
+      d.log(`autostart ${runtime}: skipped, needs ~${needGb} GB, available ${fmtGb(avail)} GB`);
       continue;
     }
     const since = d.now() - st.lastAttempt;
@@ -167,16 +179,34 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
     } catch (e) {
       r = { ok: false, message: e instanceof Error ? e.message : String(e) };
     }
-    d.ledger(AUTOSTART_EVENT, { runtime, result: r.ok ? "ok" : `error: ${r.message.slice(0, 200)}`, attempt: st.attempts });
-    if (r.ok) {
+    // "already running" from the start command means the runtime is up: success, not a failure attempt
+    const success = r.ok || isAlreadyUp(r.message);
+    d.ledger(AUTOSTART_EVENT, { runtime, result: success ? "ok" : `error: ${r.message.slice(0, 200)}`, attempt: st.attempts });
+    if (success) {
       d.log(`autostart ${runtime}: up (${r.message})`);
       st.attempts = 0;
       continue;
     }
     d.log(`autostart ${runtime}: start failed (attempt ${st.attempts}/${AUTOSTART_MAX_FAILURES}): ${r.message}`);
+    // the operator alert only after a REAL failed start: once at the first failure, once more at the give-up
+    if (!st.alerted) {
+      st.alerted = true;
+      try {
+        await d.alert(`PAI autostart: local model ${runtime} is down and its start failed (${r.message.slice(0, 200)}); needs ~${needGb} GB, available ${avail === undefined ? "?" : fmtGb(avail)} GB — retried every ${AUTOSTART_RETRY_MS / 60_000} min.`);
+      } catch {
+        /* the alert is best effort; the log line stands */
+      }
+    }
     if (st.attempts >= AUTOSTART_MAX_FAILURES) {
       st.gaveUp = true;
       d.log(`autostart ${runtime}: giving up until the next daemon start`);
+      if (st.alerted) {
+        try {
+          await d.alert(`PAI autostart: local model ${runtime} failed to start ${AUTOSTART_MAX_FAILURES} times — giving up until the next daemon start.`);
+        } catch {
+          /* best effort */
+        }
+      }
     }
   }
   return actions;
@@ -197,7 +227,8 @@ export function liveAutostartDeps(): AutostartDeps {
       return readyIsUrl(cmd.ready) ? liveRuntimeOpDeps.getUrl(cmd.ready) : (await liveRuntimeOpDeps.runCmd(cmd.ready)) === 0;
     },
     frozen: () => isFrozen() || deepfreezeHold(),
-    freeGb: () => freeMemoryGb(),
+    // no reserve here: the skip compares the measured AVAILABLE (reclaimable counted) against the tier's memoryGb as the brief demands
+    freeGb: () => freeMemoryGb(0),
     async start(runtime) {
       const { defaultDeps, runtimeStartStop } = await import("../router/cockpit-actions.js");
       return runtimeStartStop(runtime, "start", defaultDeps());
