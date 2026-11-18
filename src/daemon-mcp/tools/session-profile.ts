@@ -14,6 +14,8 @@ import {
   profilesPath,
   resolveWorkers,
   updateProfile,
+  escalationOff,
+  nextClockTime,
   type ProfilePatch,
   type ProfileTarget,
   type ResolveCtx,
@@ -50,6 +52,10 @@ export interface SessionProfileArgs {
   max_parallel?: number | null;
   /** Routing rows this session overrides: class -> ordered models ("gyro-m", "anthropic/sonnet"); a class set to null/[] clears its override, null clears all. */
   routes?: Record<string, string[] | null> | null;
+  /** "off": this session's workers are never moved to the cloud by the stall rule; "on" (default) turns it back on. */
+  escalate?: "on" | "off";
+  /** With escalate off: HH:MM (local, next occurrence) when the switch expires by itself. */
+  until?: string;
   /** With a chat change: send `/model <m>` into the running session now. */
   apply_now?: boolean;
 }
@@ -72,6 +78,7 @@ export async function describeProfile(name: string, profile: SessionProfile | nu
     `fallback: ${p.fallback?.length ? p.fallback.map(tgt).join(", ") : "none (global order)"}`,
     `parallel_min: ${p.parallel_min ?? "not set"}`,
     `max_parallel: ${p.max_parallel ?? "not set (parallel)"}`,
+    `escalate: ${escalationOff(p) ? `off${p.escalate_until ? ` until ${new Date(p.escalate_until).toLocaleString()}` : ""}` : "on"}`,
     `route overrides: ${p.routes && Object.keys(p.routes).length ? Object.entries(p.routes).map(([c, m]) => `${c}=${m.join(">")}`).join(", ") : "none (global table)"}`,
     `next worker spawn: ${single.description}`,
   ];
@@ -110,6 +117,12 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
     if ("fallback" in args) patch.fallback = args.fallback?.length ? args.fallback : null;
     if ("parallel_min" in args) patch.parallel_min = args.parallel_min ? args.parallel_min : null;
     if ("max_parallel" in args) patch.max_parallel = args.max_parallel ? args.max_parallel : null;
+    if (args.escalate !== undefined) {
+      if (args.escalate !== "on" && args.escalate !== "off") return fail('escalate takes "on" or "off"');
+      if (args.until && args.escalate === "on") return fail("until goes with escalate off");
+      patch.escalate = args.escalate === "off" ? "off" : null;
+      patch.escalate_until = args.escalate === "off" && args.until ? nextClockTime(args.until) : null;
+    } else if (args.until) return fail("until goes with escalate off");
     if ("routes" in args) {
       if (args.routes === null || args.routes === undefined) {
         clearSessionRoute(name, undefined, deps.path);
@@ -119,7 +132,7 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
         patch.route_notes = rows.route_notes;
       }
     }
-    if (!Object.keys(patch).length && !("routes" in args)) return fail("nothing to set: pass chat, workers, fallback, parallel_min, max_parallel and/or routes");
+    if (!Object.keys(patch).length && !("routes" in args)) return fail("nothing to set: pass chat, workers, fallback, parallel_min, max_parallel, escalate and/or routes");
     const profile = Object.keys(patch).length ? updateProfile(name, patch, deps.path) : getProfile(name, deps.path);
     const out = [await describeProfile(name, profile, deps)];
     if (args.chat) {

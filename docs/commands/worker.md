@@ -54,6 +54,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--where WHERE` | string | — | Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where) |
 | `--batch` | flag | — | This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min |
 | `--now` | flag | — | Go ahead of the runs waiting for a slot on the provider |
+| `--no-escalate` | flag | — | Never move this run (or its continuations) to the cloud by the stall / queued-too-long rule |
 | `--force-local` | flag | — | With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts) |
 | `--local NAME` | string | — | Run on the local model PAI resolves: the first running one in the class's routing tier order, else the workers.yaml `local:` preference when running (a `local:` that is not running is ignored), else the most recently used running model; --local NAME picks a specific running model |
 | `--local-ok` | flag | — | This run may go to a local provider under the prefer-cloud policy |

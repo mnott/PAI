@@ -209,6 +209,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       maxMinutes: num(o["max-minutes"]),
       deadline: str(o.deadline),
       noPool: o["no-pool"] === true ? true : undefined,
+      noEscalate: o["no-escalate"] === true ? true : undefined,
       browser: o["no-browser"] === true ? false : o.browser === true ? true : undefined,
       allowTests: o["allow-tests"] === true ? true : undefined,
       allowDbWrites: o["allow-db-writes"] === true ? true : undefined,
@@ -261,6 +262,8 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
   if (t.provider) target.providerFlag = t.provider;
+  // a run that asked for local (--where local, --force-local) is pinned: the stall rule never moves it to the cloud
+  if (plan.kind === "run" && (where === "local" || forceLocal)) plan.run.noEscalate = true;
   // --where a provider name is the operator's own words for where to run: it
   // reaches the engine as --provider too, so a --model that provider cannot
   // serve is refused there (pinProviderForModel), never silently dropped.
@@ -330,6 +333,7 @@ const runCommand: CommandDef = {
     { name: "where", type: "string", value: "WHERE", summary: "Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where)" },
     { name: "batch", type: "boolean", summary: "This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min" },
     { name: "now", type: "boolean", summary: "Go ahead of the runs waiting for a slot on the provider" },
+    { name: "no-escalate", type: "boolean", summary: "Never move this run (or its continuations) to the cloud by the stall / queued-too-long rule" },
     { name: "force-local", type: "boolean", summary: "With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts)" },
     { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "Run on the local model PAI resolves: the first running one in the class's routing tier order, else the workers.yaml `local:` preference when running (a `local:` that is not running is ignored), else the most recently used running model; --local NAME picks a specific running model" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },

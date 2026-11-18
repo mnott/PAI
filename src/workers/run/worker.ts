@@ -456,6 +456,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         emptyRetried: opts._emptyRetried ?? false,
         route,
         routeWhy,
+        noEscalate: opts.noEscalate,
         fallThroughOf: opts._fallThroughOf,
         escalatedFrom: opts._escalatedFrom,
         priorIds: opts._priorIds,
