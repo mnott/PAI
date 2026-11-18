@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
+import type { SchedSnapshot } from "../router/scheduler.js";
 import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig, QueuePriority };
@@ -29,7 +30,7 @@ export type { CapacityConfig, QueuePriority };
  * The fallback used when the config cannot be read; the policy values live in
  * the shipped defaults file (defaults/workers.yaml, `workers.capacity`).
  */
-export const DEFAULT_CAPACITY: CapacityConfig = { enabled: true, localDefaultCap: 1, uncappedQueueCap: 3, maxTotalWaitMs: 2 * 3_600_000, heartbeatMs: 60_000, agingMs: 15 * 60_000 };
+export const DEFAULT_CAPACITY: CapacityConfig = { enabled: true, localDefaultCap: 1, uncappedQueueCap: 3, maxTotalWaitMs: 2 * 3_600_000, heartbeatMs: 60_000, agingMs: 15 * 60_000, idleAdmitMs: 30_000, idleExtraMax: 3 };
 
 /** A config object written before these keys existed (tests, old files): the
  *  shipped defaults fill each missing one. */
@@ -608,6 +609,10 @@ export interface CapacityOpts {
   onWait?: (info: CapacityInfo | null) => void;
   /** Called at the start and after every poll with the pane's queue fields; null once the slot is granted (the pane's queue file). */
   onQueued?: (q: QueuedFile | null) => void;
+  /** Engine-idle admission: true while the local engine has had nothing in flight or queued for `config.idleAdmitMs` (engineIdleFor). Unset = never admits above the cap. */
+  engineIdle?: () => boolean;
+  /** A started job coming back from a long tool run: its ticket goes to the head of the queue (ahead of every not-yet-started job; it holds context and a worktree) without preempting anyone. */
+  returning?: boolean;
   /** True once the run was handed to another process (a reroute's follower): the wait ends without a grant and never returns. */
   aborted?: () => boolean;
   now?: () => number;
@@ -619,6 +624,16 @@ export interface CapacityOpts {
 export interface CapacityResult {
   waitedSec: number;
   cap: number;
+}
+
+/**
+ * The local engine is idle: the router's scheduler snapshot shows nothing in flight and nothing queued at any engine, and no
+ * request ended in the last `ms`. No snapshot (router unreachable) = unknown = not idle.
+ */
+export function engineIdleFor(snap: SchedSnapshot | null, now: number, ms: number): boolean {
+  if (!snap) return false;
+  if (Object.values(snap.engines).some((e) => e.inflight || Object.keys(e.queued).length)) return false;
+  return !Object.values(snap.workers).some((w) => w.activeSince > 0 || w.waitingSince > 0 || now - w.lastEnd < ms);
 }
 
 /** Resolves once fewer than `cap` other runs hold a slot on the provider and this run heads the queue; null when it never had to wait. */
@@ -653,7 +668,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const ticketText = (front: boolean): string => `${self.pid ?? process.pid}${front ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}${myBuild ? ` b:${myBuild}` : ""}`;
   // a run the preemption sweep parked here ("front", pause closed, no slot): this poll takes the wait over, its place at the head kept
   const parked = existsSync(entry) && o.priority !== "front";
-  writeTicket(entry, ticketText(o.priority === "front" || parked || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
+  writeTicket(entry, ticketText(o.priority === "front" || o.returning || parked || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
 
   let madeUrgent = false;
   // since when a slot has been free while a waiter ahead of us left it unclaimed
@@ -677,11 +692,21 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       (s) => s.id !== self.id && holds(s) && holdsSlot(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
-    return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length, head: queue[0] };
+    // started jobs (lent ones included: they hold memory and a worktree) and when the newest one started
+    const startedJobs = loaded.filter((s) => s.id !== self.id && holds(s) && s.state === "running" && !pausedFree(s) && isLive(s, owns));
+    const lastStart = Math.max(0, ...startedJobs.map((s) => Date.parse((s.started ?? "").replace(" ", "T")) || 0));
+    return { started: startedJobs.length, lastStart, holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length, head: queue[0] };
   };
   // Admission: the head takes a free slot at once; a later waiter only once the slot stayed free past the
   // grace (one grace per place ahead of it), so a stuck head (a waiter left over from an older build) never blocks the rest.
+  // Engine-idle admission: at the cap, the head waiter still goes when the model has nothing to do (the holders sit in tools or idle), up to cap + idleExtraMax started jobs and one per idle window.
+  const idleExtra = (): boolean =>
+    held === undefined && c.holding >= cap && c.position === 1 && !!o.engineIdle?.() && c.started < cap + cfg.idleExtraMax && now() - c.lastStart >= cfg.idleAdmitMs;
   const admitted = (): boolean => {
+    if (held === undefined && idleExtra()) {
+      o.log?.(`engine idle: admitted 1 extra on ${label} (${c.started + 1} started, cap ${cap})`);
+      return true;
+    }
     if (held !== undefined || c.holding >= cap) {
       freeSince = undefined;
       return false;
@@ -703,7 +728,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     try { o.preempt?.(); } catch { /* preemption is best effort: the run then queues as before */ }
   }
   let c = check();
-  if (c.position === 1 && c.holding < cap && held === undefined) {
+  if (c.position === 1 && held === undefined && (c.holding < cap || idleExtra())) {
     rmSync(entry, { force: true });
     return null;
   }
@@ -784,6 +809,11 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   queued(null);
   o.log?.(`waited ${waitedSec}s for a ${label} slot`);
   return { waitedSec, cap };
+}
+
+/** A started, running job holding a queue ticket: it lent its slot during a long tool run and waits to get it back. */
+export function waitsForSlotBack(logDir: string, s: Pick<WorkerStatus, "id" | "provider" | "state" | "paused" | "restarting">): boolean {
+  return !!logDir && s.state === "running" && !s.paused && !s.restarting && existsSync(join(queueDir(logDir, s.provider), s.id));
 }
 
 /** "waiting for a slot (position n of m)" for a worker that is paused AND holds a queue ticket (a resumed waiter); undefined otherwise. */

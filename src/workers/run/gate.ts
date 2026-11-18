@@ -39,6 +39,7 @@ import { committedFallThrough, fallThroughReason } from "../policy.js";
 import {
   admitCap,
   capacityGate,
+  engineIdleFor,
   capacityOf,
   queuedText,
   sessionScopeKey,
@@ -46,6 +47,7 @@ import {
   type QueuedFile,
 } from "../capacity.js";
 import { staggerGate } from "../stagger.js";
+import { readSchedFile } from "../../router/scheduler.js";
 import { detectSessionName } from "../session-name.js";
 import { getProfile, isBatchEnv, resolveWorkers, type ResolveCtx } from "../session-profile.js";
 import { currentSessionName } from "../session-profile-store.js";
@@ -732,6 +734,7 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
       ? {
           preempt: () => { preemptLocal(logDir, target.providerName, wid); },
           urgent: () => loadStatus(logDir, wid)?.now === true,
+          engineIdle: () => engineIdleFor(readSchedFile(logDir), Date.now(), capacityOf(config.capacity).idleAdmitMs),
         }
       : {}),
     log: (line) => {

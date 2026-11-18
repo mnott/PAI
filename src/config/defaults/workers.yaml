@@ -130,6 +130,11 @@ workers:
     # A ticket waiting longer than this jumps ahead of newer tickets of any
     # session (milliseconds).
     agingMs: 900000
+    # The local engine is idle after this long with nothing in flight and nothing
+    # queued at the router (milliseconds): one waiting job is then admitted even
+    # at the cap, up to cap + idleExtraMax started jobs.
+    idleAdmitMs: 30000
+    idleExtraMax: 3
   # Queue admission priority. When a provider is full, queued runs are admitted
   # high before normal before low (oldest first within a priority, sessions
   # taking turns); running workers are never preempted. A run's priority is
