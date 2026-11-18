@@ -51,6 +51,37 @@ describe("cockpit page script", () => {
     expect(html).toContain('title="a very long task');
     expect(html).toContain("aria-label=");
   });
+  it("queue view filters by the chosen sessions and sorts by session then position", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
+    const mk = (id: string, session: string, state = "waiting") => ({ slot: 1, kind: "job", id, state, stateText: "", priority: "normal", session, model: "gyro-l", local: true, task: id, seconds: 5, activity: "", now: "", detail: "", actions: [] });
+    (ctx as Record<string, unknown>).__rows = [mk("a1", "zeta"), mk("b1", "alpha"), mk("a2", "zeta"), mk("b2", "alpha"), mk("c1", "mid")];
+    const ids = (e: string) => (vm.runInContext(`(${e}).map(function(r){return r.id}).join(",")`, ctx) as string);
+    expect(ids("wkView(__rows)")).toBe("a1,b1,a2,b2,c1");
+    vm.runInContext('WK_FILTERS=["alpha","mid"]', ctx);
+    expect(ids("wkView(__rows)")).toBe("b1,b2,c1");
+    expect(vm.runInContext("wkBar({table:__rows})", ctx)).toContain("showing 3 of 5");
+    vm.runInContext('WK_FILTERS=[];WK_SORT={col:"session",dir:"asc"}', ctx);
+    expect(ids("wkView(__rows)")).toBe("b1,b2,c1,a1,a2");
+    const html = vm.runInContext("wkQTable(wkView(__rows))", ctx) as string;
+    expect(html).toContain('<tr class="wq-g"><td colspan="7">alpha</td></tr>');
+    expect(html).toContain("▲");
+    vm.runInContext("WK_SORT=null", ctx);
+    expect(vm.runInContext("wkQTable(wkView(__rows))", ctx)).toContain(">waiting</td>");
+  });
+  it("model is a coloured chip and destructive actions confirm inline", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({ setTimeout, clearTimeout });
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
+    expect(vm.runInContext('wkModelHue({local:false,model:"cloud: opus"})!==wkModelHue({local:false,model:"cloud: sonnet"})', ctx)).toBe(true);
+    expect(vm.runInContext('wkArm("x:to-cloud","to-cloud",function(){})', ctx)).toBe(false);
+    expect(vm.runInContext('wkArm("x:to-cloud","to-cloud",function(){})', ctx)).toBe(true);
+    expect(vm.runInContext('wkArm("x:pause","pause",function(){})', ctx)).toBe(true);
+    vm.runInContext("clearTimeout(WK_CT)", ctx);
+  });
   it("queue table colgroup leaves the task column the free width", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");

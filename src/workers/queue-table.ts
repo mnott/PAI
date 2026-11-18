@@ -195,6 +195,15 @@ export function rowGroup(r: Pick<TableRow, "state">): number {
 }
 export const GROUP_LABEL = ["running", "waiting", "paused / frozen"] as const;
 
+/** Rows of the chosen sessions only (none chosen = all), keeping their order. */
+export function filterBySession<T extends Pick<TableRow, "session">>(rows: T[], sessions: string[]): T[] {
+  return sessions.length ? rows.filter((r) => sessions.includes(r.session)) : rows;
+}
+/** Sorted by session, then by the order the rows came in (admission order); a stable sort. */
+export function sortBySession<T extends Pick<TableRow, "session">>(rows: T[]): T[] {
+  return rows.map((r, i) => ({ r, i })).sort((a, b) => (a.r.session < b.r.session ? -1 : a.r.session > b.r.session ? 1 : a.i - b.i)).map((o) => o.r);
+}
+
 /** Badge text of a row: "running", "waiting #2", "paused", "frozen", "deep-frozen". */
 export function stateBadge(r: Pick<TableRow, "state" | "slot">): string {
   return r.state === "waiting" && typeof r.slot === "number" ? `waiting #${r.slot}` : r.state;

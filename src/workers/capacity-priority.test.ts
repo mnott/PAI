@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { capacityGate, queueRows, writeTicket, type QueueRow } from "./capacity.js";
 import { localIdleLine } from "./local-idle.js";
-import { buildQueueTable, plainWording, renderQueueTable, type TableInput } from "./queue-table.js";
+import { filterBySession, sortBySession, buildQueueTable, plainWording, renderQueueTable, type TableInput } from "./queue-table.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
 import { applyPriority } from "./preempt.js";
@@ -113,6 +113,18 @@ describe("queue header and order", () => {
     const text = renderQueueTable(rows);
     expect(text[0]).toMatch(/^state\s+session\s+task\s+model\s+prio\s+time\s+id$/);
     expect(text[2]).toContain("[waiting #1]");
+  });
+});
+
+describe("queue session filter and sort", () => {
+  const rows = [{ id: "1", session: "b" }, { id: "2", session: "a" }, { id: "3", session: "b" }, { id: "4", session: "a" }];
+  it("filters to the chosen sessions (CLI --session)", () => {
+    expect(filterBySession(rows, ["a"]).map((r) => r.id)).toEqual(["2", "4"]);
+    expect(filterBySession(rows, ["a", "b"])).toHaveLength(4);
+    expect(filterBySession(rows, [])).toHaveLength(4);
+  });
+  it("sorts by session, then position", () => {
+    expect(sortBySession(rows).map((r) => r.id)).toEqual(["2", "4", "1", "3"]);
   });
 });
 

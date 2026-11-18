@@ -35,7 +35,7 @@ import { resumeWorker } from "../../workers/preempt.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap } from "../../workers/capacity.js";
 import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
-import { renderQueueTable } from "../../workers/queue-table.js";
+import { filterBySession, renderQueueTable } from "../../workers/queue-table.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
 import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile } from "../../workers/reroute.js";
@@ -1359,7 +1359,8 @@ const queueCommand: CommandDef = {
     { name: "VERB", summary: "next (alias front), up or down (default: list the queue)" },
     { name: "ID", summary: "Worker id to pull forward (with next/up)" },
   ],
-  examples: ["pai worker queue", "pai worker queue down 20261019-142851-84910", "pai worker queue next 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
+  options: [{ name: "session", type: "string", value: "NAME", repeatable: true, summary: "Show only the jobs of this session (repeatable); the default is every session" }],
+  examples: ["pai worker queue", "pai worker queue --session pai --session jobs", "pai worker queue down 20261019-142851-84910", "pai worker queue next 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
   seeAlso: ["pai worker ps", "pai worker kill"],
   run: (ctx) =>
     guard("pai worker queue", async () => {
@@ -1368,7 +1369,8 @@ const queueCommand: CommandDef = {
       const dir = logDir();
       const { workers } = readWorkersSection();
       if (verb === "list") {
-        for (const l of renderQueueTable(readQueueTable(dir, workers))) out(l);
+        const sessions = (ctx.multi?.session ?? []) as string[];
+        for (const l of renderQueueTable(filterBySession(readQueueTable(dir, workers), sessions))) out(l);
         for (const l of schedulerLines(schedulerView(dir, workers))) out(l);
         return;
       }

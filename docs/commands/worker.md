@@ -746,7 +746,7 @@ See also: `pai worker ps`
 Show or reorder the workers waiting for a provider slot
 
 ```
-pai worker queue [VERB] [ID]
+pai worker queue [VERB] [ID] [options]
 ```
 
 No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). No arguments prints the one table of the machine: running jobs first, then the waiting ones 1..n in admission order, with state, priority, session, model, task and time. `queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up, `queue down ID` one place back. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.
@@ -756,8 +756,13 @@ No arguments lists every worker parked behind a provider's concurrency cap, per 
 | `VERB` | no | next (alias front), up or down (default: list the queue) |
 | `ID` | no | Worker id to pull forward (with next/up) |
 
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--session NAME` | string | — | Show only the jobs of this session (repeatable); the default is every session |
+
 ```sh
 pai worker queue
+pai worker queue --session pai --session jobs
 pai worker queue down 20261019-142851-84910
 pai worker queue next 20261019-142851-84910
 pai worker queue up 20261019-142851-84910
