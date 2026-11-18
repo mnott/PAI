@@ -157,7 +157,8 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
   let provider: string;
   let label: string;
   let routed = "";
-  const rr = where === "local" ? reroute(args, deps) : undefined;
+  // an explicit --where local is never rerouted to the cloud by the classifier: local is what was asked for
+  const rr = undefined as { reason: string } | undefined;
   if (rr) {
     provider = cloudProvider(cfg, deps.env ?? process.env, deps.logDir);
     label = "cloud: ";
