@@ -423,6 +423,8 @@ const SED_ADDR_SUBST = String.raw`(?:\$\([^)]*\)|` + "`[^`]*`" + `)`;
 const GNU_SED_RANGE = new RegExp(String.raw`^(?:${SED_ADDR}|${SED_ADDR_SUBST}),\s*\+\d+\s*[pned]`);
 /** The same range where BOTH addresses are plain line numbers (`120,+40p`, `5, +3 p`): the form a rewrite can make BSD-valid. */
 const GNU_SED_RANGE_NUMERIC = /^(\d+),\s*\+(\d+)\s*([pn])/;
+/** The same range whose START is a computed substitution (`$(grep …),+20p`, `` `grep …`,+8p ``) and whose command prints: rewritten to `X,$p` + `| head -n N+1`. */
+const GNU_SED_RANGE_SUBST = /^(?:(?:\$\([^)]*\)|`[^`]*`)),\s*\+(\d+)\s*(p)$/;
 
 /**
  * True when a sed script starts with a GNU `,+N` address range (`18,+8p`, `$(…),+8p`).
@@ -449,33 +451,91 @@ export function rewriteGnuSedRange(script: string): string | null {
 }
 
 /** One sed script word as the shell sees it: a quoted word (single or double), else an unquoted run without spaces. */
-const SED_SCRIPT_WORD = /(["'])((?:\\.|(?!\1).)*)\1|\S+/g;
+// a quoted word ends at its LAST run of the quote char (`"$(grep 'x' f | cut -d: -f1),+8p"`): a lazy closer would
+// stop at the nested `'` and split the word mid-substitution. The alternation runs left to right, so this branch
+// claims quoted words before \S+ can; an unterminated quote falls through to \S+ (stays denied).
+const SED_SCRIPT_WORD = /(["'])((?:(?!\1)[^]|(?<=\\)\1)*)\1(?!\1)|\S+/g;
+
+/** The same word split, restricted to a segment's own text: words outside it must not be rewritten. */
+function sedScriptWordsIn(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (!/\s/.test(text[i])) {
+      const m = /^(?:(["'])((?:(?!\1)[^]|(?<=\\)\1)*)\1(?!\1)|\S+)/.exec(text.slice(i));
+      if (m) out.push(m[1] ? m[2] : m[0]);
+      i += m ? m[0].length : 1;
+    } else i++;
+  }
+  return out;
+}
+
+/** The result of a sed rewrite: the new command text plus, for the computed-start form, the line cap the caller appends as `| head -n N+1`. */
+export interface SedRewrite {
+  text: string;
+  /** Set only by the computed-start (`$(…),+Np`) rewrite: keep the first N+1 printed lines. */
+  headN?: number;
+}
+
+/** The length-preserving BSD form of a computed-start range: `$(…),+20p` → `$(…),  $p` (spaces are legal in a sed address; the caller appends `| head -n N+1`). Null when it does not fit exactly or the start is not a substitution. */
+function rewriteGnuSedRangeHeadScript(script: string): { r: string; n: number } | null {
+  const m = GNU_SED_RANGE_SUBST.exec(script);
+  if (!m) return null;
+  const idx = script.lastIndexOf(",");
+  let pad = "";
+  while ((`${script.slice(0, idx)},${pad}$p`).length < script.length) pad += " ";
+  const r = `${script.slice(0, idx)},${pad}$p`;
+  return r.length === script.length ? { r, n: Number(m[1]) } : null;
+}
 
 /**
- * A command's GNU sed ranges rewritten to BSD `X,Y` form, at the positions parseCommand read as this
- * sed call's script words (`sedOperands(args)`): each such word that is a numeric `,+N` print range
- * becomes its rewrite, re-quoted as it was (parseCommand strips quotes, so the check runs on parsed
- * words but the rewrite must edit the raw text). Null when no script word carries a rewritable range
- * — including a command whose GNU-only ranges are not numeric or mutate (`d`), which keeps the deny.
+ * A command's GNU sed ranges rewritten to BSD form, at the positions parseCommand read as this
+ * sed call's script words (`sedOperands(args)`): each such word that is a `,+N` print range becomes
+ * its rewrite, re-quoted as it was (parseCommand strips quotes, so the check runs on parsed words
+ * but the rewrite must edit the raw text). Two forms: a numeric start `X,+Np` → `X,X+Np`; a computed
+ * start `$(…),+Np` → the length-preserving `$(…),  $p` with `headN` set — the caller appends
+ * `| head -n N+1`, which prints the same lines as GNU sed would. Null when no script word carries a
+ * rewritable range — including a command whose GNU-only ranges are not numeric or mutate (`d`),
+ * which keeps the deny.
  */
-export function gnuSedRewrite(command: string, scripts: string[]): string | null {
+export function gnuSedRewrite(command: string, scripts: string[]): SedRewrite | null {
   const want = new Set<string>();
+  const headWant = new Map<string, number>(); // original script word -> N of its `,+N`
   for (const s of scripts) {
-    const w = hasGnuSedRange(s) ? rewriteGnuSedRange(s) : null;
+    if (!hasGnuSedRange(s)) continue;
+    const w = rewriteGnuSedRange(s);
     if (w !== null) want.add(w);
+    else {
+      const h = rewriteGnuSedRangeHeadScript(s);
+      if (h !== null) headWant.set(s, h.n);
+    }
   }
-  if (!want.size) return null;
+  if (!want.size && !headWant.size) return null;
   let changed = false;
+  let headN = -1;
   const out = command.replace(SED_SCRIPT_WORD, (whole, q: string | undefined, inner?: string) => {
     // unquoted scripts stay denied; a double-quoted script must survive re-quoting unchanged (no backtick or `"`).
     // whole.slice(1,-1) is the word's own text: /"/ on the quoted form always matches its own delimiters.
     if (!q || (q === '"' && /[`"]/.test(whole.slice(1, -1)))) return whole;
     const r = rewriteGnuSedRange(inner as string);
-    if (r === null || !want.has(r)) return whole;
-    changed = true;
-    return q === "'" ? `'${r.replace(/'/g, `'\\''`)}'` : `"${r.replace(/[$\\]/g, "\\$&")}"`;
+    if (r !== null && want.has(r)) {
+      changed = true;
+      return q === "'" ? `'${r.replace(/'/g, `'\\''`)}'` : `"${r.replace(/[$\\]/g, "\\$&")}"`;
+    }
+    // the head form matches the ORIGINAL script word (the rewrite changes it)
+    const n = headWant.get(inner as string);
+    if (n !== undefined) {
+      changed = true;
+      headN = Math.max(headN, n);
+      // the same lines: `X,$p` prints from X to the end and the appended `| head -n N+1` caps it at N+1.
+      // The padding keeps the word's length so the guard's splice window stays aligned; `$` is escaped in a double-quoted script so the shell does not expand it.
+      const h = rewriteGnuSedRangeHeadScript(inner as string)!.r;
+      return q === "'" ? `'${h.replace(/'/g, `'\\''`)}'` : `"${h.replace(/[$\\]/g, "\\$&")}"`;
+    }
+    return whole;
   });
-  return changed ? out : null;
+  if (!changed) return null;
+  return headN >= 0 ? { text: out, headN } : { text: out };
 }
 
 /** The sed args after the program options that take a separate value (`-e 'script'`, `-f file`). */
@@ -557,17 +617,21 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: s
       const rawSeg = st.raw.slice(seg.start, seg.end);
       const rewritten = args.length ? gnuSedRewrite(rawSeg, sedOperands(args)) : null;
       if (!rewritten || next !== undefined) return deny(GNU_SED_RANGE_REASON);
-      // splice the rewritten segment back into the heredoc-blanked text (blanking preserves offsets, so these slice the original command too).
-      // parseCommand starts a quoted first word one char late (the opening quote is swallowed before the offset is taken): realign the
-      // window from the right end — the rewrite never touches anything after the last script word, so `end` is exact.
-      const spliced = st.raw.slice(0, seg.start) + rewritten + st.raw.slice(seg.end);
+      // a computed start `$(…),+Np` becomes the BSD `X,$p` (same lines to the end of the file): the cap goes on as
+      // `| head -n N+1`, appended right after this segment so a following pipeline (`… | grep x`) or command (`; next`) stays intact.
+      const tailCmd = rewritten.headN !== undefined ? ` | head -n ${rewritten.headN + 1}` : "";
+      // splice the rewritten segment (plus the cap for a computed start) back into the heredoc-blanked text
+      // (blanking preserves offsets, so these slice the original command too). The script rewrite keeps the word's
+      // length, so `end` is exact: the window check from the right end still aligns; only where the cap was appended
+      // does the spliced text run past `end`.
+      const spliced = st.raw.slice(0, seg.start) + rewritten.text + tailCmd + st.raw.slice(seg.end);
       const tail = st.raw.slice(seg.end);
-      const winStart = Math.max(0, seg.end - rewritten.length - 2);
-      if (spliced.slice(winStart, seg.end) !== rewritten || spliced.slice(seg.end) !== tail) return deny(GNU_SED_RANGE_REASON);
+      const winStart = Math.max(0, seg.end - rewritten.text.length - 2);
+      if (spliced.slice(winStart, seg.end) !== rewritten.text || spliced.slice(seg.end + tailCmd.length) !== tail) return deny(GNU_SED_RANGE_REASON);
       // nothing else in the command may carry a GNU range the splice left untouched
       if (parseCommand(spliced).some((s) => { const w = stripPrefix(s.words); return w[0] === "sed" && process.platform === "darwin" && sedOperands(w.slice(1)).some(hasGnuSedRange); })) return deny(GNU_SED_RANGE_REASON);
       st.rewrite = spliced;
-      return { decision: "allow", context: `rewrote sed X,+N to X,Y (BSD sed): ${spliced}` };
+      return { decision: "allow", context: `rewrote sed X,+N to BSD form: ${spliced}` };
     }
     if (next !== undefined && next !== "" && (isFlag(next) || /^[sy]$/.test(next) || /^[a-zA-Z][/|#,]/.test(next) || /^[\d$/\\]/.test(next) || /[;\s/{]/.test(next))) return deny(SED_INPLACE_REASON);
   }
@@ -777,7 +841,7 @@ function decideCommand(command: string, ctx: WorkerGuardContext, detached = fals
     const redone = decideCommand(st.rewrite, ctx, detached);
     if (redone.decision !== "allow") return redone;
     // one note only, on the decision that carries the new command: a nested rewrite's note already names the final command
-    return { decision: "allow", updatedInput: { command: st.rewrite }, ...(redone.context ? {} : { context: `rewrote sed X,+N to X,Y (BSD sed): ${st.rewrite}` }) };
+    return { decision: "allow", updatedInput: { command: st.rewrite }, ...(redone.context ? {} : { context: `rewrote sed X,+N to BSD form: ${st.rewrite}` }) };
   }
   return ALLOW;
 }
