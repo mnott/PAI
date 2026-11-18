@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildQueueTable, stateBadge, type TableInput } from "./queue-table.js";
+import { buildQueueTable, cloudWhy, stateBadge, type TableInput } from "./queue-table.js";
 import { paneStateWord } from "./pane-bar.js";
 import { paneQueueStatusRow } from "./render.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
@@ -85,5 +85,31 @@ describe("paneStateWord over the real files: same word, updates next tick", () =
 
   it("no row for the id reads null (the plain row, no word)", () => {
     expect(word("nope")).toBeNull();
+  });
+});
+
+describe("queue level and why a job runs on the cloud", () => {
+  it("L1 for orchestrate/plan, L2 otherwise; a child follows its L1; cloud reason from the recorded fields", () => {
+    const rows = buildQueueTable(
+      qin(
+        [
+          qst("a-1", { className: "implement", parent: "o-1", started: "2026-11-18 11:51:00", provider: "anthropic", model: "claude-sonnet-5-5", route: { policy: "auto", reason: "rerouted (escalation: no edit or commit for 10m)", local: false } }),
+          qst("o-1", { className: "orchestrate", started: "2026-11-18 11:52:00", provider: "anthropic", model: "claude-opus-5-5", routeWhy: "class: orchestrate" }),
+          qst("b-1", { className: "implement", parent: "o-1", started: "2026-11-18 11:53:00", provider: "anthropic", model: "claude-sonnet-5-5", route: { policy: "auto", reason: "rerouted (cli)", local: false } }),
+          qst("c-1", { started: "2026-11-18 11:54:00" }),
+        ],
+        [],
+        { isLocal: (p) => p === "lm" },
+      ),
+    );
+    expect(rows.map((r) => r.id)).toEqual(["o-1", "a-1", "b-1", "c-1"]);
+    const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(by["o-1"]!.level).toBe(1);
+    expect(by["a-1"]!.level).toBe(2);
+    expect(by["o-1"]!.cloudWhy).toBe("class orchestrate runs on the cloud");
+    expect(by["a-1"]!.cloudWhy).toBe("moved: no edit or commit for 10 min on the local model");
+    expect(by["b-1"]!.cloudWhy).toBe("moved by operator");
+    expect(by["c-1"]!.cloudWhy).toBeUndefined();
+    expect(cloudWhy({ routeWhy: "class: x" } as WorkerStatus, false)).toBe("class x runs on the cloud");
   });
 });
