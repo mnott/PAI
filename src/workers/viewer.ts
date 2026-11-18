@@ -67,6 +67,7 @@ import {
   renderEvent,
   renderStatusLine,
   renderTable,
+  paneQueueStatusRow,
   tickerText,
   tickerTool,
   type Gutter,
@@ -80,6 +81,8 @@ import { scanLine } from "./scan.js";
 import { isPollCommand } from "../hooks/ts/lib/wait-poll.js";
 import { psTable } from "./ps-table.js";
 import { endLabel } from "./endreason.js";
+import { paneStateWord } from "./pane-bar.js";
+import { readWorkersSection, type WorkersConfig } from "./config.js";
 
 /** Whether a Bash command ends in a `pai worker wait*` poll. */
 const isWaitPoll = (cmd: string): boolean => isPollCommand(cmd);
@@ -711,6 +714,31 @@ export async function followWorkers(
     return w ? waitingLine(w) : null;
   };
   let lastLiveness = "";
+  // the pane's state word: the cockpit queue table's own, re-read every tick (status file +
+  // queue tickets), so a job admitted or resumed shows the new word within one tick — and the
+  // two transition lines the pane owes for it ("waiting for a slot" once, "got a slot, running" once)
+  let stateWord: string | null = null;
+  let workersCfg: WorkersConfig | undefined | null = undefined; // null: config unreadable, stop trying
+  let sawQueued = false;
+  let slotLineShown = false;
+  let gotSlotShown = false;
+  const refreshStateWord = (): void => {
+    if (target === null || !paneStatus) return;
+    if (workersCfg === undefined) {
+      try {
+        workersCfg = readWorkersSection().workers;
+      } catch {
+        workersCfg = null;
+      }
+    }
+    const w = workersCfg ? paneStateWord(logDir, target, Date.now(), workersCfg) : null;
+    if (w !== stateWord) {
+      // the queue's word changed: the ticker line repaints with it on this tick
+      if (chat) lastLiveness = "";
+      stateWord = w;
+    }
+    if (w === "waiting") sawQueued = true;
+  };
   /** write the ticker only when its text changed — an idle pane stays silent */
   const safeWriteLiveness = (s: string) => {
     if (s === lastLiveness) return;
@@ -728,7 +756,7 @@ export async function followWorkers(
       // exists there is nothing to show it from yet, so the plain ticker
       // covers that brief startup window only
       const text = paneStatus
-        ? paneStatusRow(paneStatus, new Date(now5), columns())
+        ? paneQueueStatusRow(paneStatus, stateWord, new Date(now5), columns())
         : tickerText(secs, ticker.intent, ticker.tool);
       safeWriteLiveness(chatTickerRow(text, rows, promptCursorCol()));
     } else {
@@ -1163,6 +1191,19 @@ export async function followWorkers(
       statuses = scanCache;
     }
     if (target) paneStatus = statuses.get(target) ?? paneStatus;
+    // the queue table's word for this job, before anything is drawn from it
+    refreshStateWord();
+    if (target && !finished.has(target)) {
+      // the slot transitions, each said once: waiting for a slot → got one
+      const st = statuses.get(target);
+      if (st?.state === "queued" && !slotLineShown) {
+        slotLineShown = true;
+        out(c("dim", "waiting for a slot"));
+      } else if (st?.state === "running" && sawQueued && !gotSlotShown) {
+        gotSlotShown = true;
+        out(c("dim", "got a slot, running"));
+      }
+    }
     const wanted = target ? [target] : runningIds();
     for (const wid of wanted) {
       if (handles.has(wid) || finished.has(wid)) continue;

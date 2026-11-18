@@ -785,7 +785,9 @@ export function paneStatusRow(
   now: Date = new Date(),
   columns: number | null = null,
   /** The pane's queue line while the run waits for a slot (the `<id>.queued` file), before any status exists. */
-  queued: QueuedFile | null = null
+  queued: QueuedFile | null = null,
+  /** The cockpit's word for this job from the ONE queue table (`paneStateWord`): the state prefix of the row. */
+  stateWord?: string | null
 ): string {
   // the pane opened before the queue: while the run waits for a slot the line
   // is the queue itself, refreshed in place (no goal/model tail yet — nothing has started)
@@ -805,7 +807,26 @@ export function paneStatusRow(
     (cap ? capacityText(cap) : null) ??
     warmupText(s.warmup) ??
     (s.waitingOn ? waitingLine(s.waitingOn, now.getTime(), realWaitDeps, Math.max(10, budget - 30)) : goalOf(s, budget));
-  return `${head} · ${tail}`;
+  // the state word comes from the queue table (the cockpit's own words), never
+  // a derivation here: the pane and the cockpit can never disagree on it
+  return `${stateWord ? `${stateWord} · ` : ""}${head} · ${tail}`;
+}
+
+/**
+ * The worker pane's bottom line with the state word of the ONE queue table in front:
+ * `<waiting #2 | running> · <goal> · <model> · started HH:MM · <age>` — while the run
+ * waits for a slot the queue line is the row (unchanged); once it holds a slot the
+ * cockpit's word leads. A pane whose worker has no row yet keeps the plain row.
+ */
+export function paneQueueStatusRow(
+  s: Parameters<typeof paneStatusRow>[0],
+  stateWord: string | null,
+  now: Date = new Date(),
+  columns: number | null = null,
+  queued: QueuedFile | null = null
+): string {
+  if (queued) return paneStatusRow(s, now, columns, queued);
+  return paneStatusRow(s, now, columns, null, stateWord);
 }
 
 /**
