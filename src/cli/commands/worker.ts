@@ -995,7 +995,7 @@ const mergeCommand: CommandDef = {
       }
       try {
         const target = callerMergeTarget(logDir(), ctx.args.ID as string);
-        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, force: flag(ctx, "force"), verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: target }));
+        out(await mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, force: flag(ctx, "force"), verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: target }));
         await reindexAfterMerge(target ?? process.cwd());
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) throw new CliError(e.message, "the merge was kept; fix forward or revert it", 3);

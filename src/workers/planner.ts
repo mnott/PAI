@@ -263,7 +263,7 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
         // the planner IS the caller: the child lands on the planner's own
         // branch (the L1 case). An L0-launched plan has no worker id of its
         // own and no PAI_WORKER env, so it keeps the recorded-cwd behaviour.
-        mergeWorker(logDir, r.id, { targetToplevel: process.env.PAI_WORKER === "1" ? mergeTargetForCaller(logDir, r.id, st, process.env, plannerId) : null });
+        await mergeWorker(logDir, r.id, { targetToplevel: process.env.PAI_WORKER === "1" ? mergeTargetForCaller(logDir, r.id, st, process.env, plannerId) : null });
         merged.push(r.id);
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) {
