@@ -139,6 +139,14 @@ workers:
     # Named session -> priority of every run it starts, e.g.
     #   sessions: { "Jobs": high, "Background": low }
     sessions: {}
+    # OS priority: run every worker process tree (and so each Bash command it
+    # starts) at background priority, `taskpolicy -b` on macOS, `nice -n 10`
+    # elsewhere. Your own sessions, the router and the daemon are unaffected.
+    background: true
+    # CPU seconds one worker Bash command may use (ulimit -t); a runaway loop
+    # then dies on its own. 0 = no cap. Test runs and builds through their
+    # door are exempt.
+    cpuSecondsPerCommand: 300
   # Local-model idle watcher.
   localIdle:
     enabled: true
