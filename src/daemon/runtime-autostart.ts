@@ -39,7 +39,7 @@
 
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
-import { readLocalConfig, type LocalTier } from "../workers/local-tiers.js";
+import { readLocalConfig, healthUrl, type LocalTier } from "../workers/local-tiers.js";
 import { readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommands } from "../workers/model-runtimes.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { freeMemoryGb } from "../workers/local-memory.js";
@@ -62,6 +62,8 @@ export interface AutostartConfig {
   runtimes: Record<string, RuntimeCommands>;
   /** Memory need per provider name, GB (workers.yaml local_tiers memoryGb). */
   memoryGb: Record<string, number>;
+  /** Autostart entries without a start command that name a workers.yaml local_tiers model (by tier or provider name): started as that tier. */
+  tiers?: Record<string, LocalTier>;
 }
 
 /** The manager's config: the autostart runtimes and each one's memory need from its provider's tier. */
@@ -70,10 +72,22 @@ export function runtimeAutostartConfig(
   tiers: LocalTier[]
 ): AutostartConfig {
   const memoryGb: Record<string, number> = {};
-  for (const t of tiers) if (t.memoryGb !== undefined && !(t.provider in memoryGb)) memoryGb[t.provider] = t.memoryGb;
+  for (const t of tiers) {
+    if (t.memoryGb === undefined) continue;
+    if (!(t.provider in memoryGb)) memoryGb[t.provider] = t.memoryGb;
+    if (!(t.tier in memoryGb)) memoryGb[t.tier] = t.memoryGb;
+  }
   const runtimes: Record<string, RuntimeCommands> = {};
-  for (const [name, c] of Object.entries(commands)) if (c.autostart === true) runtimes[name] = c;
-  return { enabled: Object.keys(runtimes).length > 0, runtimes, memoryGb };
+  const tierOf: Record<string, LocalTier> = {};
+  for (const [name, c] of Object.entries(commands)) {
+    if (c.autostart !== true) continue;
+    // a local_tiers model (apple-fm, ...) needs no models.runtimes start command: the flag alone starts it as that tier
+    const tier = c.start ? undefined : tiers.find((t) => t.tier === name || t.provider === name);
+    if (!c.start && !tier) continue;
+    runtimes[name] = c;
+    if (tier) tierOf[name] = tier;
+  }
+  return { enabled: Object.keys(runtimes).length > 0, runtimes, memoryGb, tiers: tierOf };
 }
 
 /** The live config: models.runtimes + the local_tiers memory needs. */
@@ -142,7 +156,7 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
   if (d.frozen()) return actions;
   let avail: number | undefined;
   for (const [runtime, cmd] of Object.entries(cfg.runtimes)) {
-    if (!cmd.start) continue;
+    if (!cmd.start && !cfg.tiers?.[runtime]) continue;
     const st = states.get(runtime) ?? { attempts: 0, lastAttempt: -Infinity, gaveUp: false, alerted: false };
     states.set(runtime, st);
     // the readiness probe FIRST: an up runtime gets no memory check, no start and no alert (13:46: gyro-l answered 200 on its ready URL and was still skipped + alerted)
@@ -223,6 +237,8 @@ export function liveAutostartDeps(): AutostartDeps {
   return {
     async isUp(runtime) {
       const cmd = readRuntimeCommands()[runtime];
+      const tier = !cmd?.start && !cmd?.ready ? liveRuntimeAutostartConfig().tiers?.[runtime] : undefined;
+      if (tier) return liveRuntimeOpDeps.getUrl(healthUrl(tier, tier.port));
       if (!cmd?.ready) return false; // no readiness configured: a start is attempted once per backoff, the ledger tells
       return readyIsUrl(cmd.ready) ? liveRuntimeOpDeps.getUrl(cmd.ready) : (await liveRuntimeOpDeps.runCmd(cmd.ready)) === 0;
     },
@@ -230,6 +246,20 @@ export function liveAutostartDeps(): AutostartDeps {
     // no reserve here: the skip compares the measured AVAILABLE (reclaimable counted) against the tier's memoryGb as the brief demands
     freeGb: () => freeMemoryGb(0),
     async start(runtime) {
+      if (!readRuntimeCommands()[runtime]?.start) {
+        // a local_tiers model: the same start path as `pai worker config start` / the cockpit's local.start
+        const { readLocalConfig: rl } = await import("../workers/local-tiers.js");
+        const { startInstance } = await import("../cli/commands/worker-config.js");
+        const cfg = rl(workersYamlPath());
+        const tier = Object.values(cfg.tiers).find((t) => t.tier === runtime || t.provider === runtime);
+        if (!tier) return { ok: false, message: `no start command or local_tiers model for ${runtime}` };
+        try {
+          const i = await startInstance(cfg, tier.tier);
+          return { ok: true, message: `${i.id} up on :${i.port}` };
+        } catch (e) {
+          return { ok: false, message: e instanceof Error ? e.message : String(e) };
+        }
+      }
       const { defaultDeps, runtimeStartStop } = await import("../router/cockpit-actions.js");
       return runtimeStartStop(runtime, "start", defaultDeps());
     },

@@ -71,6 +71,18 @@ describe("cockpit page script", () => {
     vm.runInContext("WK_SORT=null", ctx);
     expect(vm.runInContext("wkQTable(wkView(__rows))", ctx)).toContain(">waiting</td>");
   });
+  it("models card: a managed endpoint of a carded model is nested, not a second row; the card says 1 instance healthy", async () => {
+    const vm = await import("node:vm");
+    const { WIN_MODELS_JS } = await import("./cockpit-page/win/cards-models.js");
+    const ctx = vm.createContext({ Win: { registerType() {} } });
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\nfunction shortModel(s){return s}\nfunction gbm(s){return s}\nfunction gb(s){return s}\nfunction pct(s){return s}\n` + WIN_MODELS_JS, ctx);
+    (ctx as Record<string, unknown>).__inv = { runtimes: [{ name: "gyro-l", kind: "strata", tier: "gyro-l", models: [], status: "up" }], tiers: [{ tier: "gyro-l", maxInstances: 2 }], instances: [{ id: "gyro-l#1", model: "gyro-l", state: "ready", inflight: 0 }], registryModels: [], consumers: [], runtimeCommands: {} };
+    vm.runInContext("WMD={inv:__inv}", ctx);
+    expect(vm.runInContext('wmdNested({id:"gyro-l#1",origin:"managed",model:"gyro-l",provider:"gyro-l"})', ctx)).toBe(true);
+    expect(vm.runInContext('wmdNested({id:"x",origin:"registered",model:"gyro-l",provider:"gyro-l"})', ctx)).toBe(false);
+    expect(vm.runInContext('wmdNested({id:"o#1",origin:"managed",model:"other",provider:"other"})', ctx)).toBe(false);
+    expect(vm.runInContext("wmdInstText(wmdCards(__inv)[0].tier)", ctx)).toBe("1 instance · healthy");
+  });
   it("model is a coloured chip and destructive actions confirm inline", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");

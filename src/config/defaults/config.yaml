@@ -461,7 +461,9 @@ models:
   # (src/daemon/runtime-autostart.ts): free memory first against the provider's
   # local_tiers memoryGb, retry at most every 10 min, give up after 3 failures
   # until the next daemon start; a frozen machine starts nothing. It is never
-  # shipped true: only your own config.yaml sets it (e.g. for gyro-l).
+  # shipped true: only your own config.yaml sets it (e.g. for gyro-l). A workers.yaml
+  # local_tiers model (provider or tier name) needs no start command here: the flag
+  # alone starts it as that tier (models.runtimes.<name>.autostart: true).
   runtimes:
     ollama:
       start: ollama serve
