@@ -4,14 +4,48 @@
  * so both show the same thing (spec-queue-control).
  *
  * Order = admission order: running jobs first (oldest start first), then the waiting ones 1..n (per provider the
- * capacity queue's grant order, the providers side by side by their position). Commands of `pai pane run` are
- * rows of kind "command" after the running jobs. A moved job (rerouted / fall-through) is ONE row: the
- * continuation, with "continues <old id>" as detail; the old row disappears.
+ * capacity queue's grant order, the providers side by side by their position). The rows are model jobs only: a
+ * `pai pane run` command is not a job — it uses no model and no slot — so it is never a row; a pane whose command
+ * waits on a worker id (`pai worker wait <id>`) shows as an eye on that job's row instead. A moved job (rerouted /
+ * fall-through) is ONE row: the continuation, with "continues <old id>" as detail; the old row disappears.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { QueueRow } from "./capacity.js";
 import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
-import type { PaneRunStatus } from "./pane-run.js";
+import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
+
+/** Short id of a worker or pane run: the last dash-part of its id (a queue row never prints the full id). */
+export const shortId = (id: string): string => id.slice(id.lastIndexOf("-") + 1);
+
+/** The task's first lines in plain prose: up to `max` characters cut at a sentence end, for a tooltip.
+ *  A leading "Repo: …" / "Directory: …" line and a "Task:" prefix are skipped; "" when there is nothing to show. */
+export function taskSummary(text: string, max = 300): string {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  while (lines.length && (/^\s*(repo|directory)\s*:/i.test(lines[0]!) || !lines[0]!.trim())) lines.shift();
+  if (lines.length) lines[0] = lines[0]!.replace(/^\s*task:\s*/i, "");
+  let t = lines.join(" ").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  const cut = t.slice(0, max);
+  // the end of the 3rd sentence when it still fits; else the last full sentence inside the limit (else a plain cut)
+  const ends = [...cut.matchAll(/[^.!?]*[.!?](?=\s|$)/g)].map((m) => m.index! + m[0]!.length);
+  const third = ends.length >= 3 ? ends[2] : undefined;
+  if (third !== undefined && third <= max) return cut.slice(0, third).trim();
+  const last = ends.length ? ends[ends.length - 1]! : 0;
+  return last > 40 ? cut.slice(0, last).trim() : cut.trim();
+}
+
+/** Read the task text a run kept (its --spec file or the <id>.prompt copy): "" when there is none. */
+export function readTaskText(logDir: string, s: Pick<WorkerStatus, "id" | "promptFile" | "spec">): string {
+  const f = [s.promptFile, s.spec, join(logDir, `${s.id}.prompt`)].find((x): x is string => !!x && x !== "-");
+  if (!f) return "";
+  try {
+    return readFileSync(f, "utf8");
+  } catch {
+    return "";
+  }
+}
 
 /** Short model label: the provider name for a local model, "cloud: sonnet" for a cloud one (never the full id). */
 export function shortModel(local: boolean, provider: string, model?: string): string {
@@ -33,14 +67,14 @@ export type RowAction =
 export interface TableRow {
   /** "running" for a slot holder, else the waiting position 1..n. */
   slot: "running" | "saved" | "freed" | number;
-  kind: "job" | "command";
+  kind: "job";
   id: string;
   state: RowState;
   /** Plain-language state ("waiting for a local slot", "paused: frees its slot"). */
   stateText: string;
   priority: "low" | "normal" | "high" | "now";
   session: string;
-  /** Short name: "<provider>" for a local model / "cloud: <short model>" / "" for a command. */
+  /** Short name: "<provider>" for a local model / "cloud: <short model>". */
   model: string;
   /** Full "local: <model id>" / "cloud: <provider> <model id>" for a tooltip. */
   modelFull?: string;
@@ -55,6 +89,10 @@ export interface TableRow {
   now: string;
   /** "continues <old id>" and plain notes. */
   detail: string;
+  /** The task's first lines in plain prose (from the stored prompt, no model call): the task cell's tooltip. */
+  summary?: string;
+  /** Pane runs whose command waits on this job (`pai worker wait <id>`): shown as an eye on this row. */
+  waits?: Array<{ id: string; label: string }>;
   /** Set while the job is being restarted by the daemon (older PAI release); the row reads "restarting on new version". */
   restarting?: boolean;
   actions: RowAction[];
@@ -63,12 +101,15 @@ export interface TableRow {
 export interface TableInput {
   statuses: WorkerStatus[];
   queue: QueueRow[];
-  panes: Array<Pick<PaneRunStatus, "id" | "label" | "state" | "startedMs"> & { session?: string }>;
+  /** Running pane commands: never rows (they are not jobs); one whose command waits on a worker id becomes an eye on that job's row. */
+  panes: Array<Pick<PaneRunStatus, "id" | "label" | "state" | "startedMs" | "command"> & { session?: string }>;
   now: number;
   /** Provider name -> true when it runs on this machine (a local model). */
   isLocal: (provider: string) => boolean;
   /** Session display name of a status. */
   sessionOf: (s: WorkerStatus) => string;
+  /** The task text a run kept (its --spec / <id>.prompt copy): "" when none. Injected so the table itself never reads files. */
+  summaryOf?: (s: WorkerStatus) => string;
   /** Ids stopped by `pai freeze` (in memory). */
   frozen?: (id: string) => boolean;
   /** Ids stopped durably (`pai stop`); none until that exists. */
@@ -145,9 +186,10 @@ export function activityOf(s: Pick<WorkerStatus, "updated" | "toolWaitSince">, w
   return `idle ${age < 3600 ? Math.floor(age / 60) + "m" : Math.floor(age / 3600) + "h"}`;
 }
 
-/** The tooltip sentence of an activity word: the fixed meaning, plus the live last event when there is one. */
+/** The tooltip sentence of an activity word: the fixed meaning, plus the live last event when there is one. Every word has one, "idle Nm" included. */
 export function activityTip(activity: string, nowText?: string): string {
-  const base = ACT_TIP[activity as keyof typeof ACT_TIP] ?? (activity.startsWith("idle") ? "nothing for over 90 s: no request at the model and no tool running" : "");
+  const m = activity.match(/^idle (\d+)(m|h)$/);
+  const base = ACT_TIP[activity as keyof typeof ACT_TIP] ?? (m ? `no request at the model and no tool running for ${m[1]} ${m[2] === "m" ? "minutes" : "hours"}; it may be stuck` : "");
   return nowText ? `${base} — last: ${nowText}` : base;
 }
 
@@ -192,6 +234,15 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
   const live = i.statuses.filter((s) => deepIds.has(s.id) || s.state === "running" || s.state === "queued" || ticket.has(s.id));
   const gone = replacedIds(live);
+  const summaryOf = (s: WorkerStatus): string | undefined => {
+    if (!i.summaryOf) return undefined;
+    try {
+      const t = i.summaryOf(s);
+      return t ? t : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const row = (s: WorkerStatus, waiting: boolean, since: number, prio?: string, place?: { first: boolean; last: boolean }, moving?: string): Omit<TableRow, "slot"> => {
     const local = i.isLocal(s.provider);
     const deep = i.deepFrozen?.(s.id) === true;
@@ -216,6 +267,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       now: waiting ? "" : (s.last ?? "").slice(0, 120),
       seconds: sec(since),
       detail: notes.map(plainWording).join("; "),
+      ...(summaryOf(s) ? { summary: summaryOf(s) } : {}),
       ...(s.restarting ? { restarting: true } : {}),
       actions: actionsOf(state, local, waiting, place),
     };
@@ -230,14 +282,19 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     const moving = s.movingTo ? `running (${i.isLocal(s.provider) ? "local" : "cloud"}) · moving to ${i.isLocal(s.movingTo) ? "local" : "cloud"}, waiting #${q ? q.position : "?"}` : undefined;
     out.push({ slot: "running", ...row(s, false, stMs(s), undefined, undefined, moving) });
   }
-  for (const p of i.panes.filter((p) => p.state === "running").sort((a, b) => a.startedMs - b.startedMs)) {
-    out.push({ slot: "running", kind: "command", id: p.id, state: i.frozen?.(p.id) ? "frozen" : "running", stateText: i.frozen?.(p.id) ? "frozen (in memory)" : "running", priority: "normal", session: p.session || "other", model: "", local: false, task: p.label, activity: "", activityTip: "", now: "", seconds: sec(p.startedMs), detail: "command", actions: [i.frozen?.(p.id) ? "thaw" : "freeze", "stop"] });
-  }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
   const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status && !(q.status.fallThroughOf && movers.has(q.status.fallThroughOf))).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
   waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, { first: q.position === 1, last: q.position === q.queued }) }));
   for (const s of runners.filter((x) => pausedFree(x))) out.push({ slot: "freed", ...row(s, false, stMs(s)) });
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
+  // pane runs are not rows (no model, no slot); one whose command waits on a job shows as an eye on that job's row
+  const waiterIds = new Set(i.statuses.map((s) => s.id));
+  for (const p of i.panes.filter((x) => x.state === "running")) {
+    const target = paneWaitsOn(p.command);
+    if (!target || !waiterIds.has(target)) continue;
+    const r = out.find((x) => x.id === target);
+    if (r) (r.waits ??= []).push({ id: p.id, label: p.label });
+  }
   // one order: running, then waiting, then paused/frozen (stable inside each group)
   return out
     .map((r, n) => ({ r, n }))
@@ -268,7 +325,7 @@ export function stateBadge(r: Pick<TableRow, "state" | "slot">): string {
 const fmtDur = (s: number): string => (s < 90 ? `${s}s` : s < 5400 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`);
 const clip = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
-/** The CLI rendering of the table: same columns and order as the cockpit (state, session, task, model, prio, time) plus the id. */
+/** The CLI rendering of the table: same columns and order as the cockpit (state, session, task, model, prio, time) plus the short id. */
 export function renderQueueTable(rows: TableRow[]): string[] {
   if (!rows.length) return ["nothing running or waiting"];
   const head = ["state", "session", "task", "model", "prio", "time", "id"];
@@ -280,7 +337,7 @@ export function renderQueueTable(rows: TableRow[]): string[] {
     clip(r.model, 26),
     r.priority,
     fmtDur(r.seconds),
-    r.id,
+    shortId(r.id),
   ]);
   const w = head.map((h, c) => Math.max(h.length, ...body.map((b) => b[c]!.length)));
   // the activity word keeps its fixed 7-char width even when no row needs more (the column never moves)

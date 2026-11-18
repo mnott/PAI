@@ -1353,7 +1353,7 @@ const queueCommand: CommandDef = {
   summary: "Show or reorder the workers waiting for a provider slot",
   description:
     "No arguments lists every worker parked behind a provider's concurrency cap, per provider in grant order (the order the capacity gate hands out slots in). " +
-    "No arguments prints the one table of the machine: running jobs first, then the waiting ones 1..n in admission order, with state, priority, session, model, task and time. `queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up, `queue down ID` one place back. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. " +
+    "No arguments prints the one table of the machine: model jobs only — a `pai pane run` command uses no model and no slot and is never a row (a pane that waits on a job shows as an eye on that job's row). Running jobs first, then the waiting ones 1..n in admission order, with state, priority, session, model, task and time. `queue next ID` makes a waiting worker run next (position 1; `front` is an alias), `queue up ID` moves it one place up, `queue down ID` one place back. The running worker is not interrupted: there is no preemption, only the order of the waiting ones changes. " +
     "The waiting worker itself re-reads the order on its next poll, so a move takes effect within seconds.",
   args: [
     { name: "VERB", summary: "next (alias front), up or down (default: list the queue)" },
