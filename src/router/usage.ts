@@ -51,8 +51,8 @@ export interface UsageRow extends Usage {
   bust?: string[];
   /** ms from request start to the first content token; absent on old rows and non-streamed replies */
   ttftMs?: number;
-  /** ms from the first content token to the end of the reply */
-  decodeMs?: number;
+  /** ms from the first content token to the end of the reply; a streamed reply whose whole body arrives at once (a buffered tool-call response) carries no decode window: null, never 0 */
+  decodeMs?: number | null;
   /** server-reported prompt processing / generation ms (llama.cpp-style `timings`), when the backend returns them */
   promptMs?: number;
   predictedMs?: number;
