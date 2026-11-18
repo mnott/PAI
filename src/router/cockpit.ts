@@ -1400,7 +1400,7 @@ export function handleCockpit(
       }
       if (typeof id === "string" ? !WORKER_ID_RE.test(id) && !/^pane-[\w.-]+$/.test(id) : typeof session !== "string") return send(400, "application/json", JSON.stringify({ ok: false, message: "id or session required" }));
       const { workers } = readWorkersSection();
-      const d = { logDir: queueLogDir(workers), workers, by: "cockpit", reroute: async (wid: string, where: "cloud" | "local") => { const r = await rerouteWorker(wid, where, { logDir: queueLogDir(workers), by: "cockpit", deferKill: where === "local" }); return `moved to ${where === "cloud" ? "cloud" : "local"}: continues as ${r.id}`; } };
+      const d = { logDir: queueLogDir(workers), workers, by: "cockpit", reroute: async (wid: string, where: "cloud" | "local") => { const r = await rerouteWorker(wid, where, { logDir: queueLogDir(workers), by: "cockpit" }); return `moved to ${where === "cloud" ? "cloud" : "local"}: continues as ${r.id}`; } };
       const r = typeof id === "string" ? await runRowAction(d, action as RowAction, id) : await runSessionAction(d, action as RowAction, session as string);
       send(r.ok ? 200 : 409, "application/json", JSON.stringify(r));
     }).catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message })));
