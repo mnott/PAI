@@ -17,10 +17,13 @@ Without NAME: restores the deep freeze of `pai stop` now — every recorded work
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--drop` | flag | — | Discard the `pai stop` record, resume nothing |
+| `--session NAME` | string | — | Restore only the recorded workers of this session |
 
 ```sh
 pai resume
 pai resume --drop
+pai resume 20261019-142851-84910
+pai resume --session my-session
 pai resume my-session --dry-run
 pai resume 3a9f1c2e
 ```

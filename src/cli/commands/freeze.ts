@@ -23,10 +23,13 @@ function by(): string {
 
 /** `pai stop` / `pai freeze --deep`: record, WIP-commit and cleanly stop every worker and the local models; survives a reboot. */
 export async function deepStopRun(ctx: RunContext): Promise<number> {
+  const id = typeof ctx.args.ID === "string" ? ctx.args.ID : undefined;
+  const session = typeof ctx.opts.session === "string" ? ctx.opts.session : undefined;
+  const only = id || session ? { ids: id ? [id] : undefined, session } : undefined;
   if (process.env.PAI_WORKER === "1") throw new CliError("a worker cannot stop its siblings", "ask the operator to run `pai stop`");
   try {
     const deps = await realDeepFreezeDeps();
-    const r = await deepFreeze(logDir(), by(), deps, { dryRun: ctx.dryRun === true || ctx.opts["dry-run"] === true, repoOf: (s) => realRepoOf(s, deps.git) });
+    const r = await deepFreeze(logDir(), by(), deps, { dryRun: ctx.dryRun === true || ctx.opts["dry-run"] === true, repoOf: (s) => realRepoOf(s, deps.git), only });
     console.log(r.lines.join("\n"));
     return 0;
   } catch (e) {
@@ -34,9 +37,14 @@ export async function deepStopRun(ctx: RunContext): Promise<number> {
   }
 }
 
+/** True when `pai stop` recorded a worker with this id. */
+export async function isDeepRecorded(id: string): Promise<boolean> {
+  return readDeepfreeze()?.workers.some((w) => w.id === id) ?? false;
+}
+
 /** `pai resume` (no NAME) / `pai thaw` after a deep freeze: restore the recorded workers now, or discard the record with --drop. */
-export async function deepResumeRun(drop: boolean): Promise<number> {
-  const r = await deepResume(logDir(), await realDeepResumeDeps(), { drop });
+export async function deepResumeRun(drop: boolean, only?: { ids?: string[]; session?: string }): Promise<number> {
+  const r = await deepResume(logDir(), await realDeepResumeDeps(), { drop, only });
   console.log(r.lines.join("\n"));
   return r.failed.length ? 1 : 0;
 }
@@ -132,8 +140,9 @@ export const thawCommand: CommandDef = {
 export const workerFreezeCommand: CommandDef = {
   name: "freeze",
   summary: "Alias of `pai freeze` (--all) and `pai thaw` (--resume)",
-  description: "`pai worker freeze --all` is `pai freeze`; `--resume` is `pai thaw`; `--status` shows what is frozen.",
-  examples: ["pai worker freeze --all", "pai worker freeze --resume"],
+  args: [{ name: "ID", summary: "Freeze this one worker (in memory; lost on reboot)" }],
+  description: "`pai worker freeze <id>` stops one worker's process tree (`pai worker thaw <id>` continues it); `pai worker freeze --all` is `pai freeze`; `--resume` is `pai thaw`; `--status` shows what is frozen.",
+  examples: ["pai worker freeze --all", "pai worker freeze --resume", "pai worker freeze 20261019-142851-84910"],
   options: [
     { name: "all", type: "boolean", summary: "Freeze every running worker and the local model server" },
     { name: "resume", type: "boolean", summary: "Thaw (same as `pai thaw`)" },
@@ -147,9 +156,24 @@ export const workerFreezeCommand: CommandDef = {
   ],
   seeAlso: ["pai freeze", "pai thaw"],
   run: (ctx) => {
+    if (ctx.args.ID) {
+      ctx.opts.only = ctx.args.ID as string;
+      return freezeRun(ctx);
+    }
     if (ctx.opts.all !== true && ctx.opts.resume !== true && ctx.opts.status !== true) throw new CliError("say --all, --resume or --status", "pai worker freeze --all");
     return freezeRun(ctx);
   },
+};
+
+/** `pai worker thaw <id>`: continue one frozen worker. */
+export const workerThawCommand: CommandDef = {
+  name: "thaw",
+  summary: "Continue one frozen worker",
+  description: "Continues the process tree of one worker stopped with `pai worker freeze <id>`; nothing else is touched.",
+  args: [{ name: "ID", required: true, summary: "Worker id" }],
+  examples: ["pai worker thaw 20261019-142851-84910"],
+  seeAlso: ["pai worker freeze", "pai thaw"],
+  run: (ctx) => thawRun({ ...ctx, opts: { ...ctx.opts, only: ctx.args.ID as string } } as RunContext),
 };
 
 const STOP_DESC =
@@ -160,7 +184,8 @@ export const stopCommand: CommandDef = {
   summary: "Deep freeze: record, WIP-commit and stop all workers and local models; restored after a reboot",
   description: STOP_DESC,
   examples: ["pai stop --dry-run", "pai stop", "pai resume", "pai resume --drop"],
-  options: [{ name: "dry-run", type: "boolean", summary: "List what would be preserved, change nothing" }],
+  args: [{ name: "ID", summary: "Stop only this worker (omit for everything)" }],
+  options: [{ name: "dry-run", type: "boolean", summary: "List what would be preserved, change nothing" }, { name: "session", type: "string", value: "NAME", summary: "Stop only the workers of this session" }],
   seeAlso: ["pai resume", "pai freeze"],
   run: deepStopRun,
 };

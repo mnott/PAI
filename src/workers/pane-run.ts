@@ -31,6 +31,8 @@ export interface PaneRunStatus {
   state: "running" | "done" | "failed" | "lost";
   exit?: number;
   log: string;
+  /** The caller's session name (PAI_SESSION_NAME) at pane start: the queue table's session column. */
+  session?: string;
 }
 
 /** The env marker of a command running under `pai pane run`: nested pane/build runs then stay in it. */
@@ -197,6 +199,7 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
     startedMs: Date.now(),
     state: "running",
     log: logFile,
+    ...(env.PAI_SESSION_NAME ? { session: env.PAI_SESSION_NAME } : {}),
   };
   writeFileSync(logFile, `$ ${o.command.join(" ")}\n`, "utf8");
   writePaneRunStatus(o.logDir, status);

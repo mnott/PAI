@@ -528,6 +528,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker say` | Send a message to a running or queued worker |
 | `pai worker status-line` | One-line worker summary for a status bar |
 | `pai worker test-run` | Run a test command; when it goes silent, say where it is stuck |
+| `pai worker thaw` | Continue one frozen worker |
 | `pai worker usage` | Token totals per provider and model for a set of workers |
 | `pai worker verify` | Check that a worker's changes are already in your checkout |
 | `pai worker wait` | Wait for child workers; returns when any finishes or --max elapses |

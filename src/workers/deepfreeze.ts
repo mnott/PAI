@@ -188,10 +188,19 @@ export interface DeepFreezeReport {
   record: DeepRecord | null;
 }
 
-export async function deepFreeze(logDir: string, by: string, d: DeepFreezeDeps, opts: { dryRun?: boolean; repoOf?: (s: WorkerStatus) => string | undefined } = {}): Promise<DeepFreezeReport> {
+/** A subset of the workers: `pai stop <id>` / `--session <name>` (and the queue panel's row and session buttons). */
+export interface DeepSelect {
+  ids?: string[];
+  session?: string;
+}
+export const inSelect = (w: Pick<DeepWorker, "id" | "session">, sel: DeepSelect): boolean => (sel.ids?.includes(w.id) ?? false) || (sel.session !== undefined && w.session === sel.session);
+
+export async function deepFreeze(logDir: string, by: string, d: DeepFreezeDeps, opts: { dryRun?: boolean; repoOf?: (s: WorkerStatus) => string | undefined; only?: DeepSelect } = {}): Promise<DeepFreezeReport> {
   if (process.env.PAI_WORKER === "1") throw new Error("a worker cannot stop its siblings (PAI_WORKER=1)");
   const existing = readDeepfreeze();
-  const plan = planDeepFreeze(d.statuses(logDir), d.owns, opts.repoOf);
+  const sel = opts.only;
+  const plan = planDeepFreeze(d.statuses(logDir), d.owns, opts.repoOf).filter((w) => !sel || inSelect(w, sel));
+  if (sel && !plan.length) throw new Error(`no live worker matches ${sel.session ? `session ${sel.session}` : (sel.ids ?? []).join(",")}`);
   const lines = plan.map(
     (w) => `${opts.dryRun ? "would preserve" : "preserving"} ${w.state} ${w.id} [${w.project}] ${w.label}${w.branch ? ` branch ${w.branch}` : ""}${w.priority !== "normal" ? ` ${w.priority}` : ""}${w.parent ? ` (child of ${w.parent})` : ""}`
   );
@@ -199,9 +208,9 @@ export async function deepFreeze(logDir: string, by: string, d: DeepFreezeDeps, 
     lines.push(`dry run: ${plan.length} workers would be recorded in ${deepfreezePath()}, WIP-committed, stopped; local models stopped`);
     return { lines, record: null };
   }
-  if (existing) throw new Error(`already stopped since ${new Date(existing.at).toISOString()} (${existing.workers.length} workers recorded); \`pai resume\` or \`pai resume --drop\` first`);
+  if (existing && !sel) throw new Error(`already stopped since ${new Date(existing.at).toISOString()} (${existing.workers.length} workers recorded); \`pai resume\` or \`pai resume --drop\` first`);
   d.unfreeze(logDir);
-  const record: DeepRecord = { version: 1, at: d.now(), by, workers: plan, models: [] };
+  const record: DeepRecord = existing && sel ? { ...existing, workers: [...existing.workers, ...plan] } : { version: 1, at: d.now(), by, workers: plan, models: [] };
   // the record exists before the first worker is touched: a crash anywhere below still leaves the way back
   writeRecord(record);
   for (const w of stopOrder(plan)) {
@@ -225,7 +234,8 @@ export async function deepFreeze(logDir: string, by: string, d: DeepFreezeDeps, 
     if (w.wipNote) lines.push(`wip ${w.id}: ${w.wipNote}`);
     writeRecord(record);
   }
-  record.models = await d.stopModels().catch(() => []);
+  // a selective stop leaves the shared model servers running: other workers use them
+  if (!sel) record.models = await d.stopModels().catch(() => []);
   writeRecord(record);
   d.ledger(ledgerPath(logDir), "WORKERS-DEEPFREEZE", { by, workers: plan.length, models: record.models.length });
   lines.push(`deep-frozen ${plan.length} workers, stopped models: ${record.models.join(", ") || "none"}; record ${deepfreezePath()}; \`pai resume\` restores (the daemon does it after the boot)`);
@@ -264,7 +274,7 @@ export function resumeText(w: DeepWorker): string {
 }
 
 /** The `pai worker run|resume` argv of one recorded worker is built by the starter; this is the replay loop. */
-export async function deepResume(logDir: string, d: DeepResumeDeps, opts: { drop?: boolean; wait?: boolean; waitMs?: number } = {}): Promise<{ lines: string[]; resumed: string[]; skipped: string[]; failed: string[] }> {
+export async function deepResume(logDir: string, d: DeepResumeDeps, opts: { drop?: boolean; wait?: boolean; waitMs?: number; only?: DeepSelect } = {}): Promise<{ lines: string[]; resumed: string[]; skipped: string[]; failed: string[] }> {
   const rec = readDeepfreeze();
   const none = { resumed: [], skipped: [], failed: [] };
   if (!rec) return { lines: ["nothing recorded (no deep freeze)"], ...none };
@@ -282,8 +292,10 @@ export async function deepResume(logDir: string, d: DeepResumeDeps, opts: { drop
   const resumed: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
-  const left: DeepWorker[] = [];
-  for (const w of [...rec.workers].sort((a, b) => a.order - b.order)) {
+  const sel = opts.only;
+  const left: DeepWorker[] = sel ? rec.workers.filter((w) => !inSelect(w, sel)) : [];
+  if (sel && left.length === rec.workers.length) return { lines: [`nothing recorded matches ${sel.session ? `session ${sel.session}` : (sel.ids ?? []).join(",")}`], ...none };
+  for (const w of [...rec.workers].filter((w) => !sel || inSelect(w, sel)).sort((a, b) => a.order - b.order)) {
     const why = resumeSkip(w, all);
     if (why) {
       skipped.push(w.id);

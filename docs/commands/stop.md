@@ -5,14 +5,19 @@
 Deep freeze: record, WIP-commit and stop all workers and local models; restored after a reboot
 
 ```
-pai stop [options]
+pai stop [ID] [options]
 ```
 
 Deep freeze: preserves ALL worker work across a reboot. For every live worker on the machine (all sessions and projects) it writes <PAI home>/state/deepfreeze.json (id, label, session/project, cwd/repo, branch, worktree, spec, class, provider, priority, parent/children, state running|queued), commits uncommitted work in each worktree on the worker's own branch as `wip: deepfreeze <timestamp>` (hooks run; a refused commit leaves the files untouched), stops each worker through the normal teardown and marks it `deepfrozen` (no failure alert, escalation or reroute), then stops the local model servers. After the boot the daemon waits for the router and the autostart models (5 min at most), resumes every recorded worker in its original order and priority (rerouted origins whose continuation finished are skipped), sends one PAILot line and removes the record. `pai resume` does the same at once, `pai resume --drop` discards the record. `--dry-run` lists what would be preserved. Refused inside a worker. Plain `pai freeze`/`pai thaw` stay the in-memory SIGSTOP pause.
 
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | no | Stop only this worker (omit for everything) |
+
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--dry-run` | flag | — | List what would be preserved, change nothing |
+| `--session NAME` | string | — | Stop only the workers of this session |
 
 ```sh
 pai stop --dry-run

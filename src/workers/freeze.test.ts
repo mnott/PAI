@@ -592,6 +592,25 @@ describe("deep freeze", () => {
     expect(loadStatus(logDir, "w1")?.state).toBe("running");
   });
 
+  it("stop <id> / --session stop only the selection, keep the models running, and resume only the selection", async () => {
+    saveStatus(logDir, worker("s1", "2026-11-18 11:00:00", { session: { name: "mdf" } as WorkerStatus["session"] }));
+    saveStatus(logDir, worker("s2", "2026-11-18 11:01:00", { session: { name: "pai" } as WorkerStatus["session"] }));
+    saveStatus(logDir, worker("s3", "2026-11-18 11:02:00", { session: { name: "pai" } as WorkerStatus["session"] }));
+    const stopped: string[] = [];
+    const d = deps({ stop: async (_d, id) => void stopped.push(id), stopModels: async () => { throw new Error("models must stay"); } });
+    await deepFreeze(logDir, "t", d, { only: { ids: ["s1"] } });
+    await deepFreeze(logDir, "t", d, { only: { session: "pai" } });
+    expect(stopped.sort()).toEqual(["s1", "s2", "s3"]);
+    expect(readDeepfreeze()!.workers.map((w) => w.id)).toEqual(["s1", "s2", "s3"]);
+    const started: string[] = [];
+    await deepResume(logDir, resumeDeps(started), { only: { ids: ["s1"] } });
+    expect(started).toEqual(["s1"]);
+    expect(readDeepfreeze()!.workers.map((w) => w.id)).toEqual(["s2", "s3"]);
+    await deepResume(logDir, resumeDeps(started), { only: { session: "pai" } });
+    expect(started).toEqual(["s1", "s2", "s3"]);
+    expect(readDeepfreeze()).toBeNull();
+  });
+
   const resumeDeps = (started: string[], over: Partial<DeepResumeDeps> = {}): DeepResumeDeps => ({
     statuses: (d) => require_loadStatuses(d),
     start: async (_d, w) => (started.push(w.id), `${w.id}-r`),
