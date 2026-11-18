@@ -41,7 +41,7 @@ export const codeCommand: CommandDef = {
   description:
     "The code graph indexes a repository's definitions and references into PAI's own database (Postgres, or SQLite as fallback). " +
     "It reads TypeScript/TSX, JavaScript, Swift and Python; other files get a file row only. " +
-    "The index is reconciled with the repo whenever you query it; nothing runs in the background.",
+    "The index is reconciled with the repo whenever you query it; a first index of an unindexed repo is started in the background (one at a time) when a session opens there, and after each worker merge. Edits are only marked; the next query re-reads them.",
   examples: ["pai code index", "pai code explore how does the router pick a provider", "pai code callers resolveRoot"],
   seeAlso: ["pai memory search", "pai kg"],
   subcommands: [
@@ -157,12 +157,13 @@ export const codeCommand: CommandDef = {
     {
       name: "status",
       summary: "Show what is indexed for a repository",
-      description: "Prints the counts, languages and last index time. Does not index anything.",
+      description: "Prints whether the repo is indexed, the counts, languages, last full index, files marked dirty by edits, and an index running now. Does not index anything.",
+      args: [{ name: "ROOT", summary: "Repository root (default: the repo around the current directory)" }],
       options: [root, json],
-      examples: ["pai code status", "pai code status --json"],
+      examples: ["pai code status", "pai code status ~/dev/my-repo --json"],
       seeAlso: ["pai code index"],
       run: async (ctx) => {
-        const s = await cg.status(await getStorageBackend(), rootOf(ctx));
+        const s = await cg.status(await getStorageBackend(), cg.resolveRoot((ctx.args.ROOT as string | undefined) ?? (ctx.opts.root as string | undefined) ?? process.cwd()));
         print(ctx, s, [
           `root      ${s.root}`,
           `backend   ${s.backend}`,
@@ -171,7 +172,9 @@ export const codeCommand: CommandDef = {
           `symbols   ${s.symbols}`,
           `refs      ${s.refs} (${s.resolvedRefs} resolved)`,
           `languages ${Object.entries(s.byLanguage).map(([k, v]) => `${k} ${v}`).join(", ") || "-"}`,
-          `last run  ${s.lastIndexedAt ?? "never"}`,
+          `last full index ${s.lastIndexedAt ?? "never"}`,
+          `dirty     ${s.dirty} file(s) marked since the last query`,
+          `running   ${s.indexing ? `index of ${s.indexing.root} (pid ${s.indexing.pid}, since ${s.indexing.startedAt})` : "no index running"}`,
         ]);
       },
     },

@@ -154,6 +154,21 @@ export function createRunWorktree(
   }
 }
 
+/** True when the worker's repo already has a code graph; never throws, never indexes. */
+async function workerRepoIndexed(dir: string): Promise<boolean> {
+  try {
+    const [{ getStorageBackend }, { resolveRoot }, { isIndexed }] = await Promise.all([
+      import("../../storage/factory.js"), import("../../codegraph/api.js"), import("../../codegraph/session.js"),
+    ]);
+    return await Promise.race([
+      getStorageBackend().then((b) => isIndexed(b, resolveRoot(dir))),
+      new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
+    ]);
+  } catch {
+    return false;
+  }
+}
+
 export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> {
   const { config, logDir, target, model, label, parsed, systemWaiver, limit, noBrowser } = a;
   const headless = parsed.headless;
@@ -333,6 +348,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // shared 5,445 (system+tools). The documented switch (env CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS =
   // setting includeGitInstructions:false) drops it, and the git section of the system prompt with it.
   if (volatileInTask) env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = "1";
+  const graphIndexed = headless ? await workerRepoIndexed(cwd) : false;
   const claudeCmd = claudeCommand(env);
   let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
@@ -344,7 +360,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // ONE flag: contract (unless the caller brought their own), placement, caller text
   cmd.push(
     ...appendSystemPromptArgs([
-      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, volatileInTask ? undefined : noteToken, scratch)] : []),
+      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, volatileInTask ? undefined : noteToken, scratch, graphIndexed)] : []),
       ...(addendum ? [addendum.text] : []),
       ...(headless && target.provider.prompt ? [target.provider.prompt] : []),
       ...(slimArgs.length ? [WORKER_BRIEF] : []),

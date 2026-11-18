@@ -8,7 +8,7 @@ Map a repository: symbols, callers and blast radius
 pai code <command>
 ```
 
-The code graph indexes a repository's definitions and references into PAI's own database (Postgres, or SQLite as fallback). It reads TypeScript/TSX, JavaScript, Swift and Python; other files get a file row only. The index is reconciled with the repo whenever you query it; nothing runs in the background.
+The code graph indexes a repository's definitions and references into PAI's own database (Postgres, or SQLite as fallback). It reads TypeScript/TSX, JavaScript, Swift and Python; other files get a file row only. The index is reconciled with the repo whenever you query it; a first index of an unindexed repo is started in the background (one at a time) when a session opens there, and after each worker merge. Edits are only marked; the next query re-reads them.
 
 ```sh
 pai code index
@@ -186,10 +186,14 @@ See also: `pai code callers`
 Show what is indexed for a repository
 
 ```
-pai code status [options]
+pai code status [ROOT] [options]
 ```
 
-Prints the counts, languages and last index time. Does not index anything.
+Prints whether the repo is indexed, the counts, languages, last full index, files marked dirty by edits, and an index running now. Does not index anything.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ROOT` | no | Repository root (default: the repo around the current directory) |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -198,7 +202,7 @@ Prints the counts, languages and last index time. Does not index anything.
 
 ```sh
 pai code status
-pai code status --json
+pai code status ~/dev/my-repo --json
 ```
 
 See also: `pai code index`

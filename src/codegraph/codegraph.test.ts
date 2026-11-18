@@ -6,6 +6,8 @@ import { extractFile } from "./extract/index.js";
 import { openFederation } from "../storage/sqlite/federation-db.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
 import { indexRepo, callers, searchSymbols } from "./api.js";
+import { execFileSync } from "node:child_process";
+import { GRAPH_INDEXING_LINE, incrementalIndexIfIndexed, lockPath, markDirty, readDirty, runningIndex, sessionGraphLine, startBackgroundIndex, type BgDeps } from "./session.js";
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -66,4 +68,68 @@ describe("index + resolve + incremental (SQLite)", () => {
     expect(third.deleted).toBe(1);
     expect(third.files).toBe(1);
   }, 30000);
+});
+
+describe("sessions and workers use the graph", () => {
+  const mkRepo = () => {
+    const root = tmp();
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    writeFileSync(join(root, "a.ts"), "export function one(){ two(); }\nfunction two(){}\n");
+    return root;
+  };
+  const deps = (over: Partial<BgDeps> = {}): BgDeps & { spawned: string[] } => {
+    const spawned: string[] = [];
+    return { spawned, skipReason: async () => null, spawnIndex: (r) => { spawned.push(r); return process.pid; }, alive: () => true, ...over };
+  };
+
+  it("indexed repo: one line with the file count and the ask-first hint", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    await indexRepo(backend, root);
+    const d = deps();
+    const line = await sessionGraphLine(backend, root, d);
+    expect(line).toMatch(/^Code graph: 1 files indexed \(updated .+\)\. Ask it first: pai code explore/);
+    expect(d.spawned).toEqual([]);
+  });
+
+  it("unindexed repo: background index started once (lock), line injected; other repo is busy; guards skip", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const other = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    const d = deps();
+    expect(await sessionGraphLine(backend, root, d)).toBe(GRAPH_INDEXING_LINE);
+    expect(await sessionGraphLine(backend, root, d)).toBe(GRAPH_INDEXING_LINE);
+    expect(d.spawned).toEqual([root]); // second session did not start another
+    expect(await startBackgroundIndex(other, d)).toBe("busy");
+    expect(runningIndex(d.alive)?.root).toBe(root);
+    rmSync(lockPath());
+    expect(await startBackgroundIndex(other, deps({ skipReason: async () => "frozen" }))).toBe("skipped");
+    expect(await sessionGraphLine(backend, tmp(), d)).toBeNull(); // not a code repo
+  });
+
+  it("dirty list is consumed by the next query, which re-reads the file", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    await indexRepo(backend, root);
+    writeFileSync(join(root, "a.ts"), "export function one(){ three(); }\nfunction three(){}\n");
+    writeFileSync(join(root, "b.ts"), "export function fresh(){}\n");
+    markDirty(root, join(root, "b.ts"));
+    expect(readDirty(root)).toEqual(["b.ts"]);
+    expect((await searchSymbols(backend, root, "fresh")).map((s) => s.name)).toContain("fresh");
+    expect(readDirty(root)).toEqual([]);
+  });
+
+  it("merge: incremental index starts for an indexed repo only", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    const d = deps();
+    expect(await incrementalIndexIfIndexed(backend, root, d)).toBe("unindexed");
+    await indexRepo(backend, root);
+    expect(await incrementalIndexIfIndexed(backend, root, d)).toBe("started");
+    expect(d.spawned).toEqual([root]);
+  });
 });

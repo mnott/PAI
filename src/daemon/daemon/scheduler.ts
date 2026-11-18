@@ -39,6 +39,7 @@ import { paiHomeDir } from "../../config/pai-home.js";
 import { createDistWatch, distBuildId, DIST_POLL_MS } from "../dist-watch.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
+import { runCodeGraphNightly } from "../../codegraph/nightly.js";
 import { startWorktreeGc } from "../worktree-gc.js";
 import { startBuildReapSweep } from "../build-reap.js";
 import { startRuntimeAutostart } from "../runtime-autostart.js";
@@ -157,6 +158,7 @@ export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "
       await runVaultIndex();
       await runEmbedPhase();
       await runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path));
+      await runCodeGraphNightly(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path));
     },
   };
 }
