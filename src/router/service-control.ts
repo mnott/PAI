@@ -13,6 +13,7 @@ import { pidAlive } from "../workers/status.js";
 import { restartRouter } from "./restart.js";
 import { checkUpstream, restarterLookup } from "./preflight.js";
 import { routerPort } from "./router.js";
+import { readTailState } from "./tail-bind.js";
 import { abortedHost, abortedText, probeRouter, readHandoverStatus, routerHandoverStatusFile, routerLogFile, routerPidFile, routerRunningPid, routerSwapArgs, spawnRouter, startHandover } from "./supervisor.js";
 
 export function routerStartText(cliEntry: string): string {
@@ -90,5 +91,13 @@ export function routerStatusText(): string {
   const pid = routerRunningPid();
   const managed = loadConfig().router.enabled;
   const note = managed ? "daemon-managed: restarted if down" : "not daemon-managed (router.enabled is false)";
-  return pid ? `router running (pid ${pid}, port ${routerPort()}); ${note}` : `router not running; ${note}`;
+  if (!pid) return `router not running; ${note}`;
+  const port = routerPort();
+  const t = readTailState(pid);
+  const listeners = !t
+    ? `listening ${LOOPBACK_HOST}:${port}`
+    : t.state === "bound"
+      ? `listening ${LOOPBACK_HOST}:${port} and ${t.addr}:${port}`
+      : `listening ${LOOPBACK_HOST}:${port}, waiting for router.bind "${t.bind}" (not up yet)`;
+  return `router running (pid ${pid}, port ${port}); ${listeners}; ${note}`;
 }

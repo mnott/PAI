@@ -7,6 +7,7 @@ import { parseWorkersConfig } from "../../workers/config.js";
 import { createRouter, prepare } from "../router.js";
 import { claudeCodeToolsArray } from "../tool-args-schemas.js";
 import { activeRules, loadRules, RulesStore, shippedRulesPath } from "../tool-call-rules.js";
+import { bindWhenUp, isDeferrableBind } from "../tail-bind.js";
 import { adapterFor, splitProviderPrefix } from "./index.js";
 import type { WireAdapter, WireId } from "./types.js";
 
@@ -356,5 +357,45 @@ describe("large tool-call arguments", () => {
     expect(sseArgs("chat", out)).toEqual([]);
     expect(out).toContain("output limit");
     expect(out).toContain('"finish_reason":"length"');
+  });
+});
+
+describe("router loopback and tailnet bind (boot before Tailscale, 2026-11-18)", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  async function scenario(bind: string, resolve: (b: string) => string | null, flip: () => void): Promise<void> {
+    const loop = http.createServer((_q, r) => r.end("ok"));
+    await new Promise<void>((r) => loop.listen(0, "127.0.0.1", r));
+    const port = (loop.address() as { port: number }).port;
+    const tail = http.createServer((_q, r) => r.end("tail"));
+    const logs: string[] = [];
+    const states: string[] = [];
+    const cancel = bindWhenUp(tail, { bind, port: port + 1, resolve, initialMs: 30, maxMs: 60, log: (l) => logs.push(l), onState: (s) => states.push(s.state) });
+    await sleep(150);
+    expect(loop.listening).toBe(true);
+    expect(tail.listening).toBe(false);
+    expect(states).toContain("waiting");
+    expect(logs.filter((l) => /waiting/.test(l))).toHaveLength(1);
+    flip();
+    await sleep(200);
+    expect(tail.listening).toBe(true);
+    expect(states).toContain("bound");
+    expect(logs.filter((l) => /bound/.test(l))).toHaveLength(1);
+    cancel();
+    loop.close();
+    tail.close();
+  }
+  it("accepts tailscale and an IPv4 as deferrable, refuses 0.0.0.0 and garbage", () => {
+    expect(isDeferrableBind("tailscale")).toBe(true);
+    expect(isDeferrableBind("100.64.1.2")).toBe(true);
+    expect(isDeferrableBind("0.0.0.0")).toBe(false);
+    expect(isDeferrableBind("garbage")).toBe(false);
+  });
+  it("unresolvable tailscale: loopback listens, waiting, bound once the address appears", async () => {
+    let up = false;
+    await scenario("tailscale", () => (up ? "127.0.0.1" : null), () => (up = true));
+  });
+  it("an IPv4 that is not up behaves the same", async () => {
+    let addr = "192.0.2.77";
+    await scenario("192.0.2.77", () => addr, () => (addr = "127.0.0.1"));
   });
 });

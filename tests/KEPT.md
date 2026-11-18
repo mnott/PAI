@@ -12,7 +12,7 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/storage/backup-safety.test.ts | a,b | safety snapshot before restore (1dcedeea) |
 | src/cli/commands/lifecycle/restore-safety.test.ts | a,b | restore into the resolved DB, refuse source mismatch (15e96cb2, 52d8df09) |
 | src/registry/worktree-guard.test.ts | a | linked worktrees / worker log dirs never registered as projects (31aa98eb, 270ef3c1) |
-| src/router/wire/wire.test.ts | c | router wire format for OpenAI/Anthropic clients (74feddea) |
+| src/router/wire/wire.test.ts | c | router wire format for OpenAI/Anthropic clients (74feddea); loopback always served, tailnet bind deferred (b3103e92) |
 | src/registry/migrate.test.ts | c | registry schema migration (51555620) |
 | src/config/home-migrate.test.ts | c | ~/.pai home migration (d1c1a781) |
 | src/cli/docs-sync.test.ts | c | docs/commands must match command definitions (89e74fa4, df809929) |

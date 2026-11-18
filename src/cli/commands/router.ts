@@ -17,6 +17,7 @@ import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "
 import { LimitsCache } from "../../router/limits.js";
 import { exportDefaultLayout } from "../../router/cockpit-layout-default.js";
 import { cockpitProbeSettings } from "../../router/cockpit-layout.js";
+import { bindWhenUp, isDeferrableBind, writeTailState } from "../../router/tail-bind.js";
 import { listenRetry } from "../../router/listen.js";
 import { drainServers } from "../../router/drain.js";
 import { SystemMonitor } from "../../router/system.js";
@@ -94,8 +95,9 @@ const runCommand: CommandDef = {
     const managed = port === routerPort();
     // router.bind: "loopback" (default) | "tailscale" | an explicit IPv4; 0.0.0.0 is never accepted.
     const bindName = loadConfig().router.bind ?? "loopback";
+    // Loopback is always served; a tailnet name or IPv4 that is not up yet is bound later (tail-bind.ts), never fatal.
     const addr = resolveBindAddress(bindName);
-    if (!addr) {
+    if (!addr && !isDeferrableBind(bindName)) {
       throw new CliError(`cannot resolve router.bind "${bindName}" — use "loopback", "tailscale", or an IPv4 (never 0.0.0.0)`, "pai daemon status");
     }
     const remote = addr !== LOOPBACK_HOST;
@@ -104,7 +106,7 @@ const runCommand: CommandDef = {
     // client whose Host is an attacker's domain. hostAllowed already accepts
     // 127.0.0.1, localhost and [::1], so proxy traffic passes on loopback.
     const extraHosts = (loadConfig().router.allowedHosts ?? []).filter((h) => h.trim());
-    const hosts = { bind: bindName || addr, extraHosts };
+    const hosts = { bind: bindName || addr!, extraHosts };
     if (remote && extraHosts.length === 0) {
       process.stderr.write("pai: router: router.allowedHosts is empty: the cockpit opened by tailnet hostname will be refused (403); add the name to router.allowedHosts\n");
     }
@@ -235,6 +237,7 @@ const runCommand: CommandDef = {
         };
         const server = http.createServer(serving);
         const tail = remote ? http.createServer(serving) : undefined;
+        let cancelTail: (() => void) | undefined;
         const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
         {
         // the old router keeps serving through this process's warm-up: it is stopped only now, so the port is refused for one retry interval
@@ -262,26 +265,36 @@ const runCommand: CommandDef = {
           process.exit(1);
         });
         if (tail) {
-          const tailBound = inheritFds.length > 1
-            ? new Promise<void>((resolve) => tail.listen({ fd: inheritFds[1]! }, resolve))
-            : listenRetry(tail, port, addr, { waitMs: waitBindMs, intervalMs: 1 });
-          tailBound.then(async () => {
-            out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
-          }, (e: unknown) => {
-            process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
-            process.exit(1);
-          });
+          const onTailBound = async (a: string) => {
+            writeTailState({ bind: bindName, port, pid: process.pid, state: "bound", addr: a });
+            out(ok(`cockpit beyond loopback: http://${await displayHost(a)}:${port}/cockpit`));
+          };
+          if (inheritFds.length > 1) {
+            tail.listen({ fd: inheritFds[1]! }, () => void onTailBound(addr ?? bindName));
+          } else {
+            writeTailState({ bind: bindName, port, pid: process.pid, state: "waiting" });
+            cancelTail = bindWhenUp(tail, {
+              bind: bindName,
+              port,
+              log: (l) => process.stderr.write(l + "\n"),
+              onState: (st) => {
+                if (st.state === "waiting") writeTailState({ bind: bindName, port, pid: process.pid, state: "waiting" });
+              },
+              onBound: (a) => void onTailBound(a),
+            });
+          }
         }
         }
         // a handover keeps the old router alive for its in-flight streams: bounded by router.handover.drainMaxSecs, then they end with a retryable error
         const bye = (handedOver = false) => {
           draining = true;
+          cancelTail?.();
           const maxMs = handedOver ? (loadConfig().router.handover?.drainMaxSecs ?? 1800) * 1000 : loadConfig().router.drainMs;
           if (handedOver) {
             writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "draining", inflight: inflight.count() }));
             process.stderr.write(`pai: router: handed over, finishing ${inflight.count()} in-flight request(s) (at most ${maxMs / 1000}s)\n`);
           }
-          void drainServers(tail ? [server, tail] : [server], {
+          void drainServers(tail?.listening ? [server, tail] : [server], {
             timeoutMs: maxMs,
             idleGraceMs: 1500,
             onTimeout: () => {
@@ -303,7 +316,7 @@ const runCommand: CommandDef = {
         let handing = false;
         process.on("SIGUSR2", () => {
           if (handing || draining) return;
-          const handles = [server, ...(tail ? [tail] : [])].map((s) => (s as unknown as { _handle?: { fd?: number } })._handle?.fd);
+          const handles = [server, ...(tail?.listening ? [tail] : [])].map((s) => (s as unknown as { _handle?: { fd?: number } })._handle?.fd);
           if (handles.some((fd) => typeof fd !== "number" || fd < 0)) {
             process.stderr.write("pai: router: handover skipped, listening fd unavailable\n");
             return;
