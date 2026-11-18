@@ -17,6 +17,9 @@ export interface SpeedStats {
   ttftP90: number | null;
   readTps: number | null;
   writeTps: number | null;
+  /** requests behind readTps / writeTps (rows with a usable sample) */
+  readN: number;
+  writeN: number;
 }
 
 export interface SpeedRow {
@@ -57,10 +60,18 @@ function genMs(r: UsageRow, local: boolean): number | undefined {
   return local ? r.decodeMs : r.ttftMs === undefined ? undefined : r.ms;
 }
 
-/** [uncached prompt tokens, ttft ms] for rows that qualify for the prefill rate, else null. */
+/**
+ * [uncached prompt tokens, ttft ms] for rows that qualify for the prefill rate, else null.
+ * Counted tokens: input_tokens + cache_creation_input_tokens (what the server really had to
+ * prefill). cache_read_input_tokens are excluded: they cost no prefill time, so counting them
+ * would inflate the rate. A buffered local reply (decode unknown, whole answer in one chunk)
+ * has ttft == total time including generation, so it is no prefill sample unless the server
+ * reported its own prompt_ms.
+ */
 function prefillSample(r: UsageRow, local: boolean): [number, number] | null {
   const tok = uncachedPrompt(r);
   const ms = prefillMs(r);
+  if (local && r.promptMs === undefined && (r.decodeMs === undefined || r.decodeMs < MIN_GEN_MS)) return null;
   if (tok === null || tok <= 0 || ms === undefined || ms <= 0) return null;
   const max = Number(process.env.PAI_MAX_LOCAL_PREFILL_TPS) || MAX_PLAUSIBLE_LOCAL_PREFILL_TPS;
   if (local && tok / (ms / 1000) > max) {
@@ -104,14 +115,14 @@ export const MIN_GEN_MS = 50;
 /** Fewer output tokens than this are excluded from the aggregate output rate. */
 export const MIN_OUTPUT_TOKENS = 8;
 /** Output rates above these are measurement artefacts and dropped (env PAI_MAX_LOCAL_OUTPUT_TPS / PAI_MAX_CLOUD_OUTPUT_TPS override). */
-export const MAX_PLAUSIBLE_LOCAL_OUTPUT_TPS = 2000;
+export const MAX_PLAUSIBLE_LOCAL_OUTPUT_TPS = 400;
 export const MAX_PLAUSIBLE_CLOUD_OUTPUT_TPS = 1000;
 let outCapLogged = false;
 
-/** Output tok/s: median per-row rate over rows with a real generation window (existing median semantics kept). */
-export function outputRate(rows: UsageRow[], local = true): number | null {
+/** [output tokens, generation ms] of the rows with a real, known decode window; buffered/unknown/implausible rows are skipped. */
+function decodeSamples(rows: UsageRow[], local: boolean): [number, number][] {
   const max = (Number(process.env[local ? "PAI_MAX_LOCAL_OUTPUT_TPS" : "PAI_MAX_CLOUD_OUTPUT_TPS"]) || (local ? MAX_PLAUSIBLE_LOCAL_OUTPUT_TPS : MAX_PLAUSIBLE_CLOUD_OUTPUT_TPS));
-  const rates: number[] = [];
+  const out: [number, number][] = [];
   for (const r of rows) {
     const g = genMs(r, local);
     const n = r.output_tokens ?? 0;
@@ -123,9 +134,19 @@ export function outputRate(rows: UsageRow[], local = true): number | null {
       }
       continue;
     }
-    rates.push(n / (g / 1000));
+    out.push([n, g]);
   }
-  return percentile(rates, 0.5);
+  return out;
+}
+
+/**
+ * Output tok/s = Σ output_tokens / Σ decode seconds over rows with a known decode window only
+ * (decodeMs undefined = non-streamed/buffered reply, never counted as 0). Null when no row qualifies.
+ */
+export function outputRate(rows: UsageRow[], local = true): number | null {
+  const s = decodeSamples(rows, local);
+  const ms = s.reduce((a, x) => a + x[1], 0);
+  return ms > 0 ? s.reduce((a, x) => a + x[0], 0) / (ms / 1000) : null;
 }
 
 export interface EndpointSpeed {
@@ -177,6 +198,8 @@ function stats(rows: UsageRow[], local: boolean): SpeedStats {
     ttftP90: round(percentile(ttft, 0.9)),
     readTps: round(prefillRate(rows, local)),
     writeTps: round(outputRate(rows, local)),
+    readN: rows.filter((r) => prefillSample(r, local)).length,
+    writeN: decodeSamples(rows, local).length,
   };
 }
 

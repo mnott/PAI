@@ -113,6 +113,10 @@ export class UsageSniffer {
   private mode: "sse" | "json" | undefined;
   /** wall-clock ms of the first content_block_delta (text or tool-input), SSE only */
   firstContentAt: number | undefined;
+  /** push() call numbers of the first and last content delta: equal means the whole reply arrived in one chunk (buffered, not streamed) */
+  private firstPush = 0;
+  private lastPush = 0;
+  private pushes = 0;
   /** the response carries a tool call that runs `pai build` (the worker is about to wait on the build gate) */
   buildCall = false;
   /** server-reported timings (`timings` or `usage` carrying prompt_ms / predicted_ms), when present */
@@ -123,7 +127,20 @@ export class UsageSniffer {
     if (contentType) this.mode = /text\/event-stream/i.test(contentType) ? "sse" : "json";
   }
 
+  /** The content arrived in a single network chunk, so first-to-end says nothing about decode speed. */
+  get buffered(): boolean {
+    return this.firstContentAt !== undefined && this.firstPush === this.lastPush;
+  }
+
+  /** Router timing for the usage row: decodeMs only when content was streamed over time, else unknown (omitted, never 0). */
+  timing(started: number, ended: number): { ttftMs?: number; decodeMs?: number } {
+    const first = this.firstContentAt;
+    if (first === undefined) return {};
+    return this.buffered ? { ttftMs: first - started } : { ttftMs: first - started, decodeMs: ended - first };
+  }
+
   push(chunk: Buffer): void {
+    this.pushes++;
     const text = chunk.toString("utf8");
     if (!this.mode) this.mode = /^\s*(event:|data:|:)/.test(text) ? "sse" : "json";
     if (this.mode === "json") {
@@ -155,8 +172,12 @@ export class UsageSniffer {
     const line = raw.replace(/\r$/, "");
     if (!line.startsWith("data:")) return;
     const data = line.slice(5).trim();
-    if (this.firstContentAt === undefined && data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":\s*"[^"]/.test(data)) {
-      this.firstContentAt = Date.now();
+    if (data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":\s*"[^"]/.test(data)) {
+      if (this.firstContentAt === undefined) {
+        this.firstContentAt = Date.now();
+        this.firstPush = this.pushes;
+      }
+      this.lastPush = this.pushes;
     }
     if (!this.buildCall && data.includes('"partial_json"')) {
       const m = /"partial_json":\s*"((?:[^"\\]|\\.)*)"/.exec(data);

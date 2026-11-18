@@ -934,7 +934,7 @@ export function routerHandler(
                 const first = sniff?.firstContentAt;
                 const usage = sniff ? sniff.finish() : emptyUsage();
                 release(sniff ? usage : undefined, sniff?.buildCall ? { gate: true } : undefined);
-                record(ures.statusCode ?? 502, usage, { ...(first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}), ...sniff?.serverTimings });
+                record(ures.statusCode ?? 502, usage, { ...(sniff && first !== undefined && (ures.statusCode ?? 502) < 400 ? sniff.timing(started, ended) : {}), ...sniff?.serverTimings });
               });
               return;
             }
@@ -1019,7 +1019,7 @@ export function routerHandler(
               ures.statusCode ?? 502,
               usage,
               {
-                ...(first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}),
+                ...(sniff && first !== undefined && (ures.statusCode ?? 502) < 400 ? sniff.timing(started, ended) : {}),
                 ...sniff?.serverTimings,
               }
             );
