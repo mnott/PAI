@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { queueRows, writeTicket, type QueueRow } from "./capacity.js";
+import { capacityGate, queueRows, writeTicket, type QueueRow } from "./capacity.js";
 import { buildQueueTable, plainWording, renderQueueTable, type TableInput } from "./queue-table.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
