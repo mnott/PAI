@@ -600,7 +600,7 @@ export function renderTable(
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   // the activity word of every running row comes from real state (the same words as the queue table and
-  // the cockpit): gen = request open at the model, in line = waiting behind other workers at the engine,
+  // the cockpit): writing = request open at the model, in line = waiting behind other workers at the engine,
   // tool = a tool runs with no request open, idle Nm = none of those over 90 s. Never a guess from time:
   // without the router's snapshot only "tool" / "idle" show (the status file alone).
   let reqOf: (id: string) => RequestState | undefined = () => undefined;
@@ -614,7 +614,7 @@ export function renderTable(
   }
   const actMark = (s: WorkerStatus): string => {
     const a = activityOf(s, false, now.getTime(), reqOf(s.id));
-    return a ? "  " + c(a === "gen" ? "green" : a === "in line" ? "yellow" : "dim", a) : "";
+    return a ? "  " + c(a === "writing" ? "green" : a === "in line" ? "yellow" : "dim", a) : "";
   };
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   // the QUEUED section only exists while something waits: a table that never

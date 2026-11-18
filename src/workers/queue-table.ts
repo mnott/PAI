@@ -84,7 +84,7 @@ export interface TableRow {
   local: boolean;
   task: string;
   seconds: number;
-  /** Fixed-width activity cell: "gen" | "in line" | "tool" | "idle 2m" | "waiting" | "" — real state, never a guess (see ACT_TIP). */
+  /** Fixed-width activity cell: "writing" | "in line" | "tool" | "idle 2m" | "waiting" | "" — real state, never a guess (see ACT_TIP). */
   activity: string;
   /** Plain sentence of what the activity word means, for its tooltip. */
   activityTip: string;
@@ -132,7 +132,7 @@ export interface RequestState {
 /** The one line above the table (also the CLI footer): states and priorities in plain words. */
 export const QUEUE_EXPLAIN =
   "running = holds a slot; waiting = next in line; paused = parked, slot freed for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives reboot. " +
-  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs.";
+  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: \"N of M slots busy\" counts jobs holding a slot; \"back from a long tool run\" = a job that lent its slot while waiting on a long tool took it back while others filled it, so it runs above the cap until one finishes.";
 
 /** Plain-words tooltip of each priority. */
 export const PRIORITY_TIP: Record<"low" | "normal" | "high" | "now", string> = {
@@ -164,8 +164,8 @@ export function plainWording(text: string): string {
 }
 
 /** The short word of each activity, shown fixed-width in the cell; ACT_TIP carries the sentence for its tooltip. */
-export const ACT_TIP: Record<"gen" | "in line" | "tool" | "waiting", string> = {
-  gen: "its request is open at the model — the engine is generating its reply",
+export const ACT_TIP: Record<"writing" | "in line" | "tool" | "waiting", string> = {
+  writing: "its request is open at the model — the model is writing its reply",
   "in line": "its request waits in the local scheduler queue, behind other workers at the engine",
   tool: "no request open at the model; a tool (build, test) is running",
   waiting: "waiting for a slot: no request has gone to the model yet",
@@ -173,13 +173,13 @@ export const ACT_TIP: Record<"gen" | "in line" | "tool" | "waiting", string> = {
 
 /**
  * The activity word of a RUNNING job, from real state — never the age of the last status write:
- * "gen" its request is open at the model; "in line" it waits in the router's local scheduler queue;
+ * "writing" its request is open at the model; "in line" it waits in the router's local scheduler queue;
  * "tool" no request open and a tool runs (a Bash the worker waits on); else "idle Nm" past 90 s.
  * Without `req` (the router cannot be reached) only the status file speaks: "tool" / "idle", never a guess.
  */
 export function activityOf(s: Pick<WorkerStatus, "updated" | "toolWaitSince">, waiting: boolean, now: number, req?: RequestState): string {
   if (waiting) return "waiting";
-  if (req?.inflight) return "gen";
+  if (req?.inflight) return "writing";
   if (req?.queued) return "in line";
   // a tool running: the PreToolUse hook stamped the wait and the result has not cleared it yet
   if (s.toolWaitSince !== undefined || slotLent(s, now)) return "tool";
