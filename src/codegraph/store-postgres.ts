@@ -443,26 +443,79 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
       if (want.has(k) && !have.has(k)) { have.add(k); kept++; } else closeIds.push(r.id);
     }
     const fresh = [...want].filter(([k]) => !have.has(k)).map(([, t]) => t);
+    // a triple another scope already owns OPEN must not be inserted (the open-unique index rejects it)
+    let ownedElsewhere = new Set<string>();
+    if (fresh.length) {
+      for (let i = 0; i < fresh.length; i += 500) {
+        const c = fresh.slice(i, i + 500);
+        const others = await this.pool.query<{ subject: string; predicate: string; object: string }>(
+          `SELECT DISTINCT subject, predicate, object FROM kg_triples
+           WHERE valid_to IS NULL AND source_session IS DISTINCT FROM $1
+             AND (subject, predicate, object) IN (SELECT * FROM unnest($2::text[], $3::text[], $4::text[]))`,
+          [scope, c.map((t) => t.subject), c.map((t) => t.predicate), c.map((t) => t.object)],
+        );
+        for (const o of others.rows) ownedElsewhere.add(key(o));
+      }
+    }
+    // a triple another scope owns OPEN stays as it is; one we just closed gets reopened in place
+    // (the open-unique index forbids a second row) — never inserted fresh.
+    const reopenIds: number[] = [];
+    const inserts: TripleSpec[] = [];
+    if (fresh.length) {
+      for (let i = 0; i < fresh.length; i += 500) {
+        const c = fresh.slice(i, i + 500);
+        const closedRows = await this.pool.query<{ id: number; subject: string; predicate: string; object: string }>(
+          `SELECT DISTINCT ON (subject, predicate, object) id, subject, predicate, object FROM kg_triples
+           WHERE valid_to IS NOT NULL AND (subject, predicate, object) IN (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]))
+           ORDER BY subject, predicate, object, valid_to DESC`,
+          [c.map((t) => t.subject), c.map((t) => t.predicate), c.map((t) => t.object)],
+        );
+        const closedBy = new Map(closedRows.rows.map((r) => [key(r), r.id]));
+        for (const t of c) {
+          const k = key(t);
+          if (ownedElsewhere.has(k)) continue;
+          const id = closedBy.get(k);
+          if (id != null) reopenIds.push(id);
+          else inserts.push(t);
+        }
+      }
+    }
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       if (closeIds.length) await client.query("UPDATE kg_triples SET valid_to = NOW() WHERE id = ANY($1::int[])", [closeIds]);
+      for (const id of reopenIds) {
+        await client.query("UPDATE kg_triples SET valid_to = NULL, source_session = $2 WHERE id = $1", [id, scope]);
+      }
       for (let i = 0; i < fresh.length; i += 500) {
         const c = fresh.slice(i, i + 500);
+        // ON CONFLICT: the same triple is already open in another scope — one row per (subject, predicate, object)
         await client.query(
           `INSERT INTO kg_triples (subject, predicate, object, project_id, source_session, confidence)
-           SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[], $6::text[])`,
+           SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[], $6::text[])
+           ON CONFLICT (subject, predicate, object) WHERE valid_to IS NULL DO NOTHING`,
           [c.map((t) => t.subject), c.map((t) => t.predicate), c.map((t) => t.object), c.map((t) => t.projectId ?? null), c.map(() => scope), c.map((t) => t.confidence)],
         );
       }
+      let inserted = 0;
+      for (let i = 0; i < fresh.length; i += 500) {
+        const c = fresh.slice(i, i + 500);
+        const cnt = await client.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM kg_triples t
+           WHERE t.source_session = $1 AND t.valid_to IS NULL
+             AND (t.subject, t.predicate, t.object) IN (SELECT * FROM unnest($2::text[], $3::text[], $4::text[]))`,
+          [scope, c.map((t) => t.subject), c.map((t) => t.predicate), c.map((t) => t.object)],
+        );
+        inserted += Number(cnt.rows[0].n);
+      }
       await client.query("COMMIT");
+      return { added: inserted, closed: closeIds.length, kept };
     } catch (e) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw e;
     } finally {
       client.release();
     }
-    return { added: fresh.length, closed: closeIds.length, kept };
   }
 
   async triplesTouching(keys: string[], opts?: { limit?: number; includeClosed?: boolean }): Promise<TripleRow[]> {

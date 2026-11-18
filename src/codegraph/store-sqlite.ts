@@ -452,9 +452,21 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
         const k = key(r);
         if (want.has(k) && !have.has(k)) { have.add(k); kept++; } else { close.run(now, r.id); closed++; }
       }
+      // a duplicate (subject, predicate, object) already open in ANOTHER scope: keep the existing row
+      const otherOpen = this.db
+        .prepare("SELECT subject, predicate, object FROM kg_triples WHERE valid_to IS NULL AND source_session IS NOT ?")
+        .all(scope) as Array<{ subject: string; predicate: string; object: string }>;
+      const dk = new Set(otherOpen.map((d) => key(d)));
+      // the open-unique index forbids a second open row: reopen an existing closed triple in place.
+      // Only when no other scope already owns an OPEN row of it (dk) — that one stays, never closed.
+      const findClosed = this.db.prepare("SELECT id FROM kg_triples WHERE valid_to IS NOT NULL AND subject = ? AND predicate = ? AND object = ? ORDER BY valid_to DESC LIMIT 1");
+      const reopen = this.db.prepare("UPDATE kg_triples SET valid_to = NULL, valid_from = ?, source_session = ?, confidence = ? WHERE id = ?");
       for (const [k, t] of want) {
         if (have.has(k)) continue;
-        ins.run(t.subject, t.predicate, t.object, t.projectId ?? null, scope, now, t.confidence, now);
+        if (dk.has(k)) continue; // owned open by another scope: no new row, no reopen
+        const prior = findClosed.get(t.subject, t.predicate, t.object) as { id: number } | undefined;
+        if (prior) reopen.run(now, scope, t.confidence, prior.id);
+        else ins.run(t.subject, t.predicate, t.object, t.projectId ?? null, scope, now, t.confidence, now);
         added++;
       }
     })();
