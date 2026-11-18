@@ -33,15 +33,24 @@ import {
   listKgEntitiesSqlite,
   updateEntityFeedbackWeightSqlite,
 } from "./sqlite/kg-entity.js";
+import type { CodeGraphStore } from "../codegraph/store.js";
+import { SqliteCodeGraphStore } from "../codegraph/store-sqlite.js";
 
 export class SQLiteBackend implements StorageBackend {
   readonly backendType = "sqlite" as const;
   readonly supportsPostgresFeatures = false;
 
   private db: Database;
+  private codeGraphStore: CodeGraphStore | null = null;
 
   constructor(db: Database) {
     this.db = db;
+  }
+
+  /** Code knowledge graph store over this database (tables created on first use). */
+  codeGraph(): CodeGraphStore {
+    if (!this.codeGraphStore) this.codeGraphStore = new SqliteCodeGraphStore(this.db);
+    return this.codeGraphStore;
   }
 
   /**

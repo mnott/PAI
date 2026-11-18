@@ -51,9 +51,12 @@ export function placeVolatile(task: string, volatile: string): string {
  */
 export const DEFAULT_WORKER_TOOLS = "Read,Edit,Write,Bash,Grep,Glob";
 
+/** The code-graph tools of the pai MCP server: granted to every default worker (the `pai` server loads with them). */
+export const CODE_TOOL_GRANTS = "mcp__pai__code_explore,mcp__pai__code_search,mcp__pai__code_callers";
+
 /** The --allowedTools args a headless run needs; [] when the caller granted. */
 export function headlessToolGrants(allowedTools: string[]): string[] {
-  return allowedTools.length ? [] : ["--allowedTools", DEFAULT_WORKER_TOOLS];
+  return allowedTools.length ? [] : ["--allowedTools", `${DEFAULT_WORKER_TOOLS},${CODE_TOOL_GRANTS}`];
 }
 
 /**

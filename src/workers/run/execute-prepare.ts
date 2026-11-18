@@ -43,7 +43,7 @@ import { loadContractAddendum, type ContractAddendum } from "../contract-addendu
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "../preamble.js";
 import { deadlinePromptLine } from "../deadline.js";
 import { stripBrowserNames } from "../browser-tools.js";
-import { expandMcpNames, mcpServersFromToolGrants, writeMcpConfig } from "../mcp.js";
+import { readMcpServers, expandMcpNames, mcpServersFromToolGrants, writeMcpConfig } from "../mcp.js";
 import { pinNotices, projectLaunchConfig } from "../project-config.js";
 import { proxyPort, ensureProxyRunning } from "../proxy/server.js";
 import type { ExecuteArgs, StreamEvent } from "./types.js";
@@ -261,6 +261,8 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
       ...parsed.mcp,
       ...(classMcp ?? []),
       ...mcpServersFromToolGrants(parsed.allowedTools),
+      // default grant carries the code_* tools: their server must load (when installed)
+      ...(!parsed.allowedTools.length && "pai" in readMcpServers() ? ["pai"] : []),
     ];
     if (wanted.length) {
       const names = expandMcpNames(wanted, config); // unknown names fail fast
