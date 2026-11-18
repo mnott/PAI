@@ -57,6 +57,30 @@ function lastJsonObject(text: string): Record<string, unknown> | null {
   return null;
 }
 
+/** The max hops of a fall-through chain one follow walks (escalation can reroute a continuation again). */
+export const FOLLOW_CHAIN_MAX = 8;
+
+/**
+ * Walk the `fallThroughTo` chain from `start`: every link is followed (a continuation that was itself rerouted
+ * carries its own `fallThroughTo`), and the walk stops at the first status whose file is missing or whose link
+ * dangles. Returns the final run's status plus the ids followed to reach it ([] when nothing was followed).
+ * The one chain reader: `followReroute` walks it under a wait-for-announce deadline, `waitWorkers` re-reads it
+ * on every poll (a continuation announced after the origin went terminal is picked up as it appears).
+ */
+export function followChain(logDir: string, start: WorkerStatus): { cur: WorkerStatus; followed: string[] } {
+  let cur = start;
+  const followed: string[] = [];
+  for (let hops = 0; hops < FOLLOW_CHAIN_MAX; hops++) {
+    const to = loadStatus(logDir, cur.id)?.fallThroughTo ?? cur.fallThroughTo;
+    if (!to || followed.includes(to)) break;
+    const next = loadStatus(logDir, to);
+    if (!next) break;
+    followed.push(to);
+    cur = next;
+  }
+  return { cur, followed };
+}
+
 /**
  * Follow the restart of `old` to the end: print the reroute line, wait for the new run to finish, emit its result.
  * Returns the exit code (the restart's); null when the restart never appeared.
