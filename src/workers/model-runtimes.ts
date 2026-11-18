@@ -6,7 +6,10 @@
  * (src/config/defaults/config.yaml under models.runtimes) and reach the user
  * through the defaults merge — the user's entries win per key, nothing is
  * ever written into the user's config. A runtime without a configured command
- * shows no button and cannot be started. The commands run detached through a shell,
+ * shows no button and cannot be started. `autostart: true` additionally lets
+ * the PAI daemon start the runtime when it is not up (src/daemon/runtime-autostart.ts);
+ * it is never shipped true — only an operator's own config sets it.
+ * The commands run detached through a shell,
  * stdout/stderr appended to <PAI home>/logs/local/<runtime>.log; readiness is
  * the configured `ready` URL (a 2xx answers) or command (exit 0 answers),
  * polled until the deadline. Coding tiers keep using local_tiers
@@ -29,6 +32,8 @@ export interface RuntimeCommands {
   ready?: string;
   /** free text shown on the card */
   note?: string;
+  /** the PAI daemon starts this runtime when it is not up (daemon-autostart.ts); default false — never shipped true */
+  autostart?: boolean;
 }
 
 /** The `models.runtimes` block: the shipped defaults deep-merged UNDER the
@@ -51,7 +56,8 @@ export function readRuntimeCommands(configPath: string = ""): Record<string, Run
       if (typeof e.stop === "string" && e.stop.trim()) cmd.stop = e.stop;
       if (typeof e.ready === "string" && e.ready.trim()) cmd.ready = e.ready;
       if (typeof e.note === "string" && e.note.trim()) cmd.note = e.note;
-      if (cmd.start || cmd.stop || cmd.ready || cmd.note) out[name] = cmd;
+      if (e.autostart === true) cmd.autostart = true;
+      if (cmd.start || cmd.stop || cmd.ready || cmd.note || cmd.autostart) out[name] = cmd;
     }
     return out;
   } catch {

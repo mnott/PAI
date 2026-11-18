@@ -17,6 +17,7 @@ export const modelsCommand: CommandDef = {
     "Uses the daemon's 30 s cache; --fresh probes now. " +
     "`pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> " +
     "(start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here. " +
+    "models.runtimes.<runtime>.autostart: true lets the PAI daemon start that runtime when it is not up (at daemon start and after a crash, same path, memory checked first); never shipped true. " +
     "`pai models add <hf-id|path>` registers a new local model: it resolves the weights (HF ids are downloaded only with --download), " +
     "picks the runtime by format (MLX: mlx_lm.server; GGUF: llama-server if installed, else refused with the reason), assigns a free port " +
     "and writes a DISABLED registry entry (workers.yaml) with location, start, health and port filled. It never enables or routes to the model. " +

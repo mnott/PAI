@@ -456,6 +456,12 @@ models:
   # The start/stop/ready commands `pai models start|stop` and the cockpit's
   # runtime buttons run (src/workers/model-runtimes.ts). A runtime with no
   # command shows no button. Your entries in config.yaml in the PAI home win per key.
+  # autostart: true lets the PAI daemon start the runtime when it is not up — at
+  # daemon start and after a crash, through the same path as `pai models start`
+  # (src/daemon/runtime-autostart.ts): free memory first against the provider's
+  # local_tiers memoryGb, retry at most every 10 min, give up after 3 failures
+  # until the next daemon start; a frozen machine starts nothing. It is never
+  # shipped true: only your own config.yaml sets it (e.g. for gyro-l).
   runtimes:
     ollama:
       start: ollama serve

@@ -31,6 +31,8 @@ export interface LocalStatus {
   down: string[];
   /** Local providers switched off in workers.yaml. */
   disabled: string[];
+  /** Why the tier reads down while nothing runs (the daemon's autostart state); absent when unknown. */
+  downInfo?: LocalDownInfo;
 }
 
 /** The model callers that need exactly one use: the first of `running` (the one `--local` favours). */
@@ -42,11 +44,34 @@ export const localStatusPath = (logDir: string): string => join(logDir, "local-s
 
 export const NO_SERVER_HINT = "do not start model servers";
 
+/** Why the local tier reads down while nothing runs: the autostart answer of the daemon. */
+export interface LocalDownInfo {
+  /** An autostart runtime that is down (the daemon starts it): "starting gyro-l". */
+  starting?: string;
+  /** A runtime whose repeated start failures exhausted the backoff: "gave up on gyro-l". */
+  gaveUp?: string;
+  /** Nothing marked autostart while a local provider is down: "autostart off". */
+  autostartOff?: boolean;
+}
+
+/** The one line of why the local tier reads down, "" when there is nothing to say. */
+export function localDownHint(info: LocalDownInfo | null | undefined): string {
+  if (!info) return "";
+  if (info.starting) return `local model down: starting ${info.starting}`;
+  if (info.gaveUp) return `local model down, autostart gave up on ${info.gaveUp} until the next daemon start`;
+  if (info.autostartOff) return "local model down, autostart off";
+  return "";
+}
+
 export function localStatusLine(st: LocalStatus): string {
   if (st.running.length) {
     const list = st.running.map((r) => `${r.provider} (${r.model})`).join(", ");
     return `local: ${list} running — use \`pai worker run --local\``;
   }
+  // the down autostart state rides along in the cache (written by the daemon's refresher):
+  // balanced mode reads this line, and "none running" alone never says whether anything is coming up
+  const why = localDownHint(st.downInfo);
+  if (why) return `local: none running — ${why}; ${NO_SERVER_HINT}`;
   return `local: none running — local work is not available; ${NO_SERVER_HINT}`;
 }
 

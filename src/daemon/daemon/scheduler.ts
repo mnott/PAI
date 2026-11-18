@@ -39,6 +39,7 @@ import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
 import { startWorktreeGc } from "../worktree-gc.js";
 import { startBuildReapSweep } from "../build-reap.js";
+import { startRuntimeAutostart } from "../runtime-autostart.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
 // tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
@@ -1067,6 +1068,30 @@ export function startRouterSupervisor(): void {
   }, ROUTER_TICK_MS);
   if (timer.unref) timer.unref();
   process.stderr.write(`[pai-daemon] Router supervisor: every ${ROUTER_TICK_MS / 1000}s\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Local model runtime autostart
+// ---------------------------------------------------------------------------
+
+/**
+ * Start the local-runtime autostart (src/daemon/runtime-autostart.ts): every
+ * `models.runtimes.<name>.autostart: true` runtime that is not up gets started
+ * through `pai models start`'s own path — at daemon start and each minute, so
+ * a reboot or a crash never leaves the local tier down while balanced mode
+ * sends everything to the cloud. A frozen machine starts nothing; short memory
+ * skips with one operator alert; failures back off every 10 min and stop after
+ * 3 until the next daemon start. Config is read once: a change needs a daemon
+ * restart, like every other start* here.
+ */
+export function startRuntimeAutostartSupervision(): void {
+  try {
+    startRuntimeAutostart();
+  } catch (e) {
+    process.stderr.write(
+      `[pai-daemon] Runtime autostart: not started (${e instanceof Error ? e.message : String(e)})\n`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

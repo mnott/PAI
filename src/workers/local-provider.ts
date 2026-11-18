@@ -48,6 +48,7 @@ import {
 import { PORT_TIMEOUT_MS, httpModelsCheck, providerModelIds, type PortCheck } from "../cli/lib/setups.js";
 import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
+import { currentAutostartDownInfo } from "../daemon/runtime-autostart.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { classRoute, entryProvider, type TierDef } from "./route-lists.js";
 
@@ -287,6 +288,12 @@ export function startLocalStatusRefresh(): () => void {
       const { workers } = readWorkersSection();
       const dir = workersLogDir(workers);
       const st = await computeLocalStatus(workers, dir);
+      // while nothing runs, the autostart manager's answer rides along: the hint
+      // line says "starting gyro-l" / "autostart off", never a bare "none running"
+      if (!st.running.length && st.down.length) {
+        const info = currentAutostartDownInfo();
+        if (info) st.downInfo = info;
+      }
       writeLocalStatus(dir, st);
       const now = Date.now();
       if (now - lastLog >= 60_000) {

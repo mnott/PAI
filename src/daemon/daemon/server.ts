@@ -37,7 +37,7 @@ import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sy
 import { interruptStaleJobs } from "../../router/cockpit-job-recovery.js";
 import { paiHomeDir } from "../../config/pai-home.js";
 import { startOrphanCheck } from "../orphan-check.js";
-import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch } from "./scheduler.js";
+import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch, startRuntimeAutostartSupervision } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
@@ -230,6 +230,11 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // Model router: restart it whenever its port stops answering (opt-in).
   startRouterSupervisor();
+
+  // Local model runtimes marked models.runtimes.<name>.autostart: start them when down,
+  // at boot and after a crash — the router never routes to a provider that is down, so
+  // nothing else ever starts them (2026-11-18: after a reboot gyro-l stayed down all day).
+  startRuntimeAutostartSupervision();
 
   // Cockpit jobs the previous daemon (or its router) was running died with it: say so, never resume.
   try {
