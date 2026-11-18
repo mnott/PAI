@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
-import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig, QueuePriority };
 
@@ -209,7 +209,7 @@ function fairEntries(logDir: string, key: string, isAlive: (pid: number) => bool
   return fairOrder({
     entries,
     sessionOf: (id) => sessionOf(byId.get(id)),
-    running: all.filter((s) => s.provider === key && s.state === "running").map(sessionOf),
+    running: all.filter((s) => s.provider === key && s.state === "running" && !pausedFree(s)).map(sessionOf),
     lastServed: lastServed(all, key),
     now,
     ...(agingMs === undefined ? {} : { agingMs }),
@@ -627,7 +627,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     // an operator-paused worker (paused, no preemptor) releases its slot at once: the next queued run is admitted. It comes back through the queue (resumeWorker, preempt.ts), never over the cap.
     const urgentSelf = o.priority === "front" || madeUrgent;
     const holders = loaded.filter(
-      (s) => s.id !== self.id && holds(s) && s.state === "running" && !slotLent(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && !(s.paused && !s.pausedBy) && isLive(s, owns),
+      (s) => s.id !== self.id && holds(s) && holdsSlot(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
     return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length };

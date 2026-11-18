@@ -199,7 +199,7 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
     startedMs: Date.now(),
     state: "running",
     log: logFile,
-    ...(env.PAI_SESSION_NAME ? { session: env.PAI_SESSION_NAME } : {}),
+    ...((env.PAI_SESSION_NAME || env.AIBROKER_SESSION_NAME || env.AIBROKER_SESSION) ? { session: env.PAI_SESSION_NAME || env.AIBROKER_SESSION_NAME || env.AIBROKER_SESSION } : {}),
   };
   writeFileSync(logFile, `$ ${o.command.join(" ")}\n`, "utf8");
   writePaneRunStatus(o.logDir, status);
