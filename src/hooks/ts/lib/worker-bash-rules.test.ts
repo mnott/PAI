@@ -464,15 +464,15 @@ describe("headless-browser automation is denied (operator rule)", () => {
     "npx playwright test", "playwright test", "npx -y playwright codegen", "npm install playwright", "npm i -D @playwright/test",
     "pnpm add puppeteer-core", "yarn add selenium-webdriver", "bun add playwright-core", "pip install playwright", "uv pip install selenium",
     "pip3 install pyppeteer", "python -m playwright install", "python3 -m playwright codegen", "playwright install chromium", "npx @puppeteer/browsers install chrome",
-    "node pw.mjs", "tsx pw.mjs", "npx tsx pw.mjs", "node pp.js", "python sel.py",
+    "chromium --headless --dump-dom x", "google-chrome --headless=new --screenshot x", "node pw.mjs", "tsx pw.mjs", "npx tsx pw.mjs", "node pp.js", "python sel.py",
     `cd /x && node ${dir}/pw.mjs`, `python - <<'EOF'\nfrom playwright.sync_api import sync_playwright\nEOF`, `node -e "require('puppeteer')"`,
   ];
   for (const f of forms) it(`denies: ${f.split("\n")[0]}`, () => expect(denied(f)).toBe(true));
   it("uses the operator message", () => {
-    expect(JSON.stringify(bash("npx playwright test"))).toContain("Playwright/Puppeteer/Selenium are not used here (operator rule). For web pages use the claude-in-chrome MCP tools, for apps clickr; plain `chrome --headless` (dump-dom, print-to-pdf, screenshot) is allowed.");
+    expect(JSON.stringify(bash("npx playwright test"))).toContain("No headless browsers (operator rule). Use the claude-in-chrome MCP tools");
   });
   it("allows reading and unrelated commands", () => {
-    for (const c of ["grep playwright package.json", "node ok.mjs", "npm install vitest", "pip install requests", "npx tsc --noEmit", "git log --grep=puppeteer", "chromium --headless --use-mock-keychain --password-store=basic --dump-dom x", "google-chrome --headless=new --use-mock-keychain --password-store=basic --screenshot x"]) expect(denied(c)).toBe(false);
+    for (const c of ["grep playwright package.json", "node ok.mjs", "npm install vitest", "pip install requests", "npx tsc --noEmit", "git log --grep=puppeteer"]) expect(denied(c)).toBe(false);
   });
   it("denies an Edit/Write that adds an import, allows it in a repo that already depends on one", () => {
     const imp = `import { test } from "@playwright/test";\n`;
