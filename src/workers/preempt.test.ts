@@ -235,12 +235,18 @@ describe("an operator pause frees the slot and stays until resumed", () => {
     setWorkerPaused(logDir, "A", true, "cockpit");
     const room = (n: number) => () => n;
     expect(resumeWorker(logDir, "A", "cockpit", Date.now(), room(0))).toBe(true);
-    expect(loadStatus(logDir, "A")?.paused).toBeFalsy();
-    expect(readFileSync(join(logDir, "queue", "local", "A"), "utf8")).toContain("front");
-    expect(ledgerOf(logDir)).toContain("queued at front");
+    expect(loadStatus(logDir, "A")?.paused).toBe(true); // waits for its turn at a free slot
+    expect(readFileSync(join(logDir, "queue", "local", "A"), "utf8")).not.toContain("front"); // a resume never preempts
+    expect(ledgerOf(logDir)).toContain("WORKER-RESUME-QUEUED");
     setWorkerPaused(logDir, "C", true, "cockpit");
     expect(resumeWorker(logDir, "C", "cockpit", Date.now(), room(1))).toBe(true);
-    expect(existsSync(join(logDir, "queue", "local", "C"))).toBe(false);
+    // A already waits: C queues behind it instead of taking the free slot first
+    expect(existsSync(join(logDir, "queue", "local", "C"))).toBe(true);
+    rmSync(join(logDir, "queue", "local", "A"));
+    rmSync(join(logDir, "queue", "local", "C"));
+    setWorkerPaused(logDir, "B", true, "cockpit");
+    expect(resumeWorker(logDir, "B", "cockpit", Date.now(), room(1))).toBe(true);
+    expect(loadStatus(logDir, "B")?.paused).toBeFalsy(); // nobody waiting for the slot: it runs
   });
 
   it("no sweep or preemption end clears an operator pause; the ledger carries by=", () => {

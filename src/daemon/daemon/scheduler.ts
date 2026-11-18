@@ -16,7 +16,9 @@ import { alive, loadStatus, loadStatusCached, type WorkerStatus } from "../../wo
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { originTarget, sweepRuns } from "../../workers/run-events.js";
 import { panePolicy } from "../../workers/pane-policy.js";
-import { abortStuckPreemptions, endExpiredWindowNow, resumeOrphaned } from "../../workers/preempt.js";
+import { finishDeferredMoves } from "../../workers/reroute.js";
+import { requeueStaleWaiters } from "../../workers/stale-requeue.js";
+import { admitResumedWaiters, abortStuckPreemptions, endExpiredWindowNow, resumeOrphaned } from "../../workers/preempt.js";
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
