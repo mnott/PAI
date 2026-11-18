@@ -203,6 +203,10 @@ export interface WorkerStatus {
   className?: string;
   /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
   rerouted?: string;
+  /** A running job moving to a slot-limited provider: it keeps running here until its continuation is admitted there (reroute.ts finishDeferredMoves). The target provider name. */
+  movingTo?: string;
+  /** A stale waiter (older PAI release) is being restarted by the daemon, keeping its place (stale-requeue.ts). */
+  restarting?: boolean;
   /** Set when a queued origin was ended because its fall-through finished the work (reroute.ts endOriginContinued): the id that did it. */
   continuedBy?: string;
   /** Hook/permission denials the run hit (capped list, see denials.ts) and their true total. */
