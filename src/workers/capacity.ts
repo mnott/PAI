@@ -624,9 +624,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     // such a victim, any other run still counts it as holding, so the freed slot never goes to a normal
     // waiter. While the preemptor stays queued and never starts, the watchdog ends the pause again after
     // PREEMPT_ABORT_MS (preempt.ts) — victims are never held for a preemptor that stays queued indefinitely.
+    // an operator-paused worker (paused, no preemptor) releases its slot at once: the next queued run is admitted. It comes back through the queue (resumeWorker, preempt.ts), never over the cap.
     const urgentSelf = o.priority === "front" || madeUrgent;
     const holders = loaded.filter(
-      (s) => s.id !== self.id && holds(s) && s.state === "running" && !slotLent(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),
+      (s) => s.id !== self.id && holds(s) && s.state === "running" && !slotLent(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && !(s.paused && !s.pausedBy) && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
     return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length };

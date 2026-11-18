@@ -31,7 +31,7 @@ export interface EngineControl {
 
 export const PRIORITY_EVENT = "WORKER-PRIORITY";
 export const PAUSE_EVENT = "WORKER-PAUSE";
-export const RESUME_EVENT = "WORKER-RESUME";
+export const RESUME_EVENT = "WORKER-UNPAUSE";
 
 /** `high|normal|low`; anything else is an error, never a silent normal. */
 export function parseEnginePriority(v: unknown): EnginePriority {
@@ -68,7 +68,7 @@ export function setWorkerPaused(logDir: string, id: string, paused: boolean, who
       if (status.pausedAt !== undefined) status.pausedMs = (status.pausedMs ?? 0) + Math.max(0, now - status.pausedAt);
       delete status.pausedAt;
       saveStatus(logDir, status, new Date(now), true);
-      appendLedger(ledgerPath(logDir), PAUSE_EVENT, { who, id, priority: status.priority ?? "normal" });
+      appendLedger(ledgerPath(logDir), PAUSE_EVENT, { by: who, who, id, priority: status.priority ?? "normal" });
     }
     return false;
   }
@@ -85,7 +85,7 @@ export function setWorkerPaused(logDir: string, id: string, paused: boolean, who
     delete status.pausedAt;
   }
   saveStatus(logDir, status, new Date(), true);
-  appendLedger(ledgerPath(logDir), paused ? PAUSE_EVENT : RESUME_EVENT, { who, id, priority: status.priority ?? "normal", ...(preemptedBy ? { preemptedBy } : {}) });
+  appendLedger(ledgerPath(logDir), paused ? PAUSE_EVENT : RESUME_EVENT, { by: who, who, id, priority: status.priority ?? "normal", ...(preemptedBy ? { preemptedBy } : {}) });
   return true;
 }
 

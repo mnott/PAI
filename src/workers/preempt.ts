@@ -37,7 +37,7 @@ function roomOn(statuses: WorkerStatus[], provider: string): number {
   }
   if (raw === undefined) return Number.MAX_SAFE_INTEGER;
   const holding = statuses.filter(
-    (s) => s.provider === provider && s.state === "running" && !slotLent(s) && isLive(s) && !(s.paused && s.pausedBy && isLive(statuses.find((x) => x.id === s.pausedBy) ?? ({} as WorkerStatus))),
+    (s) => s.provider === provider && s.state === "running" && !slotLent(s) && isLive(s) && !(s.paused && !s.pausedBy) && !(s.paused && s.pausedBy && isLive(statuses.find((x) => x.id === s.pausedBy) ?? ({} as WorkerStatus))),
   ).length;
   return raw - holding;
 }
@@ -68,6 +68,23 @@ function parkAtGate(logDir: string, s: WorkerStatus, by: string, now: number): b
   mkdirSync(dir, { recursive: true });
   writeTicket(join(dir, s.id), `${s.runPid ?? s.pid} front @${now}`);
   return setWorkerPaused(logDir, s.id, false, `preempt:${by}`, undefined, now);
+}
+
+/**
+ * The one explicit resume of an operator pause (`pai worker resume`, the MCP tool, the cockpit/pane button). An operator-paused
+ * worker released its slot, so it takes a free one when the cap has room and otherwise re-enters the gate's queue at the FRONT of
+ * its priority class (never over the cap). Returns false when it was not paused.
+ */
+export function resumeWorker(logDir: string, id: string, who = "cli", now = Date.now(), roomFn: RoomFn = roomOn): boolean {
+  const s = loadStatus(logDir, id);
+  if (!s?.paused) return false;
+  if (s.pausedBy || s.state !== "running") return setWorkerPaused(logDir, id, false, who, undefined, now);
+  const room = roomFn(loadStatuses(logDir), s.provider);
+  if (room > 0) return setWorkerPaused(logDir, id, false, who, undefined, now);
+  const dir = queueDir(logDir, s.provider);
+  mkdirSync(dir, { recursive: true });
+  writeTicket(join(dir, s.id), `${s.runPid ?? s.pid} front @${now}`);
+  return setWorkerPaused(logDir, id, false, `${who} (queued at front: no free slot)`, undefined, now);
 }
 
 /** Whether the preemption pause of `s` (paused with pausedBy set) has ended: its preemptor is gone from the ledger or no longer live. */
@@ -170,7 +187,7 @@ export function makeUrgent(logDir: string, id: string, local: boolean, who = "cl
   // urgent workers never pause each other: its own preemption pause ends (an operator pause, pausedBy cleared, stays)
   if (s.paused && s.pausedBy && s.state === "running") {
     try {
-      if (setWorkerPaused(logDir, id, false, "priority-now", undefined, now)) appendLedger(ledgerPath(logDir), "WORKER-RESUME", { who: "priority-now", id });
+      setWorkerPaused(logDir, id, false, "priority-now", undefined, now);
     } catch {
       /* ended meanwhile */
     }

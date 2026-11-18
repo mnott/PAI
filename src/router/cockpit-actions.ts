@@ -21,6 +21,7 @@ import { withLoginIdentity } from "../workers/run-env.js";
 import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 import { parseEnginePriority, setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
+import { resumeWorker } from "../workers/preempt.js";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 import { readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
@@ -665,7 +666,7 @@ export async function runCockpitAction(
         writeLedgerLine(deps, action, target, `${from}->${level}`);
         return { ok: true, message: `${target}: ${level} priority (next engine request)` };
       }
-      const changed = setWorkerPaused(dir, target, action === "worker.pause", "cockpit");
+      const changed = action === "worker.pause" ? setWorkerPaused(dir, target, true, "cockpit") : resumeWorker(dir, target, "cockpit");
       writeLedgerLine(deps, action, target, changed ? "done" : "unchanged");
       return { ok: true, message: `${target}: ${action === "worker.pause" ? (changed ? "paused" : "already paused") : changed ? "resumed" : "was not paused"}` };
     } catch (e) {

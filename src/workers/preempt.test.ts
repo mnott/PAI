@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { saveStatus, loadStatus, type WorkerStatus } from "./status.js";
 import { setWorkerPaused } from "./engine-control.js";
-import { abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, PREEMPT_ABORT_MS } from "./preempt.js";
+import { abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, resumeWorker, PREEMPT_ABORT_MS } from "./preempt.js";
 import { capacityGate } from "./capacity.js";
 import { inheritUrgency } from "./run/gate.js";
 import { waitWhilePreempted } from "../hooks/ts/lib/worker-guard.js";
@@ -202,5 +202,60 @@ describe("urgency and preemption never meet", () => {
     ]);
     expect(r).toBe("admitted");
     expect(inheritUrgency(logDir, "C2", mk("C2", live()), { PAI_WORKER_ID: "VIC" })).toBe(false);
+  });
+});
+
+// 2026-11-18: pausing one of three running gyro-l workers did not admit the queued job, and the paused worker was
+// unpaused again silently. An operator pause now releases the slot at once; only an explicit resume clears it,
+// and it re-enters the queue at the front (never over the cap).
+describe("an operator pause frees the slot and stays until resumed", () => {
+  const ledgerOf = (dir: string): string => readdirSync(dir).filter((f) => f.includes("ledger")).map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
+  const tick = (): Promise<void> => new Promise((x) => setTimeout(x, 5));
+
+  it("pausing one of 3 running workers with 2 queued admits queue #1 only", async () => {
+    const { logDir, mk, live } = setup();
+    for (const id of ["A", "B", "C"]) saveStatus(logDir, mk(id, live()));
+    mkdirSync(join(logDir, "queue", "local"), { recursive: true });
+    const gate = (id: string) => capacityGate({ logDir, self: { id, provider: "local", pid: live() }, cap: 3, config: {}, sleep: tick });
+    const q1 = gate("Q1");
+    await tick();
+    const q2 = gate("Q2");
+    const raced = (p: Promise<unknown>) => Promise.race([p.then(() => "admitted"), new Promise((x) => setTimeout(() => x("waiting"), 300))]);
+    expect(await raced(q1)).toBe("waiting"); // full: A, B, C hold the 3 slots
+    setWorkerPaused(logDir, "A", true, "cockpit");
+    expect(await raced(q1)).toBe("admitted");
+    saveStatus(logDir, mk("Q1", live()));
+    expect(await raced(q2)).toBe("waiting"); // one slot freed, one taken: Q2 stays queued
+    expect(loadStatus(logDir, "A")?.paused).toBe(true);
+  });
+
+  it("resume re-queues at the front when the cap is full and takes a free slot otherwise", () => {
+    const { logDir, mk, live } = setup();
+    for (const id of ["A", "B", "C", "Q1"]) saveStatus(logDir, mk(id, live()));
+    setWorkerPaused(logDir, "A", true, "cockpit");
+    const room = (n: number) => () => n;
+    expect(resumeWorker(logDir, "A", "cockpit", Date.now(), room(0))).toBe(true);
+    expect(loadStatus(logDir, "A")?.paused).toBeFalsy();
+    expect(readFileSync(join(logDir, "queue", "local", "A"), "utf8")).toContain("front");
+    expect(ledgerOf(logDir)).toContain("queued at front");
+    setWorkerPaused(logDir, "C", true, "cockpit");
+    expect(resumeWorker(logDir, "C", "cockpit", Date.now(), room(1))).toBe(true);
+    expect(existsSync(join(logDir, "queue", "local", "C"))).toBe(false);
+  });
+
+  it("no sweep or preemption end clears an operator pause; the ledger carries by=", () => {
+    const { logDir, mk, live } = setup();
+    saveStatus(logDir, mk("A", live()));
+    saveStatus(logDir, mk("N", live(), { now: true }));
+    setWorkerPaused(logDir, "A", true, "cockpit");
+    expect(resumeOrphaned(logDir)).toEqual([]);
+    expect(resumePreempted(logDir, "N")).toEqual([]);
+    expect(abortStuckPreemptions(logDir, Date.now() + 10 * PREEMPT_ABORT_MS)).toEqual([]);
+    expect(makeUrgent(logDir, "N", true)).not.toContain("A");
+    expect(loadStatus(logDir, "A")?.paused).toBe(true);
+    resumeWorker(logDir, "A", "cli", Date.now(), () => 1);
+    const l = ledgerOf(logDir);
+    expect(l).toMatch(/WORKER-PAUSE by=cockpit who=cockpit id=A/);
+    expect(l).toMatch(/WORKER-UNPAUSE by=cli who=cli id=A/);
   });
 });
