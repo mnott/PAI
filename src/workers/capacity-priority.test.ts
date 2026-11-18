@@ -7,7 +7,7 @@ import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
 import { localIdleLine } from "./local-idle.js";
-import { filterBySession, sortBySession, buildQueueTable, plainWording, readTaskText, renderQueueTable, taskSummary, type TableInput } from "./queue-table.js";
+import { filterBySession, sortBySession, buildQueueTable, plainWording, readTaskText, renderQueueTable, stateBadge, taskSummary, type TableInput } from "./queue-table.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
@@ -71,6 +71,13 @@ describe("queue table", () => {
     const rows = buildQueueTable(qin([a, p], [qrow(p, "anthropic", 1)]));
     expect(rows[0]).toMatchObject({ session: "mdf", model: expect.any(String), modelFull: "local: qwen", stateText: "running" });
     expect(rows[1]).toMatchObject({ state: "paused", model: "cloud: opus", modelFull: "cloud: anthropic opus", session: "other", stateText: "paused (slot freed)" });
+  });
+
+  it("a resumed worker waiting for a slot (paused + ticket) reads as waiting for a slot, not paused", () => {
+    const p = qst("p", { paused: true });
+    const rows = buildQueueTable(qin([p], [qrow(p, "lm", 1)]));
+    expect(rows[0]).toMatchObject({ state: "waiting", stateText: "waiting for a slot (resumed)" });
+    expect(stateBadge(rows[0]!)).toBe("waiting for a slot (position 1 of 3)");
   });
 
   it("marks frozen and deep-frozen rows and offers the matching action", () => {

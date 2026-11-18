@@ -785,3 +785,11 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   o.log?.(`waited ${waitedSec}s for a ${label} slot`);
   return { waitedSec, cap };
 }
+
+/** "waiting for a slot (position n of m)" for a worker that is paused AND holds a queue ticket (a resumed waiter); undefined otherwise. */
+export function waitingForSlotText(logDir: string, s: Pick<WorkerStatus, "id" | "provider" | "paused">, isAlive: (pid: number) => boolean = alive): string | undefined {
+  if (!s.paused || !logDir) return undefined;
+  const q = liveQueue(logDir, s.provider, isAlive);
+  const i = q.indexOf(s.id);
+  return i < 0 ? undefined : `waiting for a slot (position ${i + 1} of ${q.length})`;
+}

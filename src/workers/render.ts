@@ -12,7 +12,7 @@ import { deadlineLabel } from "./deadline.js";
 import { lowPowerFactor, lowPowerStretchActive } from "../daemon/low-power.js";
 import { activeText } from "./active-time.js";
 import { sessionOf } from "./capacity.js";
-import { ellipsize, queuedBarRow, queuedText, type QueuedFile } from "./capacity.js";
+import { ellipsize, queuedBarRow, queuedText, waitingForSlotText, type QueuedFile } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, nativeAnthropicModels, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
@@ -594,7 +594,7 @@ export function renderTable(
 
   // engine controls: "paused" or a non-normal priority, only while set
   const engineMark = (s: WorkerStatus): string => {
-    const m = [slotLent(s) ? "waiting on tool (slot lent)" : "", s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
+    const m = [slotLent(s) ? "waiting on tool (slot lent)" : "", s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : waitingForSlotText(logDir, s) ?? "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
     return m ? "  " + c(s.paused ? "yellow" : "dim", m) : "";
   };
 

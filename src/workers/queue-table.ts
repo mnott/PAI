@@ -71,6 +71,8 @@ export interface TableRow {
   kind: "job";
   id: string;
   state: RowState;
+  /** Full state wording that replaces the short badge (a resumed worker waiting for a slot). */
+  badge?: string;
   /** Plain-language state ("waiting for a local slot", "paused: frees its slot"). */
   stateText: string;
   priority: "low" | "normal" | "high" | "now";
@@ -282,7 +284,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     const state: RowState = deep ? "deep-frozen" : fr ? "frozen" : s.paused && !(waiting && s.state === "running") ? "paused" : waiting ? "waiting" : "running";
     const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? ""].filter(Boolean);
     const stateText =
-      state === "waiting" ? (s.restarting ? "restarting on new version" : `waiting for a ${local ? "local" : "cloud"} slot`) : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : moving ?? "running";
+      state === "waiting" ? (s.restarting ? "restarting on new version" : s.paused ? "waiting for a slot (resumed)" : `waiting for a ${local ? "local" : "cloud"} slot`) : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : moving ?? "running";
     return {
       kind: "job",
       id: s.id,
@@ -320,7 +322,12 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
   const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status && !(q.status.fallThroughOf && movers.has(q.status.fallThroughOf))).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
-  waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, { first: q.position === 1, last: q.position === q.queued }) }));
+  waiting.forEach((q, n) => {
+    const r: TableRow = { slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, { first: q.position === 1, last: q.position === q.queued }) };
+    // a resumed worker (paused + ticket) is waiting for a slot, not paused: one wording for pane, ps and cockpit
+    if (q.status!.paused && !q.status!.pausedBy && !q.status!.restarting) r.badge = `waiting for a slot (position ${q.position} of ${q.queued})`;
+    out.push(r);
+  });
   for (const s of runners.filter((x) => pausedFree(x))) out.push({ slot: "freed", ...row(s, false, stMs(s)) });
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
   // pane runs are not rows (no model, no slot); one whose command waits on a job shows as an eye on that job's row
@@ -373,7 +380,8 @@ export function sortBySession<T extends Pick<TableRow, "session">>(rows: T[]): T
 }
 
 /** Badge text of a row: "running", "waiting #2", "paused", "frozen", "deep-frozen". */
-export function stateBadge(r: Pick<TableRow, "state" | "slot">): string {
+export function stateBadge(r: Pick<TableRow, "state" | "slot" | "badge">): string {
+  if (r.badge) return r.badge;
   return r.state === "waiting" && typeof r.slot === "number" ? `waiting #${r.slot}` : r.state;
 }
 

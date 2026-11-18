@@ -709,7 +709,7 @@ export function startWorkerSupervisor(): void {
     void timedTask("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
     void timedTask("pane-close-finished", () => closeFinishedPanes(dir)).catch(() => undefined);
     // workers paused by a --now run that is gone (killed, crashed) go on again; a --now run still queued 60 s after pausing them never took their slots — the watchdog gives them back (PREEMPT-ABORT) so the queue cannot deadlock
-    void timedTask("preempt-sweep", async () => { endExpiredWindowNow(dir); abortStuckPreemptions(dir); resumeOrphaned(dir); }).catch(() => undefined);
+    void timedTask("preempt-sweep", async () => { endExpiredWindowNow(dir); abortStuckPreemptions(dir); resumeOrphaned(dir); for (const id of admitResumedWaiters(dir)) process.stderr.write(`[pai-daemon] Queue: resumed ${id} (slot free)\n`); }).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
 
