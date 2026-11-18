@@ -114,10 +114,13 @@ describe("GNU sed relative-range denial on macOS", () => {
   const ctx: WorkerGuardContext = { cwd: "/w/tree", home: "/h", worktreeRoot: "/w/tree", inWorktree: false, mainCheckout: null, testScript: () => null };
   const gnu = (command: string) => decideWorkerGate({ tool: "Bash", input: { command }, cwd: "/w/tree", env: { PAI_WORKER: "1" } }, { worker: () => ctx });
   const darwin = process.platform === "darwin";
-  (darwin ? it : it.skip)("denies GNU `,+N` ranges, absolute ends and s/// bodies pass", () => {
-    expect(gnu('sed -n "18,+8p" f.ts')?.action).toBe("deny");
-    expect(gnu('sed -n "$(grep -n x f | cut -d: -f1),+8p" f.ts')?.action).toBe("deny");
-    expect(gnu("sed -n '18,+8p' f.ts")?.action).toBe("deny"); // unquoted and single-quoted scripts too
+  (darwin ? it : it.skip)("rewrites numeric `,+N` ranges, denies other GNU forms, absolute ends and s/// bodies pass", () => {
+    const a = gnu('sed -n "18,+8p" f.ts');
+    expect(a?.action).toBe("allow");
+    expect(a?.updatedInput?.command).toBe('sed -n "18,26p" f.ts');
+    expect(gnu("sed -n '18,+8p' f.ts")?.updatedInput?.command).toBe("sed -n '18,26p' f.ts"); // single-quoted too
+    expect(gnu('sed -n "$(grep -n x f | cut -d: -f1),+8p" f.ts')?.action).toBe("deny"); // non-numeric start
+    expect(gnu("sed -n '/re/,+8p' f.ts")?.action).toBe("deny");
     expect(gnu('sed -n "18,26p" f.ts')).toBeNull();
     expect(gnu("sed -n 1,8p")).toBeNull();
     expect(gnu("sed 's/a,+b/c/' f")).toBeNull(); // a substitution containing ",+" is not an address
