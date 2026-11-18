@@ -9,8 +9,8 @@
  *  are the generic types of win/types.ts; the cards here only carry views (wkTableView / wkLocalView / wkWtView). */
 
 export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted, then the paused and frozen ones. Every button acts on that one job (or on every job of a session) and the state badge shows the effect at once.";
-var WK_EXPLAIN="running = holds a slot; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: N of M slots busy counts jobs holding a slot; back from a long tool run = a job that lent its slot while waiting on a long tool took it back while others filled it, so it runs above the cap until one finishes.";
-var WK_ACT="Activity: writing = its request is open at the model, the model is writing its reply; in line = its request waits in the local scheduler queue behind other workers; tool = no request open, a tool (build, test) is running; waiting = waiting for a slot, no request has gone to the model yet; idle Nm = no request at the model and no tool running for N minutes, it may be stuck.";
+var WK_EXPLAIN="running = holds a slot; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs.";
+var WK_ACT="Activity: gen = its request is open at the model, the engine is generating its reply; in line = its request waits in the local scheduler queue behind other workers; tool = no request open, a tool (build, test) is running; waiting = waiting for a slot, no request has gone to the model yet; idle Nm = no request at the model and no tool running for N minutes, it may be stuck.";
 var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%"],["model","model",110],["prio","prio",90],["time","time r",80],["actions","actions",210]];
 var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
 var WK_GROUPS=["running","waiting","paused / frozen"];
@@ -46,14 +46,14 @@ function wkTopic(r,on){if(!r.topic)return"";var t=r.topic,s=t.length>16?t.slice(
 /** Model as a chip: each local provider its own stable hue, cloud: violet (sonnet), amber (opus), other cloud families their own. */
 function wkModelHue(r){var m=r.model||"";if(r.local)return wkHue(m);return/opus/.test(m)?40:/sonnet/.test(m)?270:/haiku/.test(m)?200:/fable/.test(m)?320:290}
 function wkModel(r){if(!r.model)return'<span class="dim">–</span>';return'<span class="wq-chip wq-mc" style="--h:'+wkModelHue(r)+'" title="'+esc(r.modelFull||r.model)+'">'+esc(r.model)+'</span>'}
-var WK_ICO={"pause":"⏸","resume":"▶","stop":"■","next":"⤒","up":"↑","down":"↓","deep-resume":"▶"};
-function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic'+(a==="up"||a==="down"?" wq-sm":"")+'" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
+var WK_ICO={"pause":"⏸","resume":"▶","stop":"■","next":"↑","deep-resume":"▶"};
+function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
 function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯</button>'}
 /** Copy the full worker id to the clipboard (the queue never shows it in full); a prompt fallback when the clipboard API is absent. */
 function wkCopyId(id){var done=function(){WK_COPY=id;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_COPY=null},1600)};try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(String(id)).then(done,function(){window.prompt("worker id (copy it)",String(id))});return}}catch(e){}window.prompt("worker id (copy it)",String(id))}
 function wkTRow(r){
  var has=function(a){return r.actions.indexOf(a)>=0},main=has("deep-resume")?"deep-resume":has("resume")?"resume":"pause";
- var acts=(has(main)?wkIconBtn(r.id,main):"")+(has("next")?wkIconBtn(r.id,"next"):"")+(has("up")?wkIconBtn(r.id,"up"):"")+(has("down")?wkIconBtn(r.id,"down"):"")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
+ var acts=(has(main)?wkIconBtn(r.id,main):"")+(has("next")?wkIconBtn(r.id,"next"):"")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
  var badge=r.state==="waiting"&&typeof r.slot==="number"?"waiting #"+r.slot:r.state;
  var st='<span class="wq-b '+(WK_BADGE[r.state]||"")+'" title="'+esc(r.stateText+(r.detail?" · "+r.detail:""))+'">'+esc(badge)+'</span>'+(r.activity&&r.state==="running"?' <span class="wq-act" title="'+esc(r.activityTip||r.now||"")+'">'+esc(r.activity)+'</span>':"");
  var tip=r.task;if(r.summary)tip+="\n\n"+r.summary;tip+="\nid: "+r.id;if(r.waits&&r.waits.length){for(var wi=0;wi<r.waits.length;wi++)tip+="\na session waits for this job: "+r.waits[wi].label}
@@ -77,7 +77,7 @@ function wkMenuHtml(){
  if(k==="all")items=[["data-qg","freeze","freeze all","stop every worker's processes in memory (lost on reboot)"],["data-qg","thaw","thaw all","continue all frozen processes"],["data-qg","deep-freeze",WK_CONF==="qg:deep-freeze"?"confirm?":"deep-freeze all","pai stop: save all work and stop everything; survives a reboot"],["data-qg","deep-resume","resume all","pai resume: restore everything saved"]];
  else if(k.indexOf("sess:")===0)items=[["pause","pause"],["freeze","freeze"],["deep-freeze","deep-freeze"],["deep-resume","resume saved"],["resume","resume"]].map(function(x){return["data-qx",x[0],(WK_CONF==="qx:"+x[0]?"confirm?":x[1]+" all of "+k.slice(5)),x[1]+" every job of this session: "+(WK_LBL[x[0]]||["",""])[1]]});
  else{r=((WQ&&WQ.table)||[]).filter(function(x){return"row:"+x.id===k})[0];if(!r)return"";
-  items=["freeze","thaw","deep-freeze","deep-resume","to-cloud","to-local"].filter(function(a){return r.actions.indexOf(a)>=0}).map(function(a){var l=WK_LBL[a];return["data-qa",a,WK_CONF===r.id+":"+a?"confirm?":l[0],l[1],r.id]});
+  items=["freeze","thaw","deep-freeze","deep-resume","to-cloud","to-local","up","down"].filter(function(a){return r.actions.indexOf(a)>=0}).map(function(a){var l=WK_LBL[a];return["data-qa",a,WK_CONF===r.id+":"+a?"confirm?":l[0],l[1],r.id]});
   items.push(["data-copy","copy",WK_COPY==="copy:"+r.id?"copied":"copy id","copy the full worker id to the clipboard: "+r.id,r.id])}
  return'<div class="wq-menu" role="menu" style="left:'+WK_MENU.x+'px;top:'+WK_MENU.y+'px">'+items.map(function(x){return'<button type="button" role="menuitem" '+x[0]+'="'+esc(x[1])+'"'+(x[4]?' data-id="'+esc(x[4])+'"':'')+' title="'+esc(x[3])+'">'+esc(x[2])+'</button>'}).join("")+'</div>';
 }

@@ -232,7 +232,7 @@ export function localIdleLine(f: LocalIdleFile | null, now = Date.now()): string
   if (!f || now - Date.parse(f.at) > 120_000) return "";
   const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}%`;
   // same accounting as the slot gate: running = slot holders / cap; paused and waiting are counted apart
-  const provs = f.providers.map((p) => [`${p.provider}: ${Math.min(p.running, p.cap)} of ${p.cap} slots busy`, p.running > p.cap ? `${p.running - p.cap} back from a long tool run` : "", p.paused ? `${p.paused} paused` : "", p.queued ? `${p.queued} waiting` : ""].filter(Boolean).join(" · "));
+  const provs = f.providers.map((p) => [`${p.provider}: ${p.running} of ${p.cap} slots busy`, p.paused ? `${p.paused} paused` : "", p.queued ? `${p.queued} waiting` : ""].filter(Boolean).join(" · "));
   return [...provs, gpu].join(" · ");
 }
 
