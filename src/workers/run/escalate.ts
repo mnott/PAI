@@ -10,7 +10,7 @@ import { ANTHROPIC_NATIVE, getProviderOrNative } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
 import { appendLedger } from "../ledger.js";
 import { ledgerPath } from "../paths.js";
-import { type WorkerStatus, saveStatus, UNLABELED } from "../status.js";
+import { type WorkerStatus, saveStatus, loadStatus, UNLABELED } from "../status.js";
 import { planEscalation } from "../escalation.js";
 import { runEscalation } from "../escalate-run.js";
 import { localFailures } from "../route-classifier.js";
@@ -19,6 +19,31 @@ import { type ExecuteArgs } from "./types.js";
 import { relaunchOptions } from "./finalise.js";
 import { runWorker } from "./worker-ref.js";
 import { branchCommits, handoffSpec } from "./handoff.js";
+
+/**
+ * A continuation never starts while its origin lives: a status still live under another, running process is stopped first
+ * (commits stay on the branch); a stop that fails reports false and the caller starts nothing. The in-process fall-through's
+ * own process is the origin's runner and is not "another process".
+ */
+export async function stopOriginFirst(logDir: string, wid: string, killer?: (id: string, reason: string) => Promise<unknown>): Promise<boolean> {
+  const st = loadStatus(logDir, wid);
+  if (!st || (st.state !== "running" && st.state !== "queued")) return true;
+  if (st.pid === process.pid || !(st.pid > 0)) return true;
+  try {
+    process.kill(st.pid, 0);
+  } catch {
+    return true; // its process is gone
+  }
+  try {
+    await (killer ?? (async (id, reason) => (await import("../kill-tree.js")).killWorker(logDir, id, { by: "fall-through", reason })))(wid, "a continuation starts: the origin stops first");
+    const after = loadStatus(logDir, wid);
+    if (after && (after.state === "running" || after.state === "queued")) throw new Error(`still ${after.state}`);
+    return true;
+  } catch (e) {
+    appendLedger(ledgerPath(logDir), "WORKER-FALLTHROUGH-SKIPPED", { id: wid, reason: `origin could not be stopped: ${(e as Error).message}`.slice(0, 200) });
+    return false;
+  }
+}
 
 /**
  * Escalation one tier up (escalation.ts) for a run that just ended: context over the
@@ -156,8 +181,12 @@ export type RerunSource = Pick<ExecuteArgs, "logDir" | "cwd" | "claudeArgs" | "l
  * the ledger line, the new run's _fallThroughOf/_priorIds and `st.fallThroughTo`. The one restart path of the
  * local-to-cloud fall-through (`to` = the cloud) and of reroute / the supervision escalation (any provider).
  */
-export function rerunOn(a: RerunSource, wid: string, why: string, st: WorkerStatus, to: RerunTarget = CLOUD): Promise<number> {
+export async function rerunOn(a: RerunSource, wid: string, why: string, st: WorkerStatus, to: RerunTarget = CLOUD): Promise<number> {
   const { logDir } = a;
+  if (!(await stopOriginFirst(logDir, wid))) {
+    process.stderr.write(`pai worker: ${wid} could not be stopped — no continuation started\n`);
+    return st.rc ?? 1;
+  }
   const where = to === CLOUD ? "the cloud" : to.provider;
   appendLedger(ledgerPath(logDir), "WORKER-FALLTHROUGH", { id: wid, reason: why, ...(to === CLOUD ? {} : { to: to.provider }) });
   process.stderr.write(`pai worker: ${wid} on ${a.target?.providerName ?? st.provider} ended badly (${why}) — re-running on ${where}\n`);

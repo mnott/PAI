@@ -83,7 +83,7 @@ import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, runTerm, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
 import { SIGNAL_SALVAGE_MS, printResult, identityExtras } from "./finalise.js";
-import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
+import { tryEscalate, rerunOn, ranLocal, stopOriginFirst } from "./escalate.js";
 import { executeRun } from "./execute.js";
 
 /** A named local provider that is disabled or whose server does not answer. */
@@ -539,6 +539,7 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
   // the fall-through rule is a local run's: a cloud run that died in the host
   // re-runs fresh on its own target, not once more on the cloud
   if (localRun && target && a.route) {
+    if (!(await stopOriginFirst(logDir, wid))) return st?.rc ?? 1;
     appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: `pool host ended the run (${why})` });
     process.stderr.write(`pai worker: ${wid} on ${a.target.providerName} ended in the pool host (${why}) — re-running on the cloud\n`);
     return (a.runner ?? runWorker)({

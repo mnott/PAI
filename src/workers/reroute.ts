@@ -58,7 +58,7 @@ const stampMs = (stamp: string | undefined): number | null => {
  * thaw or resume the overdue spell restarts from its end.
  */
 export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy()): string | null {
-  if (s.rerouted || s.origin === "chat" || s.paused || providerPinned(s)) return null;
+  if (s.rerouted || s.continuedBy || s.origin === "chat" || s.paused || providerPinned(s)) return null;
   if (frozenSince(s.id) !== undefined) return null; // frozen by the operator: no escalation verdict
   if (!s.spec && !s.promptFile) return null;
   const pause = { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs };
@@ -81,10 +81,11 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
 export const FALLTHROUGH_RECENT_MS = 5 * 60_000;
 
 /** The run that already continues `origin` among these statuses: queued/running, or finished within FALLTHROUGH_RECENT_MS of `nowMs`. Null when there is none. */
-function recentFallThrough(all: WorkerStatus[], origin: string, nowMs: number): string | null {
+function recentFallThrough(all: WorkerStatus[], origin: string, nowMs: number, cleanForever = false): string | null {
   for (const s of all) {
     if (s.fallThroughOf !== origin || s.id === origin) continue;
     if (s.state === "queued" || s.state === "running") return s.id;
+    if (cleanForever && s.state === "done" && (s.rc ?? 0) === 0) return s.id; // the work was done: the origin is never escalated again
     const t = stampMs(s.updated);
     if (t !== null && nowMs - t < FALLTHROUGH_RECENT_MS) return s.id;
   }
@@ -96,7 +97,7 @@ function recentFallThrough(all: WorkerStatus[], origin: string, nowMs: number): 
  * view cannot hide it): queued/running, or finished within FALLTHROUGH_RECENT_MS. Null when there is none.
  */
 export function liveFallThrough(logDir: string, origin: string, nowMs: number = Date.now()): string | null {
-  return recentFallThrough(loadStatuses(logDir), origin, nowMs);
+  return recentFallThrough(loadStatuses(logDir), origin, nowMs, true);
 }
 
 /**
@@ -286,6 +287,20 @@ export async function waitAnnouncedId(idFile: string, pid: number, timeoutMs = 1
 }
 
 /**
+ * A restart that did not announce in time must not live on beside its origin (2026-11-18: 26042 and 43292/82237 started
+ * after the 15 s wait ended, while the origin kept running). Its process group is ended; an id announced meanwhile is stopped too.
+ */
+export async function abandonRestart(logDir: string, idFile: string, pid: number): Promise<void> {
+  try {
+    if (pid > 0) process.kill(-pid, "SIGTERM");
+  } catch {
+    /* already gone */
+  }
+  const late = existsSync(idFile) ? readFileSync(idFile, "utf8").trim() : "";
+  if (late) await defaultKill(logDir, late, "restart abandoned: it did not announce in time", "reroute").catch(() => undefined);
+}
+
+/**
  * Start `pai worker <verb> args` detached (own session, survives a daemon restart) and return the worker id
  * once the process has announced it. The caller's env (session identity, urgency window, pane anchoring) is
  * inherited. Throws with the process output when it exits or times out before an id exists.
@@ -352,8 +367,9 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
       env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
       outPath: join(logDir, "runs", `reroute-${s.id}.out`),
     });
-    const newId = await waitAnnouncedId(idFile, pid);
+    const newId = await waitAnnouncedId(idFile, pid, 60_000);
     if (!newId) {
+      await abandonRestart(logDir, idFile, pid);
       const out = join(logDir, "runs", `reroute-${s.id}.out`);
       const tail = existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").slice(-5).join(" / ") : "";
       throw new Error(`the restart on ${s.provider} did not start${tail ? `: ${tail}` : ""}`);

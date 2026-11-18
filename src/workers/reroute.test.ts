@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSpawn, endContinuedOrigins, escalationReason, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { stopOriginFirst } from "./run/escalate.js";
 import { carryGoals } from "./note-delivery.js";
 
 let dir: string;
@@ -368,5 +369,22 @@ describe("operator goals travel to continuations", () => {
   it("no goals: the prompt is untouched", () => {
     saveStatus(dir, queued({ id: "N", state: "done" }));
     expect(carryGoals(dir, ["-p", "task"], ["N"])).toEqual(["-p", "task"]);
+  });
+});
+
+describe("no continuation while its origin lives", () => {
+  const live = (): WorkerStatus => queued({ promptFile: join(dir, "spec.txt"), state: "running", pid: process.ppid });
+  it("an origin that cannot be stopped blocks the in-process continuation; one that stops lets it start", async () => {
+    saveStatus(dir, live());
+    expect(await stopOriginFirst(dir, "w1", async () => { throw new Error("no"); })).toBe(false);
+    expect(await stopOriginFirst(dir, "w1", async () => []), "kill returned but status still live").toBe(false);
+    expect(await stopOriginFirst(dir, "w1", async (id) => { const st = loadStatus(dir, id)!; st.state = "killed"; saveStatus(dir, st, new Date(), true); return []; })).toBe(true);
+  });
+  it("a clean continuation, however old, and a continued origin are never escalated again", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
+    saveStatus(dir, queued({ id: "w2", fallThroughOf: "w1", state: "done", rc: 0, updated: "2026-01-01 00:00:00" }));
+    const { liveFallThrough } = await import("./reroute.js");
+    expect(liveFallThrough(dir, "w1", Date.now() + 3600_000)).toBe("w2");
+    expect(escalationReason(job({ state: "running", continuedBy: "w2", progressAt: new Date(NOW - 30 * 60_000).toISOString() } as never), NOW, pol(0))).toBeNull();
   });
 });
