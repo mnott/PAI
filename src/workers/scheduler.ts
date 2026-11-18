@@ -7,7 +7,7 @@
  */
 import { isLocalProvider, type WorkersConfig } from "./config.js";
 import { admitCap, liveQueue, queueRows, sessionOf } from "./capacity.js";
-import { alive, isLive, loadStatuses, ownsPid, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatuses, pausedFree, ownsPid, type WorkerStatus } from "./status.js";
 
 export interface SessionCounters {
   session: string;
@@ -56,7 +56,7 @@ export function schedulerView(
   };
   const used = new Map<string, number>();
   for (const s of statuses) {
-    if (!local(s.provider) || s.state !== "running" || !isLive(s, owns)) continue;
+    if (!local(s.provider) || s.state !== "running" || pausedFree(s) || !isLive(s, owns)) continue;
     get(s).running++;
     used.set(s.provider, (used.get(s.provider) ?? 0) + 1);
   }

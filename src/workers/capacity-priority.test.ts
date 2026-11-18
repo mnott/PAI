@@ -7,7 +7,8 @@ import { buildQueueTable, plainWording, renderQueueTable, type TableInput } from
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
 import { applyPriority } from "./preempt.js";
-import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { holdsSlot, loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { schedulerView } from "./scheduler.js";
 
 let dir: string;
 beforeEach(() => {
@@ -169,5 +170,30 @@ describe("row and session actions", () => {
     const res = await runSessionAction(d, "pause", "mdf");
     expect(res.message).toContain("2 job(s)");
     expect(["m1", "m2", "p1"].map((id) => !!loadStatus(d.logDir, id)!.paused)).toEqual([true, true, false]);
+  });
+});
+
+describe("paused workers free their slot (one accounting)", () => {
+  const three = ["a", "b", "c"].map((id) => qst(id, { paused: true, pausedBy: null as unknown as undefined, pid: process.pid }));
+  it("holdsSlot: operator pause (also null pausedBy from an old pause) frees, preemptor pause and plain running hold", () => {
+    expect(three.map((s) => holdsSlot(s))).toEqual([false, false, false]);
+    expect(holdsSlot(qst("x", { paused: true, pausedBy: "u1" }))).toBe(true);
+    expect(holdsSlot(qst("y"))).toBe(true);
+  });
+  it("3 running, all paused, 2 waiting: engine shows 0 of 3 held and the waiters are first in line", () => {
+    const wk = { providers: { lm: { baseUrl: "http://127.0.0.1:1/v1", maxConcurrent: 3 } } } as unknown as WorkersConfig;
+    const v = schedulerView(dir, wk, QNOW, three, () => true, () => true);
+    expect(v.engines.find((e) => e.provider === "lm")!.used).toBe(0);
+  });
+  it("table label matches the accounting and the paused rows do not occupy a slot", () => {
+    const hold = qst("h", { paused: true, pausedBy: "u1" });
+    const rows = buildQueueTable(qin([...three, hold], [qrow(qst("w1", { state: "queued" }), "lm", 1)]));
+    for (const id of ["a", "b", "c"]) expect(rows.find((r) => r.id === id)).toMatchObject({ slot: "freed", stateText: "paused (slot freed)" });
+    expect(rows.find((r) => r.id === "h")).toMatchObject({ slot: "running", stateText: "paused (holds its slot)" });
+    expect(rows.find((r) => r.id === "w1")!.slot).toBe(1);
+  });
+  it("a pane command shows the caller's session", () => {
+    const rows = buildQueueTable(qin([], [], { panes: [{ id: "pane-1", label: "build", state: "running", startedMs: QNOW - 5000, session: "gyro-sess" }] }));
+    expect(rows[0]).toMatchObject({ kind: "command", session: "gyro-sess" });
   });
 });

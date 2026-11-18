@@ -9,7 +9,7 @@
  * continuation, with "continues <old id>" as detail; the old row disappears.
  */
 import type { QueueRow } from "./capacity.js";
-import type { WorkerStatus } from "./status.js";
+import { pausedFree, type WorkerStatus } from "./status.js";
 import type { PaneRunStatus } from "./pane-run.js";
 
 export type RowState = "running" | "waiting" | "paused" | "frozen" | "deep-frozen";
@@ -22,7 +22,7 @@ export type RowAction =
 
 export interface TableRow {
   /** "running" for a slot holder, else the waiting position 1..n. */
-  slot: "running" | "saved" | number;
+  slot: "running" | "saved" | "freed" | number;
   kind: "job" | "command";
   id: string;
   state: RowState;
@@ -141,7 +141,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     const state: RowState = deep ? "deep-frozen" : fr ? "frozen" : s.paused ? "paused" : waiting ? "waiting" : "running";
     const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? ""].filter(Boolean);
     const stateText =
-      state === "waiting" ? `waiting for a ${local ? "local" : "cloud"} slot` : state === "paused" ? "paused (slot freed)" : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : "running";
+      state === "waiting" ? `waiting for a ${local ? "local" : "cloud"} slot` : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : "running";
     return {
       kind: "job",
       id: s.id,
@@ -161,13 +161,14 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   };
   const out: TableRow[] = [];
   const runners = live.filter((s) => s.state === "running" && !deepIds.has(s.id) && !ticket.has(s.id) && !gone.has(s.id)).sort((a, b) => stMs(a) - stMs(b) || (a.id < b.id ? -1 : 1));
-  for (const s of runners) out.push({ slot: "running", ...row(s, false, stMs(s)) });
+  for (const s of runners.filter((x) => !pausedFree(x))) out.push({ slot: "running", ...row(s, false, stMs(s)) });
   for (const p of i.panes.filter((p) => p.state === "running").sort((a, b) => a.startedMs - b.startedMs)) {
     out.push({ slot: "running", kind: "command", id: p.id, state: i.frozen?.(p.id) ? "frozen" : "running", stateText: i.frozen?.(p.id) ? "frozen (in memory)" : "running", priority: "normal", session: p.session || "other", model: "", local: false, task: p.label, activity: "", now: "", seconds: sec(p.startedMs), detail: "command", actions: [i.frozen?.(p.id) ? "thaw" : "freeze", "stop"] });
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
   const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
   waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority) }));
+  for (const s of runners.filter((x) => pausedFree(x))) out.push({ slot: "freed", ...row(s, false, stMs(s)) });
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
   return out;
 }
@@ -179,7 +180,7 @@ const clip = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1)
 export function renderQueueTable(rows: TableRow[]): string[] {
   if (!rows.length) return ["nothing running or waiting"];
   const head = ["#", "state", "activity", "prio", "session", "model", "task", "time", "id"];
-  const body = rows.map((r) => [r.slot === "running" ? "run" : r.slot === "saved" ? "-" : String(r.slot), r.stateText, r.activity, r.priority, clip(r.session, 18), clip(r.model, 26), clip(r.task + (r.detail ? ` (${r.detail})` : ""), 50), fmtDur(r.seconds), r.id]);
+  const body = rows.map((r) => [r.slot === "running" ? "run" : r.slot === "saved" || r.slot === "freed" ? "-" : String(r.slot), r.stateText, r.activity, r.priority, clip(r.session, 18), clip(r.model, 26), clip(r.task + (r.detail ? ` (${r.detail})` : ""), 50), fmtDur(r.seconds), r.id]);
   const w = head.map((h, c) => Math.max(h.length, ...body.map((b) => b[c]!.length)));
   const fmt = (cells: string[]): string => cells.map((c, k) => c.padEnd(w[k]!)).join("  ").trimEnd();
   return [fmt(head), ...body.map(fmt), "", QUEUE_EXPLAIN];

@@ -1018,6 +1018,16 @@ export function describeTool(name: string, inp: unknown): string {
 
 export const DEFAULT_TOOL_LEND_MS = 20_000;
 
+/** An operator-paused worker (no preemptor): parked, its slot is free for the next job. Pauses set before the slot-freeing release carry the same status fields. */
+export function pausedFree(s: Pick<WorkerStatus, "paused" | "pausedBy">): boolean {
+  return !!s.paused && !s.pausedBy;
+}
+
+/** Whether a running worker holds a provider slot: live-running, not lent over a long tool wait, not operator-paused. The one rule every slot counter uses. */
+export function holdsSlot(s: Pick<WorkerStatus, "state" | "paused" | "pausedBy" | "toolWaitSince">, now = Date.now()): boolean {
+  return s.state === "running" && !slotLent(s, now) && !pausedFree(s);
+}
+
 /** Whether `s` has waited on a Bash command long enough that its slot is lent to the next queued worker (tool-wait.ts). */
 export function slotLent(s: Pick<WorkerStatus, "toolWaitSince">, now = Date.now(), lendMs = DEFAULT_TOOL_LEND_MS): boolean {
   return s.toolWaitSince !== undefined && now - s.toolWaitSince >= lendMs;
