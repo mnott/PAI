@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS code_symbols (
   end_line       INTEGER NOT NULL,
   signature      TEXT NOT NULL DEFAULT '',
   exported       BOOLEAN NOT NULL DEFAULT FALSE,
-  search_text    TEXT NOT NULL DEFAULT ''
+  search_text    TEXT NOT NULL DEFAULT '',
+  doc            TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS code_refs (
@@ -66,6 +67,9 @@ ALTER TABLE code_symbols
   ADD COLUMN IF NOT EXISTS fts_vector tsvector
   GENERATED ALWAYS AS (to_tsvector('simple', search_text)) STORED;
 CREATE INDEX IF NOT EXISTS idx_code_symbols_fts ON code_symbols USING GIN (fts_vector);
+
+-- doc comments became a searchable column after the first release.
+ALTER TABLE code_symbols ADD COLUMN IF NOT EXISTS doc TEXT NOT NULL DEFAULT '';
 `;
 
 /** Apply the code-graph schema to a Postgres database. Idempotent. */
