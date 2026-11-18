@@ -409,7 +409,28 @@ describe("large tool-call arguments", () => {
 });
 
 describe("router loopback and tailnet bind (boot before Tailscale, 2026-11-18)", () => {
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // a fake retry clock: timers fire only when the test advances them, so the
+  // scenario never sleeps and no wall-clock race can make it flaky under load.
+  function fakeClock(): { setTimer(fn: () => void, ms: number): { cancel(): void }; advance(): Promise<void> } {
+    const armed: Array<{ fn: () => void; ms: number }> = [];
+    return {
+      setTimer: (fn, ms) => {
+        const e = { fn, ms };
+        armed.push(e);
+        return { cancel: () => { const i = armed.indexOf(e); if (i >= 0) armed.splice(i, 1); } };
+      },
+      // fires every armed timer once (the backoff delay), then drains the macrotask/microtask queue so each callback's listen/error event has landed; repeats while callbacks keep arming timers
+      advance: async () => {
+        for (let round = 0; round < 10 && armed.length; round++) {
+          const due = armed.splice(0);
+          for (const e of due) e.fn();
+          await new Promise((r) => setImmediate(r));
+          await Promise.resolve();
+          await new Promise((r) => setImmediate(r));
+        }
+      },
+    };
+  }
   async function scenario(bind: string, resolve: (b: string) => string | null, flip: () => void): Promise<void> {
     const loop = http.createServer((_q, r) => r.end("ok"));
     await new Promise<void>((r) => loop.listen(0, "127.0.0.1", r));
@@ -417,14 +438,23 @@ describe("router loopback and tailnet bind (boot before Tailscale, 2026-11-18)",
     const tail = http.createServer((_q, r) => r.end("tail"));
     const logs: string[] = [];
     const states: string[] = [];
-    const cancel = bindWhenUp(tail, { bind, port: port + 1, resolve, initialMs: 30, maxMs: 60, log: (l) => logs.push(l), onState: (s) => states.push(s.state) });
-    await sleep(150);
+    // the bound event awaited directly — no sleep after flip()
+    let resolveBound!: (addr: string) => void;
+    const boundP = new Promise<string>((r) => (resolveBound = r));
+    const clock = fakeClock();
+    let settle!: () => void;
+    const settled = new Promise<void>((r) => (settle = r));
+    const cancel = bindWhenUp(tail, { bind, port: port + 1, resolve, initialMs: 30, maxMs: 60, log: (l) => logs.push(l), onState: (s) => states.push(s.state), onBound: (a) => resolveBound(a), setTimer: clock.setTimer, onSettled: () => settle() });
+    // await the deferred-bind event instead of sleeping; then confirm the first attempt found the address not up
+    await settled;
+    await new Promise((r) => setImmediate(r));
     expect(loop.listening).toBe(true);
     expect(tail.listening).toBe(false);
     expect(states).toContain("waiting");
     expect(logs.filter((l) => /waiting/.test(l))).toHaveLength(1);
     flip();
-    await sleep(200);
+    await clock.advance(); // one fake retry tick, no real time passes
+    await boundP;
     expect(tail.listening).toBe(true);
     expect(states).toContain("bound");
     expect(logs.filter((l) => /bound/.test(l))).toHaveLength(1);

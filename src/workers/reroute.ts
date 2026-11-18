@@ -27,7 +27,9 @@ import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
 import { loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
+import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { markHandover } from "./run/follow-reroute.js";
+import { escalationOff, getProfile } from "./session-profile-store.js";
 
 export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
 
@@ -37,7 +39,7 @@ export const reroutePolicy = escalationPolicy;
 /** Minutes an urgent queued job waits before it moves when workers.escalate.queuedMaxMin is 0 (off). */
 export const URGENT_QUEUED_MIN = 2;
 
-const PINNED = /\((?:flag: --provider|local)\)$/;
+const PINNED = /\((?:flag: --provider|local|--where local|--force-local)\)$/;
 
 /** Whether the caller chose this run's provider (status.routeWhy names the source). */
 export function providerPinned(s: Pick<WorkerStatus, "routeWhy">): boolean {
@@ -57,8 +59,29 @@ const stampMs = (stamp: string | undefined): number | null => {
  * Every elapsed-time threshold runs on the active clock: freeze AND paused minutes never count, so after a
  * thaw or resume the overdue spell restarts from its end.
  */
-export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy()): string | null {
+export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy(), sched: SchedSnapshot | null = null): string | null {
+  return overdueReason(s, nowMs, p, sched, true);
+}
+
+/** Whether escalation is switched off for this run: its own --no-escalate, or its session's profile switch (unexpired). */
+export function escalationSwitchedOff(s: Pick<WorkerStatus, "noEscalate" | "sessionKey" | "session">, nowMs: number): boolean {
+  if (s.noEscalate) return true;
+  for (const name of new Set([s.sessionKey, s.session?.name])) if (name && escalationOff(getProfile(name), nowMs)) return true;
+  return false;
+}
+
+/** A stalled run the session switch is holding back, as the note ps/cockpit show; null when escalation is on or nothing is overdue. */
+export function escalationHeldNote(s: WorkerStatus, nowMs: number, p: ReroutePolicy = reroutePolicy(), sched: SchedSnapshot | null = null): string | null {
+  if (s.noEscalate || !escalationSwitchedOff(s, nowMs)) return null;
+  const r = overdueReason(s, nowMs, p, sched, false);
+  const m = r?.match(/for (\d+)m/);
+  return r ? `stalled ${m ? `${m[1]}m` : r}, escalation off for this session` : null;
+}
+
+function overdueReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, sched: SchedSnapshot | null, honourSwitch: boolean): string | null {
   if (s.rerouted || s.continuedBy || s.origin === "chat" || s.paused || providerPinned(s)) return null;
+  if (s.noEscalate) return null;
+  if (honourSwitch && escalationSwitchedOff(s, nowMs)) return null;
   if (frozenSince(s.id) !== undefined) return null; // frozen by the operator: no escalation verdict
   if (!s.spec && !s.promptFile) return null;
   const pause = { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs };
@@ -73,8 +96,15 @@ export function escalationReason(s: WorkerStatus, nowMs: number, p: ReroutePolic
   if (s.state !== "running") return null;
   if ((s.consecFails ?? 0) >= p.stallFailedCalls) return `${s.consecFails} failed tool calls in a row`;
   const last = stampMs(s.progressAt) ?? stampMs(s.started);
-  const min = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause) / 60_000;
-  return min >= p.stallMaxMin ? `no edit or commit for ${Math.floor(min)}m` : null;
+  const wallMs = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause);
+  // a local job's requests wait their turn at the model: that time is not the job's own (starved, not stuck)
+  const a = sched?.workers[s.id];
+  const lineNow = a ? a.waitMsTotal + (a.waitingSince ? Math.max(0, nowMs - a.waitingSince) : 0) : 0;
+  const lineMs = Math.min(wallMs, Math.max(0, lineNow - (s.lineAtProgressMs ?? 0)));
+  const ownMin = (wallMs - lineMs) / 60_000;
+  if (ownMin < p.stallMaxMin) return null;
+  const what = s.readOnly ? "no successful tool call" : "no edit or commit";
+  return lineMs > 0 ? `${what} for ${Math.floor(ownMin)}m of own time (${Math.floor(wallMs / 60_000)}m wall, ${Math.floor(lineMs / 60_000)}m in line)` : `${what} for ${Math.floor(ownMin)}m`;
 }
 
 /** A finished fall-through still blocks another reroute of its origin this long. */
@@ -350,7 +380,7 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
   return async (s) => {
     const st = loadStatus(logDir, s.id);
     if (!st) throw new Error(`no worker named "${s.id}" to restart`);
-    const args = ["worker", "run", "--provider", s.provider, ...(st.outputFormat && st.outputFormat !== "text" ? ["--output-format", st.outputFormat] : []), ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
+    const args = ["worker", "run", "--provider", s.provider, ...(st.outputFormat && st.outputFormat !== "text" ? ["--output-format", st.outputFormat] : []), ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.topic ? ["--topic", st.topic] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
     mkdirSync(join(logDir, "runs"), { recursive: true });
     const idFile = join(logDir, "runs", `rerun-${s.id}.id`);
     try {
@@ -536,9 +566,22 @@ export async function escalateOverdue(
   policy: ReroutePolicy = reroutePolicy()
 ): Promise<Escalation[]> {
   const done: Escalation[] = [];
+  const sched = readSchedFile(d.logDir, nowMs);
   for (const s of statuses) {
-    const reason = escalationReason(s, nowMs, policy);
-    if (!reason) continue;
+    const reason = escalationReason(s, nowMs, policy, sched);
+    if (!reason) {
+      // a stall the session switch holds back stays visible in ps / the cockpit
+      const held = s.state === "running" ? escalationHeldNote(s, nowMs, policy, sched) : null;
+      if (held !== (s.escalationHeld ?? null)) {
+        const st = (d.load ?? ((x: string) => loadStatus(d.logDir, x)))(s.id);
+        if (st && st.state === "running") {
+          if (held) st.escalationHeld = held;
+          else delete st.escalationHeld;
+          saveStatus(d.logDir, st, new Date(), true);
+        }
+      }
+      continue;
+    }
     try {
       const r = await rerouteWorker(s.id, "cloud", { ...d, by: "escalation", reason });
       done.push({ id: s.id, label: s.label, provider: r.provider, reason, session: s.spawnerSession ?? s.session?.id ?? null });

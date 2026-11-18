@@ -11,7 +11,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
 import type { CodeGraphStore, SymbolRow } from "./store.js";
-import { indexRoot, reconcile } from "./indexer.js";
+import { indexFiles, indexRoot, reconcile } from "./indexer.js";
+import { consumeDirty, readDirty, runningIndex } from "./session.js";
+import { extractFile } from "./extract/index.js";
+import { exactNameTokens, pathWords, questionTerms, rankCandidates } from "./rank.js";
 import type { RelateProject } from "./relate.js";
 import { relatedElsewhere } from "./graph.js";
 
@@ -96,7 +99,11 @@ export async function ensureFresh(backend: StorageBackend, root: string): Promis
   if (existing.files === 0) {
     return indexRepo(backend, rootAbs);
   }
-  const counts = await reconcile(store, rootAbs);
+  // files the Edit/Write hook marked dirty are re-read first (no parse happened in the hook)
+  const dirty = consumeDirty(rootAbs);
+  const direct = dirty.length ? await indexFiles(store, rootAbs, dirty) : { changed: 0, deleted: 0 };
+  const rec = await reconcile(store, rootAbs);
+  const counts = rec ? { changed: rec.changed + direct.changed, deleted: rec.deleted + direct.deleted } : direct.changed || direct.deleted ? direct : null;
   if (!counts) return null;
   const stats = await store.stats(rootAbs);
   return {
@@ -115,6 +122,7 @@ export async function ensureFresh(backend: StorageBackend, root: string): Promis
 export async function status(backend: StorageBackend, root: string): Promise<{
   root: string; backend: string; indexed: boolean; files: number; symbols: number;
   refs: number; resolvedRefs: number; byLanguage: Record<string, number>; lastIndexedAt: string | null;
+  dirty: number; indexing: { pid: number; root: string; startedAt: string } | null;
 }> {
   const store = backend.codeGraph();
   const rootAbs = resolve(root);
@@ -129,6 +137,8 @@ export async function status(backend: StorageBackend, root: string): Promise<{
     resolvedRefs: s.resolvedRefs,
     byLanguage: s.byLanguage,
     lastIndexedAt: s.lastIndexedAt != null ? new Date(s.lastIndexedAt).toISOString() : null,
+    dirty: readDirty(rootAbs).length,
+    indexing: ((l) => (l ? { pid: l.pid, root: l.root, startedAt: new Date(l.startedAt).toISOString() } : null))(runningIndex()),
   };
 }
 
@@ -176,13 +186,44 @@ export async function callees(backend: StorageBackend, root: string, name: strin
   const seen = new Set<string>();
   const out: RefHit[] = [];
   for (const t of targets) {
+    // refs to the definition's own parameters/locals are not callees. The
+    // extractor skips them since 1.2.81, but stored rows can predate it
+    // (unchanged files are never re-read), so filter here too: drop any ref
+    // whose name is bound inside this symbol's source range and that did not
+    // resolve to a repo symbol (a same-named real symbol stays listed).
+    const locals = await localNamesOf(rootAbs, t);
     for (const r of await store.callees(t.id)) {
+      if (!r.target && locals.has(r.toName)) continue;
       const key = `${r.fromFile}:${r.line}:${r.toName}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({ symbol: r.target ? toHit(r.target) : null, name: r.toName, kind: r.kind, file: r.fromFile, line: r.line });
       if (out.length >= (limit ?? 50)) return out;
     }
+  }
+  return out;
+}
+
+/** Names bound as parameters or locals inside the symbol's own source range.
+ *  Re-parses the defining file from disk (one parse per callee lookup). The
+ *  extractor records local bindings before refs and suppresses a ref whose
+ *  target is bound in the enclosing definition — so the identifiers that
+ *  occur in this slice but produce no ref here are exactly its locals. */
+async function localNamesOf(rootAbs: string, s: SymbolRow): Promise<Set<string>> {
+  const out = new Set<string>();
+  let content: string;
+  try {
+    const lines = readFileSync(`${rootAbs}/${s.file}`, "utf8").split("\n");
+    if (lines.length < s.startLine) return out;
+    content = lines.slice(s.startLine - 1, Math.max(s.endLine, s.startLine)).join("\n");
+  } catch {
+    return out; // definition no longer on disk at its stored range: no filter
+  }
+  const extracted = await extractFile({ path: s.file, content, mtime: 0 });
+  if (!extracted) return out;
+  const refed = new Set(extracted.refs.map((r) => r.toName));
+  for (const m of content.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) {
+    if (!refed.has(m[0])) out.add(m[0]);
   }
   return out;
 }
@@ -223,11 +264,6 @@ export interface ExploreResult {
   truncated: boolean;
 }
 
-/** identifier-like tokens from a question or symbol list */
-function queryTokens(query: string): string[] {
-  return [...new Set(query.match(/[A-Za-z_][A-Za-z0-9_]{1,}/g) ?? [])];
-}
-
 /** verbatim source of a symbol, read from disk by line range */
 function sourceOf(rootAbs: string, s: SymbolHit): string {
   try {
@@ -256,16 +292,26 @@ export async function explore(
   const budgetChars = (opts?.budgetTokens ?? 4000) * 4;
   const depth = opts?.depth ?? 1;
 
-  // exact-name matches first, then full-text
-  const tokens = queryTokens(query);
-  const matched = new Map<number, SymbolHit>();
-  for (const t of tokens) {
-    for (const s of await store.symbolsByName(rootAbs, t, 5)) if (!matched.has(s.id)) matched.set(s.id, toHit(s));
-    // qualified tail match: "preempt.otherUrgent" style
-    for (const s of await store.searchSymbols(rootAbs, t, 3)) if (!matched.has(s.id)) matched.set(s.id, toHit(s));
-    if (matched.size >= 12) break;
+  // question terms (stopwords dropped), candidates from name, FTS and path, then ranked
+  const terms = questionTerms(query);
+  const exactTokens = exactNameTokens(query);
+  const exactNames = new Set(exactTokens);
+  const candidates: SymbolRow[] = [];
+  for (const t of exactTokens) candidates.push(...await store.symbolsByName(rootAbs, t, 5));
+  for (const t of terms) {
+    candidates.push(...await store.symbolsByName(rootAbs, t, 5));
+    candidates.push(...await store.searchSymbols(rootAbs, t, 60));
   }
-  const symbols = [...matched.values()];
+  if (terms.length) {
+    const pathHits = (await store.listFiles(rootAbs))
+      .map((f) => ({ path: f.path, n: terms.filter((t) => pathWords(f.path).has(t)).length }))
+      .filter((f) => f.n > 0)
+      .sort((a, b) => b.n - a.n || a.path.length - b.path.length)
+      .slice(0, 8);
+    for (const f of pathHits) candidates.push(...await store.symbolsInFile(rootAbs, f.path));
+  }
+  const ranked = rankCandidates(candidates, terms, exactNames, { files: 6, perFile: 4, total: 12 });
+  const symbols = ranked.flatMap((f) => f.symbols.map((r) => toHit(r.symbol)));
 
   let text = "";
   let truncated = false;
@@ -284,11 +330,7 @@ export async function explore(
 
   // definitions grouped by file
   const byFile = new Map<string, SymbolHit[]>();
-  for (const s of symbols) {
-    let list = byFile.get(s.file);
-    if (!list) { list = []; byFile.set(s.file, list); }
-    list.push(s);
-  }
+  for (const f of ranked) byFile.set(f.file, f.symbols.map((r) => toHit(r.symbol)));
   for (const [file, syms] of byFile) {
     if (!push(`\n## ${file}\n`)) break;
     for (const s of syms) {
@@ -347,8 +389,22 @@ async function callersNoFresh(backend: StorageBackend, rootAbs: string, name: st
 }
 async function calleesNoFresh(backend: StorageBackend, rootAbs: string, qualifiedName: string, limit: number): Promise<RefHit[]> {
   const store = backend.codeGraph();
+  // same own-parameters/locals filter as callees() (stored rows may predate
+  // the extractor fix); a ref's enclosing symbol is matched by name+file
+  const seeds = await store.symbolsByName(rootAbs, qualifiedName, 20);
+  const localsOf = new Map<string, Set<string>>(); // `${file}#${qualifiedName}` → local names
   const out: RefHit[] = [];
   for (const r of await store.calleesByName(rootAbs, qualifiedName, limit)) {
+    if (!r.target && r.fromSymbol) {
+      const key = `${r.fromFile}#${r.fromSymbol}`;
+      let ls = localsOf.get(key);
+      if (!ls) {
+        const seed = seeds.find((s) => s.file === r.fromFile && s.qualifiedName === r.fromSymbol);
+        ls = seed ? await localNamesOf(rootAbs, seed) : new Set<string>();
+        localsOf.set(key, ls);
+      }
+      if (ls.has(r.toName)) continue;
+    }
     out.push({ symbol: r.target ? toHit(r.target) : null, name: r.toName, kind: r.kind, file: r.fromFile, line: r.line });
   }
   return out;

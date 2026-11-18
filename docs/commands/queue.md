@@ -64,6 +64,7 @@ Runs each pending item as a worker in its own worktree branch, up to N at once. 
 | `--model MODEL` | string | — | Model the items' workers get: default, fast or a model id (default: the provider's worker_model) |
 | `--now` | flag | — | The items' workers go ahead of the runs waiting for a slot on the provider |
 | `--no-pool` | flag | — | The items' workers start fresh, never using the worker pool |
+| `--topic name` | string | — | Topic the items' workers run under (an item added with its own topic keeps it) |
 | `--detach` | flag | — | Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it |
 
 ```sh

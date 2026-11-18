@@ -48,6 +48,8 @@ export interface StartRequest {
   priority?: "front";
   /** The worker is started with --no-pool. */
   noPool?: boolean;
+  /** `--topic` of the worker (a queue item's own topic). */
+  topic?: string;
 }
 
 export interface MergeOutcome {

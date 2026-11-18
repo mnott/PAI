@@ -5,6 +5,10 @@
  * terminal (done/failed/killed/lost), then returns their result texts. The
  * orchestrator's Bash call stays synchronous and gets the JSON on stdout,
  * with exit 1 naming whoever failed or timed out.
+ *
+ * A worker that ended because it was rerouted/escalated (its status carries `rerouted` + `fallThroughTo`) is not
+ * an end: the wait follows the fall-through chain — links of links too, via followChain in run/follow-reroute.ts,
+ * the reader `followReroute` shares — and reports the final run's result under the asked id plus `"followed"`.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -12,13 +16,17 @@ import { eventsPath } from "./paths.js";
 import { parseWorkerReport, verifyReportChanges, type WorkerReport } from "./report.js";
 import { activeNow } from "./freeze.js";
 import { loadStatus, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { followChain } from "./run/follow-reroute.js";
 
 export interface WaitResult {
+  /** The id as asked for. When the run was rerouted/escalated this stays the origin's id; the final run's result is what `state`/`rc`/`result` carry, and `followed` names the chain. */
   id: string;
   label: string;
   state: WorkerStatus["state"];
   rc: number | null;
   secs: number | null;
+  /** The continuation ids this wait followed to the final run (a rerouted/escalated worker's `fallThroughTo` chain, links of links); absent when nothing was followed. */
+  followed?: string[];
   /** Absent while the worker is still running (wait timed out): not a verdict. */
   ok?: boolean;
   /** Claimed changes the filesystem does not confirm (same check as the result banner's "verify:" note). */
@@ -86,17 +94,32 @@ function unconfirmedClaims(st: WorkerStatus, report: WorkerReport | null): strin
   return v.failures.map((f) => f.path);
 }
 
-function toWaitResult(logDir: string, st: WorkerStatus, pending: boolean): WaitResult {
-  const result = lastResultText(logDir, st.id);
+/**
+ * A terminal status that ended as a hand-over — rerouted/escalated (`rerouted`), or a fall-through whose
+ * continuation finished the work (`continuedBy`) — and names its continuation: not an end, the chain continues.
+ */
+const handedOver = (st: WorkerStatus): boolean =>
+  (!!st.rerouted || !!st.continuedBy) && !!st.fallThroughTo;
+
+/** How long a hand-over's unannounced continuation is awaited before the origin's own end stands. */
+const LINK_GRACE_MS = 1_500;
+
+function toWaitResult(logDir: string, askedId: string, st: WorkerStatus, pending: boolean): WaitResult {
+  // a rerouted/escalated worker's "killed" is the hand-over, not an end: follow its fallThroughTo chain (the
+  // continuation's own links too) and report the final run. The JSON keeps the asked id + `followed` so callers
+  // match lines to ids (2026-11-17: a live escalation read as failed, rc 143).
+  const { cur, followed } = followChain(logDir, st);
+  const result = lastResultText(logDir, cur.id);
   const report = parseWorkerReport(result ?? "");
-  const unconfirmed = pending ? [] : unconfirmedClaims(st, report);
+  const unconfirmed = pending ? [] : unconfirmedClaims(cur, report);
   return {
-    id: st.id,
-    label: st.label,
-    state: st.state,
-    rc: st.rc,
-    secs: st.secs,
-    ...(pending ? { timedOut: true as const } : { ok: st.state === "done" && (st.rc ?? 0) === 0 && unconfirmed.length === 0 }),
+    id: askedId,
+    label: cur.label,
+    state: cur.state,
+    rc: cur.rc,
+    secs: cur.secs,
+    ...(followed.length ? { followed } : {}),
+    ...(pending ? { timedOut: true as const } : { ok: cur.state === "done" && (cur.rc ?? 0) === 0 && unconfirmed.length === 0 }),
     ...(unconfirmed.length ? { unconfirmed } : {}),
     result,
     report,
@@ -119,12 +142,23 @@ export async function waitWorkers(
   const known = new Map<string, WorkerStatus>();
   reconcileStatuses(logDir, new Date(), 0, opts.owns);
   const pending = new Set<string>();
+  // settled = the END of the fall-through chain is terminal (a rerouted origin stays open until its continuation
+  // ends); a hand-over whose continuation has no status file yet gets a short grace to announce, then stands.
+  const danglingSince = new Map<string, number>();
+  const settled = (id: string, st: WorkerStatus): boolean => {
+    const { cur } = followChain(logDir, st);
+    if (!TERMINAL.includes(cur.state)) return false;
+    if (!handedOver(cur)) return true;
+    const since = danglingSince.get(id) ?? activeNow();
+    danglingSince.set(id, since);
+    return activeNow() - since >= LINK_GRACE_MS;
+  };
   // the pre-sleep check: already-finished workers return without waiting
   for (const id of ids) {
     const st = loadStatus(logDir, id);
     if (!st) throw new Error(`no worker named "${id}"`);
     known.set(id, st);
-    if (!TERMINAL.includes(st.state)) pending.add(id);
+    if (!settled(id, st)) pending.add(id);
   }
   // the budget runs on the active clock: `pai freeze` time is not waited
   const deadline = activeNow() + timeoutMs;
@@ -139,10 +173,10 @@ export async function waitWorkers(
     for (const id of [...pending]) {
       const st = loadStatus(logDir, id);
       if (st) known.set(id, st); // a vanished file keeps the last known status
-      if (!st || TERMINAL.includes(known.get(id)!.state)) pending.delete(id);
+      if (!st || settled(id, known.get(id)!)) pending.delete(id);
     }
   }
-  return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!, pending.has(id))), timedOut: [...pending] };
+  return { results: ids.map((id) => toWaitResult(logDir, id, known.get(id)!, pending.has(id))), timedOut: [...pending] };
 }
 
 /** Exit code of every wait verb that means "not yet, call again". The predicate lives in hooks/ts/lib/wait-poll.ts. */

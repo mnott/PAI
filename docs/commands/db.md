@@ -118,6 +118,29 @@ pai db migrate-to-postgres --skip-dump
 
 See also: `pai db schema`
 
+### pai db cleanup-test-dbs
+
+Drop leaked pai_test_* scratch databases older than an hour
+
+```
+pai db cleanup-test-dbs [options]
+```
+
+Drop leaked pai_test_* scratch databases older than an hour.
+
+Test runs create scratch Postgres databases (pai_test_*) and drop them in afterAll; this clears the leftovers a crashed run left behind. Only names matching pai_test_* are ever dropped, and only once their oldest relation is more than an hour old, so a database a running test still uses is never touched
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dry-run` | flag | — | List what would be dropped, drop nothing |
+
+```sh
+pai db cleanup-test-dbs --dry-run
+pai db cleanup-test-dbs
+```
+
+See also: `pai db tables`
+
 ## Subcommands
 
 | Command | Description |
@@ -126,6 +149,7 @@ See also: `pai db schema`
 | `pai db tables` | List the tables |
 | `pai db schema` | Show the columns of a table |
 | `pai db migrate-to-postgres` | One-time copy of the data from SQLite to PostgreSQL |
+| `pai db cleanup-test-dbs` | Drop leaked pai_test_* scratch databases older than an hour |
 
 ## See also
 

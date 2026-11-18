@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { extractFile } from "./extract/index.js";
 import { openFederation } from "../storage/sqlite/federation-db.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
-import { indexRepo, callers, searchSymbols } from "./api.js";
+import { indexRepo, callers, searchSymbols, explore, callees } from "./api.js";
+import { execFileSync } from "node:child_process";
+import { GRAPH_INDEXING_LINE, incrementalIndexIfIndexed, lockPath, markDirty, readDirty, runningIndex, sessionGraphLine, startBackgroundIndex, type BgDeps } from "./session.js";
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -65,5 +67,113 @@ describe("index + resolve + incremental (SQLite)", () => {
     const third = await indexRepo(backend, root);
     expect(third.deleted).toBe(1);
     expect(third.files).toBe(1);
+  }, 30000);
+});
+
+describe("sessions and workers use the graph", () => {
+  const mkRepo = () => {
+    const root = tmp();
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    writeFileSync(join(root, "a.ts"), "export function one(){ two(); }\nfunction two(){}\n");
+    return root;
+  };
+  const deps = (over: Partial<BgDeps> = {}): BgDeps & { spawned: string[] } => {
+    const spawned: string[] = [];
+    return { spawned, skipReason: async () => null, spawnIndex: (r) => { spawned.push(r); return process.pid; }, alive: () => true, ...over };
+  };
+
+  it("indexed repo: one line with the file count and the ask-first hint", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    await indexRepo(backend, root);
+    const d = deps();
+    const line = await sessionGraphLine(backend, root, d);
+    expect(line).toMatch(/^Code graph: 1 files indexed \(updated .+\)\. Ask it first: pai code explore/);
+    expect(d.spawned).toEqual([]);
+  });
+
+  it("unindexed repo: background index started once (lock), line injected; other repo is busy; guards skip", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const other = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    const d = deps();
+    expect(await sessionGraphLine(backend, root, d)).toBe(GRAPH_INDEXING_LINE);
+    expect(await sessionGraphLine(backend, root, d)).toBe(GRAPH_INDEXING_LINE);
+    expect(d.spawned).toEqual([root]); // second session did not start another
+    expect(await startBackgroundIndex(other, d)).toBe("busy");
+    expect(runningIndex(d.alive)?.root).toBe(root);
+    rmSync(lockPath());
+    expect(await startBackgroundIndex(other, deps({ skipReason: async () => "frozen" }))).toBe("skipped");
+    expect(await sessionGraphLine(backend, tmp(), d)).toBeNull(); // not a code repo
+  });
+
+  it("dirty list is consumed by the next query, which re-reads the file", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    await indexRepo(backend, root);
+    writeFileSync(join(root, "a.ts"), "export function one(){ three(); }\nfunction three(){}\n");
+    writeFileSync(join(root, "b.ts"), "export function fresh(){}\n");
+    markDirty(root, join(root, "b.ts"));
+    expect(readDirty(root)).toEqual(["b.ts"]);
+    expect((await searchSymbols(backend, root, "fresh")).map((s) => s.name)).toContain("fresh");
+    expect(readDirty(root)).toEqual([]);
+  });
+
+  it("merge: incremental index starts for an indexed repo only", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    const d = deps();
+    expect(await incrementalIndexIfIndexed(backend, root, d)).toBe("unindexed");
+    await indexRepo(backend, root);
+    expect(await incrementalIndexIfIndexed(backend, root, d)).toBe("started");
+    expect(d.spawned).toEqual([root]);
+  });
+});
+
+describe("explore ranking and callees", () => {
+  it("ranks the merge gate above a local `where`, and callees skip own parameters", async () => {
+    const root = tmp();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/gate.ts"),
+      "/** the merge gate: checks a branch before it is merged */\nexport function runMergeGate(branch: string){ return moveTo(branch); }\nexport function moveTo(b: string){ return b; }\n");
+    writeFileSync(join(root, "src/target.ts"),
+      "export function other(){ const where = 1; return where; }\n");
+    writeFileSync(join(root, "src/front.ts"),
+      "import { moveTo } from \"./gate.js\";\nexport function setFront(logDir: string, id: string){ const tmp = id; moveTo(logDir); return tmp; }\n");
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    await indexRepo(backend, root);
+
+    const r = await explore(backend, root, "where is the merge gate implemented");
+    expect(r.symbols[0].file).toBe("src/gate.ts");
+    expect(r.symbols[0].name).toBe("runMergeGate");
+    expect(r.symbols.some((s) => s.name === "where")).toBe(false);
+    expect(r.text.indexOf("## src/gate.ts")).toBeGreaterThan(-1);
+
+    const c = await callees(backend, root, "setFront");
+    expect(c.map((h) => h.name)).toContain("moveTo");
+    for (const p of ["logDir", "id", "tmp"]) expect(c.map((h) => h.name)).not.toContain(p);
+  }, 30000);
+
+  it("callees drops own parameters even when stored refs predate the extractor fix", async () => {
+    const root = tmp();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/front.ts"),
+      "export function moveTo(b: string){ return b; }\nexport function setFront(logDir: string, id: string){ moveTo(logDir); return id; }\n");
+    const raw = openFederation(join(tmp(), "db2.sqlite"));
+    const backend = new SQLiteBackend(raw);
+    await indexRepo(backend, root);
+    // simulate rows stored by a pre-1.2.81 index: refs to the parameters
+    const sym = raw.prepare("SELECT id, repo_root, file_id FROM code_symbols WHERE name = 'setFront'").get() as { id: number; repo_root: string; file_id: number };
+    for (const n of ["logDir", "id"]) {
+      raw.prepare("INSERT INTO code_refs (repo_root, from_file_id, from_symbol_id, to_name, to_symbol_id, kind, line) VALUES (?,?,?,?,NULL,'call',2)")
+        .run(sym.repo_root, sym.file_id, sym.id, n);
+    }
+    const c = await callees(backend, root, "setFront");
+    expect(c.map((h) => h.name)).toContain("moveTo");
+    for (const p of ["logDir", "id"]) expect(c.map((h) => h.name)).not.toContain(p);
   }, 30000);
 });

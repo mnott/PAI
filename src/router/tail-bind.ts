@@ -50,14 +50,19 @@ export interface TailBindOpts {
   log: (line: string) => void;
   onState?: (s: { state: "waiting" | "bound"; addr?: string }) => void;
   onBound?: (addr: string) => void;
+  /** Retry timer; default setTimeout. Tests pass a fake clock so no wall-clock waiting is needed. */
+  setTimer?: (fn: () => void, ms: number) => { cancel(): void };
+  /** Called once the first attempt ran and the bind is deferred (or bound). Lets tests await instead of sleep. */
+  onSettled?: () => void;
 }
 
 /** Retries until `server` listens on the resolved address. Returns a cancel function. */
 export function bindWhenUp(server: http.Server, o: TailBindOpts): () => void {
   const resolve = o.resolve ?? ((b: string) => resolveBindAddress(b));
+  const setTimer = o.setTimer ?? ((fn: () => void, ms: number) => { const t = setTimeout(fn, ms); t.unref?.(); return { cancel: () => clearTimeout(t) }; });
   let delay = o.initialMs ?? 10_000;
   const maxMs = o.maxMs ?? 60_000;
-  let timer: NodeJS.Timeout | undefined;
+  let timer: { cancel(): void } | undefined;
   let cancelled = false;
   let announced = false;
   const waiting = (why: string): void => {
@@ -66,8 +71,7 @@ export function bindWhenUp(server: http.Server, o: TailBindOpts): () => void {
       o.log(`pai: router: waiting for router.bind "${o.bind}" (${why}); serving on loopback meanwhile`);
     }
     o.onState?.({ state: "waiting" });
-    timer = setTimeout(attempt, delay);
-    timer.unref?.();
+    timer = setTimer(attempt, delay);
     delay = Math.min(maxMs, Math.round(delay * 1.5));
   };
   const attempt = (): void => {
@@ -90,9 +94,11 @@ export function bindWhenUp(server: http.Server, o: TailBindOpts): () => void {
     server.once("listening", onOk);
     server.listen(o.port, addr);
   };
+  // the first attempt is synchronous; the listen/error events land on later ticks, so `onSettled` fires after them
   attempt();
+  queueMicrotask(() => o.onSettled?.());
   return () => {
     cancelled = true;
-    if (timer) clearTimeout(timer);
+    if (timer) timer.cancel();
   };
 }

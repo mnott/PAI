@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS code_symbols (
   end_line       INTEGER NOT NULL,
   signature      TEXT NOT NULL DEFAULT '',
   exported       BOOLEAN NOT NULL DEFAULT FALSE,
-  search_text    TEXT NOT NULL DEFAULT ''
+  search_text    TEXT NOT NULL DEFAULT '',
+  doc            TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS code_refs (
@@ -54,7 +55,12 @@ CREATE TABLE IF NOT EXISTS code_refs (
 CREATE INDEX IF NOT EXISTS idx_code_files_root    ON code_files (repo_root);
 CREATE INDEX IF NOT EXISTS idx_code_symbols_file  ON code_symbols (file_id);
 CREATE INDEX IF NOT EXISTS idx_code_symbols_name  ON code_symbols (repo_root, name);
+-- FK cascade indexes: every DELETE FROM code_files / code_symbols scans the
+-- referencing table once per parent row without these, and a forced reindex
+-- deletes thousands of parents (the 11-minute per-file delete, 2026-11-18).
+-- Idempotent — also lands on databases created before.
 CREATE INDEX IF NOT EXISTS idx_code_refs_from     ON code_refs (from_file_id);
+CREATE INDEX IF NOT EXISTS idx_code_refs_frsym    ON code_refs (from_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_code_refs_toname   ON code_refs (repo_root, to_name);
 CREATE INDEX IF NOT EXISTS idx_code_refs_tosym    ON code_refs (to_symbol_id);
 
@@ -66,6 +72,9 @@ ALTER TABLE code_symbols
   ADD COLUMN IF NOT EXISTS fts_vector tsvector
   GENERATED ALWAYS AS (to_tsvector('simple', search_text)) STORED;
 CREATE INDEX IF NOT EXISTS idx_code_symbols_fts ON code_symbols USING GIN (fts_vector);
+
+-- doc comments became a searchable column after the first release.
+ALTER TABLE code_symbols ADD COLUMN IF NOT EXISTS doc TEXT NOT NULL DEFAULT '';
 `;
 
 /** Apply the code-graph schema to a Postgres database. Idempotent. */

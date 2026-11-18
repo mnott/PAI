@@ -197,10 +197,20 @@ export interface WorkerStatus {
   consecFails?: number | null;
   /** nowStamp() of the last successful Edit/Write/commit; the supervision tick escalates a run that stops making progress (reroute.ts). */
   progressAt?: string;
+  /** Cumulative ms this worker's requests waited in the router's local scheduler queue, as of progressAt (reroute.ts: that wait is not stall time). */
+  lineAtProgressMs?: number;
+  /** A read-only job (no Edit/Write grant, or a spec saying so): any successful tool call counts as progress for the stall escalation. */
+  readOnly?: boolean;
+  /** --no-escalate (or a run that asked for local): the stall/queue escalation never moves this run; its continuations keep it. */
+  noEscalate?: boolean;
+  /** Set by the supervision tick while the session's escalation switch holds back a stalled run ("stalled 12m, escalation off for this session"). */
+  escalationHeld?: string;
   /** Copy of the task text (<id>.prompt), kept so the run can be started again elsewhere (reroute.ts). */
   promptFile?: string;
   /** The --class the run was started with. */
   className?: string;
+  /** --topic, inherited from the parent worker or the run this one continues (topic.ts). */
+  topic?: string;
   /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
   rerouted?: string;
   /** A running job moving to a slot-limited provider: it keeps running here until its continuation is admitted there (reroute.ts finishDeferredMoves). The target provider name. */

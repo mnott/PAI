@@ -31,6 +31,8 @@ export interface SymbolRecord {
   startLine: number;
   endLine: number;
   signature: string;
+  /** doc comment (/// or /** …) attached to the definition, when any */
+  doc?: string;
   exported: boolean;
 }
 
@@ -63,6 +65,8 @@ export interface SymbolRow {
   startLine: number;
   endLine: number;
   signature: string;
+  /** doc comment attached to the definition ("" when none is stored) */
+  doc: string;
   exported: boolean;
 }
 
@@ -117,8 +121,15 @@ export interface CodeGraphStore {
   upsertFile(repoRoot: string, file: FileRecord): Promise<{ fileId: number; brokenRefIds: number[] }>;
 
   /** Delete files (symbols/refs cascade; inbound to_symbol_id links null).
-   *  Returns the ids of refs that pointed at deleted symbols and must be re-resolved. */
+   *  Takes the paths in batches so a whole-repo wipe is a handful of set-based
+   *  statements, not one delete per file. Returns the ids of refs that pointed
+   *  at deleted symbols and must be re-resolved. */
   deleteFiles(repoRoot: string, paths: string[]): Promise<{ brokenRefIds: number[] }>;
+
+  /** Wipe every row of a repo (files + their symbols/refs) in one set-based
+   *  transaction — the --force path. No brokenRefIds: every ref of the repo is
+   *  gone with it, and the reindex rebuilds them. */
+  clearRepo(repoRoot: string): Promise<void>;
 
   /** Refresh mtime/size/indexed_at after a touch whose content hash did not change —
    *  never touches symbols/refs (unlike upsertFile, which replaces them). */

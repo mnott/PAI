@@ -105,9 +105,16 @@ export async function indexRoot(store: CodeGraphStore, root: string, opts: { for
   const brokenRefIds: number[] = [];
   const changedPaths: string[] = [];
 
-  for (const path of deleted) {
-    const res = await store.deleteFiles(rootAbs, [path]);
-    brokenRefIds.push(...res.brokenRefIds);
+  // --force re-reads every file anyway, so drop the repo's rows up front in
+  // one set-based transaction instead of paying a per-file cascade inside
+  // each upsert (the 11-minute forced reindex, 2026-11-18). This also covers
+  // the deleted files — their refs are gone with the wipe, nothing to report.
+  if (opts.force) {
+    await store.clearRepo(rootAbs);
+  } else if (deleted.length > 0) {
+    // one batched delete, not one per file: on a large wipe the per-file path
+    // is N cascade round-trips (see store-postgres deleteFiles)
+    brokenRefIds.push(...(await store.deleteFiles(rootAbs, deleted)).brokenRefIds);
   }
 
   for (const path of disk) {
@@ -170,7 +177,7 @@ export async function reconcile(store: CodeGraphStore, root: string): Promise<In
 
   const changedPaths: string[] = [];
   const brokenRefIds: number[] = [];
-  for (const path of deleted) brokenRefIds.push(...(await store.deleteFiles(rootAbs, [path])).brokenRefIds);
+  if (deleted.length > 0) brokenRefIds.push(...(await store.deleteFiles(rootAbs, deleted)).brokenRefIds);
 
   let changed = 0;
   for (const path of disk) {
@@ -204,4 +211,47 @@ export async function reconcile(store: CodeGraphStore, root: string): Promise<In
   if (!touched) return null;
   await resolveAffected(store, rootAbs, changedPaths, brokenRefIds);
   return { changed, deleted: deleted.length };
+}
+
+/**
+ * Index exactly these repo-relative files (the dirty list, merged files): new and
+ * changed ones are extracted, vanished ones deleted. No directory listing.
+ */
+export async function indexFiles(store: CodeGraphStore, root: string, paths: string[]): Promise<IndexCounts> {
+  const rootAbs = resolve(root);
+  const stored = new Map((await store.listFiles(rootAbs)).map((f) => [f.path, f]));
+  const brokenRefIds: number[] = [];
+  const changedPaths: string[] = [];
+  const vanished: string[] = [];
+  let changed = 0;
+  for (const path of [...new Set(paths)]) {
+    if (skipped(path)) continue;
+    const abs = join(rootAbs, path);
+    let st;
+    try { st = statSync(abs); } catch { st = null; }
+    if (!st || !st.isFile()) {
+      if (stored.has(path)) vanished.push(path);
+      continue;
+    }
+    if (st.size > MAX_FILE_BYTES) continue;
+    const prev = stored.get(path);
+    if (prev && prev.mtime === Math.round(st.mtimeMs)) continue;
+    const content = readFileSync(abs);
+    const hash = hashOf(content);
+    if (prev && prev.contentHash === hash) { await store.touchFileMtime(rootAbs, path, Math.round(st.mtimeMs), st.size); continue; }
+    const extracted = await extractFile({ path, content: content.toString("utf8"), mtime: Math.round(st.mtimeMs), size: st.size });
+    const res = await store.upsertFile(rootAbs, extracted
+      ? { path, language: extracted.language, contentHash: hash, mtime: Math.round(st.mtimeMs), size: st.size, symbols: extracted.symbols, refs: extracted.refs }
+      : { path, language: "unknown", contentHash: hash, mtime: Math.round(st.mtimeMs), size: st.size, symbols: [], refs: [] });
+    brokenRefIds.push(...res.brokenRefIds);
+    if (extracted) changedPaths.push(path);
+    changed++;
+  }
+  let deleted = 0;
+  if (vanished.length > 0) {
+    brokenRefIds.push(...(await store.deleteFiles(rootAbs, vanished)).brokenRefIds);
+    deleted = vanished.length;
+  }
+  if (changed || deleted) await resolveAffected(store, rootAbs, changedPaths, brokenRefIds);
+  return { changed, deleted };
 }

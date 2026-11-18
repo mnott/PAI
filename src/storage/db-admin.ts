@@ -9,6 +9,7 @@
 import type { StorageBackend } from "./interface.js";
 import type { SQLiteBackend } from "./sqlite.js";
 import type { PostgresBackend } from "./postgres.js";
+import { createPgPool } from "./pg-pool.js";
 
 export interface TableResult {
   columns: string[];
@@ -85,6 +86,7 @@ export async function getDbTableSchema(backend: StorageBackend, table: string): 
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
     throw new Error(`Invalid table name: ${table}`);
   }
+
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as {
     cid: number;
     name: string;
@@ -106,4 +108,58 @@ export async function getDbTableSchema(backend: StorageBackend, table: string): 
     r.pk ? "PK" : "",
   ]);
   return { columns, rows: outRows };
+}
+
+/** The scratch-database name pattern tests create (src/storage/test-db.ts). */
+export const TEST_DB_PATTERN = "^pai_test_[a-z0-9_]+$";
+
+/** Age after which a pai_test_* database is considered leaked, not in-flight. */
+export const TEST_DB_MIN_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Drop leaked scratch test databases: names matching pai_test_* whose creation
+ * is older than minAgeMs. pg_database has no timestamp, so age comes from the
+ * oldest relation in each database (pg_stat_file on its base directory — the
+ * same trick PG 17's AGE clauses use). A freshly created database (still being
+ * used by a running test) is never touched; a database with no relations yet
+ * reports NULL age and is skipped. Nothing outside the pattern is dropped, and
+ * createPgPool's live-database guard still applies underneath.
+ */
+export async function cleanupTestDatabases(
+  adminConnectionString: string,
+  opts: { minAgeMs?: number; dryRun?: boolean } = {},
+): Promise<string[]> {
+  const minAgeMs = opts.minAgeMs ?? TEST_DB_MIN_AGE_MS;
+  const admin = createPgPool({ connectionString: adminConnectionString, max: 1, connectionTimeoutMillis: 5000 });
+  try {
+    const found = await admin.query<{ datname: string }>(
+      `SELECT d.datname FROM pg_database d
+       WHERE d.datistemplate = false
+         AND d.datname ~ $1
+         AND age(now(), pg_stat_file(format('%s/base/%s', current_setting('data_directory'), d.oid), true).modification)
+             > make_interval(secs => $2::double precision / 1000)
+       ORDER BY d.datname`,
+      [TEST_DB_PATTERN, minAgeMs],
+    );
+    const dropped: string[] = [];
+    for (const { datname } of found.rows) {
+      if (opts.dryRun) { dropped.push(datname); continue; }
+      try {
+        await admin.query(`DROP DATABASE IF EXISTS "${datname.replace(/"/g, '""')}"`);
+        dropped.push(datname);
+      } catch {
+        // a test still connected to it: leave it for the next run
+      }
+    }
+    return dropped;
+  } finally {
+    await admin.end();
+  }
+}
+
+/** Admin URL ('postgres' database) derived from a configured connection string. */
+export function pgAdminUrl(connectionString: string): string {
+  const url = new URL(connectionString);
+  url.pathname = "/postgres";
+  return url.toString();
 }

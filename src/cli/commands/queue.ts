@@ -108,6 +108,7 @@ const runCmd: CommandDef = {
     { name: "model", type: "string", value: "MODEL", summary: "Model the items' workers get: default, fast or a model id (default: the provider's worker_model)" },
     { name: "now", type: "boolean", summary: "The items' workers go ahead of the runs waiting for a slot on the provider" },
     { name: "no-pool", type: "boolean", summary: "The items' workers start fresh, never using the worker pool" },
+    { name: "topic", type: "string", value: "name", summary: "Topic the items' workers run under (an item added with its own topic keeps it)" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it" },
   ],
   examples: ["pai queue run", "pai queue run --detach", "pai queue run --parallel 2", "pai queue run --escalate sonnet"],
@@ -127,6 +128,7 @@ const runCmd: CommandDef = {
           ? { name: named, cap: namedCap(named) }
           : providerOf(settings);
     const parallel = typeof ctx.opts.parallel === "number" ? Math.max(1, Math.floor(ctx.opts.parallel)) : (settings.maxParallel ?? prov.cap);
+    if (typeof ctx.opts.topic === "string" && ctx.opts.topic.trim()) process.env.PAI_TOPIC = ctx.opts.topic.trim();
     const logDir = workersLogDir(readWorkersSection().workers);
     const origin = await reportOriginWithHost();
     if (ctx.opts.detach === true) {

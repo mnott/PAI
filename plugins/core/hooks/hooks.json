@@ -18,6 +18,12 @@
         ]
       },
       {
+        "matcher": "startup",
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/code-graph.mjs" }
+        ]
+      },
+      {
         "matcher": "startup|compact",
         "hooks": [
           { "type": "command", "command": "${PAI_DIR}/Hooks/supervision-banner.mjs" }
@@ -41,6 +47,12 @@
       {
         "hooks": [
           { "type": "command", "command": "${PAI_DIR}/Hooks/inbox-inject.mjs" }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "${PAI_DIR}/Hooks/code-graph-dirty.mjs" }
         ]
       }
     ],

@@ -20,6 +20,8 @@ export interface RunOptions {
   providerFlag?: string;
   /** --class value (the old --role): a task class from workers.classes. */
   className?: string;
+  /** --topic: groups related jobs in the queue (topic.ts). */
+  topic?: string;
   modelFlag?: string;
   label?: string;
   /** Typed system waiver (keepalive heartbeat): the start may run headless, ledgered PANE-WAIVED kind=system. Nothing else waives a pane. */
@@ -32,6 +34,8 @@ export interface RunOptions {
   queuePriority?: QueuePriority;
   /** --now: wait at the front of the provider's queue (capacity.ts). */
   priority?: "front";
+  /** --no-escalate: the stall rule never moves this run to the cloud (continuations keep it). */
+  noEscalate?: boolean;
   /** --model fast without a provider: the routed provider's fast model. */
   modelFast?: boolean;
   /** --model default without a provider: the routed provider's default model, not its worker_model. */
@@ -250,6 +254,7 @@ export interface ExecuteArgs {
   worktreeFlag?: boolean;
   resumeOf?: string;
   className?: string;
+  topic?: string;
   reroutes: number;
   emptyRetried?: boolean;
   route?: RouteInfo;
@@ -261,6 +266,7 @@ export interface ExecuteArgs {
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
   routeWhy?: string;
+  noEscalate?: boolean;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
   /** --orchestrate: PAI_WORKER_ORCHESTRATOR=1 in the env and the orchestrator addendum in the contract. */

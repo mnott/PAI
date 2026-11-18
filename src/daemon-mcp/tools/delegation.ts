@@ -27,6 +27,7 @@ import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
 import { reportOriginWithHost, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
 import type { RunOrigin, RunRecord } from "../../workers/run-events.js";
 import { error, text, type WorkerToolResult } from "./tool-result.js";
+import { normalizeTopic } from "../../workers/topic.js";
 
 export type { WorkerToolResult };
 
@@ -258,7 +259,7 @@ export async function planSave(args: { project: string; name: string; plan: Plan
 }
 
 /** Start the run in the background and return at once. */
-export async function planRun(args: { project: string; name: string; escalate?: boolean } & WhereArgs, deps: DelegationDeps): Promise<WorkerToolResult> {
+export async function planRun(args: { project: string; name: string; escalate?: boolean; topic?: string } & WhereArgs, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
     const loaded = await loadProjectPlan(args, deps);
     if ("content" in loaded) return loaded;
@@ -274,7 +275,7 @@ export async function planRun(args: { project: string; name: string; escalate?: 
     const target = await resolveWhere(args, deps, (plan.maxParallel ?? 2) > 1);
     const par = parallelOf(plan, target?.provider ? deps.capOf(target.provider) : deps.provider(loadSettings(repo)).cap);
     const origin = await deps.origin();
-    deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...runTarget(target), ...(args.escalate ? { escalate: escalationCloud().tier } : {}) }, cwd: repo, origin });
+    deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...runTarget(target), ...(normalizeTopic(args.topic) ? { topic: normalizeTopic(args.topic) } : {}), ...(args.escalate ? { escalate: escalationCloud().tier } : {}) }, cwd: repo, origin });
     return text(withTarget(target, `Plan "${args.name}" started in the background${origin ? "" : " (no calling session found, events are not delivered)"}: ${total - merged.size} of ${total} parts to run, ${par} at a time${merged.size ? ` (${merged.size} already merged are skipped)` : ""}. Check progress with plan_status.`));
   } catch (e) {
     return error(e);
@@ -361,14 +362,14 @@ async function openQueue(project: string, deps: DelegationDeps): Promise<{ repo:
   return { repo, store: new QueueStore(queueStatePath(repo)), settings: loadSettings(repo) };
 }
 
-export async function queueAdd(args: { project: string; sentence: string; files?: string[]; image?: string } & WhereArgs, deps: DelegationDeps): Promise<WorkerToolResult> {
+export async function queueAdd(args: { project: string; sentence: string; files?: string[]; image?: string; topic?: string } & WhereArgs, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
     if (!args.sentence?.trim()) return fail("sentence is empty; describe the change in one sentence");
     const image = args.image ? resolve(args.image) : undefined;
     if (image && !existsSync(image)) return fail(`No such image: ${image}`);
     const target = await resolveWhere({ ...args, task: args.sentence }, deps);
     const { repo, store } = await openQueue(args.project, deps);
-    const it = store.add(args.sentence.trim(), repo, { files: (args.files ?? []).map((f) => f.trim()).filter(Boolean), image });
+    const it = store.add(args.sentence.trim(), repo, { files: (args.files ?? []).map((f) => f.trim()).filter(Boolean), image, topic: normalizeTopic(args.topic) });
     return text(withTarget(target, `Queued as ${it.id}. Call queue_run to start the pending items${target ? " (pass the same where / model / now)" : ""}.`));
   } catch (e) {
     return error(e);

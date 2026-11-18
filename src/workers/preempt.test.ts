@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { saveStatus, loadStatus, type WorkerStatus } from "./status.js";
 import { setWorkerPaused } from "./engine-control.js";
-import { abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, resumeWorker, PREEMPT_ABORT_MS } from "./preempt.js";
-import { capacityGate } from "./capacity.js";
+import { abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, resumeWorker, admitResumedWaiters, PREEMPT_ABORT_MS } from "./preempt.js";
+import { capacityGate, liveQueue, queueDir, waitingForSlotText, writeTicket } from "./capacity.js";
 import { inheritUrgency } from "./run/gate.js";
 import { waitWhilePreempted } from "../hooks/ts/lib/worker-guard.js";
 
@@ -263,5 +263,47 @@ describe("an operator pause frees the slot and stays until resumed", () => {
     const l = ledgerOf(logDir);
     expect(l).toMatch(/WORKER-PAUSE by=cockpit who=cockpit id=A/);
     expect(l).toMatch(/WORKER-UNPAUSE by=cli who=cli id=A/);
+  });
+});
+
+describe("admitResumedWaiters", () => {
+  const waiter = (s: ReturnType<typeof setup>, id: string) => {
+    saveStatus(s.logDir, s.mk(id, s.live()));
+    setWorkerPaused(s.logDir, id, true, "cli");
+    resumeWorker(s.logDir, id, "cli", Date.now(), () => 0);
+  };
+  const countdown = (n: number) => () => n--;
+
+  it("releases two resumed waiters in queue order while slots are free", () => {
+    const s = setup();
+    waiter(s, "A");
+    waiter(s, "B");
+    expect(admitResumedWaiters(s.logDir, Date.now(), countdown(2))).toEqual(["A", "B"]);
+    expect(loadStatus(s.logDir, "A")?.paused).toBeFalsy();
+    expect(loadStatus(s.logDir, "B")?.paused).toBeFalsy();
+  });
+
+  it("releases nothing with no free slot", () => {
+    const s = setup();
+    waiter(s, "A");
+    expect(admitResumedWaiters(s.logDir, Date.now(), () => 0)).toEqual([]);
+    expect(loadStatus(s.logDir, "A")?.paused).toBe(true);
+  });
+
+  it("a new job at the head blocks the waiters behind it", () => {
+    const s = setup();
+    waiter(s, "A");
+    saveStatus(s.logDir, s.mk("N", 1, { state: "queued" }));
+    writeTicket(join(queueDir(s.logDir, "local"), "N"), `${s.live()} front @${Date.now()}`);
+    expect(liveQueue(s.logDir, "local")[0]).toBe("N");
+    expect(admitResumedWaiters(s.logDir, Date.now(), () => 3)).toEqual([]);
+    expect(loadStatus(s.logDir, "A")?.paused).toBe(true);
+  });
+
+  it("a paused worker with a ticket reads as waiting for a slot, not paused", () => {
+    const s = setup();
+    waiter(s, "A");
+    expect(waitingForSlotText(s.logDir, { id: "A", provider: "local", paused: true })).toBe("waiting for a slot (position 1 of 1)");
+    expect(waitingForSlotText(s.logDir, { id: "Z", provider: "local", paused: true })).toBeUndefined();
   });
 });

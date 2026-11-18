@@ -44,6 +44,18 @@ function firstLineOf(node: Node, source: string): string {
   return source.slice(node.startIndex, Math.min(node.endIndex, node.startIndex + 400)).split("\n")[0].trim();
 }
 
+/** doc comment (/// or /** …) attached to a definition — searchable question text */
+function docCommentOf(node: Node, source: string): string | undefined {
+  let prev = node.previousSibling;
+  // TS/JS definitions sit inside their export_statement wrapper
+  if (!prev && node.parent?.type === "export_statement") prev = node.parent.previousSibling;
+  if (!prev) return undefined;
+  if (prev.type !== "comment") return undefined;
+  const t = prev.text;
+  if (!(t.startsWith("///") || t.startsWith("/**"))) return undefined;
+  return t.replace(/\s+/g, " ").trim().slice(0, 500);
+}
+
 const TS_DEF_NODES: Record<string, SymbolKind> = {
   function_declaration: "function",
   generator_function_declaration: "function",
@@ -251,8 +263,30 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
   const source = input.content;
   const symbols: SymbolRecord[] = [];
   const refs: RefRecord[] = [];
-  /** definition nodes already recorded, innermost last (for enclosing-symbol lookup) */
-  const defs: Array<{ end: number; index: number }> = [];
+  // ---- local bindings per symbol -------------------------------------------
+  // A function's parameters and its own locals are not callees: refs to them
+  // stay unresolved and never resolve to a repo symbol (resolve.ts matches by
+  // name), so they pollute `pai code callees`. Record every binding site per
+  // enclosing definition; the ref pass skips refs whose target is bound there.
+  /** local names of the innermost definition containing a node, null at file level */
+  const localsOf = new Map<number, Set<string>>();
+  /** definitions still open at the current node (walk order is document order) */
+  const openDefs: Array<{ end: number; id: number }> = [];
+  const enclosingAt = (start: number): number => {
+    while (openDefs.length && openDefs[openDefs.length - 1].end <= start) openDefs.pop();
+    return openDefs.length ? openDefs[openDefs.length - 1].id : -1;
+  };
+  const addAll = (n: Node, type: string): void => {
+    if (n.type === type) addLocal(n.startIndex, n.text);
+    for (const id of n.descendantsOfType(type)) if (id) addLocal(id.startIndex, id.text);
+  };
+  const addLocal = (start: number, name: string): void => {
+    const id = enclosingAt(start);
+    if (id < 0) return; // file-level bindings are repo symbols themselves
+    let set = localsOf.get(id);
+    if (!set) { set = new Set(); localsOf.set(id, set); }
+    set.add(name);
+  };
 
   walkTree(tree, (rawNode, parents) => {
     const node: Node = rawNode!;
@@ -260,8 +294,54 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
     const line = node.startPosition.row + 1;
     // walk order is document order: pop definitions this node has moved past
     const nodeStart = node.startIndex;
-    while (defs.length && nodeStart >= defs[defs.length - 1].end) defs.pop();
-    const fromSymbolIndex: number | undefined = defs.length ? defs[defs.length - 1].index : undefined;
+    const enclosing = enclosingAt(nodeStart);
+    const fromSymbolIndex: number | undefined = enclosing >= 0 ? enclosing : undefined;
+
+    // ---------------- local bindings ----------------
+    // parameters and let/const/var declarations bind names inside their
+    // enclosing definition; refs to bound names are not calls of repo symbols.
+    if (lang === "typescript" || lang === "javascript") {
+      if (node.type === "formal_parameters") {
+        for (const p of named(node)) {
+          const pn = p.type === "required_parameter" || p.type === "optional_parameter" ? p.childForFieldName("pattern") : p;
+          if (!pn) continue;
+          if (pn.type === "identifier") addLocal(pn.startIndex, pn.text);
+          else addAll(pn, "identifier");
+        }
+      } else if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
+        for (const decl of named(node).filter((c) => c.type === "variable_declarator")) {
+          const dn = decl.childForFieldName("name");
+          if (!dn) continue;
+          if (dn.type === "identifier") addLocal(dn.startIndex, dn.text);
+          else addAll(dn, "identifier");
+        }
+      }
+    } else if (lang === "python") {
+      if (node.type === "parameters") {
+        for (const c of named(node)) {
+          const pn = c.type === "typed_parameter" || c.type === "typed_default_parameter" || c.type === "default_parameter" ? c.childForFieldName("name") : c;
+          const id = pn && (pn.type === "identifier" ? pn : pn?.descendantsOfType("identifier")[0]);
+          if (id) addLocal(id.startIndex, id.text);
+        }
+      } else if (node.type === "assignment") {
+        const left = node.childForFieldName("left");
+        if (left && ["identifier", "pattern_list", "tuple_pattern", "list_pattern"].includes(left.type)) {
+          addAll(left, "identifier");
+        }
+      }
+    } else if (lang === "swift") {
+      if (node.type === "function_value_parameters") {
+        for (const vp of named(node).filter((c) => c.type === "parameter")) {
+          const id = vp.descendantsOfType("simple_identifier").pop();
+          if (id) addLocal(id.startIndex, id.text);
+        }
+      } else if (node.type === "property_declaration" && enclosingAt(node.startIndex) >= 0) {
+        // a local let/var inside a function body (top-level ones are symbols)
+        const pat = node.childForFieldName("pattern") ?? node.descendantsOfType("pattern")[0];
+        const id = pat?.descendantsOfType("simple_identifier").pop();
+        if (id) addLocal(id.startIndex, id.text);
+      }
+    }
 
     // ---------------- definitions ----------------
     let kind: SymbolKind | null = null;
@@ -287,6 +367,7 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
         if (!dn || dn.type !== "identifier") continue;
         const value = decl.childForFieldName("value");
         const isFn = !!value && ["arrow_function", "function_expression", "generator_function"].includes(value.type);
+        const index = symbols.length;
         symbols.push({
           name: dn.text,
           qualifiedName: dn.text,
@@ -294,8 +375,10 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
           startLine: node.startPosition.row + 1,
           endLine: node.endPosition.row + 1,
           signature: firstLineOf(node, source),
+          doc: docCommentOf(node, source),
           exported: isTsExported(node),
         });
+        if (isFn) openDefs.push({ end: node.endIndex, id: index });
       }
       // declarations still host refs (initialiser calls) — fall through below
     }
@@ -321,17 +404,23 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
         startLine: node.startPosition.row + 1,
         endLine: node.endPosition.row + 1,
         signature: signatureOf(node, source),
+        doc: docCommentOf(node, source),
         exported,
       });
-      defs.push({ end: node.endIndex, index });
+      openDefs.push({ end: node.endIndex, id: index });
     }
 
     // ---------------- refs ----------------
+    /** true when the ref target is a parameter or local of the enclosing definition */
+    const isLocalTarget = (toName: string): boolean => {
+      const id = enclosingAt(nodeStart);
+      return id >= 0 && localsOf.get(id)?.has(toName) === true;
+    };
     if (lang === "typescript" || lang === "javascript") {
       if (node.type === "call_expression" || node.type === "new_expression") {
         const target = node.type === "new_expression" ? node.childForFieldName("constructor") : node.childForFieldName("function");
         const cn = calleeName(target);
-        if (cn) refs.push({ fromSymbolIndex, toName: cn, kind: "call", line });
+        if (cn && !isLocalTarget(cn)) refs.push({ fromSymbolIndex, toName: cn, kind: "call", line });
       } else if (node.type === "class_heritage") {
         // TS heritage wraps extends_clause/implements_clause children; plain JS
         // heritage holds the parent identifier directly. The grammar types
@@ -361,12 +450,12 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
           const obj = parent.childForFieldName("object");
           if (!obj || obj.type === "this" || obj.type === "super") return;
         }
-        refs.push({ fromSymbolIndex, toName: node.text, kind: "references", line });
+        if (!isLocalTarget(node.text)) refs.push({ fromSymbolIndex, toName: node.text, kind: "references", line });
       }
     } else if (lang === "python") {
       if (node.type === "call") {
         const cn = calleeName(node.childForFieldName("function"));
-        if (cn) refs.push({ fromSymbolIndex, toName: cn, kind: "call", line });
+        if (cn && !isLocalTarget(cn)) refs.push({ fromSymbolIndex, toName: cn, kind: "call", line });
       } else if (node.type === "class_definition") {
         for (const c of (node.childForFieldName("superclasses") ? named(node.childForFieldName("superclasses")!) : [])) {
           const base = c.type === "keyword_argument" ? c.childForFieldName("name")?.text : c.text;
@@ -388,15 +477,15 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
         if (parent.childForFieldName("name")?.id === node.id) return;
         if (parent.type === "call" && parent.childForFieldName("function")?.id === node.id) return;
         if (parent.type === "assignment" && parent.childForFieldName("left")?.id === node.id) return;
-        refs.push({ fromSymbolIndex, toName: node.text, kind: "references", line });
+        if (!isLocalTarget(node.text)) refs.push({ fromSymbolIndex, toName: node.text, kind: "references", line });
       } else if (node.type === "attribute") {
         const attr = node.childForFieldName("attribute");
-        if (attr && node.parent?.type !== "call") refs.push({ fromSymbolIndex, toName: attr.text, kind: "references", line });
+        if (attr && node.parent?.type !== "call" && !isLocalTarget(attr.text)) refs.push({ fromSymbolIndex, toName: attr.text, kind: "references", line });
       }
     } else if (lang === "swift") {
       if (node.type === "call_expression") {
         const cn = calleeName(node.childForFieldName("callee"));
-        if (cn) refs.push({ fromSymbolIndex, toName: cn, kind: "call", line });
+        if (cn && !isLocalTarget(cn)) refs.push({ fromSymbolIndex, toName: cn, kind: "call", line });
       } else if (node.type === "inheritance_specifier") {
         const t = node.childForFieldName("inherits_from");
         if (t) refs.push({ fromSymbolIndex, toName: t.text.replace(/<.*>/, ""), kind: "extends", line });
@@ -409,10 +498,10 @@ export async function extractFile(input: ExtractInput): Promise<Omit<FileRecord,
         if (["user_type", "type_identifier", "pattern", "bound_identifier", "property_definition_pattern", "navigation_expression"].includes(parent.type)) return;
         if (parent.childForFieldName("name")?.id === node.id) return;
         if (parent.type === "call_expression" && parent.childForFieldName("callee")?.text === node.text) return;
-        refs.push({ fromSymbolIndex, toName: node.text, kind: "references", line });
+        if (!isLocalTarget(node.text)) refs.push({ fromSymbolIndex, toName: node.text, kind: "references", line });
       } else if (node.type === "user_type") {
         const t = node.descendantsOfType("type_identifier")[0]?.text ?? node.child(0)?.text;
-        if (t) refs.push({ fromSymbolIndex, toName: t, kind: "references", line });
+        if (t && !isLocalTarget(t)) refs.push({ fromSymbolIndex, toName: t, kind: "references", line });
       }
     }
   });

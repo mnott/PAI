@@ -33,9 +33,10 @@ import { workerFreezeCommand, workerThawCommand } from "./freeze.js";
 import { setWorkerPaused } from "../../workers/engine-control.js";
 import { resumeWorker } from "../../workers/preempt.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
+import { normalizeTopic } from "../../workers/topic.js";
 import { providerCap } from "../../workers/capacity.js";
 import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
-import { filterBySession, renderQueueTable } from "../../workers/queue-table.js";
+import { filterBySession, filterByTopic, renderQueueTable } from "../../workers/queue-table.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
 import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile } from "../../workers/reroute.js";
@@ -195,6 +196,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       localOk: o["local-ok"] === true ? true : undefined,
       cloud: o.cloud === true ? true : undefined,
       className: className ?? agentClass,
+      topic: normalizeTopic(o.topic),
       modelFlag: str(o.model),
       label,
       mcpFlag: str(o.mcp),
@@ -207,6 +209,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       maxMinutes: num(o["max-minutes"]),
       deadline: str(o.deadline),
       noPool: o["no-pool"] === true ? true : undefined,
+      noEscalate: o["no-escalate"] === true ? true : undefined,
       browser: o["no-browser"] === true ? false : o.browser === true ? true : undefined,
       allowTests: o["allow-tests"] === true ? true : undefined,
       allowDbWrites: o["allow-db-writes"] === true ? true : undefined,
@@ -259,6 +262,8 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
   if (t.provider) target.providerFlag = t.provider;
+  // a run that asked for local (--where local, --force-local) is pinned: the stall rule never moves it to the cloud
+  if (plan.kind === "run" && (where === "local" || forceLocal)) plan.run.noEscalate = true;
   // --where a provider name is the operator's own words for where to run: it
   // reaches the engine as --provider too, so a --model that provider cannot
   // serve is refused there (pinProviderForModel), never silently dropped.
@@ -328,6 +333,7 @@ const runCommand: CommandDef = {
     { name: "where", type: "string", value: "WHERE", summary: "Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where)" },
     { name: "batch", type: "boolean", summary: "This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min" },
     { name: "now", type: "boolean", summary: "Go ahead of the runs waiting for a slot on the provider" },
+    { name: "no-escalate", type: "boolean", summary: "Never move this run (or its continuations) to the cloud by the stall / queued-too-long rule" },
     { name: "force-local", type: "boolean", summary: "With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts)" },
     { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "Run on the local model PAI resolves: the first running one in the class's routing tier order, else the workers.yaml `local:` preference when running (a `local:` that is not running is ignored), else the most recently used running model; --local NAME picks a specific running model" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
@@ -338,6 +344,7 @@ const runCommand: CommandDef = {
     { name: "mcp", type: "string", value: "NAMES", summary: "MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`)" },
     { name: "no-pane", type: "boolean", summary: "Ignored: every start needs a visible pane" },
     { name: "priority", type: "string", value: "high|normal|low", summary: "Priority when the provider is full or its local engine is shared (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker; change it live with `pai worker priority <id> <level>`" },
+    { name: "topic", type: "string", value: "name", summary: "Topic that groups related jobs in the queue and cockpit (children of a worker and continuations keep the parent's; no topic is guessed from the label)" },
     { name: "no-queue", type: "boolean", summary: "Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent)" },
     { name: "no-stagger", type: "boolean", summary: "Do not wait for an earlier run on the same provider to warm its prompt cache" },
     { name: "worktree", type: "boolean", summary: "Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo)" },
@@ -513,6 +520,7 @@ const psCommand: CommandDef = {
     "Shows the workers started from this terminal. When other sessions have live workers too, a MACHINE section lists every live worker on this computer with the session that owns it.",
   options: [
     { name: "all", type: "boolean", summary: "Workers of all sessions, not just this terminal's" },
+    { name: "topic", type: "string", value: "NAME", summary: "Only the workers of this topic" },
     { name: "panes", type: "boolean", summary: "List process -> pane -> tab for everything running, checked live" },
     { name: "mute-local-idle", type: "string", value: "SESSION", summary: "Stop the idle-local-model nudge to this session name (or iTerm id)" },
     { name: "unmute-local-idle", type: "string", value: "SESSION", summary: "Resume the idle-local-model nudge to this session" },
@@ -542,7 +550,7 @@ const psCommand: CommandDef = {
         const d = new Date(w.until);
         out(`urgent: ${w.key} now${w.where === "local" ? ", local" : ""} until ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
       }
-      out(psOutput(dir, flag(ctx, "all"), process.env));
+      out(psOutput(dir, flag(ctx, "all"), process.env, undefined, str(ctx.opts.topic)));
     }),
 };
 
@@ -945,6 +953,16 @@ const helpCommand: CommandDef = {
 // Taking the work back
 // ---------------------------------------------------------------------------
 
+/** The merged files are now on disk: an incremental background-priority index when the repo has a graph. Never fails the merge. */
+async function reindexAfterMerge(dir: string): Promise<void> {
+  try {
+    const [{ getStorageBackend }, { resolveRoot }, { incrementalIndexIfIndexed }] = await Promise.all([
+      import("../../storage/factory.js"), import("../../codegraph/api.js"), import("../../codegraph/session.js"),
+    ]);
+    await incrementalIndexIfIndexed(await getStorageBackend(), resolveRoot(dir));
+  } catch { /* best effort */ }
+}
+
 const mergeCommand: CommandDef = {
   name: "merge",
   summary: "Merge a worker's branch into your checkout",
@@ -967,7 +985,7 @@ const mergeCommand: CommandDef = {
   ],
   seeAlso: ["pai worker verify", "pai worker pending", "pai worker discard"],
   run: (ctx) =>
-    guard("pai worker pending", () => {
+    guard("pai worker pending", async () => {
       let verify = str(ctx.opts.verify);
       if (verify === undefined) {
         const configured = readMergeVerify();
@@ -976,7 +994,9 @@ const mergeCommand: CommandDef = {
         } else verify = configured;
       }
       try {
-        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, force: flag(ctx, "force"), verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: callerMergeTarget(logDir(), ctx.args.ID as string) }));
+        const target = callerMergeTarget(logDir(), ctx.args.ID as string);
+        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, force: flag(ctx, "force"), verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: target }));
+        await reindexAfterMerge(target ?? process.cwd());
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) throw new CliError(e.message, "the merge was kept; fix forward or revert it", 3);
         if (e instanceof WorkerRunningError) throw new CliError(e.message, `pai worker wait ${ctx.args.ID}   or: pai worker kill ${ctx.args.ID} --reason 'merge now'`, 3);
@@ -1359,7 +1379,10 @@ const queueCommand: CommandDef = {
     { name: "VERB", summary: "next (alias front), up or down (default: list the queue)" },
     { name: "ID", summary: "Worker id to pull forward (with next/up)" },
   ],
-  options: [{ name: "session", type: "string", value: "NAME", repeatable: true, summary: "Show only the jobs of this session (repeatable); the default is every session" }],
+  options: [
+    { name: "session", type: "string", value: "NAME", repeatable: true, summary: "Show only the jobs of this session (repeatable); the default is every session" },
+    { name: "topic", type: "string", value: "NAME", repeatable: true, summary: "Show only the jobs of this topic (repeatable); the default is every topic" },
+  ],
   examples: ["pai worker queue", "pai worker queue --session pai --session jobs", "pai worker queue down 20261019-142851-84910", "pai worker queue next 20261019-142851-84910", "pai worker queue up 20261019-142851-84910"],
   seeAlso: ["pai worker ps", "pai worker kill"],
   run: (ctx) =>
@@ -1370,7 +1393,7 @@ const queueCommand: CommandDef = {
       const { workers } = readWorkersSection();
       if (verb === "list") {
         const sessions = (ctx.multi?.session ?? []) as string[];
-        for (const l of renderQueueTable(filterBySession(readQueueTable(dir, workers), sessions))) out(l);
+        for (const l of renderQueueTable(filterByTopic(filterBySession(readQueueTable(dir, workers), sessions), (ctx.multi?.topic ?? []) as string[]))) out(l);
         for (const l of schedulerLines(schedulerView(dir, workers))) out(l);
         return;
       }

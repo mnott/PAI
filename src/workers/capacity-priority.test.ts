@@ -7,7 +7,7 @@ import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
 import { localIdleLine } from "./local-idle.js";
-import { filterBySession, sortBySession, buildQueueTable, plainWording, readTaskText, renderQueueTable, taskSummary, type TableInput } from "./queue-table.js";
+import { filterBySession, sortBySession, buildQueueTable, plainWording, readTaskText, renderQueueTable, stateBadge, taskSummary, type TableInput } from "./queue-table.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
@@ -73,6 +73,13 @@ describe("queue table", () => {
     expect(rows[1]).toMatchObject({ state: "paused", model: "cloud: opus", modelFull: "cloud: anthropic opus", session: "other", stateText: "paused (slot freed)" });
   });
 
+  it("a resumed worker waiting for a slot (paused + ticket) reads as waiting for a slot, not paused", () => {
+    const p = qst("p", { paused: true });
+    const rows = buildQueueTable(qin([p], [qrow(p, "lm", 1)]));
+    expect(rows[0]).toMatchObject({ state: "waiting", stateText: "waiting for a slot (resumed)" });
+    expect(stateBadge(rows[0]!)).toBe("waiting for a slot (position 1 of 3)");
+  });
+
   it("marks frozen and deep-frozen rows and offers the matching action", () => {
     const rows = buildQueueTable(qin([qst("f"), qst("d")], [], { frozen: (id) => id === "f", deepFrozen: (id) => id === "d" }));
     const by = Object.fromEntries(rows.map((r) => [r.id, r]));
@@ -132,9 +139,9 @@ describe("queue table", () => {
   const qsched = (w: Record<string, Partial<{ activeSince: number; waitingSince: number }>>): SchedSnapshot =>
     ({ at: QNOW, engines: {}, workers: Object.fromEntries(Object.entries(w).map(([id, a]) => [id, { requests: 1, waitMsTotal: 0, lastWaitMs: 0, serviceMsTotal: 0, lastServiceMs: 0, waitingSince: 0, activeSince: 0, lastEnd: 0, session: "s", engine: "e", ...a }])) }) as SchedSnapshot;
 
-  it("activity 'gen': its request is open at the model (the router's scheduler snapshot)", () => {
+  it("activity 'writing': its request is open at the model (the router's scheduler snapshot)", () => {
     const rows = buildQueueTable(qin([qst("g")], [], { sched: qsched({ g: { activeSince: QNOW - 4000 } }) }));
-    expect(rows[0]!.activity).toBe("gen");
+    expect(rows[0]!.activity).toBe("writing");
     expect(rows[0]!.activityTip).toContain("its request is open at the model");
   });
   it("activity 'in line': its request waits in the local scheduler queue", () => {
@@ -163,7 +170,7 @@ describe("queue table", () => {
     for (const r of rows) if (!r.activity.startsWith("idle")) expect(r.activity.length).toBeLessThanOrEqual(7);
     const lines = renderQueueTable(rows);
     // rows sort by id (g, i, q, t): the words keep their fixed 7-char field, so every column lines up
-    expect(lines[1]).toMatch(/^\[running\] gen    /);
+    expect(lines[1]).toMatch(/^\[running\] writing/);
     expect(lines[3]).toMatch(/^\[running\] in line/);
   });
 });
@@ -172,6 +179,10 @@ describe("queue header and order", () => {
   it("counts slots like the gate: paused apart from busy, waiting separate", () => {
     const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 2, free: 1, queued: 2, paused: 3, activity: {} }] };
     expect(localIdleLine(f, QNOW)).toBe("gyro-l: 2 of 3 slots busy · 3 paused · 2 waiting · GPU 100%");
+  });
+  it("never shows more busy slots than the cap; the extra one is named apart", () => {
+    const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 0, paused: 0, activity: {} }] };
+    expect(localIdleLine(f, QNOW)).toBe("gyro-l: 3 of 3 slots busy · 1 back from a long tool run · GPU 100%");
   });
   it("groups running, waiting, paused/frozen; the CLI has the cockpit columns", () => {
     const r = qst("r"), w = qst("w", { state: "queued" }), p = qst("p", { paused: true }), fz = qst("fz");
