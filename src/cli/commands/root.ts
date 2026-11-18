@@ -9,7 +9,7 @@ import { basename } from "node:path";
 import { isLoopbackProvider } from "../../workers/run-env.js";
 import { cooldownRemaining, type RoutingState } from "../../workers/routing.js";
 import { SESSION_WORKER_PROVIDER_ENV } from "../../workers/session-provider.js";
-import { SESSION_NAME_ENV, getProfile, updateProfile, type SessionProfile } from "../../workers/session-profile-store.js";
+import { SESSION_NAME_ENV, getProfile, profilesPath, updateProfile, type SessionProfile } from "../../workers/session-profile-store.js";
 import { looksLikePath, prepareDir, type Register } from "../lib/new-dir.js";
 import { readWorkersSection, ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig, nativeOrchestratorModel } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
@@ -281,8 +281,15 @@ export async function startSession(a: StartArgs): Promise<number> {
     out(dryRunText(harness));
     return 0;
   }
-  // the choice becomes this session's profile (its default from now on); the global config is never written
-  updateProfile(name, setupProfile(workers, setup));
+  // the chat of the chosen setup becomes this session's profile; the global
+  // config is never written, and workers are never part of the write (a launch
+  // must not pin them — only `pai session profile set` does): the launch's
+  // worker provider lives in the env above, for this session only. An old
+  // implicit pin this path wrote under the old code is cleared here; an
+  // explicit pin always survives.
+  const launchPatch = setupProfile(workers, setup);
+  if (getProfile(name, profilesPath())?.workers_implicit) launchPatch.workers = null;
+  updateProfile(name, launchPatch, profilesPath(), "launch-setup");
   return execHarness(harness, workers);
 }
 

@@ -4,20 +4,126 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSpawn, endContinuedOrigins, escalationReason, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { getProfile, lastProfileWriteLogError, profilesPath, setProfileLedger, updateProfile } from "./session-profile-store.js";
+import { resolveWorkers } from "./session-profile.js";
+import { resolveTarget, type TargetDeps } from "./target.js";
+import { sessionProfileSet, type SessionProfileDeps } from "../daemon-mcp/tools/session-profile.js";
+import { parseLedger } from "./ledger.js";
 import { stopOriginFirst } from "./run/escalate.js";
 import { carryGoals } from "./note-delivery.js";
 
 let dir: string;
+let savedHome: string | undefined;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "reroute-"));
   writeFileSync(join(dir, "spec.txt"), "do the thing", "utf8");
+  // the profile tests below get a temp home: their store and ledger never touch the machine's
+  savedHome = process.env.PAI_HOME;
+  process.env.PAI_HOME = join(dir, "home");
+  setProfileLedger(() => join(dir, "ledger.log"));
 });
 afterEach(() => {
+  setProfileLedger(undefined);
+  if (savedHome === undefined) delete process.env.PAI_HOME;
+  else process.env.PAI_HOME = savedHome;
   rmSync(dir, { recursive: true, force: true });
 });
 
 const queued = (over: Partial<WorkerStatus> = {}): WorkerStatus =>
   ({ id: "w1", pid: 4321, label: "l", cwd: "/", term: "", provider: "fakeA", model: "m", state: "queued", started: "", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null, promptFile: "/nonexistent-prompt", ...over }) as WorkerStatus;
+
+// ---------------------------------------------------------------------------
+// The session profile's workers pin (2026-11-18: a one-run --cloud / reroute
+// showed up as a standing "workers: anthropic" pin). Only an explicit set —
+// `pai session profile set --workers` / session_profile_set — writes it; a run
+// or a reroute never does, and every write names its caller in the ledger.
+// ---------------------------------------------------------------------------
+
+// a config the resolver accepts without reaching the network or the real files
+type FakeCfg = Parameters<typeof resolveWorkers>[1]["cfg"] & { tiers?: unknown[] };
+const fakeCfg = (over: { active?: string | null } = {}): FakeCfg =>
+  ({ providers: {}, nativeModels: { default: "m" }, active: null, routing: { policy: "auto", priority: [], order: [], budgetPriority: [] }, tiers: [], ...over }) as unknown as FakeCfg;
+const fakeCtx = () => async () => ({ cfg: fakeCfg(), profile: null, env: {}, budgets: {}, routing: {} as never });
+
+// the store under a name of its own: the updateProfile calls below are the
+// test's own setup (they log on purpose); "no write" asserts about Sess only
+const otherStore = (): string => {
+  const p = join(dir, "other-profiles.yaml");
+  setProfileLedger(() => `${p}.ledger.log`);
+  return p;
+};
+const profileLedgerWrites = (store: string): ReturnType<typeof parseLedger> => {
+  const f = `${store}.ledger.log`;
+  return existsSync(f) ? parseLedger(readFileSync(f, "utf8")).filter((l) => l.event === "PROFILE-WRITE") : [];
+};
+
+describe("session profile workers pin writers", () => {
+  it("a run with --cloud leaves the profile unchanged and logs no write", async () => {
+    const store = otherStore();
+    updateProfile("Sess", { workers: { provider: "kimi" } }, store); // an explicit pin, set first (this setup logs)
+    const before = getProfile("Sess", store)!;
+    const deps: TargetDeps = {
+      workers: fakeCfg({ active: "gyro-l" }),
+      logDir: dir,
+      env: {},
+      profileCtx: fakeCtx(),
+      check: async () => false,
+    };
+    const t = await resolveTarget({ where: "cloud" }, deps);
+    expect(t.provider).toBe("anthropic"); // cloud resolves with no loopback server up
+    expect(getProfile("Sess", store)).toEqual(before);
+    expect(profileLedgerWrites(store).filter((l) => l.fields.session === "Sess")).toHaveLength(1); // only the setup's own set
+  });
+
+  it("reroute --where cloud leaves the profile unchanged and logs no write", async () => {
+    const store = otherStore();
+    updateProfile("Sess", { workers: { provider: "kimi" } }, store);
+    const before = getProfile("Sess", store)!;
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt") }));
+    const r = await rerouteWorker("w1", "cloud", {
+      logDir: dir,
+      resolve: async () => ({ provider: "fakeB", description: "fake fakeB" }),
+      kill: async () => [],
+      spawn: (_s: SpawnSpec) => undefined,
+    });
+    expect(r.provider).toBe("fakeB");
+    expect(getProfile("Sess", store)).toEqual(before);
+    expect(profileLedgerWrites(store).filter((l) => l.fields.session === "Sess")).toHaveLength(1); // only the setup's own set
+  });
+
+  it("an explicit set writes the pin with no implicit mark and names its caller in the ledger", async () => {
+    const store = otherStore();
+    const deps: SessionProfileDeps = { path: store, env: { PAI_SESSION_NAME: "Sess" }, ctx: fakeCtx() };
+    const r = await sessionProfileSet({ name: "Sess", workers: { provider: "kimi" } }, deps);
+    expect(r.isError).toBeFalsy();
+    const p = getProfile("Sess", store)!;
+    expect(p.workers).toEqual({ provider: "kimi" });
+    expect(p.workers_implicit).toBeUndefined();
+    const line = profileLedgerWrites(store).find((l) => l.fields.session === "Sess");
+    if (!line) throw new Error(`no PROFILE-WRITE line, error: ${lastProfileWriteLogError() ?? "none"}`);
+    expect(line.fields.caller).toBe("session-profile-set");
+  });
+
+  it("an explicit set replaces a launch-written implicit pin and clears the mark", async () => {
+    const store = otherStore();
+    updateProfile("Sess", { workers: { provider: "anthropic" }, workers_implicit: true }, store, "launch-setup");
+    const deps: SessionProfileDeps = { path: store, env: { PAI_SESSION_NAME: "Sess" }, ctx: fakeCtx() };
+    await sessionProfileSet({ name: "Sess", workers: { provider: "kimi" } }, deps);
+    const p = getProfile("Sess", store)!;
+    expect(p.workers).toEqual({ provider: "kimi" });
+    expect(p.workers_implicit).toBeUndefined();
+  });
+
+  it("a patch that changes nothing writes nothing: no file rewrite, no ledger line", () => {
+    const store = otherStore();
+    updateProfile("Sess", { workers: { provider: "kimi" } }, store);
+    const content = readFileSync(store, "utf8");
+    setProfileLedger(() => { throw new Error("must not log a no-op"); });
+    const after = updateProfile("Sess", { workers: { provider: "kimi" } }, store);
+    expect(after.workers).toEqual({ provider: "kimi" });
+    expect(readFileSync(store, "utf8")).toBe(content);
+  });
+});
 
 const NOW = Date.parse("2026-11-16T12:00:00Z");
 const pol = (queuedMaxMin: number): ReroutePolicy => ({ queuedMaxMin, stallMaxMin: 10, stallFailedCalls: 6 });

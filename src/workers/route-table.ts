@@ -235,7 +235,7 @@ export function setSessionRoute(session: string, name: string, models: unknown, 
     if (opts.note.trim()) notes[cls] = opts.note.trim();
     else delete notes[cls];
   }
-  updateProfile(session, { routes: { ...(cur.routes ?? {}), [cls]: entries }, route_notes: Object.keys(notes).length ? notes : null }, opts.profilesPath);
+  updateProfile(session, { routes: { ...(cur.routes ?? {}), [cls]: entries }, route_notes: Object.keys(notes).length ? notes : null }, opts.profilesPath, "route-set");
   return { id: cls, entries, text: `${session}: ${cls}=${entries.join(">")}` };
 }
 
@@ -272,7 +272,7 @@ export function clearSessionRoute(session: string, name?: string, profilesPath?:
     delete routes[c];
     delete notes[c];
   }
-  updateProfile(session, { routes: Object.keys(routes).length ? routes : null, route_notes: Object.keys(notes).length ? notes : null }, profilesPath);
+  updateProfile(session, { routes: Object.keys(routes).length ? routes : null, route_notes: Object.keys(notes).length ? notes : null }, profilesPath, "route-clear");
   return `${session}: ${cls ? `${cls} override cleared` : "overrides cleared"}`;
 }
 
