@@ -75,12 +75,16 @@ export const endTop: CommandDef = {
 
 export const resumeTop: CommandDef = {
   name: "resume",
-  summary: "Open a session by name or id (same as `pai open`)",
-  description: "Kept for old scripts. Resumes the session when possible, otherwise starts a fresh one in the same directory.",
-  args: [{ name: "NAME", required: true, summary: "Session name or the first characters of its id" }],
-  examples: ["pai resume my-session --dry-run", "pai resume 3a9f1c2e"],
-  seeAlso: ["pai open"],
-  run: (c) => legacy(() => cmdGoto(c.args.NAME as string, { dryRun: c.dryRun })),
+  summary: "Restore everything `pai stop` recorded (no NAME), or open a session by name or id",
+  description: "Without NAME: restores the deep freeze of `pai stop` now — every recorded worker is resumed on its branch in its original order and priority (the daemon does this by itself after a boot); `--drop` discards the record and resumes nothing. With NAME (kept for old scripts, same as `pai open`): resumes the session when possible, otherwise starts a fresh one in the same directory.",
+  args: [{ name: "NAME", summary: "Session name or the first characters of its id (omit to restore the `pai stop` record)" }],
+  options: [{ name: "drop", type: "boolean", summary: "Discard the `pai stop` record, resume nothing" }],
+  examples: ["pai resume", "pai resume --drop", "pai resume my-session --dry-run", "pai resume 3a9f1c2e"],
+  seeAlso: ["pai open", "pai stop"],
+  run: async (c) => {
+    if (c.args.NAME === undefined) return (await import("./freeze.js")).deepResumeRun(c.opts.drop === true);
+    return legacy(() => cmdGoto(c.args.NAME as string, { dryRun: c.dryRun }));
+  },
 };
 
 export const cdTop: CommandDef = {

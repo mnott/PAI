@@ -503,3 +503,156 @@ describe("helpers", () => {
     expect(parseProcs(t).map((r) => r.pid)).toEqual([12]);
   });
 });
+
+// ---- deep freeze (`pai stop` / `pai resume`) ----
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { deepFreeze, deepResume, readDeepfreeze, deepfrozenIds, type DeepFreezeDeps, type DeepResumeDeps } from "./deepfreeze.js";
+import { loadStatus, saveStatus } from "./status.js";
+
+describe("deep freeze", () => {
+  let dir: string;
+  let logDir: string;
+  let prevFile: string | undefined;
+  const git = (cwd: string, args: string[]): { ok: boolean; out: string } => {
+    try {
+      return { ok: true, out: execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+    } catch (e) {
+      return { ok: false, out: String((e as Error).message) };
+    }
+  };
+  const mkRepo = (name: string): string => {
+    const r = join(dir, name);
+    mkdirSync(r, { recursive: true });
+    git(r, ["init", "-q", "-b", "main"]);
+    git(r, ["config", "user.email", "t@t"]);
+    git(r, ["config", "user.name", "t"]);
+    writeFileSync(join(r, "a.txt"), "1");
+    git(r, ["add", "-A"]);
+    git(r, ["commit", "-q", "-m", "init"]);
+    return r;
+  };
+  const worker = (id: string, started: string, extra: Partial<WorkerStatus> = {}): WorkerStatus =>
+    ({ id, pid: 4242, label: `task ${id}`, cwd: dir, term: "", provider: "anthropic", model: "m", state: "running", started, updated: started, turns: 1, tools: 0, last: "", rc: null, secs: null, ...extra }) as WorkerStatus;
+  const deps = (over: Partial<DeepFreezeDeps> = {}): DeepFreezeDeps => ({
+    statuses: (d) => require_loadStatuses(d),
+    owns: () => true,
+    now: () => Date.UTC(2026, 10, 18, 12, 0, 0),
+    git,
+    stop: async () => undefined,
+    stopModels: async () => ["gyro-l"],
+    unfreeze: () => undefined,
+    ledger: () => undefined,
+    ...over,
+  });
+  let require_loadStatuses: (d: string) => WorkerStatus[];
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "deepfreeze-"));
+    logDir = join(dir, "logs");
+    mkdirSync(logDir);
+    prevFile = process.env.PAI_DEEPFREEZE_FILE;
+    process.env.PAI_DEEPFREEZE_FILE = join(dir, "state", "deepfreeze.json");
+    const m = await import("./status.js");
+    require_loadStatuses = m.loadStatuses;
+  });
+  afterEach(() => {
+    if (prevFile === undefined) delete process.env.PAI_DEEPFREEZE_FILE;
+    else process.env.PAI_DEEPFREEZE_FILE = prevFile;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes the record and WIP-commits a dirty worktree, marks deepfrozen, stops models", async () => {
+    const repo = mkRepo("repo");
+    const wt = join(dir, "wt");
+    git(repo, ["worktree", "add", "-q", "-b", "worker/w1", wt]);
+    writeFileSync(join(wt, "new.txt"), "unsaved work");
+    saveStatus(logDir, worker("w1", "2026-11-18 11:00:00", { worktreeDir: wt, branch: "worker/w1", priority: "high", goals: [{ text: "also X", at: "t" }] }));
+    saveStatus(logDir, worker("w2", "2026-11-18 11:05:00", { state: "queued", promptFile: join(dir, "w2.prompt"), className: "impl" }));
+    const stopped: string[] = [];
+    const r = await deepFreeze(logDir, "tester", deps({ stop: async (_d, id) => void stopped.push(id) }));
+    const rec = readDeepfreeze()!;
+    expect(rec.workers.map((w) => [w.id, w.state, w.priority, w.order])).toEqual([["w1", "running", "high", 0], ["w2", "queued", "normal", 1]]);
+    expect(rec.workers[1].spec).toBe(join(dir, "w2.prompt"));
+    expect(rec.models).toEqual(["gyro-l"]);
+    expect(stopped.sort()).toEqual(["w1", "w2"]);
+    expect(git(wt, ["log", "-1", "--format=%s"]).out).toMatch(/^wip: deepfreeze 2026-11-18T12-00-00-000Z/);
+    expect(git(wt, ["status", "--porcelain"]).out).toBe("");
+    expect(rec.workers[0].wip).toBe(git(wt, ["rev-parse", "HEAD"]).out.trim());
+    expect(loadStatus(logDir, "w1")?.state).toBe("deepfrozen");
+    expect(loadStatus(logDir, "w2")?.state).toBe("deepfrozen");
+    expect(r.lines.join("\n")).toContain("deep-frozen 2 workers");
+    expect(deepfrozenIds().has("w1")).toBe(true);
+  });
+
+  it("dry run lists and changes nothing", async () => {
+    saveStatus(logDir, worker("w1", "2026-11-18 11:00:00"));
+    const r = await deepFreeze(logDir, "t", deps({ stop: async () => { throw new Error("must not stop"); } }), { dryRun: true });
+    expect(r.lines.join("\n")).toContain("would preserve running w1");
+    expect(readDeepfreeze()).toBeNull();
+    expect(loadStatus(logDir, "w1")?.state).toBe("running");
+  });
+
+  const resumeDeps = (started: string[], over: Partial<DeepResumeDeps> = {}): DeepResumeDeps => ({
+    statuses: (d) => require_loadStatuses(d),
+    start: async (_d, w) => (started.push(w.id), `${w.id}-r`),
+    setPriority: () => undefined,
+    ready: async () => true,
+    sleep: async () => undefined,
+    now: () => 0,
+    notify: async () => undefined,
+    ledger: () => undefined,
+    ...over,
+  });
+  const freezeThree = async (): Promise<void> => {
+    saveStatus(logDir, worker("a", "2026-11-18 11:00:00"));
+    saveStatus(logDir, worker("b", "2026-11-18 11:01:00", { state: "queued", fallThroughTo: "b2" }));
+    saveStatus(logDir, worker("b2", "2026-11-18 11:02:00", { state: "done", rc: 0 }));
+    saveStatus(logDir, worker("c", "2026-11-18 11:03:00", { priority: "low" }));
+    await deepFreeze(logDir, "t", deps({ statuses: (d) => require_loadStatuses(d).filter((s) => s.id !== "b2") }));
+  };
+
+  it("post-boot resume replays in order, skips an origin whose continuation finished, removes the record, tells the operator once", async () => {
+    await freezeThree();
+    const started: string[] = [];
+    const told: string[] = [];
+    const r = await deepResume(logDir, resumeDeps(started, { notify: async (t) => void told.push(t) }), { wait: true });
+    expect(started).toEqual(["a", "c"]);
+    expect(r.skipped).toEqual(["b"]);
+    expect(readDeepfreeze()).toBeNull();
+    expect(told).toHaveLength(1);
+    expect(told[0]).toContain("resumed 2 workers");
+  });
+
+  it("waits for readiness (bounded) before resuming", async () => {
+    await freezeThree();
+    let polls = 0;
+    let t = 0;
+    const started: string[] = [];
+    await deepResume(logDir, resumeDeps(started, { ready: async () => ++polls >= 3, now: () => t, sleep: async (ms) => void (t += ms) }), { wait: true });
+    expect(polls).toBe(3);
+    expect(started.length).toBe(2);
+  });
+
+  it("thaw --drop (drop) resumes nothing and discards the record", async () => {
+    await freezeThree();
+    const started: string[] = [];
+    const r = await deepResume(logDir, resumeDeps(started), { drop: true });
+    expect(started).toEqual([]);
+    expect(readDeepfreeze()).toBeNull();
+    expect(r.lines[0]).toContain("dropped");
+  });
+
+  it("a failed start stays in the record", async () => {
+    await freezeThree();
+    const r = await deepResume(logDir, resumeDeps([], { start: async (_d, w) => { if (w.id === "c") throw new Error("boom"); return `${w.id}-r`; } }));
+    expect(r.failed).toEqual(["c"]);
+    expect(readDeepfreeze()!.workers.map((w) => w.id)).toEqual(["c"]);
+  });
+
+  it("deepfrozen workers trigger no failure, stall or escalation", () => {
+    const s = worker("w1", "2026-11-18 10:00:00", { state: "deepfrozen", pid: 999999, spawnerSession: "sess", session: { id: "i", name: "n" }, rc: null, updated: "2026-11-18 10:00:00" });
+    const ev = detectSupervisionEvents([s], { now: new Date("2026-11-18 14:00:00"), stallMs: 60_000, isAlive: () => false });
+    expect(ev).toEqual([]);
+    expect(escalationReason(s, Date.parse("2026-11-18T14:00:00"))).toBeNull();
+  });
+});

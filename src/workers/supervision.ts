@@ -260,6 +260,8 @@ export function detectSupervisionEvents(
     // the operator's own pane: ending it is not a worker outcome, idling is
     // not a stall — nothing here is worth a push into anybody's terminal
     if (isChatPane(s)) continue;
+    // stopped by `pai stop` (deep freeze): neither failed nor stalled; the post-boot resume continues it
+    if (s.state === "deepfrozen") continue;
     // a child of another worker reports to that parent (handoff), never to
     // the operator's session
     if (s.parent && present.has(s.parent)) continue;

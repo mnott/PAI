@@ -27,6 +27,7 @@ import { AG2_REASK_TEXT, type WorkerReport } from "../report.js";
 import { scanWorkerRun } from "../scan.js";
 import { readWorkersCached } from "../config.js";
 import { killTree } from "../kill-tree.js";
+import { deepfrozenIds } from "../deepfreeze.js";
 import { removeRunSettings } from "../settings-file.js";
 import { type RunLimit } from "../deadline.js";
 import { reapWorkerProcesses } from "../reap.js";
@@ -101,7 +102,8 @@ export function recordKilledEnd(p: {
 }): void {
   const { logDir, status, sig, ledger } = p;
   resumePreempted(logDir, status.id);
-  status.state = "killed";
+  // `pai stop` (deep freeze) names this id in its record: the end is a preserved stop, not a kill
+  status.state = deepfrozenIds().has(status.id) ? "deepfrozen" : "killed";
   status.rc = 143;
   status.secs = Math.floor((Date.now() - p.t0) / 1000);
   const end = recordSignalEnd(logDir, status, sig);
