@@ -505,26 +505,25 @@ describe("helpers", () => {
 });
 
 // ---- deep freeze (`pai stop` / `pai resume`) ----
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { deepFreeze, deepResume, readDeepfreeze, deepfrozenIds, type DeepFreezeDeps, type DeepResumeDeps } from "./deepfreeze.js";
+import { deepFreeze, deepResume, readDeepfreeze, deepfrozenIds, gitNoInput, gitNoInputSafe, type DeepFreezeDeps, type DeepResumeDeps } from "./deepfreeze.js";
 import { loadStatus, saveStatus } from "./status.js";
 
 describe("deep freeze", () => {
   let dir: string;
   let logDir: string;
   let prevFile: string | undefined;
-  const git = (cwd: string, args: string[]): { ok: boolean; out: string } => {
-    try {
-      return { ok: true, out: execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
-    } catch (e) {
-      return { ok: false, out: String((e as Error).message) };
-    }
-  };
+  // git can never wait for input here: the shared helper adds GIT_TERMINAL_PROMPT=0 / GIT_EDITOR=true /
+  // GIT_ASKPASS=echo + a temp HOME (no global config — the operator's core.editor=cursor and credential
+  // helpers are what blocked the suite on 2026-11-18), `-c core.hooksPath=` (no repo hooks) and a 20 s SIGKILL
+  // timeout; `git init` in an empty dir still inherits the global user.name/email.
+  const git = (cwd: string, args: string[]): { ok: boolean; out: string } => gitNoInputSafe(cwd, args);
+  // one repo per test call (unique name): no two tests share a repo, so no shared index.lock
   const mkRepo = (name: string): string => {
     const r = join(dir, name);
     mkdirSync(r, { recursive: true });
     git(r, ["init", "-q", "-b", "main"]);
+    // the temp HOME drops the global config, so identity is set locally per repo
     git(r, ["config", "user.email", "t@t"]);
     git(r, ["config", "user.name", "t"]);
     writeFileSync(join(r, "a.txt"), "1");
@@ -547,6 +546,7 @@ describe("deep freeze", () => {
   });
   let require_loadStatuses: (d: string) => WorkerStatus[];
   beforeEach(async () => {
+    // a unique temp dir per test (mkdtemp's random suffix): tests never share a repo or a lock file
     dir = mkdtempSync(join(tmpdir(), "deepfreeze-"));
     logDir = join(dir, "logs");
     mkdirSync(logDir);
@@ -575,7 +575,7 @@ describe("deep freeze", () => {
     expect(rec.workers[1].spec).toBe(join(dir, "w2.prompt"));
     expect(rec.models).toEqual(["gyro-l"]);
     expect(stopped.sort()).toEqual(["w1", "w2"]);
-    expect(git(wt, ["log", "-1", "--format=%s"]).out).toMatch(/^wip: deepfreeze 2026-11-18T12-00-00-000Z/);
+    expect(gitNoInput(wt, ["log", "-1", "--format=%s"])).toMatch(/^wip: deepfreeze 2026-11-18T12-00-00-000Z/);
     expect(git(wt, ["status", "--porcelain"]).out).toBe("");
     expect(rec.workers[0].wip).toBe(git(wt, ["rev-parse", "HEAD"]).out.trim());
     expect(loadStatus(logDir, "w1")?.state).toBe("deepfrozen");
