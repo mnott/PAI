@@ -98,10 +98,16 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
     // A comment mentioning CREATE TRIGGER sits between the tables and the index block; the old
     // cut at that word silently dropped every index (a ref lookup took 88 ms instead of <1 ms).
     const cut = CODEGRAPH_SQLITE_SQL.indexOf("-- The FTS sync triggers");
-    const indexes = CODEGRAPH_SQLITE_SQL.slice(CODEGRAPH_SQLITE_SQL.indexOf("CREATE INDEX"));
+    // the unique open-triple index sits between the kg_triples table and the first CREATE INDEX;
+    // slicing only from "CREATE INDEX" would drop it (same trap as the trigger comment above)
+    const indexes = CODEGRAPH_SQLITE_SQL.slice(CODEGRAPH_SQLITE_SQL.indexOf("CREATE UNIQUE INDEX"));
     // the doc-column migration below the index block is guarded here: SQLite has
     // no ADD COLUMN IF NOT EXISTS, and a plain ALTER would throw on every re-run
     this.db.exec(CODEGRAPH_SQLITE_SQL.slice(0, cut) + indexes);
+    // the open-unique index is a partial index; verify it really exists (older DBs predate it)
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='uq_kg_open_triple'").get()) {
+      this.db.exec("CREATE UNIQUE INDEX uq_kg_open_triple ON kg_triples(subject, predicate, object) WHERE valid_to IS NULL");
+    }
     if (!this.db.prepare("SELECT 1 FROM pragma_table_info('code_symbols') WHERE name='doc'").get()) {
       this.db.exec("ALTER TABLE code_symbols ADD COLUMN doc TEXT NOT NULL DEFAULT ''");
     }
@@ -436,6 +442,7 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
   async syncTriples(scope: string, desired: TripleSpec[]): Promise<{ added: number; closed: number; kept: number }> {
     this.ensure();
     const key = (t: { subject: string; predicate: string; object: string }) => `${t.subject}\u0000${t.predicate}\u0000${t.object}`;
+    // dedupe the desired set by (subject, predicate, object) before anything else
     const want = new Map(desired.map((t) => [key(t), t]));
     const open = this.db
       .prepare("SELECT id, subject, predicate, object FROM kg_triples WHERE source_session = ? AND valid_to IS NULL")
@@ -452,21 +459,24 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
         const k = key(r);
         if (want.has(k) && !have.has(k)) { have.add(k); kept++; } else { close.run(now, r.id); closed++; }
       }
-      // a duplicate (subject, predicate, object) already open in ANOTHER scope: keep the existing row
+      // a duplicate (subject, predicate, object) already open in ANOTHER scope: keep the existing row.
       const otherOpen = this.db
-        .prepare("SELECT subject, predicate, object FROM kg_triples WHERE valid_to IS NULL AND source_session IS NOT ?")
+        .prepare("SELECT subject, predicate, object FROM kg_triples WHERE valid_to IS NULL AND NOT (source_session IS ?)")
         .all(scope) as Array<{ subject: string; predicate: string; object: string }>;
       const dk = new Set(otherOpen.map((d) => key(d)));
-      // the open-unique index forbids a second open row: reopen an existing closed triple in place.
-      // Only when no other scope already owns an OPEN row of it (dk) — that one stays, never closed.
-      const findClosed = this.db.prepare("SELECT id FROM kg_triples WHERE valid_to IS NOT NULL AND subject = ? AND predicate = ? AND object = ? ORDER BY valid_to DESC LIMIT 1");
+      // history rows of THIS scope stay closed (that is the audit trail); reopen only foreign history.
+      const findClosed = this.db.prepare("SELECT id FROM kg_triples WHERE valid_to IS NOT NULL AND subject = ? AND predicate = ? AND object = ? AND NOT (source_session IS ?) ORDER BY valid_to DESC LIMIT 1");
       const reopen = this.db.prepare("UPDATE kg_triples SET valid_to = NULL, valid_from = ?, source_session = ?, confidence = ? WHERE id = ?");
       for (const [k, t] of want) {
         if (have.has(k)) continue;
-        if (dk.has(k)) continue; // owned open by another scope: no new row, no reopen
-        const prior = findClosed.get(t.subject, t.predicate, t.object) as { id: number } | undefined;
+        // owned OPEN by another scope: keep that row, add nothing. Otherwise a triple with closed
+        // history (this scope's own vanish, or another scope's closed twin) reopens IN PLACE — the
+        // open-unique index forbids a second open row anyway; only never-seen triples insert fresh.
+        if (dk.has(k)) continue;
+        const prior = findClosed.get(t.subject, t.predicate, t.object, scope) as { id: number } | undefined;
         if (prior) reopen.run(now, scope, t.confidence, prior.id);
         else ins.run(t.subject, t.predicate, t.object, t.projectId ?? null, scope, now, t.confidence, now);
+        dk.add(k); // one open row per triple: a repeat of the same key in this batch never re-adds
         added++;
       }
     })();
@@ -492,8 +502,9 @@ export class SqliteCodeGraphStore implements CodeGraphStore {
 
   async tripleCounts(): Promise<Record<string, { open: number; closed: number }>> {
     this.ensure();
+    // DISTINCT(valid_to) collapses the value, not the rows — it reported every triple as open.
     const rows = this.db
-      .prepare("SELECT predicate, SUM(valid_to IS NULL) AS open, SUM(valid_to IS NOT NULL) AS closed FROM kg_triples WHERE source_session LIKE 'relate:%' GROUP BY predicate")
+      .prepare("SELECT predicate, SUM(CASE WHEN valid_to IS NULL THEN 1 ELSE 0 END) AS open, SUM(CASE WHEN valid_to IS NOT NULL THEN 1 ELSE 0 END) AS closed FROM kg_triples WHERE source_session LIKE 'relate:%' GROUP BY predicate")
       .all() as Array<{ predicate: string; open: number; closed: number }>;
     return Object.fromEntries(rows.map((r) => [r.predicate, { open: r.open, closed: r.closed }]));
   }

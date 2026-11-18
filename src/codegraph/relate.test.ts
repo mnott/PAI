@@ -144,21 +144,22 @@ describe("relate (SQLite)", () => {
     dirs.push(dir);
     const root = join(dir, "PAI");
     mkdirSync(join(root, "src"), { recursive: true });
-    writeFileSync(join(root, "src/a.ts"), 'fetch("/api/widgets/1");\n');
+    writeFileSync(join(root, "src/a.ts"), 'app.get("/api/widgets/:id", handler);\nexport function handler(){}\n');
     execFileSync("git", ["init", "-q"], { cwd: root });
-    const consumerRoot = repo({ "src/c.ts": 'fetch(`${base}/api/widgets/${id}`);\n' });
+    const consumerRoot = repo({ "src/c.ts": 'export async function load(id: string) { return fetch(`${base}/api/widgets/${id}`); }\n' });
     const backend = new SQLiteBackend(openFederation(join(tmp(), "db2.sqlite")));
     await indexRepo(backend, root);
     await indexRepo(backend, consumerRoot);
     const projects = [{ slug: "pai-1", root }, { slug: "consumer", root: consumerRoot }];
     const r1 = await relate(backend, projects, {});
     expect(r1.byPredicate["calls-api"]).toBe(1);
-    const keys1 = (await backend.codeGraph().triplesTouching([`code:pai-1`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
+    // a whole-repo seed lists only triples hung off the repo key; file-level ones are found via the file key
+    const keys1 = (await backend.codeGraph().triplesTouching([`code:pai-1:src/a.ts`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
     expect(keys1.some((k) => k.includes("code:pai-1:src/a.ts"))).toBe(true);
     const r2 = await relate(backend, projects, {});
     expect(r2.kept).toBe(r1.triples);
     expect(r2.added).toBe(0);
-    const keys2 = (await backend.codeGraph().triplesTouching([`code:pai-1`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
+    const keys2 = (await backend.codeGraph().triplesTouching([`code:pai-1:src/a.ts`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
     expect(keys2.sort()).toEqual(keys1.sort());
   }, 60000);
 
