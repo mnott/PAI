@@ -16,6 +16,7 @@ import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
 import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
 import { topicChip } from "./topic.js";
+import { specMarkTip } from "./denials.js";
 
 /** Short id of a worker or pane run: the last dash-part of its id (a queue row never prints the full id). */
 export const shortId = (id: string): string => id.slice(id.lastIndexOf("-") + 1);
@@ -96,6 +97,8 @@ export interface TableRow {
   activity: string;
   /** Plain sentence of what the activity word means, for its tooltip. */
   activityTip: string;
+  /** Tooltip of the "?" (spec conflict) marker: the guard's count and the first conflicting reason; absent without one. */
+  specTip?: string;
   /** A started job in line for its slot back (activity "in line", tooltip inLineSlotTip); set by buildQueueTable. */
   slotBack?: boolean;
   /** The live last tool call, for a tooltip only (it changes every second and must not move the table). */
@@ -316,6 +319,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       detail: notes.map(plainWording).join("; "),
       ...(summaryOf(s) ? { summary: summaryOf(s) } : {}),
       ...(s.restarting ? { restarting: true } : {}),
+      ...(specMarkTip(s) ? { specTip: specMarkTip(s) } : {}),
       actions: actionsOf(state, local, waiting, place),
     };
   };

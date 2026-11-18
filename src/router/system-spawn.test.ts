@@ -209,6 +209,15 @@ describe("cockpit page script", () => {
     expect(specMarkTip({ denialCount: 2, denials: [{ at: "x", tool: "Bash", hook: "h", input: "", reason: "r", specConflict: false }] })).toBe("");
     expect(specMarkTip({})).toBe("");
   });
+  it("the cockpit row renders the ? marker with a CSS tooltip carrying the spec tip", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
+    (ctx as Record<string, unknown>).__r = { slot: "running", kind: "job", id: "a", sid: "a", state: "running", stateText: "running", priority: "normal", session: "PAI", model: "m", local: true, level: 2, task: "t", seconds: 5, activity: "", now: "", detail: "", actions: ["pause"], specTip: "the guard blocked this job 2 times; the block may contradict its brief: x" };
+    const h = vm.runInContext("wkTRow(__r)", ctx) as string;
+    expect(h).toContain('class="wq-tip" role="tooltip">the guard blocked this job 2 times');
+  });
   it("queue model column is a short name", async () => {
     const { shortModel } = await import("../workers/queue-table.js");
     expect(shortModel(true, "gyro-l", "gyro-l/qwen3.8-flash-next-gyro-l")).toBe("gyro-l");
