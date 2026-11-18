@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths, dbWriteReason, liveContainerReason, type DbWriteContext } from "./worker-bash-rules.js";
+import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
 
 describe("nodeOnTypeScriptReason", () => {
@@ -441,5 +444,41 @@ describe("liveContainerReason (live-container rule)", () => {
   });
   it("allows everything on a --allow-db-writes run", () => {
     expect(r("docker exec app-live python x.py", { PAI_ALLOW_DB_WRITES: "1" })).toBeNull();
+  });
+});
+
+describe("headless-browser automation is denied (operator rule)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ba-"));
+  writeFileSync(join(dir, "pw.mjs"), `import { chromium } from "playwright";\n`);
+  writeFileSync(join(dir, "pp.js"), `const p = require('puppeteer');\n`);
+  writeFileSync(join(dir, "sel.py"), `from selenium import webdriver\n`);
+  writeFileSync(join(dir, "ok.mjs"), `console.log("hi");\n`);
+  mkdirSync(join(dir, "dep"));
+  writeFileSync(join(dir, "dep", "package.json"), JSON.stringify({ devDependencies: { "@playwright/test": "^1" } }));
+  const gctx = (): WorkerGuardContext => ({ cwd: dir, home: "/home/u", worktreeRoot: dir, inWorktree: true, mainCheckout: "/repo", testScript: () => null });
+  const call = (tool_name: string, tool_input: unknown) =>
+    decideWorkerGuard({ tool_name, tool_input } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" }, gctx);
+  const bash = (command: string) => call("Bash", { command });
+  const denied = (command: string) => bash(command).decision === "deny";
+  const forms = [
+    "npx playwright test", "playwright test", "npx -y playwright codegen", "npm install playwright", "npm i -D @playwright/test",
+    "pnpm add puppeteer-core", "yarn add selenium-webdriver", "bun add playwright-core", "pip install playwright", "uv pip install selenium",
+    "pip3 install pyppeteer", "python -m playwright install", "python3 -m playwright codegen", "playwright install chromium", "npx @puppeteer/browsers install chrome",
+    "chromium --headless --dump-dom x", "google-chrome --headless=new --screenshot x", "node pw.mjs", "tsx pw.mjs", "npx tsx pw.mjs", "node pp.js", "python sel.py",
+    `cd /x && node ${dir}/pw.mjs`, `python - <<'EOF'\nfrom playwright.sync_api import sync_playwright\nEOF`, `node -e "require('puppeteer')"`,
+  ];
+  for (const f of forms) it(`denies: ${f.split("\n")[0]}`, () => expect(denied(f)).toBe(true));
+  it("uses the operator message", () => {
+    expect(JSON.stringify(bash("npx playwright test"))).toContain("No headless browsers (operator rule). Use the claude-in-chrome MCP tools");
+  });
+  it("allows reading and unrelated commands", () => {
+    for (const c of ["grep playwright package.json", "node ok.mjs", "npm install vitest", "pip install requests", "npx tsc --noEmit", "git log --grep=puppeteer"]) expect(denied(c)).toBe(false);
+  });
+  it("denies an Edit/Write that adds an import, allows it in a repo that already depends on one", () => {
+    const imp = `import { test } from "@playwright/test";\n`;
+    expect(call("Write", { file_path: join(dir, "a.ts"), content: imp }).decision).toBe("deny");
+    expect(call("Edit", { file_path: join(dir, "a.py"), new_string: "from selenium import webdriver" }).decision).toBe("deny");
+    expect(call("Write", { file_path: join(dir, "a.ts"), content: "export const x = 1;\n" }).decision).not.toBe("deny");
+    expect(call("Write", { file_path: join(dir, "dep", "e2e.spec.ts"), content: imp }).decision).not.toBe("deny");
   });
 });

@@ -57,7 +57,7 @@ async function main(): Promise<void> {
 
   const d = evaluate(
     { kind: "tool_call", tool: "Edit", input: input.tool_input, cwd: input.cwd ?? process.cwd() },
-    { env: process.env, gates: { edit: { isExemptPrefix: (abs) => exemptPrefixes().some((p) => isUnder(abs, p)), isGitWorkTree: inGitWorkTree }, testGovernance: true } },
+    { env: process.env, gates: { edit: { isExemptPrefix: (abs) => exemptPrefixes().some((p) => isUnder(abs, p)), isGitWorkTree: inGitWorkTree }, testGovernance: true, browserAutomation: true } },
   );
   if (d.action === "deny") return block(d.message!);
   return allow();

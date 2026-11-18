@@ -28,6 +28,7 @@ import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptRe
 import { operatorTestsReason, projectTestsByOperator } from "./worker-test-rules.js";
 import { blankHeredocBodies } from "./heredoc.js";
 import { isScratchRootFile } from "./worker-scratch-name.js";
+import { browserAutomationBashReason, browserAutomationEditReason, addedText } from "./browser-automation-gate.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
 import { benchStartReason } from "./worker-bench-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
@@ -832,6 +833,8 @@ export function decideWorkerGuard(
           if (why) return deny(why);
         }
       }
+      const ba = browserAutomationBashReason(cmd, ctx().cwd, env.TMPDIR);
+      if (ba) return deny(ba);
       const cfg = parseCommand(cmd).map((sg) => configMutationReason(sg.words, env, ctx().home)).find((r) => r);
       if (cfg) return deny(cfg);
       // a worker starts children on the mode chain: --model/--provider only when its own brief names one
@@ -866,6 +869,8 @@ export function decideWorkerGuard(
     if (typeof f !== "string") return ALLOW;
     const c = ctx();
     const p = abs(f, c.cwd, c.home);
+    const ba = p && browserAutomationEditReason(p, addedText(ti as never));
+    if (ba) return deny(ba);
     const why = p && protectedPathReason(p, c.home);
     if (why) return deny(`edit of ${f} blocked: ${why}`);
     const local = p && isLocalWorker(env) && (tool === "Write" || tool === "Edit") ? localEditReason(tool, p, ti.content, c.worktreeRoot) : null;
