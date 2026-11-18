@@ -5,6 +5,10 @@
  * terminal (done/failed/killed/lost), then returns their result texts. The
  * orchestrator's Bash call stays synchronous and gets the JSON on stdout,
  * with exit 1 naming whoever failed or timed out.
+ *
+ * A worker that ended because it was rerouted/escalated (its status carries `rerouted` + `fallThroughTo`) is not
+ * an end: the wait follows the fall-through chain — links of links too, via followChain in run/follow-reroute.ts,
+ * the reader `followReroute` shares — and reports the final run's result under the asked id plus `"followed"`.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -12,13 +16,17 @@ import { eventsPath } from "./paths.js";
 import { parseWorkerReport, verifyReportChanges, type WorkerReport } from "./report.js";
 import { activeNow } from "./freeze.js";
 import { loadStatus, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { followChain } from "./run/follow-reroute.js";
 
 export interface WaitResult {
+  /** The id as asked for. When the run was rerouted/escalated this stays the origin's id; the final run's result is what `state`/`rc`/`result` carry, and `followed` names the chain. */
   id: string;
   label: string;
   state: WorkerStatus["state"];
   rc: number | null;
   secs: number | null;
+  /** The continuation ids this wait followed to the final run (a rerouted/escalated worker's `fallThroughTo` chain, links of links); absent when nothing was followed. */
+  followed?: string[];
   /** Absent while the worker is still running (wait timed out): not a verdict. */
   ok?: boolean;
   /** Claimed changes the filesystem does not confirm (same check as the result banner's "verify:" note). */
@@ -86,16 +94,28 @@ function unconfirmedClaims(st: WorkerStatus, report: WorkerReport | null): strin
   return v.failures.map((f) => f.path);
 }
 
-function toWaitResult(logDir: string, st: WorkerStatus, pending: boolean): WaitResult {
-  const result = lastResultText(logDir, st.id);
+/**
+ * A terminal status that ended as a hand-over — rerouted/escalated (`rerouted`), or a fall-through whose
+ * continuation finished the work (`continuedBy`) — and names its continuation: not an end, the chain continues.
+ */
+const handedOver = (st: WorkerStatus): boolean =>
+  (!!st.rerouted || !!st.continuedBy) && !!st.fallThroughTo;
+
+function toWaitResult(logDir: string, askedId: string, st: WorkerStatus, pending: boolean): WaitResult {
+  // a rerouted/escalated worker's "killed" is the hand-over, not an end: follow its fallThroughTo chain (the
+  // continuation's own links too) and report the final run. The JSON keeps the asked id + `followed` so callers
+  // match lines to ids (2026-11-17: a live escalation read as failed, rc 143).
+  const { cur, followed } = pending ? { cur: st, followed: [] as string[] } : followChain(logDir, st);
+  const result = lastResultText(logDir, cur.id);
   const report = parseWorkerReport(result ?? "");
-  const unconfirmed = pending ? [] : unconfirmedClaims(st, report);
+  const unconfirmed = pending ? [] : unconfirmedClaims(cur, report);
   return {
-    id: st.id,
-    label: st.label,
-    state: st.state,
-    rc: st.rc,
-    secs: st.secs,
+    id: askedId,
+    label: cur.label,
+    state: cur.state,
+    rc: cur.rc,
+    secs: cur.secs,
+    ...(followed.length ? { followed } : {}),
     ...(pending ? { timedOut: true as const } : { ok: st.state === "done" && (st.rc ?? 0) === 0 && unconfirmed.length === 0 }),
     ...(unconfirmed.length ? { unconfirmed } : {}),
     result,
@@ -124,7 +144,9 @@ export async function waitWorkers(
     const st = loadStatus(logDir, id);
     if (!st) throw new Error(`no worker named "${id}"`);
     known.set(id, st);
-    if (!TERMINAL.includes(st.state)) pending.add(id);
+    // terminal *and* not a hand-over: only then is the id done (a rerouted origin stays open until its
+    // continuation's own status turns terminal — the chain is re-walked on every poll and at the end).
+    if (!(TERMINAL.includes(st.state) && !handedOver(st))) pending.add(id);
   }
   // the budget runs on the active clock: `pai freeze` time is not waited
   const deadline = activeNow() + timeoutMs;
@@ -139,10 +161,11 @@ export async function waitWorkers(
     for (const id of [...pending]) {
       const st = loadStatus(logDir, id);
       if (st) known.set(id, st); // a vanished file keeps the last known status
-      if (!st || TERMINAL.includes(known.get(id)!.state)) pending.delete(id);
+      const cur = known.get(id)!;
+      if (!st || (TERMINAL.includes(cur.state) && !handedOver(cur))) pending.delete(id);
     }
   }
-  return { results: ids.map((id) => toWaitResult(logDir, known.get(id)!, pending.has(id))), timedOut: [...pending] };
+  return { results: ids.map((id) => toWaitResult(logDir, id, known.get(id)!, pending.has(id))), timedOut: [...pending] };
 }
 
 /** Exit code of every wait verb that means "not yet, call again". The predicate lives in hooks/ts/lib/wait-poll.ts. */
