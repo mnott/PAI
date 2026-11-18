@@ -295,4 +295,17 @@ describe("config set provider overrides (2026-11-17 incident)", () => {
     writeWorkersSection(raw, workers);
     expect(readFileSync(join(h, "workers.yaml"), "utf8")).toBe(wBefore);
   });
+
+  it("config set keeps booleans and numbers typed, env values and quoted scalars stay strings", () => {
+    const h = fakeCfgHome(GYRO_YAML);
+    setConfigValueOp("models.runtimes.gyro-l.autostart", "true", { force: true });
+    setConfigValueOp("models.runtimes.gyro-l.port", "8035", { force: true });
+    setConfigValueOp("models.runtimes.gyro-l.label", '"true"', { force: true });
+    setConfigValueOp("workers.providers.gyro-l.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS", "32768");
+    const cfg = readFileSync(join(h, "config.yaml"), "utf8");
+    expect(cfg).toMatch(/^\s+autostart: true$/m);
+    expect(cfg).toMatch(/^\s+port: 8035$/m);
+    expect(cfg).toMatch(/^\s+label: "true"$/m);
+    expect(readFileSync(join(h, "workers.yaml"), "utf8")).toContain('CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32768"');
+  });
 });
