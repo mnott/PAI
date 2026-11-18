@@ -47,7 +47,7 @@ function wkTRow(r){
  var badge=r.state==="waiting"&&typeof r.slot==="number"?"waiting #"+r.slot:r.state;
  var st='<span class="wq-b '+(WK_BADGE[r.state]||"")+'" title="'+esc(r.stateText+(r.detail?" · "+r.detail:""))+'">'+esc(badge)+'</span>'+(r.activity&&r.state==="running"?' <span class="wq-act" title="'+esc(r.now||"")+'">'+esc(r.activity)+'</span>':"");
  var full=r.task+(r.detail?" · "+r.detail:"")+" ["+r.id+"]";
- var task='<span class="wq-t" title="'+esc(full)+'">'+esc(r.task)+'</span>'+(r.stale?' <span class="wq-stale" title="waiting since an older build">stale waiter</span>':"");
+ var task='<span class="wq-t" title="'+esc(full)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"");
  var pr=r.kind==="command"?'<span class="dim">–</span>':'<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
  return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td>'+pr+'</td><td class="r">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
 }

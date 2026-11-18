@@ -17,9 +17,8 @@
  * of the waiting ones changes.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { backoffMs } from "./stagger.js";
-import { distBuildId } from "../daemon/dist-watch.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
 import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
@@ -94,9 +93,24 @@ interface QueueEntry {
 /** Grace a free slot gets for the queue head to claim it before the next waiter may take it. */
 export const HEAD_GRACE_MS = 10_000;
 
-/** Build id of the running dist entry; undefined when unreadable (source runs, mid-build). */
+/**
+ * Release id of the running PAI: the package version next to the dist entry ("v1.2.62"); undefined when unreadable (source runs).
+ * A rebuild of dist (every merge gate does one) is not a new release: a waiter is "older" only when a newer version was released
+ * after it queued, never because dist was rebuilt minutes after it started.
+ */
 export function currentBuildId(): string | undefined {
-  return process.argv[1] ? distBuildId(process.argv[1]) : undefined;
+  const entry = process.argv[1];
+  if (!entry) return undefined;
+  let dir = dirname(entry);
+  for (let i = 0; i < 4; i++, dir = dirname(dir)) {
+    try {
+      const j = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name?: string; version?: string };
+      if (j.version) return `v${j.version}`;
+    } catch {
+      /* not here */
+    }
+  }
+  return undefined;
 }
 
 /** Write a ticket atomically (temp + rename): a poller never reads it half-written. The ".tmp" suffix keeps it out of the listing. */
@@ -173,7 +187,12 @@ export function fairOrder(i: FairInput): QueueEntry[] {
   const out: QueueEntry[] = [...front];
   // higher priority is admitted first; fairness and aging only order tickets of the same priority
   for (const tier of QUEUE_PRIORITIES) {
-    const mine = rest.filter((e) => (e.priority ?? "normal") === tier);
+    const inTier = rest.filter((e) => (e.priority ?? "normal") === tier);
+    // an operator's move (up / next / down / drag) writes a rank: it fixes the place, ahead of fair share and aging — without this an aged waiter (older than the aging bound) ignored every move
+    const ranked = inTier.filter((e) => e.rank !== undefined).sort((a, b) => a.rank! - b.rank!);
+    for (const e of ranked) load.set(i.sessionOf(e.id), (load.get(i.sessionOf(e.id)) ?? 0) + 1);
+    out.push(...ranked);
+    const mine = inTier.filter((e) => e.rank === undefined);
     const aged = mine.filter((e) => i.now - since(e) > aging).sort((a, b) => since(a) - since(b));
     const agedIds = new Set(aged.map((e) => e.id));
     const per = new Map<string, QueueEntry[]>();
@@ -322,9 +341,9 @@ export function reorderQueueTo(logDir: string, provider: string, id: string, pos
   return liveQueue(logDir, provider);
 }
 
-/** A ticket's recorded build differs from the current one; a ticket without a build (written before this field) is stale when the current build is known. */
+/** A ticket was written by another release than the current one. A ticket without a recorded release, or an unknown current one, is never stale. */
 export function isStaleBuild(recorded: string | undefined, current: string | undefined): boolean {
-  return current !== undefined && recorded !== current;
+  return current !== undefined && recorded !== undefined && recorded !== current;
 }
 
 export interface QueueRow {
