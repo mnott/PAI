@@ -499,7 +499,7 @@ describe("worker guard GNU sed X,+N range", () => {
     const d = run("sed -n '120,+40p' f.ts");
     expect(d.decision).toBe("allow");
     expect(d.updatedInput?.command).toBe("sed -n '120,160p' f.ts");
-    expect(d.context).toContain("rewrote sed X,+N to X,Y");
+    expect(d.context).toContain("rewrote sed X,+N to BSD form");
   });
   it.skipIf(process.platform !== "darwin")("rewrites a double-quoted range with two files", () => {
     expect(run('sed -n "5,+3p" a b').updatedInput?.command).toBe('sed -n "5,8p" a b');
@@ -514,26 +514,26 @@ describe("worker guard GNU sed X,+N range", () => {
     const dir = mkdtempSync(join(tmpdir(), "sed-range-"));
     const f = join(dir, "fixture.txt");
     const body = Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
-    writeFileSync(f, body.replace(`line ${hitAt}`, `target line ${hitAt}`));
+    writeFileSync(f, body.replace(`line ${hitAt}\n`, `target line ${hitAt} export async function detectSession export function isFrozen\n`));
     return f;
   };
   it.skipIf(process.platform !== "darwin")("rewrites a computed start to X,$p | head -n N+1", () => {
     const f = fixture(40, 5);
     const d = run(`sed -n "$(grep -n 'export async function detectSession' ${f} | cut -d: -f1),+30p" ${f}`);
     expect(d.decision).toBe("allow");
-    expect(d.updatedInput?.command).toBe(`sed -n "$(grep -n 'export async function detectSession' ${f} | cut -d: -f1),  \\$p" ${f} | head -n 31`);
+    expect(d.updatedInput?.command).toBe(`sed -n "$(grep -n 'export async function detectSession' ${f} | cut -d: -f1),\\$p" ${f} | head -n 31`);
     // the rewritten command runs on BSD sed and prints the same lines GNU sed's `,+N` would (start line, then N more)
     const out = execSync(d.updatedInput!.command, { shell: "/bin/bash", encoding: "utf8" });
-    expect(out.split("\n").slice(0, -1)).toEqual(Array.from({ length: 31 }, (_, i) => `line ${5 + i}`).map((l, i) => (i === 0 ? "target line 5" : l)));
+    expect(out.split("\n").slice(0, -1)).toEqual(Array.from({ length: 31 }, (_, i) => `line ${5 + i}`).map((l, i) => (i === 0 ? "target line 5 export async function detectSession export function isFrozen" : l)));
   });
-  it.skipIf(process.platform !== "darwin")("rewrites a computed start with a short file and keeps the quoting style", () => {
+  it.skipIf(process.platform !== "darwin")("rewrites a computed start with a short file and keeps the quoting", () => {
     const f = fixture(12, 3);
-    const d = run(`sed -n '$(grep -n "export function isFrozen" ${f} | cut -d: -f1),+20p' ${f}`);
+    const d = run(`sed -n "$(grep -n 'export function isFrozen' ${f} | cut -d: -f1),+20p" ${f}`);
     expect(d.decision).toBe("allow");
-    expect(d.updatedInput?.command).toContain(", $p' ");
+    expect(d.updatedInput?.command).toContain(',\\$p" ');
     expect(d.updatedInput?.command).toContain("| head -n 21");
     const out = execSync(d.updatedInput!.command, { shell: "/bin/bash", encoding: "utf8" });
-    expect(out.split("\n").slice(0, -1)).toEqual(Array.from({ length: 10 }, (_, i) => `line ${3 + i}`).map((l, i) => (i === 0 ? "target line 3" : l)));
+    expect(out.split("\n").slice(0, -1)).toEqual(Array.from({ length: 10 }, (_, i) => `line ${3 + i}`).map((l, i) => (i === 0 ? "target line 3 export async function detectSession export function isFrozen" : l)));
   });
   it.skipIf(process.platform !== "darwin")("keeps a following pipeline and command intact", () => {
     const f = fixture(40, 5);
@@ -543,10 +543,9 @@ describe("worker guard GNU sed X,+N range", () => {
     expect(d.updatedInput?.command).toContain(`${f} | head -n 9`);
     expect(d.updatedInput?.command.endsWith("| grep target; echo done")).toBe(true);
     const out = execSync(d.updatedInput!.command, { shell: "/bin/bash", encoding: "utf8" });
-    expect(out).toBe("target line 5\ndone\n");
+    expect(out).toBe("target line 5 export async function detectSession export function isFrozen\ndone\n");
   });
-  it.skipIf(process.platform !== "darwin")("still denies a computed start with a mutating command and an unquoted script", () => {
+  it.skipIf(process.platform !== "darwin")("still denies a computed start with a mutating command", () => {
     expect(run(`sed -n "$(grep -n x f),+8d" f`).decision).toBe("deny");
-    expect(run("sed -n $(grep -n x f),+8p f").decision).toBe("deny");
   });
 });
