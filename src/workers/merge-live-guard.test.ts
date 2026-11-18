@@ -277,3 +277,37 @@ describe("merge of an escalated continuation", () => {
     expect(git(repo, ["log", "--format=%s", "-1"])).toContain("merge worker gone");
   });
 });
+
+describe("merge of a worker's uncommitted work", () => {
+  function leaveUncommitted(repo: string, logDir: string, id: string, snapshot: boolean): string {
+    makeWorker(repo, logDir, id, { file: "committed.txt" });
+    const dir = worktreePath(logDir, id);
+    writeFileSync(join(dir, "uncommitted.txt"), "left behind\n");
+    if (snapshot) saveStatus(logDir, { ...loadStatus(logDir, id)!, worktreeSnapshot: true });
+    return dir;
+  }
+
+  for (const snapshot of [false, true]) {
+    const kind = snapshot ? "snapshot worktree" : "plain worktree";
+    it(`${kind}: uncommitted work is committed and the gate runs`, () => {
+      const { repo, logDir } = fixture();
+      leaveUncommitted(repo, logDir, "unc", snapshot);
+      const marker = join(logDir, "gate-ran");
+      mergeWorker(logDir, "unc", { verifyTests: false, rebuild: false, cliRoot: null, verify: `touch ${marker}` });
+      expect(existsSync(marker)).toBe(true);
+      expect(readFileSync(join(repo, "uncommitted.txt"), "utf8")).toBe("left behind\n");
+      expect(git(repo, ["status", "--porcelain"])).toBe("");
+    });
+
+    it(`${kind}: a failed gate leaves main unchanged and keeps the branch`, () => {
+      const { repo, logDir } = fixture();
+      leaveUncommitted(repo, logDir, "uncfail", snapshot);
+      const head = git(repo, ["rev-parse", "HEAD"]);
+      expect(() => mergeWorker(logDir, "uncfail", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).toThrow(/verify failed/);
+      expect(existsSync(join(repo, "uncommitted.txt"))).toBe(false);
+      expect(git(repo, ["status", "--porcelain"])).toBe("");
+      expect(git(repo, ["branch", "--list", "worker/uncfail"])).toContain("worker/uncfail");
+      if (snapshot) expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
+    });
+  }
+});
