@@ -15,6 +15,8 @@ import { dirname, join } from "node:path";
 export const LOCAL_STATUS_REFRESH_MS = 30_000;
 /** A cache older than this means the daemon is not refreshing it. */
 export const LOCAL_STATUS_MAX_AGE_MS = 180_000;
+/** Two probes of a suspected-down port this far apart must both refuse before it reads down (incident 2026-11-18 19:48/20:27: a busy gyro-l answered /v1/models too slowly and read "local model down: starting ollama" while `pai worker ps` showed 3 of 3 slots busy at 98–100% GPU). */
+export const DOWN_CONFIRM_MS = 10_000;
 
 export interface LocalRunning {
   provider: string;
@@ -33,6 +35,13 @@ export interface LocalStatus {
   disabled: string[];
   /** Why the tier reads down while nothing runs (the daemon's autostart state); absent when unknown. */
   downInfo?: LocalDownInfo;
+  /** Providers whose health check timed out while they stay alive — a busy engine, never down (see localBusyHint). */
+  busy?: string[];
+}
+
+/** The one line of why local engines read busy: their health answers slowly while they work. "" when nothing is busy. */
+export function localBusyHint(busy: readonly string[] | undefined): string {
+  return busy?.length ? `local model busy (${busy.join(", ")})` : "";
 }
 
 /** The model callers that need exactly one use: the first of `running` (the one `--local` favours). */
@@ -68,6 +77,9 @@ export function localStatusLine(st: LocalStatus): string {
     const list = st.running.map((r) => `${r.provider} (${r.model})`).join(", ");
     return `local: ${list} running — use \`pai worker run --local\``;
   }
+  // a busy engine reads "busy", never "down": its health answers slowly while it works, and nothing is started for it (2026-11-18: gyro-l at 3 of 3 slots, GPU 98–100%, read "local model down: starting ollama")
+  const busy = localBusyHint(st.busy);
+  if (busy) return `local: ${busy} — requests still route to it; ${NO_SERVER_HINT}`;
   // the down autostart state rides along in the cache (written by the daemon's refresher):
   // balanced mode reads this line, and "none running" alone never says whether anything is coming up
   const why = localDownHint(st.downInfo);
@@ -114,6 +126,8 @@ export function readLocalStatus(logDir: string, now = Date.now(), maxAgeMs = LOC
 /** Text + JSON of the answer for the CLI and the MCP tool. */
 export function localStatusReport(st: LocalStatus): { text: string; json: LocalStatus } {
   const extra =
-    (st.down.length ? ` down: ${st.down.join(", ")}.` : "") + (st.disabled.length ? ` disabled: ${st.disabled.join(", ")}.` : "");
+    (st.busy?.length ? ` busy: ${st.busy.join(", ")}.` : "") +
+    (st.down.length ? ` down: ${st.down.join(", ")}.` : "") +
+    (st.disabled.length ? ` disabled: ${st.disabled.join(", ")}.` : "");
   return { text: localStatusLine(st) + (extra ? `\n${extra.trim()}` : ""), json: st };
 }
