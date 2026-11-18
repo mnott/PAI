@@ -218,6 +218,11 @@ export async function loadWatchTick(state: LoadWatchState, cfg: LoadWatchConfig,
   } else if (step === "thaw" && state.frozenByUs) {
     try {
       reading.lastAction = `thawed: ${await d.thaw()}`;
+      try {
+        await d.alert(`PAI load watchdog: load ${load.toFixed(1)} is back under ${threshold} for ${cfg.thawMinutes} min; ${reading.lastAction}.`);
+      } catch {
+        /* best effort */
+      }
     } catch (e) {
       reading.lastAction = `thaw failed: ${e instanceof Error ? e.message : String(e)}`;
     }
@@ -272,9 +277,18 @@ export function liveLoadWatchDeps(logDir: string): LoadWatchDeps {
     },
     kill: (pid) => process.kill(pid, "SIGKILL"),
     alert: async (text) => {
-      // straight to AIBroker's PAILot channel: no router, no session in the path
-      const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
-      await callAiBroker("pailot_send", { text }, 8_000);
+      // PAI's operator-notification path (run-events aibrokerMessenger.toPailot): the PAILot rate/dedup guard, then
+      // AIBroker's socket `pailot_send` with an 8 s timeout. No router, no session in the path.
+      const { guardedPailot } = await import("../workers/pailot-guard.js");
+      await guardedPailot(logDir, text, async (t) => {
+        try {
+          const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
+          await callAiBroker("pailot_send", { text: t }, 8_000);
+          return true;
+        } catch {
+          return false;
+        }
+      });
     },
     ledger: (event, kv) => appendLedger(ledgerPath(logDir), event, kv),
     write: (r) => {
