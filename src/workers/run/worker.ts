@@ -463,6 +463,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         limit,
         noBrowser,
         allowTests: opts.allowTests,
+        allowDbWrites: opts.allowDbWrites,
         opts,
         runT0,
       };

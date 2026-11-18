@@ -37,6 +37,7 @@ import {
 } from "./workers-config.js";
 import { registerSecretValue } from "../utils/redact.js";
 import { isLoopbackHostname } from "../utils/loopback.js";
+import { DEFAULT_DB_WRITE_ALLOW, type DbWriteAllow } from "../hooks/ts/lib/worker-bash-rules.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -639,6 +640,8 @@ export interface WorkersConfig {
   escalate: EscalateConfig;
   /** Loop guard echo size (workers.loopGuard); see hooks/ts/lib/loop-guard.ts. */
   loopGuard: LoopGuardConfig;
+  /** Live-database write allowlist for the worker Bash guard (workers.guard.dbWriteAllow); see hooks/ts/lib/worker-bash-rules.ts. */
+  guard: { dbWriteAllow: DbWriteAllow };
   /** FAIL ledger (workers.failLedger), per-run override PAI_FAIL_LEDGER=1. */
   failLedger: FailLedgerConfig;
   /** Throwaway bench clones live under this dir (workers.benchTreesDir, ~ expanded); a standalone clone there is not a shared checkout. */
@@ -698,6 +701,8 @@ export function defaultWorkersConfig(): WorkersConfig {
   const escalate = parseEscalate(w.escalate, (path, msg) => {
     throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`);
   });
+  const guard = obj(w.guard);
+  const dbWriteAllow = obj(guard.dbWriteAllow);
   const loopGuard = obj(w.loopGuard);
   const failLedger = obj(w.failLedger);
   return {
@@ -775,6 +780,9 @@ export function defaultWorkersConfig(): WorkersConfig {
     },
     escalate,
     benchTreesDir: typeof w.benchTreesDir === "string" ? w.benchTreesDir : "~/.cache/pai/realtask-trees",
+    guard: {
+      dbWriteAllow: { containers: strArr(dbWriteAllow.containers), databases: strArr(dbWriteAllow.databases) },
+    },
     loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000), echoRunnerLines: num(loopGuard.echoRunnerLines, 40) },
     failLedger: { enabled: bool(failLedger.enabled, false), maxEntries: num(failLedger.maxEntries, 5) },
     unparsedCallContinuations: num(w.unparsedCallContinuations, 1),
@@ -1554,6 +1562,20 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       localIdle[k] = t[k] as number;
     }
   }
+  const guard: WorkersConfig["guard"] = structuredClone(d.guard);
+  if (w.guard !== undefined) {
+    if (typeof w.guard !== "object" || w.guard === null || Array.isArray(w.guard)) bad(".guard", "must be an object");
+    const g = (w.guard as Record<string, unknown>).dbWriteAllow;
+    if (g !== undefined) {
+      if (typeof g !== "object" || g === null || Array.isArray(g)) bad(".guard.dbWriteAllow", "must be an object with containers/databases arrays");
+      const t = g as Record<string, unknown>;
+      for (const k of ["containers", "databases"] as const) {
+        if (t[k] === undefined) continue;
+        if (!Array.isArray(t[k]) || (t[k] as unknown[]).some((v) => typeof v !== "string")) bad(`.guard.dbWriteAllow.${k}`, "must be an array of glob strings");
+        guard.dbWriteAllow[k] = [...(t[k] as string[])];
+      }
+    }
+  }
   const loopGuard = { ...d.loopGuard };
   if (w.loopGuard !== undefined) {
     if (typeof w.loopGuard !== "object" || w.loopGuard === null || Array.isArray(w.loopGuard)) bad(".loopGuard", "must be an object");
@@ -1671,6 +1693,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     orchestrate,
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
+    guard,
     loopGuard,
     failLedger,
     benchTreesDir: (w.benchTreesDir as string | undefined) ?? d.benchTreesDir,

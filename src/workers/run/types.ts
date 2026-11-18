@@ -72,6 +72,8 @@ export interface RunOptions {
   browser?: boolean;
   /** --allow-tests: this worker may run tests despite `.pai/checks.yaml` `tests: operator` (PAI_WORKER_ALLOW_TESTS=1); only when the operator asked for tests. */
   allowTests?: boolean;
+  /** --allow-db-writes: this worker's SQL clients may write databases (PAI_ALLOW_DB_WRITES=1); only for briefs that really need writes. */
+  allowDbWrites?: boolean;
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
@@ -271,6 +273,8 @@ export interface ExecuteArgs {
   noBrowser: boolean;
   /** --allow-tests: PAI_WORKER_ALLOW_TESTS=1 in the env; the guard then allows tests despite `tests: operator`. */
   allowTests?: boolean;
+  /** --allow-db-writes: PAI_ALLOW_DB_WRITES=1 in the env; the guard then allows SQL-client writes to databases. */
+  allowDbWrites?: boolean;
   /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */
   opts: RunOptions;
   /** Set once the follow pane was handled (tryPoolRun); executeRun then neither opens nor verifies a second one. */

@@ -184,6 +184,18 @@ workers:
     queuedMaxMin: 0
     stallMaxMin: 10
     stallFailedCalls: 6
+  # Worker Bash guard: the live-database write allowlist. A worker's SQL-client
+  # writes (psql/mysql/sqlite3/… via shell, docker exec, kubectl exec or ssh) are
+  # denied unless the statement declares itself read-only, the target is a scratch
+  # file in the worktree/$TMPDIR, or it matches this list: `containers` holds
+  # container/service/host names (globs), `databases` db names (globs). A write is
+  # allowed when the container matches a containers entry OR the db name matches a
+  # databases entry; add project-specific trial containers in the user's workers
+  # config, never here. An operator override exists per run: --allow-db-writes.
+  guard:
+    dbWriteAllow:
+      containers: []
+      databases: ["*_test", "*_scratch"]
   # Loop guard: a denied repeat of a read-only call (Bash read, Read, Grep,
   # Glob) gets the call's last output back, trimmed to these sizes, so the
   # model stops asking for it again. Secret-looking lines are masked.
