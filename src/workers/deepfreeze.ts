@@ -13,8 +13,10 @@
  * with a conversation) or `pai worker run --spec` (a queued one, or one without a session). A rerouted origin whose
  * continuation already finished is not resumed. `pai resume` / `pai thaw` do the same at once; `--drop` discards.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import * as execFileModule from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 import { readFreeze, realFreezeDeps, thawAll } from "./freeze.js";
 import { appendLedger as ledgerLine } from "./ledger.js";
@@ -97,6 +99,45 @@ export const deepfreezeHold = (): boolean => !resumeMode && existsSync(deepfreez
 
 const ts = (ms: number): string => new Date(ms).toISOString().replace(/[:.]/g, "-");
 
+/**
+ * A git call must never wait for input. On 2026-11-18 a deep-freeze test hung with the main thread stuck in
+ * `execFileSync("git", …)`: an unbounded spawn inherits the operator's global config, and anything there that
+ * talks to a human blocks forever with stdio piped — `core.editor=cursor` (a GUI editor git waits on when a
+ * commit message is needed), a credential helper (GCM / osxkeychain popping a dialog or asking for a username),
+ * an LFS `filter-process` daemon reading stdin, or a repo hook. A half-dead git can also leave an index.lock
+ * behind, and the next call in that repo waits on it. So every git spawn gets: no terminal prompt (a credential
+ * ask fails instead of asking), a non-interactive editor, no askpass GUI, `-c core.hooksPath=` so repo hooks
+ * never run, and a hard timeout with SIGKILL — bounded, and the error names the command.
+ */
+export const GIT_NO_INPUT_ARGS = ["-c", "core.hooksPath=", "-c", "commit.gpgsign=false"] as const;
+
+/** Env that makes git unaskable: no terminal prompt, no askpass GUI, a non-interactive editor, an isolated temp HOME (no global config: the operator's `core.editor=cursor` and credential helpers are exactly what blocks). */
+export function gitNoInputEnv(homeDir = mkdtempSync(join(tmpdir(), "pai-git-home-"))): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", GIT_EDITOR: "true", HOME: homeDir, XDG_CONFIG_HOME: join(homeDir, ".config") };
+}
+
+/** Run git with the no-input env; never waits for a human; throws after `timeoutMs` (default 20 s) with the command in the message. */
+export function gitNoInput(cwd: string, args: string[], opts: { timeoutMs?: number } = {}): string {
+  const { execFileSync } = execFileModule as typeof import("node:child_process");
+  const timeoutMs = opts.timeoutMs ?? 20_000;
+  try {
+    return execFileSync("git", [...GIT_NO_INPUT_ARGS, ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: gitNoInputEnv(), timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 32 * 1024 * 1024 });
+  } catch (e) {
+    const x = e as { stderr?: string; stdout?: string; message?: string; signal?: string };
+    if (x.signal === "SIGKILL") throw new Error(`git ${args.join(" ")} timed out after ${timeoutMs / 1000}s in ${cwd} (killed — it was waiting for something)`);
+    throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${`${x.stderr ?? ""}${x.stdout ?? ""}` || x.message || String(e)}`.slice(0, 500));
+  }
+}
+
+/** The DeepFreezeDeps.git shape: never throws — a failure is { ok:false, out: the error }. */
+export function gitNoInputSafe(cwd: string, args: string[]): GitResult {
+  try {
+    return { ok: true, out: gitNoInput(cwd, args) };
+  } catch (e) {
+    return { ok: false, out: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export interface GitResult {
   ok: boolean;
   out: string;
@@ -159,7 +200,12 @@ function stopOrder(ws: DeepWorker[]): DeepWorker[] {
   return [...ws].sort((a, b) => depth(b) - depth(a) || b.order - a.order);
 }
 
-/** Commit everything uncommitted in the worker's worktree as "wip: deepfreeze <ts>"; hooks run (no --no-verify: the repo rules forbid skipping them). A failure leaves the files exactly where they are. */
+/**
+ * Commit everything uncommitted in the worker's worktree as "wip: deepfreeze <ts>". Hooks and gpg signing are
+ * disabled via `-c core.hooksPath=` / `-c commit.gpgsign=false` on every call (see GIT_NO_INPUT_ARGS): a hook or
+ * an editor is exactly what waits for input, and a deep freeze runs when the machine is about to go down — it
+ * cannot block on either. A failure leaves the files exactly where they are.
+ */
 export function wipCommit(w: DeepWorker, d: Pick<DeepFreezeDeps, "git" | "now">): void {
   const dir = w.worktreeDir;
   if (!dir || !existsSync(dir)) return;
@@ -335,19 +381,11 @@ export function realRepoOf(s: WorkerStatus, git: DeepFreezeDeps["git"]): string 
 }
 
 export async function realDeepFreezeDeps(): Promise<DeepFreezeDeps> {
-  const { execFileSync } = await import("node:child_process");
   return {
     statuses: (dir) => loadStatuses(dir),
     owns: (s) => ownsPid(s),
     now: () => Date.now(),
-    git: (cwd, args) => {
-      try {
-        return { ok: true, out: execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
-      } catch (e) {
-        const x = e as { stdout?: string; stderr?: string; message?: string };
-        return { ok: false, out: `${x.stderr ?? ""}${x.stdout ?? ""}` || (x.message ?? "") };
-      }
-    },
+    git: gitNoInputSafe,
     stop: async (dir, id) => {
       const { killTree } = await import("./kill-tree.js");
       await killTree(dir, id, { only: true, by: "deepfreeze", reason: "deep freeze: resumes after the boot" });
