@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths, dbWriteReason, liveContainerReason, type DbWriteContext } from "./worker-bash-rules.js";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
@@ -505,5 +506,47 @@ describe("worker guard GNU sed X,+N range", () => {
   });
   it.skipIf(process.platform !== "darwin")("still denies a non-numeric start", () => {
     expect(run("sed -n '/foo/,+3p' f").decision).toBe("deny");
+  });
+
+  // the two denials of 2026-11-18 (worker 20261118-211912-48686): a computed start `$(grep …),+Np` is rewritten to
+  // `X,$p | head -n N+1`, which prints the same lines on BSD sed as GNU sed's `X,+Np` would.
+  const fixture = (lines: number, hitAt: number): string => {
+    const dir = mkdtempSync(join(tmpdir(), "sed-range-"));
+    const f = join(dir, "fixture.txt");
+    const body = Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    writeFileSync(f, body.replace(`line ${hitAt}`, `target line ${hitAt}`));
+    return f;
+  };
+  it.skipIf(process.platform !== "darwin")("rewrites a computed start to X,$p | head -n N+1", () => {
+    const f = fixture(40, 5);
+    const d = run(`sed -n "$(grep -n 'export async function detectSession' ${f} | cut -d: -f1),+30p" ${f}`);
+    expect(d.decision).toBe("allow");
+    expect(d.updatedInput?.command).toBe(`sed -n "$(grep -n 'export async function detectSession' ${f} | cut -d: -f1),  \\$p" ${f} | head -n 31`);
+    // the rewritten command runs on BSD sed and prints the same lines GNU sed's `,+N` would (start line, then N more)
+    const out = execSync(d.updatedInput!.command, { shell: "/bin/bash", encoding: "utf8" });
+    expect(out.split("\n").slice(0, -1)).toEqual(Array.from({ length: 31 }, (_, i) => `line ${5 + i}`).map((l, i) => (i === 0 ? "target line 5" : l)));
+  });
+  it.skipIf(process.platform !== "darwin")("rewrites a computed start with a short file and keeps the quoting style", () => {
+    const f = fixture(12, 3);
+    const d = run(`sed -n '$(grep -n "export function isFrozen" ${f} | cut -d: -f1),+20p' ${f}`);
+    expect(d.decision).toBe("allow");
+    expect(d.updatedInput?.command).toContain(", $p' ");
+    expect(d.updatedInput?.command).toContain("| head -n 21");
+    const out = execSync(d.updatedInput!.command, { shell: "/bin/bash", encoding: "utf8" });
+    expect(out.split("\n").slice(0, -1)).toEqual(Array.from({ length: 10 }, (_, i) => `line ${3 + i}`).map((l, i) => (i === 0 ? "target line 3" : l)));
+  });
+  it.skipIf(process.platform !== "darwin")("keeps a following pipeline and command intact", () => {
+    const f = fixture(40, 5);
+    const d = run(`sed -n "$(grep -n 'export function isFrozen' ${f} | cut -d: -f1),+8p" ${f} | grep target; echo done`);
+    expect(d.decision).toBe("allow");
+    // the cap lands between the sed call and the worker's own pipeline/command, both untouched
+    expect(d.updatedInput?.command).toContain(`${f} | head -n 9`);
+    expect(d.updatedInput?.command.endsWith("| grep target; echo done")).toBe(true);
+    const out = execSync(d.updatedInput!.command, { shell: "/bin/bash", encoding: "utf8" });
+    expect(out).toBe("target line 5\ndone\n");
+  });
+  it.skipIf(process.platform !== "darwin")("still denies a computed start with a mutating command and an unquoted script", () => {
+    expect(run(`sed -n "$(grep -n x f),+8d" f`).decision).toBe("deny");
+    expect(run("sed -n $(grep -n x f),+8p f").decision).toBe("deny");
   });
 });
