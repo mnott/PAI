@@ -25,16 +25,28 @@ export interface ServedProbe {
  * where any status (or a timeout) counts as alive.
  */
 export async function probeServedModels(host: string, port: number, timeoutMs: number): Promise<ServedProbe> {
-  try {
-    const h = host.includes(":") ? `[${host}]` : host;
-    const res = await fetch(`http://${h}:${port}/v1/models`, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return { alive: false };
-    const body = (await res.json()) as { data?: Array<{ id?: unknown }> } | null;
-    const ids = (body?.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
-    return { alive: true, ...(ids.length ? { ids } : {}) };
-  } catch {
-    return { alive: false };
+  const h = host.includes(":") ? `[${host}]` : host;
+  let busy = false;
+  // A server at its connection/slot cap accepts the socket and then resets it or
+  // stays silent (2026-11-18: gyro-l, 3 of 3 slots, reset ~2 of 3 probes, so
+  // routing read "not running" and sent work to the cloud). A reset or a timeout
+  // is therefore retried and, when it persists, means busy: alive, models unknown.
+  // Only a refused connection (nothing listening) or a non-2xx answer is down.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`http://${h}:${port}/v1/models`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) return { alive: false };
+      const body = (await res.json()) as { data?: Array<{ id?: unknown }> } | null;
+      const ids = (body?.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
+      return { alive: true, ...(ids.length ? { ids } : {}) };
+    } catch (e) {
+      const code = (e as { cause?: { code?: string } }).cause?.code;
+      const name = (e as { name?: string }).name;
+      busy = code === "ECONNRESET" || code === "UND_ERR_SOCKET" || code === "UND_ERR_HEADERS_TIMEOUT" || name === "TimeoutError" || name === "AbortError";
+      if (!busy) return { alive: false };
+    }
   }
+  return { alive: busy };
 }
 
 /**
