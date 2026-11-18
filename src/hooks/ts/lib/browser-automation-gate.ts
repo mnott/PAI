@@ -1,9 +1,9 @@
 /**
- * browser-automation-gate.ts — operator rule: no headless browsers, ever (workers and interactive sessions).
+ * browser-automation-gate.ts — operator rule: no Playwright/Puppeteer/Selenium (plain headless Chrome is allowed) (workers and interactive sessions).
  *
  * Evidence 2026-11-18: a worker used Playwright to inspect a theme's hover rules; the operator stopped it by hand.
  * The browser tools are claude-in-chrome (mcp__claude-in-chrome__*) and clickr (mcp__clickr__*).
- * Bash: playwright/puppeteer/selenium runs, installs, browser-binary downloads, `--headless` Chrome, and a runner
+ * Bash: playwright/puppeteer/selenium runs, installs, browser-binary downloads, and a runner
  * (node/tsx/python…) on a script that imports one. Edit/Write: adding such an import to a source file, except in a repo
  * whose package.json already lists one (an existing product dependency).
  * Pure but for reading the named script files / package.json (read errors allow).
@@ -14,7 +14,7 @@ import { basename, dirname, resolve } from "node:path";
 import { parseCommand } from "./worker-guard.js";
 
 export const BROWSER_AUTOMATION_DENY_MESSAGE =
-  "No headless browsers (operator rule). Use the claude-in-chrome MCP tools (navigate, find, read_page, javascript_tool, computer screenshot/zoom) for web pages, or clickr for native apps.";
+  "Playwright/Puppeteer/Selenium are not used here (operator rule). For web pages use the claude-in-chrome MCP tools, for apps clickr; plain `chrome --headless` (dump-dom, print-to-pdf, screenshot) is allowed.";
 
 const JS_PKGS = new Set(["playwright", "@playwright/test", "playwright-core", "puppeteer", "puppeteer-core", "selenium-webdriver", "@puppeteer/browsers"]);
 const PY_PKGS = new Set(["playwright", "selenium", "pyppeteer"]);
@@ -23,7 +23,6 @@ const RUNNERS = /^(node|nodejs|tsx|ts-node|bun|deno|python|python3(\.\d+)?|pytho
 const SCRIPT_EXT = /\.(m?[jt]s|cjs|cts|tsx|jsx|py)$/;
 const IMPORT_RE = /(?:\bfrom\s+|\bimport\s*\(?\s*|\brequire\(\s*)['"]?(playwright(?:-core)?|@playwright\/test|puppeteer(?:-core)?|selenium(?:-webdriver)?|pyppeteer)\b/;
 const PREFIXES = new Set(["nohup", "sudo", "exec", "env", "setsid", "time", "command", "caffeinate", "nice", "arch"]);
-const CHROME_BIN = /^(google[- ]chrome(-stable)?|google chrome( for testing)?|chromium(-browser)?|chrome|chrome-headless-shell)$/i;
 const isAssignment = (w: string): boolean => /^[A-Za-z_]\w*=/.test(w);
 const pos = (args: string[]): string[] => args.filter((a) => !a.startsWith("-"));
 const pkgName = (a: string): string => a.replace(/^(@[^/@]+\/[^@]+|[^@]+)@.*$/, "$1");
@@ -52,7 +51,6 @@ function segmentDenied(words: string[], cwds: string[], raw: string): boolean {
   const p = pos(args);
 
   if (cmd === "playwright" || cmd === "puppeteer" || cmd === "playwright-core") return true;
-  if (CHROME_BIN.test(cmd) && args.some((a) => a === "--headless" || a.startsWith("--headless="))) return true;
   if (/^(npx|bunx|pnpx)$/.test(cmd) || (/^(pnpm|yarn|bun)$/.test(cmd) && /^(dlx|x|exec)$/.test(p[0] ?? ""))) {
     const rest = /^(npx|bunx|pnpx)$/.test(cmd) ? p : p.slice(1);
     if (rest[0] && JS_PKGS.has(pkgName(rest[0]))) return true;
