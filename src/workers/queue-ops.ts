@@ -14,6 +14,7 @@ import { setWorkerPaused } from "./engine-control.js";
 import { applyPriority, resumeWorker, type PriorityLevel } from "./preempt.js";
 import { deepFreeze, deepResume, deepfrozenIds, realDeepFreezeDeps, realDeepResumeDeps, realRepoOf, type DeepSelect } from "./deepfreeze.js";
 import { buildQueueTable, readTaskText, taskSummary, type RowAction, type TableRow } from "./queue-table.js";
+import { cachedTldr } from "./helper-uses.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 
 /** The table of the machine's workers right now. `deepFrozen` stays empty until `pai stop` records its jobs.
@@ -40,8 +41,12 @@ export function readQueueTable(logDir: string, workers: WorkersConfig, now = Dat
       const n = ownerSessionName(s);
       return n.startsWith("tab ") || n === "?" ? "other" : n;
     },
-    // the task cell's tooltip: the first lines of the prompt copy the run kept, plain prose, no model call
-    summaryOf: (s) => taskSummary(readTaskText(logDir, s)),
+    // the task cell's tooltip: a cached local-model TL;DR, else the first lines of the prompt copy the run kept
+    summaryOf: (s) => {
+      const text = readTaskText(logDir, s);
+      // cached 2-sentence TL;DR from the small local model; generated in the background, the rule-based first sentences meanwhile
+      return cachedTldr(logDir, s.id, text) ?? taskSummary(text);
+    },
     frozen: (id) => frozenSince(id) !== undefined,
     deepFrozen: deep,
     sched,

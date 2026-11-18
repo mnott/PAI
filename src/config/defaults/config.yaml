@@ -526,3 +526,20 @@ release:
   # Name of the environment variable holding the forge (Gitea/Forgejo) token
   # for `pai build mirror-sync`. The token itself is never stored or printed.
   forgeTokenEnv: AIBROKER_FORGE_TOKEN
+# Small bounded tasks on a small local model, never the cloud (src/workers/helper.ts).
+# One request in flight, low priority at the router, short timeout; on any failure the
+# caller keeps its rule-based behaviour. models: ordered; a provider name served by the
+# router (apple-fm runs on the Neural Engine) or ollama:<model> on the host Ollama.
+helper:
+  enabled: true
+  models: [apple-fm, "ollama:qwen3:8b"]
+  timeoutMs: 20000
+  maxInputChars: 6000
+  ollamaUrl: http://127.0.0.1:11434
+  uses:
+    # classify an unclassified tool-error alert (harness / model / benign) with a one-line reason
+    toolErrors: true
+    # two-sentence TL;DR of a job's spec, cached per job
+    tldr: true
+    # 3-line summary of a failing merge gate / build / test run
+    gateSummary: true

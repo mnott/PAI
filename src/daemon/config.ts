@@ -293,6 +293,9 @@ export interface PaiDaemonConfig {
   /** Vault index switch (on by default). */
   vaultIndex: VaultIndexConfig;
 
+  /** Small bounded tasks on a small local model (src/workers/helper.ts); never the cloud. */
+  helper?: { enabled?: boolean; models?: string[]; timeoutMs?: number; maxInputChars?: number; ollamaUrl?: string; uses?: { toolErrors?: boolean; tldr?: boolean; gateSummary?: boolean } };
+
   /** Model router supervised by the daemon (src/router/supervisor.ts). */
   router: RouterConfig;
 
