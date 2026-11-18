@@ -6,7 +6,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { Document, isMap, isSeq, parseDocument, Scalar, type Node } from "yaml";
+import { Document, isMap, isSeq, parse as parseYaml, parseDocument, Scalar, type Node } from "yaml";
 import {
   defaults as loadConfigDefaults,
   loadConfig,
@@ -154,8 +154,8 @@ function setInYamlDoc(doc: Document, segments: string[], value: unknown, forceSt
     doc.setIn(segments, value);
     return;
   }
-  const s = new Scalar(String(value));
-  if (forceString || needsQuoting(value)) s.type = Scalar.QUOTE_DOUBLE;
+  const s = new Scalar(forceString ? String(value) : value);
+  if (typeof s.value === "string" && (forceString || needsQuoting(s.value))) s.type = Scalar.QUOTE_DOUBLE;
   else s.type = Scalar.PLAIN;
   doc.setIn(segments, s as Node);
 }
@@ -257,13 +257,21 @@ function editedProviderYamlDoc(yamlPath: string, rest: string[], value: unknown 
 // Value parsing (`pai config set <path> <value>`)
 // ---------------------------------------------------------------------------
 
-/** true/false, null, numbers, `[...]`/`{...}` as JSON, else the raw string. */
+/** Parse a CLI value as a YAML scalar: true/false -> boolean, numbers -> number,
+ *  null -> null, a quoted scalar -> its string, `[...]`/`{...}` as JSON, anything else the raw string. */
 export function parseConfigValueString(raw: string): unknown {
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  if (raw === "null") return null;
-  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
   const trimmed = raw.trim();
+  if (!trimmed.startsWith("[") && !trimmed.startsWith("{")) {
+    try {
+      const v = parseYaml(trimmed);
+      if (v === null || typeof v === "boolean" || typeof v === "number" || typeof v === "string") {
+        return trimmed === "" ? raw : v;
+      }
+    } catch {
+      /* not a YAML scalar: keep the raw string */
+    }
+    return raw;
+  }
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     try {
       return JSON.parse(trimmed);
@@ -411,6 +419,23 @@ function validateAgainstSchema(segments: string[], value: unknown, opts: { force
 // Value parsing (`pai config set <path> <value>`)
 // ---------------------------------------------------------------------------
 
+/** When the schema names a scalar at this path, coerce the parsed value to its type
+ *  (`"true"` for a boolean key, `8035` for a string key); a value that cannot be coerced is refused. */
+function coerceToSchema(segments: string[], value: unknown, raw: string, opts: { force?: boolean }): unknown {
+  if (opts.force || value === null || typeof value === "object") return value;
+  const { value: expected, found } = getAtPath(schemaRoot(), segments);
+  if (!found || expected === null || expected === undefined || typeof expected === "object") return value;
+  const want = typeof expected;
+  if (typeof value === want) return value;
+  const text = typeof value === "string" ? value : raw.trim();
+  if (want === "string") return text;
+  if (want === "boolean" && (text === "true" || text === "false")) return text === "true";
+  if (want === "number" && text !== "" && Number.isFinite(Number(text))) return Number(text);
+  throw new MainConfigOpsError(
+    `${segments.join(".")}: expected ${want}, got ${typeof value} (pass --force to override)`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Public ops
 // ---------------------------------------------------------------------------
@@ -495,7 +520,10 @@ export interface SetConfigResult {
  */
 export function setConfigValueOp(dottedPath: string, rawValue: string, opts: { force?: boolean; asString?: boolean } = {}): SetConfigResult {
   const segments = splitConfigPath(dottedPath);
-  const value = opts.asString ? rawValue : parseConfigValueString(rawValue);
+  // keys under any `.env.` map are always strings (a YAML int there is not a valid env value)
+  const envLeaf = segments.slice(1, -1).includes("env");
+  let value = opts.asString || envLeaf ? rawValue : parseConfigValueString(rawValue);
+  if (!envLeaf) value = coerceToSchema(segments, value, rawValue, opts);
   validateAgainstSchema(segments, value, opts);
 
   // provider override → workers.yaml (deep merge into the defined provider),
@@ -538,7 +566,6 @@ export function setConfigValueOp(dottedPath: string, rawValue: string, opts: { f
   // int); every other scalar keeps the type the user asked for, and any value
   // whose plain form would re-parse as something else (an all-digit token,
   // "true", "no") is forced to a quoted string.
-  const envLeaf = segments.length >= 4 && segments[0] === "workers" && segments[1] === "providers" && segments[3] === "env";
   setInYamlDoc(doc, at, value, envLeaf);
   validateResultingConfig(undefined, String(doc));
   // no-op when the file already holds this exact quoted scalar (the write also
