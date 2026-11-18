@@ -345,7 +345,7 @@ const runCommand: CommandDef = {
     { name: "browser", type: "boolean", summary: "Allow browser tools" },
     { name: "no-browser", type: "boolean", summary: "Remove every browser tool from this worker" },
     { name: "allow-tests", type: "boolean", summary: "Let this worker run tests even when the project has `.pai/checks.yaml` `tests: operator`; use only when the operator asked for tests" },
-    { name: "allow-db-writes", type: "boolean", summary: "Let this worker's SQL clients write databases (PAI_ALLOW_DB_WRITES=1); by default every INSERT/UPDATE/DELETE/DDL through psql/mysql/sqlite3/… is denied unless the statement is read-only or the target matches workers guard.dbWriteAllow; use only for briefs that really need writes" },
+    { name: "allow-db-writes", type: "boolean", summary: "Allow writes to live databases and containers (PAI_ALLOW_DB_WRITES=1): let this worker's SQL clients write databases and lift the live-container cp/exec rule (workers.guard.liveContainers); by default every INSERT/UPDATE/DELETE/DDL through psql/mysql/sqlite3/… is denied unless the statement is read-only or the target matches workers guard.dbWriteAllow; use only for briefs that really need writes" },
     { name: "print-cmd", type: "boolean", summary: "Print the claude command as JSON and exit without starting anything" },
     { name: "report", type: "string", value: "FORMAT", summary: "Final report format: json or ag2 (default ag2)" },
     { name: "no-report-retry", type: "boolean", summary: "Do not ask once more when the final report is malformed" },

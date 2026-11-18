@@ -508,6 +508,8 @@ export interface DbWriteContext {
   worktreeRoot: string | null;
   /** workers `guard.dbWriteAllow`; absent = defaults (no container entries). */
   dbWriteAllow?: DbWriteAllow;
+  /** workers `guard.liveContainers` globs (config.yaml); absent = none. */
+  liveContainers?: string[];
 }
 
 /** Absolute path with `$TMPDIR`/`${TMPDIR}`/`$HOME`/`~` expanded; null when other variables remain. */
@@ -679,4 +681,118 @@ export function dbWriteReason(command: string, env: Record<string, string | unde
     return `live database write blocked: ${client} ${matchedStatement(sql)} — ${DB_WRITE_REASON_TAIL}`;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Live containers (2026-11-18 08:54: a worker `docker cp`-ed a python script into a
+// LIVE app container and ran it with `docker exec`; the script opened a read-write DB
+// connection, which the SQL rule cannot see). Containers matching config
+// `workers.guard.liveContainers` (config.yaml) and not `dbWriteAllow.containers`
+// take no copy-in and no exec beyond SQL clients (judged by dbWriteReason) and
+// read-only inspection commands.
+// ---------------------------------------------------------------------------
+
+/** Read-only inspection commands allowed inside a live container. */
+const READ_ONLY_EXEC = new Set(["ls", "cat", "head", "tail", "env", "printenv", "ps", "df", "du", "stat", "find", "grep", "wc", "date", "id", "whoami", "uname"]);
+
+/** True when `cmd args` is a read-only inspection command (find without -delete/-exec; env without a command). */
+function isReadOnlyExec(cmd: string, args: string[]): boolean {
+  const c = baseName(cmd);
+  if (!READ_ONLY_EXEC.has(c)) return false;
+  if (c === "find") return !args.some((a) => /^-(delete|exec|execdir|ok|okdir|fprint\w*|fls)$/.test(a));
+  if (c === "env") return args.length === 0; // `env X=1 cmd` would run cmd
+  return true;
+}
+
+/** Message tail naming the allowed routes. */
+function liveContainerReason_(container: string, what: string): string {
+  return (
+    `live container protected: ${what} on ${container} blocked (rule: workers.guard.liveContainers in config.yaml) — ` +
+    "workers do not copy into or run code in a live container. Allowed: use the trial container (a name matching guard.dbWriteAllow.containers), " +
+    "read-only commands (ls, cat, head, tail, env, printenv, ps, df, du, stat, find without -delete/-exec, grep, wc, date, id, whoami, uname) or a SQL client judged by the SQL rule, " +
+    "or have the operator start this run with --allow-db-writes (allow writes to live databases and containers; PAI_ALLOW_DB_WRITES=1)"
+  );
+}
+
+/**
+ * The live-container rule: reason when a docker segment copies into (`docker cp <src> <live>:<path>`), runs a non-read-only command in
+ * (`docker exec` / `docker compose exec`) or mounts the volumes of (`docker run --volumes-from <live>`) a container matching liveContainers
+ * and not dbWriteAllow.containers. SQL clients are left to dbWriteReason. Not detected: `-v`/`--mount` of a live container's named volumes
+ * (a volume name does not reliably identify its container), so those pass. Off with PAI_ALLOW_DB_WRITES=1.
+ */
+export function liveContainerReason(command: string, env: Record<string, string | undefined>, ctx: DbWriteContext): string | null {
+  if (env.PAI_ALLOW_DB_WRITES === "1") return null;
+  const live = ctx.liveContainers ?? [];
+  if (!live.length) return null;
+  const allow = (ctx.dbWriteAllow ?? DEFAULT_DB_WRITE_ALLOW).containers;
+  const isLive = (n: string): boolean => live.some((g) => matchGlob(g, n)) && !allow.some((g) => matchGlob(g, n));
+  for (const seg of parseCommand(command)) {
+    const words = seg.words;
+    if (!words.length) continue;
+    const [head, ...rest0] = words;
+    let h = baseName(head);
+    const rest = [...rest0];
+    if (h === "npx" || h === "pnpm" || h === "yarn" || h === "bun") {
+      let q = 0;
+      while (q < rest.length && rest[q].startsWith("-")) q++;
+      if (q < rest.length && ["docker", "docker-compose"].includes(baseName(rest[q]))) ((h = baseName(rest[q])), rest.splice(0, q + 1));
+    }
+    if (h !== "docker" && h !== "docker-compose") continue;
+    // past global flags to the subcommand (compose's -f/-p/--profile take a value)
+    const skipFlags = (a: string[]): number => {
+      let k = 0;
+      while (k < a.length && a[k].startsWith("-")) {
+        if (/^(--file|--project-name|--profile|--context|-f|-p|-H|--host|-c)$/.test(a[k])) k += 2;
+        else k += 1;
+      }
+      return k;
+    };
+    let args = rest;
+    let sub: string | undefined;
+    let compose = h === "docker-compose";
+    if (compose) sub = args[skipFlags(args)], (args = args.slice(skipFlags(args) + 1));
+    else {
+      const k = skipFlags(args);
+      sub = args[k];
+      args = args.slice(k + 1);
+      if (sub === "compose") {
+        compose = true;
+        const m = skipFlags(args);
+        sub = args[m];
+        args = args.slice(m + 1);
+      }
+    }
+    if (sub === "container" && args[0]) ((sub = args[0]), (args = args.slice(1))); // docker container cp/exec/run
+    if (sub === "cp" && !compose) {
+      const pos = args.filter((a) => !a.startsWith("-"));
+      const dest = pos[pos.length - 1];
+      const ci = dest?.indexOf(":") ?? -1;
+      if (pos.length >= 2 && ci > 0 && isLive(dest.slice(0, ci))) return liveContainerReason_(dest.slice(0, ci), "docker cp into the container");
+    } else if (sub === "exec") {
+      const inner = execArgs(args);
+      if (!inner || !isLive(inner.service)) continue;
+      if (SQL_CLIENTS.has(baseName(inner.cmd))) continue;
+      if (isReadOnlyExec(inner.cmd, inner.rest)) continue;
+      return liveContainerReason_(inner.service, `${compose ? "docker compose exec" : "docker exec"} ${baseName(inner.cmd)}`);
+    } else if (sub === "run") {
+      for (let i = 0; i < args.length; i++) {
+        const v = args[i] === "--volumes-from" ? args[i + 1] : args[i].startsWith("--volumes-from=") ? args[i].slice(15) : undefined;
+        if (v && isLive(v.split(":")[0])) return liveContainerReason_(v.split(":")[0], `${compose ? "docker compose run" : "docker run"} --volumes-from`);
+      }
+    }
+  }
+  return null;
+}
+
+/** `docker exec` words (past the subcommand): the container/service, its command word and arguments. */
+function execArgs(args: string[]): { service: string; cmd: string; rest: string[] } | null {
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) {
+    if (/^-[a-z]$/.test(args[i]) && !"iItTdD".includes(args[i][1])) i += 2;
+    else if (/^--(env|env-file|workdir|user|detach-keys|index)$/.test(args[i])) i += 2;
+    else i += 1;
+  }
+  if (i >= args.length) return null;
+  if (i + 1 >= args.length) return { service: args[i], cmd: "", rest: [] };
+  return { service: args[i], cmd: args[i + 1], rest: args.slice(i + 2) };
 }

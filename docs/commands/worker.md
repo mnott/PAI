@@ -74,7 +74,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--browser` | flag | — | Allow browser tools |
 | `--no-browser` | flag | — | Remove every browser tool from this worker |
 | `--allow-tests` | flag | — | Let this worker run tests even when the project has `.pai/checks.yaml` `tests: operator`; use only when the operator asked for tests |
-| `--allow-db-writes` | flag | — | Let this worker's SQL clients write databases (PAI_ALLOW_DB_WRITES=1); by default every INSERT/UPDATE/DELETE/DDL through psql/mysql/sqlite3/… is denied unless the statement is read-only or the target matches workers guard.dbWriteAllow; use only for briefs that really need writes |
+| `--allow-db-writes` | flag | — | Allow writes to live databases and containers (PAI_ALLOW_DB_WRITES=1): let this worker's SQL clients write databases and lift the live-container cp/exec rule (workers.guard.liveContainers); by default every INSERT/UPDATE/DELETE/DDL through psql/mysql/sqlite3/… is denied unless the statement is read-only or the target matches workers guard.dbWriteAllow; use only for briefs that really need writes |
 | `--print-cmd` | flag | — | Print the claude command as JSON and exit without starting anything |
 | `--report FORMAT` | string | — | Final report format: json or ag2 (default ag2) |
 | `--no-report-retry` | flag | — | Do not ask once more when the final report is malformed |

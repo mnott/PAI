@@ -24,7 +24,7 @@ import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
 import { totalSleepSecs } from "../../../workers/status.js";
 import { WAIT_RECIPE } from "../../../workers/wait-on.js";
-import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptReason, tscFileArgReason, dbWriteReason, type DbWriteAllow } from "./worker-bash-rules.js";
+import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptReason, tscFileArgReason, dbWriteReason, liveContainerReason, type DbWriteAllow } from "./worker-bash-rules.js";
 import { operatorTestsReason, projectTestsByOperator } from "./worker-test-rules.js";
 import { blankHeredocBodies } from "./heredoc.js";
 import { isScratchRootFile } from "./worker-scratch-name.js";
@@ -67,6 +67,8 @@ export interface WorkerGuardContext {
   taskText?: () => string | undefined;
   /** workers `guard.dbWriteAllow` allowlist for the live-database write rule; absent = defaults (`*_test`, `*_scratch` dbs, no containers). */
   dbWriteAllow?: DbWriteAllow;
+  /** workers `guard.liveContainers` globs (config.yaml); absent = none. */
+  liveContainers?: string[];
 }
 
 interface Segment {
@@ -839,6 +841,8 @@ export function decideWorkerGuard(
       const gw = ctx();
       const dbw = dbWriteReason(cmd, env, { cwd: gw.cwd, home: gw.home, worktreeRoot: gw.worktreeRoot, dbWriteAllow: gw.dbWriteAllow });
       if (dbw) return deny(dbw);
+      const lcr = liveContainerReason(cmd, env, { cwd: gw.cwd, home: gw.home, worktreeRoot: gw.worktreeRoot, dbWriteAllow: gw.dbWriteAllow, liveContainers: gw.liveContainers });
+      if (lcr) return deny(lcr);
       // the package's own test script (if it runs tsx) legitimises its node-based runner form in nodeOnTypeScriptReason
       const why = nodeOnTypeScriptReason(cmd, ctx().testScript()) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
       if (why) return deny(why);

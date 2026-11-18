@@ -88,6 +88,13 @@ function buildContext(cwd: string): WorkerGuardContext {
         return undefined;
       }
     })(),
+    liveContainers: (() => {
+      try {
+        return readWorkersSection().workers.guard.liveContainers;
+      } catch {
+        return undefined;
+      }
+    })(),
     // tests: operator: a test runner or a door run in test mode (`sh tools/build.sh test …`)
     testCommand: (command: string) => operatorTestsReason(command, (ws, dir) => runsDoor(ws, dir, loadBuildsConfig(dir)), cwd),
     // the worker's brief for the child-routing rule; an unreadable one denies --model/--provider (fails closed)
