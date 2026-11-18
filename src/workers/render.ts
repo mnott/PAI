@@ -26,6 +26,8 @@ import { sessionTag } from "./scope.js";
 import { endLabel } from "./endreason.js";
 import { parseWorkerReport, renderReport } from "./report.js";
 import { scanLine } from "./scan.js";
+import { activityOf, type RequestState } from "./queue-table.js";
+import { readSchedFile } from "../router/scheduler.js";
 
 export type ColorEnabled = boolean;
 
@@ -500,7 +502,9 @@ export function renderTable(
   scopeLabel: string,
   now: Date = new Date(),
   inbox: Record<string, number> = {},
-  workers: Pick<WorkersConfig, "providers" | "nativeModels"> = safeWorkers()
+  workers: Pick<WorkersConfig, "providers" | "nativeModels"> = safeWorkers(),
+  /** The worker log dir: the router's scheduler snapshot (the activity word's source) is read from here. */
+  logDir = ""
 ): string {
   const provTag = (s: WorkerStatus) => providerTag(s, workers);
   const queued: WorkerStatus[] = [];
@@ -595,6 +599,23 @@ export function renderTable(
   };
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+  // the activity word of every running row comes from real state (the same words as the queue table and
+  // the cockpit): gen = request open at the model, in line = waiting behind other workers at the engine,
+  // tool = a tool runs with no request open, idle Nm = none of those over 90 s. Never a guess from time:
+  // without the router's snapshot only "tool" / "idle" show (the status file alone).
+  let reqOf: (id: string) => RequestState | undefined = () => undefined;
+  if (logDir) {
+    try {
+      const sched = readSchedFile(logDir, now.getTime());
+      if (sched) reqOf = (id) => (sched.workers[id] ? { inflight: sched.workers[id]!.activeSince > 0, queued: sched.workers[id]!.waitingSince > 0 } : undefined);
+    } catch {
+      /* the router cannot be reached: the status file alone decides */
+    }
+  }
+  const actMark = (s: WorkerStatus): string => {
+    const a = activityOf(s, false, now.getTime(), reqOf(s.id));
+    return a ? "  " + c(a === "gen" ? "green" : a === "in line" ? "yellow" : "dim", a) : "";
+  };
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   // the QUEUED section only exists while something waits: a table that never
   // had a queue stays exactly the RUNNING/FINISHED table it always was
@@ -651,7 +672,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${p}${c("cyan", s.id)}${inboxMark(s)} ${provTag(s)}${tag ? " " + tag : ""}  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${engineMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
+        `${p}${c("cyan", s.id)}${inboxMark(s)} ${provTag(s)}${tag ? " " + tag : ""}  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${actMark(s)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${engineMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
         chain,
         last
       )

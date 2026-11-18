@@ -126,7 +126,7 @@ export interface WorkerAcct {
   lastServiceMs: number;
   /** epoch ms the worker's oldest queued request began waiting, 0 when none queued */
   waitingSince: number;
-  /** epoch ms the worker's request in flight began, 0 when none */
+  /** epoch ms the worker's request in flight began, 0 when none (also 0 while the engine is parked saving its conversation — see parking.ts) */
   activeSince: number;
   lastEnd: number;
   session: string;
