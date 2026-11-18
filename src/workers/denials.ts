@@ -120,6 +120,17 @@ export function denialMark(s: DenialStatus): string {
   return `denied ${n}${s.denials?.some((d) => d.specConflict) ? " spec?" : ""}`;
 }
 
+/** Cut one denial reason to a short tooltip line. */
+const shortReason = (r: string): string => r.replace(/\s+/g, " ").trim().slice(0, 160);
+
+/** What the `spec?` marker means, for its tooltip: "" when there is no marker. */
+export function specMarkTip(s: DenialStatus): string {
+  const first = (s.denials ?? []).find((d) => d.specConflict);
+  if (!first) return "";
+  const n = s.denialCount ?? s.denials?.length ?? 0;
+  return `the guard blocked this job ${n} time${n === 1 ? "" : "s"}; the block may contradict its brief: ${shortReason(first.reason)}`;
+}
+
 /** Replay lines: one per recorded denial, `!` marking a likely spec conflict. */
 export function denialLines(s: DenialStatus): string[] {
   const list = s.denials ?? [];

@@ -12,7 +12,7 @@ import { deadlineLabel } from "./deadline.js";
 import { lowPowerFactor, lowPowerStretchActive } from "../daemon/low-power.js";
 import { activeText } from "./active-time.js";
 import { sessionOf } from "./capacity.js";
-import { ellipsize, queuedBarRow, queuedText, waitingForSlotText, waitsForSlotBack, type QueuedFile } from "./capacity.js";
+import { ellipsize, queuedBarRow, queuedText, slotBackLine, slotBackPosition, waitingForSlotText, waitsForSlotBack, type QueuedFile } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, nativeAnthropicModels, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
@@ -26,7 +26,7 @@ import { sessionTag } from "./scope.js";
 import { endLabel } from "./endreason.js";
 import { parseWorkerReport, renderReport } from "./report.js";
 import { scanLine } from "./scan.js";
-import { activityOf, levelOf, SLOT_BACK, type RequestState } from "./queue-table.js";
+import { activityOf, levelOf, type RequestState } from "./queue-table.js";
 import { readSchedFile } from "../router/scheduler.js";
 
 export type ColorEnabled = boolean;
@@ -595,7 +595,7 @@ export function renderTable(
 
   // engine controls: "paused" or a non-normal priority, only while set
   const engineMark = (s: WorkerStatus): string => {
-    const m = [waitsForSlotBack(logDir, s) ? "started; its slot was lent during a long tool run; waits to get it back" : slotLent(s) ? "waiting on tool (slot lent)" : "", s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : waitingForSlotText(logDir, s) ?? "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
+    const m = [waitsForSlotBack(logDir, s) ? slotBackLine(logDir, s.provider, s.id) : slotLent(s) ? "waiting on tool (slot lent)" : "", s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : waitingForSlotText(logDir, s) ?? "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
     return m ? "  " + c(s.paused ? "yellow" : "dim", m) : "";
   };
 
@@ -614,8 +614,9 @@ export function renderTable(
     }
   }
   const actMark = (s: WorkerStatus): string => {
-    const a = waitsForSlotBack(logDir, s) ? SLOT_BACK : activityOf(s, false, now.getTime(), reqOf(s.id));
-    return a ? "  " + c(a === "writing" ? "green" : a === "in line" ? "yellow" : "dim", a) : "";
+    // the same word as the queue table: a started job in line for its slot back reads "in line"; ps has no tooltip, so the position rides along
+    const a = waitsForSlotBack(logDir, s) ? `in line${slotBackPosition(logDir, s.provider, s.id) ? ` ${slotBackPosition(logDir, s.provider, s.id)}` : ""}` : activityOf(s, false, now.getTime(), reqOf(s.id));
+    return a ? "  " + c(a === "writing" ? "green" : a.startsWith("in line") ? "yellow" : "dim", a) : "";
   };
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   // the QUEUED section only exists while something waits: a table that never
