@@ -51,6 +51,7 @@ import {
 } from "../opencode.js";
 import { type StreamEvent, type ImageExecuteArgs, type ExecuteArgs, type CodexArgs, type OpencodeArgs } from "./types.js";
 import { isoStamp, bumpContextTokens } from "./stream.js";
+import { backgroundArgv } from "../priority.js";
 import { requireVisiblePane, spawnOwned, announcePane } from "./pane-handles.js";
 import {
   SIGNAL_SALVAGE_MS,
@@ -380,7 +381,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   };
 
   try {
-    spawned = await spawnOwned(wid, spec.buildCmd(prompt), {
+    spawned = await spawnOwned(wid, backgroundArgv(spec.buildCmd(prompt), config.priority), {
       env,
       cwd: worktree?.dir ?? cwd,
       stdio: ["ignore", "pipe", "inherit"],
