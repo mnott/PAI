@@ -172,7 +172,10 @@ export class UsageSniffer {
     const line = raw.replace(/\r$/, "");
     if (!line.startsWith("data:")) return;
     const data = line.slice(5).trim();
-    if (data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":\s*"[^"]/.test(data)) {
+    const anthropicDelta = data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":\s*"[^"]/.test(data);
+    // OpenAI chat chunks: delta carrying text/reasoning or a tool-call fragment
+    const chatDelta = !anthropicDelta && data.includes('"delta"') && (/"(content|reasoning_content|reasoning)":\s*"[^"]/.test(data) || /"arguments":\s*"[^"]/.test(data));
+    if (anthropicDelta || chatDelta) {
       if (this.firstContentAt === undefined) {
         this.firstContentAt = Date.now();
         this.firstPush = this.pushes;
