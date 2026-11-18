@@ -119,7 +119,8 @@ describe("GNU sed relative-range denial on macOS", () => {
     expect(a?.action).toBe("allow");
     expect(a?.updatedInput?.command).toBe('sed -n "18,26p" f.ts');
     expect(gnu("sed -n '18,+8p' f.ts")?.updatedInput?.command).toBe("sed -n '18,26p' f.ts"); // single-quoted too
-    expect(gnu('sed -n "$(grep -n x f | cut -d: -f1),+8p" f.ts')?.action).toBe("deny"); // non-numeric start
+    expect(gnu('sed -n "$(grep -n x f | cut -d: -f1),+8d" f.ts')?.action).toBe("deny"); // computed start rewrites only for `p`
+    expect(gnu("sed -n '/x/,+8p' f.ts")?.action).toBe("deny"); // regex start
     expect(gnu("sed -n '/re/,+8p' f.ts")?.action).toBe("deny");
     expect(gnu('sed -n "18,26p" f.ts')).toBeNull();
     expect(gnu("sed -n 1,8p")).toBeNull();
