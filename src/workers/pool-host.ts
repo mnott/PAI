@@ -31,7 +31,6 @@ import { createInterface } from "node:readline";
 import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
-import { readMcpServers, writeMcpConfig } from "./mcp.js";
 import { repairAndValidateAg2, validateAg2 } from "./agentish.js";
 import { stripContextSuffix } from "../router/router.js";
 import { getProviderOrNative, readWorkersSection, workersConfigStamp, type WorkerProvider, type WorkersConfig } from "./config.js";
@@ -583,7 +582,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     let cmd: string[] = [...cmdHead(env)];
     const addendum = loadContractAddendum(providerName, provider.contract);
     cmd.push("--model", model);
-    cmd.push("--strict-mcp-config", "--mcp-config", "pai" in readMcpServers() ? writeMcpConfig(logDir, poolSlotSettingsId(providerName, model), ["pai"]) : ensureNoMcpConfig(logDir));
+    cmd.push("--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir));
     cmd.push(...headlessToolGrants([]));
     // a slot is born like a bare headless worker: the default core grant,
     // narrowed schemas (headlessToolsFlag([]) names none) included
