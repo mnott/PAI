@@ -139,8 +139,8 @@ export interface RequestState {
 
 /** The one line above the table (also the CLI footer): states and priorities in plain words. */
 export const QUEUE_EXPLAIN =
-  "running = holds a slot; waiting = next in line; paused = parked, slot freed for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives reboot. " +
-  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: \"N of M slots busy\" counts jobs holding a slot; \"back from a long tool run\" = a job that lent its slot while waiting on a long tool took it back while others filled it, so it runs above the cap until one finishes.";
+  "running = holds a slot, or started and waiting to take its slot back; waiting = next in line; paused = parked, slot freed for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives reboot. " +
+  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: \"N of M slots busy\" counts jobs holding a slot; \"K lent\" = started jobs waiting on a long tool (or to get their slot back, \"slot back?\"): busy + lent = the running rows; \"engine idle: admitted K extra\" = jobs started above the cap because the model had nothing to do.";
 
 /** Plain-words tooltip of each priority. */
 export const PRIORITY_TIP: Record<"low" | "normal" | "high" | "now", string> = {
@@ -195,7 +195,11 @@ export function plainWording(text: string): string {
 }
 
 /** The short word of each activity, shown fixed-width in the cell; ACT_TIP carries the sentence for its tooltip. */
-export const ACT_TIP: Record<"writing" | "in line" | "tool" | "waiting", string> = {
+export const SLOT_BACK = "slot back?";
+/** Width of the fixed activity cell (the longest word). */
+export const ACT_WIDTH = SLOT_BACK.length;
+export const ACT_TIP: Record<"writing" | "in line" | "tool" | "waiting" | "slot back?", string> = {
+  "slot back?": "started; its slot was lent during a long tool run; waits to get it back",
   writing: "its request is open at the model — the model is writing its reply",
   "in line": "its request waits in the local scheduler queue, behind other workers at the engine",
   tool: "no request open at the model; a tool (build, test) is running",
@@ -266,6 +270,8 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     return a ? { inflight: a.activeSince > 0, queued: a.waitingSince > 0 } : undefined;
   };
   const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
+  // a started job (running, not parked, not restarting) that holds a queue ticket lent its slot during a long tool run and waits to take one back: it RUNS, it is not a waiting job
+  const startedWaiting = (s: WorkerStatus): boolean => s.state === "running" && !s.paused && !s.restarting && ticket.has(s.id);
   const live = i.statuses.filter((s) => deepIds.has(s.id) || s.state === "running" || s.state === "queued" || ticket.has(s.id));
   const gone = replacedIds(live);
   const summaryOf = (s: WorkerStatus): string | undefined => {
@@ -311,17 +317,19 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     };
   };
   const out: TableRow[] = [];
-  const runners = live.filter((s) => s.state === "running" && !deepIds.has(s.id) && !ticket.has(s.id) && !gone.has(s.id)).sort((a, b) => stMs(a) - stMs(b) || (a.id < b.id ? -1 : 1));
+  const runners = live.filter((s) => s.state === "running" && !deepIds.has(s.id) && (!ticket.has(s.id) || startedWaiting(s)) && !gone.has(s.id)).sort((a, b) => stMs(a) - stMs(b) || (a.id < b.id ? -1 : 1));
   // a running job moving to a slot-limited provider keeps running; its continuation waits in the target's queue and is shown on this row
   const moverOf = (id: string) => i.queue.find((q) => q.status?.fallThroughOf === id);
   const movers = new Set(runners.filter((x) => x.movingTo).map((x) => x.id));
   for (const s of runners.filter((x) => !pausedFree(x))) {
     const q = s.movingTo ? moverOf(s.id) : undefined;
     const moving = s.movingTo ? `running (${i.isLocal(s.provider) ? "local" : "cloud"}) · moving to ${i.isLocal(s.movingTo) ? "local" : "cloud"}, waiting #${q ? q.position : "?"}` : undefined;
-    out.push({ slot: "running", ...row(s, false, stMs(s), undefined, undefined, moving) });
+    const r: TableRow = { slot: "running", ...row(s, false, stMs(s), undefined, undefined, moving) };
+    if (startedWaiting(s) && r.state === "running") r.activity = SLOT_BACK;
+    out.push(r);
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
-  const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status && !(q.status.fallThroughOf && movers.has(q.status.fallThroughOf))).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
+  const waiting = i.queue.filter((q) => !gone.has(q.id) && !(q.status && startedWaiting(q.status)) && !deepIds.has(q.id) && q.status && !(q.status.fallThroughOf && movers.has(q.status.fallThroughOf))).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
   waiting.forEach((q, n) => {
     const r: TableRow = { slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, { first: q.position === 1, last: q.position === q.queued }) };
     // a resumed worker (paused + ticket) is waiting for a slot, not paused: one wording for pane, ps and cockpit
@@ -394,8 +402,8 @@ export function renderQueueTable(rows: TableRow[]): string[] {
   const head = ["state", "session", "task", "model", "prio", "time", "id"];
   const l1Ids = new Set(rows.filter((r) => r.level === 1).map((r) => r.id));
   const body = rows.map((r) => [
-    // the activity word is fixed 7 chars so the state column never moves (full meaning in the cockpit tooltip)
-    `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity.padEnd(7).trimEnd() : ""}`,
+    // the activity word is fixed ACT_WIDTH chars so the state column never moves (full meaning in the cockpit tooltip)
+    `[${stateBadge(r)}]${r.activity && r.state === "running" ? " " + r.activity.padEnd(ACT_WIDTH).trimEnd() : ""}`,
     clip(r.session, 18) + (r.topic ? ` [${topicChip(r.topic)}]` : ""),
     clip(`L${r.level} ${r.level === 2 && r.parent && l1Ids.has(r.parent) ? "└ " : ""}${r.task}`, 50),
     clip(r.model + (r.cloudWhy ? " ↑" : ""), 26),

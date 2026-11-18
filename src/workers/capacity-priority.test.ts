@@ -180,9 +180,9 @@ describe("queue header and order", () => {
     const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 2, free: 1, queued: 2, paused: 3, activity: {} }] };
     expect(localIdleLine(f, QNOW)).toBe("gyro-l: 2 of 3 slots busy · 3 paused · 2 waiting · GPU 100%");
   });
-  it("never shows more busy slots than the cap; the extra one is named apart", () => {
+  it("an over-cap holder is named as an engine-idle admission", () => {
     const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 0, paused: 0, activity: {} }] };
-    expect(localIdleLine(f, QNOW)).toBe("gyro-l: 3 of 3 slots busy · 1 back from a long tool run · GPU 100%");
+    expect(localIdleLine(f, QNOW)).toBe("gyro-l: 4 of 3 slots busy · engine idle: admitted 1 extra · GPU 100%");
   });
   it("groups running, waiting, paused/frozen; the CLI has the cockpit columns", () => {
     const r = qst("r"), w = qst("w", { state: "queued" }), p = qst("p", { paused: true }), fz = qst("fz");
@@ -483,5 +483,58 @@ describe("pull-forward among front tickets without rank", () => {
     front();
     expect(moveUp(dir, "fakeA", "55574")).toBe(true);
     expect(liveQueue(dir, "fakeA")).toEqual(["55574", "19344", "84703"]);
+  });
+});
+
+// 2026-11-18: ps said "3 of 3 slots busy" while the queue table showed one running job: started jobs that waited to
+// take their slot back (running status + a queue ticket) were listed among the waiting ones.
+describe("a started job waiting for its slot back is running everywhere", () => {
+  it("queue table: the ticketed running job is in the running group with activity 'slot back?', not in the waiting list", () => {
+    const back = qst("b1", { toolWaitSince: QNOW - 60_000 });
+    const fresh = qst("n1", { state: "queued" });
+    const rows = buildQueueTable(qin([back, fresh], [qrow(back, "lm", 1), qrow(fresh, "lm", 2)]));
+    expect(rows.map((r) => [r.id, r.state, r.slot])).toEqual([["b1", "running", "running"], ["n1", "waiting", 1]]);
+    expect(rows[0]!.activity).toBe("slot back?");
+    expect(rows[0]!.activityTip).toContain("its slot was lent during a long tool run; waits to get it back");
+    expect(renderQueueTable(rows)[1]).toMatch(/^\[running\] slot back\?/);
+  });
+  it("slot line: holders + lent add up to the running rows; extras are named as engine-idle admissions", () => {
+    const f = { at: new Date(QNOW).toISOString(), gpuPct: 0, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 8, paused: 0, lent: 2, activity: {} }] };
+    expect(localIdleLine(f, QNOW)).toBe("gyro-l: 4 of 3 slots busy · engine idle: admitted 1 extra · 2 lent (waiting on a tool or for their slot back) · 8 waiting · GPU 0%");
+  });
+});
+
+describe("engine-idle admission", () => {
+  const run = (id: string): WorkerStatus => ({ ...st(id), state: "running", started: "2026-11-18 11:00:00" }) as WorkerStatus;
+  const gateFor = (id: string, statuses: WorkerStatus[], o: { idle: boolean; cap?: number }) =>
+    Promise.race([
+      capacityGate({ logDir: dir, self: { id, provider: "fakeA" }, cap: o.cap ?? 2, config: {}, isAlive: () => true, load: () => statuses, now: () => QNOW, sleep: () => new Promise((x) => setTimeout(x, 5)), engineIdle: () => o.idle }).then(() => "admitted"),
+      new Promise((x) => setTimeout(() => x("waiting"), 250)),
+    ]);
+  it("admits the head above the cap while the engine is idle", async () => {
+    expect(await gateFor("w9", [run("a"), run("b")], { idle: true })).toBe("admitted");
+  });
+  it("waits at the cap while the engine is busy", async () => {
+    expect(await gateFor("w9", [run("a"), run("b")], { idle: false })).toBe("waiting");
+  });
+  it("stops at the hard ceiling cap + idleExtraMax started jobs", async () => {
+    const five = ["a", "b", "c", "d", "e"].map(run);
+    expect(await gateFor("w9", five, { idle: true })).toBe("waiting");
+    expect(await gateFor("w8", five.slice(0, 4), { idle: true })).toBe("admitted");
+  });
+  it("one extra per idle window: a job that just started blocks the next", async () => {
+    const fresh = { ...run("c"), started: "2026-11-18 11:59:50" } as WorkerStatus;
+    expect(await gateFor("w9", [run("a"), run("b"), fresh], { idle: true })).toBe("waiting");
+  });
+  it("a job back from a long tool run goes ahead of every not-yet-started job, even a high one", async () => {
+    mkdirSync(join(dir, "queue", "fakeA"), { recursive: true });
+    const hi = { ...st("hi"), priority: "high" } as WorkerStatus;
+    saveStatus(dir, hi);
+    saveStatus(dir, st("back"));
+    writeTicket(join(dir, "queue", "fakeA", "hi"), `${process.pid} @1 p:high`);
+    const g = capacityGate({ logDir: dir, self: { id: "back", provider: "fakeA" }, cap: 1, config: {}, isAlive: () => true, load: () => [run("a")], now: () => QNOW, sleep: () => new Promise((x) => setTimeout(x, 5)), tier: "high", returning: true });
+    await new Promise((x) => setTimeout(x, 30));
+    expect(liveQueue(dir, "fakeA", () => true)[0]).toBe("back");
+    void g;
   });
 });

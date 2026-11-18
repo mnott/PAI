@@ -358,6 +358,10 @@ export interface CapacityConfig {
   heartbeatMs: number;
   /** Aging bound: a ticket waiting longer jumps ahead of newer tickets of any session (`workers.capacity.agingMs`). */
   agingMs: number;
+  /** The local engine counts as idle after this long with nothing in flight and nothing queued at the router (`workers.capacity.idleAdmitMs`); one waiting job is then admitted even at the cap. */
+  idleAdmitMs: number;
+  /** Hard ceiling of started jobs above the cap that engine-idle admission may reach (`workers.capacity.idleExtraMax`; cap + this). */
+  idleExtraMax: number;
 }
 
 /** Queue admission priority of a run: higher is admitted first (capacity.ts). */
@@ -774,6 +778,8 @@ export function defaultWorkersConfig(): WorkersConfig {
       maxTotalWaitMs: num(capacity.maxTotalWaitMs, 2 * 3_600_000),
       heartbeatMs: num(capacity.heartbeatMs, 60_000),
       agingMs: num(capacity.agingMs, 15 * 60_000),
+      idleAdmitMs: num(capacity.idleAdmitMs, 30_000),
+      idleExtraMax: num(capacity.idleExtraMax, 3),
     },
     priority: { sessions: prioritySessions(prio.sessions, (path, msg) => { throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`); }) },
     urgency: { windowMinutes: num(obj(w.urgency).windowMinutes, 30) },
@@ -1536,7 +1542,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       if (typeof t.enabled !== "boolean") bad(".capacity.enabled", "must be true or false");
       capacity.enabled = t.enabled as boolean;
     }
-    for (const k of ["localDefaultCap", "uncappedQueueCap", "maxTotalWaitMs", "heartbeatMs", "agingMs"] as const) {
+    for (const k of ["localDefaultCap", "uncappedQueueCap", "maxTotalWaitMs", "heartbeatMs", "agingMs", "idleAdmitMs", "idleExtraMax"] as const) {
       if (t[k] === undefined) continue;
       if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) <= 0) bad(`.capacity.${k}`, "must be a positive number");
       capacity[k] = t[k] as number;
