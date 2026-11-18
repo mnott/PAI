@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync, spawn } from "node:child_process";
+import { reapWorkerProcesses } from "./reap.js";
+import { scratchDir } from "./scratch.js";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -132,4 +135,57 @@ describe("reaper spares the processes of a live worker's worktree", () => {
       rmSync(logDir, { recursive: true, force: true });
     }
   });
+});
+
+describe("reapWorkerProcesses ends the worker's whole process tree", () => {
+  const MARK = `reapmark${process.pid}x${Date.now()}`;
+  const psLines = (): string[] => execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n").filter((l) => l.includes(MARK));
+  // perl alarm caps the spin without `timeout`, which moves its child into a group of its own
+  const loop = (tag: string) => `perl -e 'alarm 20; exec @ARGV' sh -c 'while :; do :; done # ${MARK}-${tag}'`;
+  const cleanup: number[] = [];
+  afterEach(() => {
+    for (const l of psLines()) {
+      const pid = Number(l.trim().split(/\s+/)[0]);
+      try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+    }
+    for (const p of cleanup.splice(0)) try { process.kill(-p, "SIGKILL"); } catch { /* gone */ }
+  });
+  const waitFor = async (cond: () => boolean): Promise<void> => {
+    for (let i = 0; i < 50 && !cond(); i++) await new Promise((r) => setTimeout(r, 100));
+  };
+
+  /** A fake run: leads its own group, backgrounds a subshell loop and a setsid'd escapee carrying the worker's scratch dir. */
+  async function startFake(id: string): Promise<number> {
+    const script = `(${loop("group")}) & perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' ${loop("scratch")} ${scratchDir(id)} & wait`;
+    // the scratch path rides in argv after the loop: `timeout` rejects it, so put it in the loop body instead
+    const fixed = script.replace(` ${scratchDir(id)} &`, " &").replace(`${MARK}-scratch`, `${MARK}-scratch ${scratchDir(id)}`);
+    const root = spawn("sh", ["-c", fixed], { detached: true, stdio: "ignore" });
+    root.unref();
+    cleanup.push(root.pid!);
+    await waitFor(() => psLines().filter((l) => l.includes("while :")).length >= 2);
+    expect(psLines().filter((l) => l.includes("while :")).length).toBeGreaterThanOrEqual(2);
+    return root.pid!;
+  }
+
+  it("normal end: group child and setsid escapee are gone, an unrelated look-alike is untouched", async () => {
+    const id = `reapt-${process.pid}-a`;
+    const root = await startFake(id);
+    const other = spawn("sh", ["-c", `${loop("unrelated")}`], { detached: true, stdio: "ignore" });
+    other.unref();
+    cleanup.push(other.pid!);
+    await reapWorkerProcesses({ rootPid: root, id }, () => undefined, 300);
+    await waitFor(() => !psLines().some((l) => /-group|-scratch/.test(l)));
+    expect(psLines().filter((l) => /-group|-scratch/.test(l))).toEqual([]);
+    expect(psLines().some((l) => l.includes("-unrelated"))).toBe(true);
+  }, 20000);
+
+  it("kill: the leader dies first, the sweep still ends its group and the escapee", async () => {
+    const id = `reapt-${process.pid}-b`;
+    const root = await startFake(id);
+    process.kill(root, "SIGKILL");
+    await new Promise((r) => setTimeout(r, 200));
+    await reapWorkerProcesses({ rootPid: root, id }, () => undefined, 300);
+    await waitFor(() => !psLines().some((l) => /-group|-scratch/.test(l)));
+    expect(psLines().filter((l) => /-group|-scratch/.test(l))).toEqual([]);
+  }, 20000);
 });

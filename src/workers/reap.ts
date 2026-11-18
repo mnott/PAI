@@ -63,13 +63,14 @@ export function pidsWithCwdInside(dir: string, among?: number[]): number[] {
 
 /** Live pids sharing the process GROUP of `pid` (`ps -o pgid=`), `rootPid` itself excluded. A worker's run leads its own group (spawned detached); a backgrounded Bash child shares it, so killing the group ends them too. */
 export function pidsInGroupOf(pid: number, rootPid?: number): number[] {
+  if (!(pid > 1)) return [];
   try {
+    // a group id is the pid of the process that created it: members of group `pid` exist only when `pid` led it
+    // (even once the leader is gone), so a run inside its launcher's shared group signals nothing
     const rows = execFileSync("ps", ["-axo", "pid=,pgid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 })
       .split("\n")
       .map((l) => l.trim().split(/\s+/).map(Number));
-    const pgid = rows.find(([p]) => p === pid)?.[1];
-    if (!pgid || pgid <= 1) return [];
-    return rows.filter(([p, g]) => g === pgid && p !== pid && p !== rootPid && p !== process.pid).map(([p]) => p);
+    return rows.filter(([p, g]) => g === pid && p !== pid && p !== rootPid && p !== process.pid).map(([p]) => p);
   } catch {
     return [];
   }

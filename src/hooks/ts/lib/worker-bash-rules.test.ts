@@ -305,3 +305,22 @@ describe("worker guard heredoc bodies", () => {
     expect(denied("cat > x <<EOF; pkill foo\nhello\nEOF")).toBe(true);
   });
 });
+
+describe("worker guard backgrounded busy loops", () => {
+  const ctx = (): WorkerGuardContext => ({
+    cwd: "/repo/.workers/worktrees/abc",
+    home: "/home/u",
+    worktreeRoot: "/repo/.workers/worktrees/abc",
+    inWorktree: true,
+    mainCheckout: "/repo",
+    testScript: () => null,
+  });
+  const denied = (command: string) =>
+    JSON.stringify(
+      decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" }, ctx)
+    ).includes("deny");
+  for (const c of ["( while :; do :; done ) &", "setsid sh -c 'while :; do :; done' &", "yes > /dev/null &", "for i in 1 2; do (while :; do :; done) & done"])
+    it(`denies ${c}`, () => expect(denied(c)).toBe(true));
+  for (const c of ["timeout 20 sh -c 'while :; do :; done' &", "while read l; do echo $l; done < f", "timeout 5 yes > /dev/null &"])
+    it(`allows ${c}`, () => expect(denied(c)).toBe(false));
+});
