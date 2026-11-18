@@ -578,6 +578,70 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   return ALLOW;
 }
 
+/**
+ * The unbounded busy loop: `while :; do :; done`, `until true; do :; done`, `for ((;;))` — a shell spin that
+ * burns a whole core and, backgrounded, outlives the worker that started it (2026-11-17/18 overnight: a
+ * scratch load-probe's `while :; do :; done &` loops were reparented to launchd and held load 160 for
+ * 10 h, starving every session on the machine). A loop is only a busy loop when its body runs no real
+ * command: `:`/`true`/`false`, sleep, nested loops and control words are not work. `yes > /dev/null &`
+ * spins just the same without any loop syntax.
+ */
+const BUSY_LOOP_RE = /\b(while|until)\b[^;\n]*[;\n]\s*do\b([\s\S]*?)\bdone\b\s*(?:[)]\s*)?&|\bfor\s*\(\(\s*;\s*;\s*\)\)\s*(?:do\b([\s\S]*?)\bdone)?\s*[;&]/g;
+const BUSY_BODY_WORD = new Set(["", ":", "true", "false", "sleep", "while", "until", "for", "if", "then", "else", "elif", "do", "done", "{", "}", "(", ")", "!", "wait"]);
+/** The same loop grammar without the paired-background requirement: a busy loop anywhere in text that holds a background. */
+const BUSY_LOOP_ANY_RE = /\b(while|until)\b[^;\n]*[;\n]\s*do\b([\s\S]*?)\bdone\b|\bfor\s*\(\(\s*;\s*;\s*\)\)\s*(?:do\b([\s\S]*?)\bdone)?/g;
+/** A backgrounded `yes` (or a yes/gnu-yes in a pipeline) with no duration cap: an infinite byte spinner. */
+const YES_BG_RE = /(?:^|[\s;&|(])((?:g)?nu?-?yes|(?:\/\S+\/)?y(?:es|ss))\b[^;&|\n]*&/;
+
+/** True when a loop body holds no real command (only `:`/true/false/sleep/nested loops/control words). */
+function busyLoopBody(body: string): boolean {
+  const inner = parseCommand(body);
+  if (!inner.length) return true;
+  for (const seg of inner) {
+    const w = stripPrefix(seg.words)[0];
+    if (w === undefined) continue;
+    if (BUSY_BODY_WORD.has(w)) continue;
+    if (/^\d+$/.test(w)) continue; // `2>/dev/null` left as its own token by the splitter
+    return false;
+  }
+  return true;
+}
+
+/** Deny a backgrounded unbounded busy loop: a spin that survives the worker and starves the machine. */
+export function busyLoopReason(command: string): string | null {
+  let text = blankHeredocBodies(command);
+  // `timeout N …` caps the spin by definition: what it wraps is bounded, not an unbounded loop.
+  // The duration may sit behind flag values (`timeout -k 5 20`, `perl -e 'alarm 20; exec @ARGV'`).
+  text = text.replace(/\b(?:g?timeout|perl)\b([^;&|\n]*)/g, (whole, head) => {
+    const m = /(?:^|\s)((?:-\S+\s+)*)(\d+(?:\.\d+)?[smhd]?)(?=\s)/.exec(head);
+    return m ? whole.slice(0, m.index) + m[1] + " ".repeat(m[2].length) : whole;
+  });
+  for (const m of text.matchAll(BUSY_LOOP_RE)) {
+    if (busyLoopBody(m[2] ?? m[3] ?? "")) return BUSY_LOOP_REASON;
+  }
+  // `while :; do :; done` anywhere a background follows it: `sh -c '…' &`, `setsid sh -c '…' &` and the
+  // function-body form all hide the loop behind quotes or a `&` that closes an OUTER command, where the
+  // text regex above cannot pair loop with background. A quoted payload is a spinner only when every
+  // `… &` inside it ends in a busy loop (the documented nohup job recipe stays allowed).
+  if (/\S\s*&/.test(text)) {
+    for (const m of text.matchAll(BUSY_LOOP_ANY_RE)) {
+      if (busyLoopBody(m[2] ?? m[3] ?? "")) return BUSY_LOOP_REASON;
+    }
+    for (const q of text.matchAll(/'([^']*)'|"([^"]*)"/g)) {
+      const inner = q[1] ?? q[2];
+      if (!/&/.test(inner)) continue;
+      const loops = [...inner.matchAll(BUSY_LOOP_RE)];
+      if (loops.length && loops.every((m) => busyLoopBody(m[2] ?? m[3] ?? ""))) return BUSY_LOOP_REASON;
+    }
+  }
+  if (YES_BG_RE.test(text)) return BUSY_LOOP_REASON;
+  return null;
+}
+
+const BUSY_LOOP_REASON =
+  "unbounded busy loop blocked: `while :; do :; done &` / `yes > /dev/null &` burns a core and outlives your run when backgrounded (an overnight load-probe held load 160 for 10 h and starved the machine). " +
+  "Cap it with a duration — `timeout 20 <command>` — or use `pai worker wait-on` for a detached job.";
+
 const MAX_FOREGROUND_SECS = 120;
 const WAIT_REASON_TAIL =
   "calls longer than 2 min block operator messages and supervision; long jobs run fine detached: " + WAIT_RECIPE + ".";
@@ -620,6 +684,10 @@ function decideCommand(command: string, ctx: WorkerGuardContext, detached = fals
   // one pass over the text: heredoc bodies blanked for every rule below (parseCommand segments, the sleep scan, the commit message)
   const st = { cwd: ctx.cwd, raw: blankHeredocBodies(command) };
   const segs = parseCommand(command);
+  // the busy-loop check reads raw text (parseCommand's `&` splitting loses which loop was backgrounded),
+  // and runs at every depth including inside `nohup … &` / `bash -c '…' &` payloads
+  const spin = busyLoopReason(st.raw);
+  if (spin) return deny(spin);
   const long = detached ? null : longWaitReason(command, segs);
   if (long) return deny(long);
   for (const seg of segs) {

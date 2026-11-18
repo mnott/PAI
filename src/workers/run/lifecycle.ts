@@ -6,6 +6,6 @@
 import { reapWorkerProcesses } from "../reap.js";
 
 /** End everything this run process spawned (and anything cwd'd in the worktree). Never throws. */
-export async function reapRunTree(worktreeDir?: string): Promise<void> {
-  await reapWorkerProcesses({ rootPid: process.pid, dir: worktreeDir });
+export async function reapRunTree(worktreeDir?: string, id?: string): Promise<void> {
+  await reapWorkerProcesses({ rootPid: process.pid, dir: worktreeDir, id });
 }

@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { isLive, loadStatuses } from "./status.js";
+import { scratchDir } from "./scratch.js";
 import { ownedTree, worktreesDir } from "./worktree.js";
 import { processTree } from "./wait-on.js";
 
@@ -60,11 +61,75 @@ export function pidsWithCwdInside(dir: string, among?: number[]): number[] {
   return out;
 }
 
-/** Processes belonging to a worker: descendants of `rootPid` plus any with cwd inside `dir`, minus protected ones. */
-export function findOrphans(opts: { rootPid?: number; dir?: string }): OrphanProc[] {
+/** Live pids sharing the process GROUP of `pid` (`ps -o pgid=`), `rootPid` itself excluded. A worker's run leads its own group (spawned detached); a backgrounded Bash child shares it, so killing the group ends them too. */
+export function pidsInGroupOf(pid: number, rootPid?: number): number[] {
+  if (!(pid > 1)) return [];
+  try {
+    // a group id is the pid of the process that created it: members of group `pid` exist only when `pid` led it
+    // (even once the leader is gone), so a run inside its launcher's shared group signals nothing
+    const rows = execFileSync("ps", ["-axo", "pid=,pgid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 })
+      .split("\n")
+      .map((l) => l.trim().split(/\s+/).map(Number));
+    return rows.filter(([p, g]) => g === pid && p !== pid && p !== rootPid && p !== process.pid).map(([p]) => p);
+  } catch {
+    return [];
+  }
+}
+
+/** Live pids whose command line carries PAI_WORKER_ID=<id> (a wrapper env assignment survives exec; `ps eww` shows it when the process keeps its argv). The reliable identity is the scratch dir in cwd or argv — see pidsWithScratchDir. */
+export function pidsWithWorkerEnv(id: string): number[] {
+  const out: number[] = [];
+  try {
+    const text = execFileSync("ps", ["eww", "-ax"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 });
+    for (const line of text.split("\n")) {
+      if (!line.includes(`PAI_WORKER_ID=${id}`)) continue;
+      const m = /^\s*(\d+)\b/.exec(line);
+      if (m && Number(m[1]) !== process.pid) out.push(Number(m[1]));
+    }
+  } catch {
+    /* ps failed */
+  }
+  return out;
+}
+
+/** Live pids whose cwd or argv contains `dir`: the escapees that left the tree and the group via setsid/nohup/disown but still carry their worker's scratch dir. */
+export function pidsWithScratchDir(dir: string): number[] {
+  const out = new Set<number>();
+  try {
+    for (const p of pidsWithCwdInside(dir)) out.add(p);
+  } catch {
+    /* lsof failed */
+  }
+  try {
+    // the argv half: `ps eww` lines carry pid + command + environment, so a child that inherited
+    // TMPDIR=<dir> is found even when its own argv does not mention it
+    const text = execFileSync("ps", ["eww", "-ax"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 });
+    for (const line of text.split("\n")) {
+      if (!line.includes(dir)) continue;
+      const m = /^\s*(\d+)\b/.exec(line);
+      if (m && Number(m[1]) !== process.pid) out.add(Number(m[1]));
+    }
+  } catch {
+    /* ps failed */
+  }
+  return [...out];
+}
+
+/** Processes belonging to a worker: descendants of `rootPid`, its process group (the backgrounded Bash children), anything with cwd inside `dir` or the worker's scratch dir, and anything whose argv names worker `id` — minus protected ones. */
+export function findOrphans(opts: { rootPid?: number; dir?: string; id?: string }): OrphanProc[] {
   const pids = new Set<number>();
-  if (opts.rootPid) for (const p of processTree(opts.rootPid).slice(1)) pids.add(p);
+  if (opts.rootPid) {
+    for (const p of processTree(opts.rootPid).slice(1)) pids.add(p);
+    // the run leads its own group: a `while :; do :; done &` child shares it even after the runner dies
+    for (const p of pidsInGroupOf(opts.rootPid, opts.rootPid)) pids.add(p);
+  }
   if (opts.dir) for (const p of pidsWithCwdInside(opts.dir)) pids.add(p);
+  // escapees that left the group via setsid/nohup but still carry their identity: the scratch dir in
+  // cwd/argv (TMPDIR is under it), or PAI_WORKER_ID visible in `ps eww`
+  if (opts.id) {
+    for (const p of pidsWithScratchDir(scratchDir(opts.id))) pids.add(p);
+    for (const p of pidsWithWorkerEnv(opts.id)) pids.add(p);
+  }
   pids.delete(process.pid);
   const out: OrphanProc[] = [];
   for (const pid of pids) {
@@ -109,7 +174,7 @@ export async function endProcesses(procs: OrphanProc[], log: (line: string) => v
 }
 
 /** Teardown of a worker: end everything it left running. Never throws. */
-export async function reapWorkerProcesses(opts: { rootPid?: number; dir?: string }, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
+export async function reapWorkerProcesses(opts: { rootPid?: number; dir?: string; id?: string }, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
   try {
     const procs = findOrphans(opts);
     if (procs.length) await endProcesses(procs, log, graceMs);
@@ -134,12 +199,19 @@ export function snapshotWorkerPids(_opts?: { rootPid?: number; dir?: string }): 
  * The cwd listing only looks at the new pids, so it stays cheap. `rootPid` itself, the live router and anything older are never touched;
  * a spare the host starts meanwhile has its own dir and is no descendant of the slot process, so it is no candidate.
  */
-export async function reapNewSince(opts: { rootPid?: number; dir?: string }, before: Set<number>, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
+export async function reapNewSince(opts: { rootPid?: number; dir?: string; id?: string }, before: Set<number>, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
   try {
     const fresh = [...snapshotWorkerPids()].filter((p) => !before.has(p) && p !== process.pid && p !== opts.rootPid);
     const pids = new Set<number>();
-    if (opts.rootPid) for (const p of processTree(opts.rootPid).slice(1)) if (!before.has(p)) pids.add(p);
+    if (opts.rootPid) {
+      for (const p of processTree(opts.rootPid).slice(1)) if (!before.has(p)) pids.add(p);
+      for (const p of pidsInGroupOf(opts.rootPid, opts.rootPid)) if (!before.has(p)) pids.add(p);
+    }
     if (opts.dir) for (const p of pidsWithCwdInside(opts.dir, fresh)) pids.add(p);
+    if (opts.id) {
+      for (const p of pidsWithScratchDir(scratchDir(opts.id))) if (!before.has(p)) pids.add(p);
+      for (const p of pidsWithWorkerEnv(opts.id)) if (!before.has(p)) pids.add(p);
+    }
     pids.delete(process.pid);
     if (opts.rootPid) pids.delete(opts.rootPid);
     const procs: OrphanProc[] = [];
