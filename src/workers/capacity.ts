@@ -19,6 +19,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
+import { distBuildId } from "../daemon/dist-watch.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
 import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
@@ -86,6 +87,16 @@ interface QueueEntry {
   since?: number;
   /** Admission priority; unset = normal. */
   priority?: QueuePriority;
+  /** Build id of the process that queued the run (dist entry mtime:size at queue entry). */
+  build?: string;
+}
+
+/** Grace a free slot gets for the queue head to claim it before the next waiter may take it. */
+export const HEAD_GRACE_MS = 10_000;
+
+/** Build id of the running dist entry; undefined when unreadable (source runs, mid-build). */
+export function currentBuildId(): string | undefined {
+  return process.argv[1] ? distBuildId(process.argv[1]) : undefined;
 }
 
 /** Write a ticket atomically (temp + rename): a poller never reads it half-written. The ".tmp" suffix keeps it out of the listing. */
@@ -96,7 +107,7 @@ export function writeTicket(path: string, text: string): void {
 }
 
 const entryText = (e: QueueEntry): string =>
-  `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}${e.since === undefined ? "" : ` @${e.since}`}${e.priority && e.priority !== "normal" ? ` p:${e.priority}` : ""}`;
+  `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}${e.since === undefined ? "" : ` @${e.since}`}${e.priority && e.priority !== "normal" ? ` p:${e.priority}` : ""}${e.build ? ` b:${e.build}` : ""}`;
 
 /** A ticket deleted (its run stopped) or written unparsably between the listing and this read is absent, not an error. */
 function readEntry(dir: string, id: string): QueueEntry | null {
@@ -111,9 +122,11 @@ function readEntry(dir: string, id: string): QueueEntry | null {
   const at = marks.find((m) => m.startsWith("@"));
   const since = at ? Number(at.slice(1)) : NaN;
   const prio = marks.find((m) => m.startsWith("p:"))?.slice(2) as QueuePriority | undefined;
+  const build = marks.find((m) => m.startsWith("b:"))?.slice(2);
   return {
     id,
     pid: Number(p),
+    ...(build ? { build } : {}),
     front: marks.includes("front"),
     ...(rank === undefined ? {} : { rank }),
     ...(Number.isFinite(since) ? { since } : {}),
@@ -309,6 +322,11 @@ export function reorderQueueTo(logDir: string, provider: string, id: string, pos
   return liveQueue(logDir, provider);
 }
 
+/** A ticket's recorded build differs from the current one; a ticket without a build (written before this field) is stale when the current build is known. */
+export function isStaleBuild(recorded: string | undefined, current: string | undefined): boolean {
+  return current !== undefined && recorded !== current;
+}
+
 export interface QueueRow {
   id: string;
   provider: string;
@@ -324,6 +342,8 @@ export interface QueueRow {
   since?: number;
   /** Admission priority of the ticket (normal when unset). */
   priority?: QueuePriority;
+  /** The waiter was queued by an older build than the current dist: a leftover from an upgrade ("stale waiter"). */
+  stale?: boolean;
 }
 
 /**
@@ -332,7 +352,7 @@ export interface QueueRow {
  * worker_queue list. Dead entries are dropped; a provider with no cap (or a
  * cap the config no longer names) still lists its waiters, cap undefined.
  */
-export function queueRows(logDir: string, caps: Record<string, number | undefined> = {}, isAlive: (pid: number) => boolean = alive, statuses?: WorkerStatus[]): QueueRow[] {
+export function queueRows(logDir: string, caps: Record<string, number | undefined> = {}, isAlive: (pid: number) => boolean = alive, statuses?: WorkerStatus[], currentBuild: string | undefined = currentBuildId()): QueueRow[] {
   let providers: string[];
   try {
     providers = readdirSync(join(logDir, "queue")).sort();
@@ -352,6 +372,7 @@ export function queueRows(logDir: string, caps: Record<string, number | undefine
         status: loadStatus(logDir, e.id) ?? undefined,
         ...(e.since === undefined ? {} : { since: e.since }),
         ...(e.priority ? { priority: e.priority } : {}),
+        ...(isStaleBuild(e.build, currentBuild) ? { stale: true } : {}),
       });
     });
   }
@@ -562,6 +583,10 @@ export interface CapacityOpts {
   /** Waited this long (default `config.maxTotalWaitMs`): call onAlarm once. The alarm only tells the owner; it never kills or skips the run. */
   alarmMs?: number;
   onAlarm?: (info: CapacityInfo) => void;
+  /** Build id of this process (default: the dist entry); recorded in the ticket so a stale waiter shows. */
+  buildId?: () => string | undefined;
+  /** Grace before the next waiter takes a free slot the head left unclaimed (default HEAD_GRACE_MS). */
+  headGraceMs?: number;
   /** Called at the start and after every poll while queued; null once the slot is granted (the caller flips queued -> running then). */
   onWait?: (info: CapacityInfo | null) => void;
   /** Called at the start and after every poll with the pane's queue fields; null once the slot is granted (the pane's queue file). */
@@ -606,12 +631,17 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
   const t0 = now();
-  const ticketText = (front: boolean): string => `${self.pid ?? process.pid}${front ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`;
+  const myBuild = (o.buildId ?? currentBuildId)();
+  const graceMs = o.headGraceMs ?? HEAD_GRACE_MS;
+  const ticketText = (front: boolean): string => `${self.pid ?? process.pid}${front ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}${myBuild ? ` b:${myBuild}` : ""}`;
   // a run the preemption sweep parked here ("front", pause closed, no slot): this poll takes the wait over, its place at the head kept
   const parked = existsSync(entry) && o.priority !== "front";
   writeTicket(entry, ticketText(o.priority === "front" || parked || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
 
   let madeUrgent = false;
+  // since when a slot has been free while a waiter ahead of us left it unclaimed
+  let freeSince: number | undefined;
+  const warned = new Set<string>();
 
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
@@ -630,7 +660,26 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       (s) => s.id !== self.id && holds(s) && holdsSlot(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
-    return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length };
+    return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length, head: queue[0] };
+  };
+  // Admission: the head takes a free slot at once; a later waiter only once the slot stayed free past the
+  // grace (one grace per place ahead of it), so a stuck head (a waiter left over from an older build) never blocks the rest.
+  const admitted = (): boolean => {
+    if (held !== undefined || c.holding >= cap) {
+      freeSince = undefined;
+      return false;
+    }
+    if (c.position === 1) return true;
+    freeSince ??= now();
+    if (now() - freeSince < graceMs * (c.position - 1)) return false;
+    const h = c.head;
+    if (h && !warned.has(h)) {
+      warned.add(h);
+      const e = readEntry(dir, h);
+      const stale = e && isStaleBuild(e.build, myBuild);
+      o.log?.(`${stale ? "stale waiter" : "stuck head"}: ${h} did not claim a free slot in ${Math.round(graceMs / 1000)}s${stale ? ` (build ${e?.build ?? "unknown"}, current ${myBuild})` : ""}; ${self.id} goes first`);
+    }
+    return true;
   };
 
   if (o.priority === "front") {
@@ -695,7 +744,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
         try { o.preempt?.(); } catch { /* best effort */ }
       }
       c = check();
-      if (c.position === 1 && c.holding < cap && held === undefined) break;
+      if (admitted()) break;
       o.onWait?.(info());
       queued(paneQueued(info()));
       if (!alarmed && o.onAlarm && now() - t0 >= (o.alarmMs ?? cfg.maxTotalWaitMs)) {

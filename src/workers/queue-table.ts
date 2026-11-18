@@ -134,12 +134,12 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
   const live = i.statuses.filter((s) => deepIds.has(s.id) || s.state === "running" || s.state === "queued" || ticket.has(s.id));
   const gone = replacedIds(live);
-  const row = (s: WorkerStatus, waiting: boolean, since: number, prio?: string): Omit<TableRow, "slot"> => {
+  const row = (s: WorkerStatus, waiting: boolean, since: number, prio?: string, stale?: boolean): Omit<TableRow, "slot"> => {
     const local = i.isLocal(s.provider);
     const deep = i.deepFrozen?.(s.id) === true;
     const fr = !deep && i.frozen?.(s.id) === true;
     const state: RowState = deep ? "deep-frozen" : fr ? "frozen" : s.paused ? "paused" : waiting ? "waiting" : "running";
-    const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? ""].filter(Boolean);
+    const notes = [s.fallThroughOf ? `fall-through of ${s.fallThroughOf}` : "", s.route?.reason?.startsWith("rerouted") ? s.route.reason : "", s.escalated ?? "", stale ? "stale waiter (older build)" : ""].filter(Boolean);
     const stateText =
       state === "waiting" ? `waiting for a ${local ? "local" : "cloud"} slot` : state === "paused" ? (pausedFree(s) ? "paused (slot freed)" : "paused (holds its slot)") : state === "frozen" ? "frozen (in memory)" : state === "deep-frozen" ? "deep-frozen (saved)" : "running";
     return {
@@ -167,7 +167,7 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
   const waiting = i.queue.filter((q) => !gone.has(q.id) && !deepIds.has(q.id) && q.status).sort((a, b) => a.position - b.position || (a.since ?? stMs(a.status!)) - (b.since ?? stMs(b.status!)) || (a.id < b.id ? -1 : 1));
-  waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority) }));
+  waiting.forEach((q, n) => out.push({ slot: n + 1, ...row(q.status!, true, q.since ?? stMs(q.status!), q.priority, q.stale) }));
   for (const s of runners.filter((x) => pausedFree(x))) out.push({ slot: "freed", ...row(s, false, stMs(s)) });
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
   return out;
