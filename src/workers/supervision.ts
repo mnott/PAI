@@ -58,6 +58,7 @@ import { dirname, join } from "node:path";
 import { alive, isChatPane, loadStatusesCached, nowStamp, type WorkerStatus } from "./status.js";
 import { readWorkersSection } from "./config.js";
 import { itermForClaudeSession, itermUuid } from "./scope.js";
+import { classifyAlert } from "./helper-uses.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" in a long-running daemon (prune-dist.mjs deletes superseded chunks).
 import {
@@ -628,6 +629,14 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   )) {
     const owner = byId.get(p.worker);
     if (!owner || isBenchWorker(owner)) continue;
+    if (p.group.cls === "unknown") {
+      // the rule table cannot name it: a small local model gives a class and a one-line reason; rules stay the fallback
+      const v = await classifyAlert(p.group).catch(() => null);
+      if (v) {
+        p.group.cls = v.cls;
+        p.group.hint = `${v.reason} (local model)`;
+      }
+    }
     pending.push({
       id: `${owner.id}#toolerror@${toolErrorSigTag(p.signature)}`,
       ts: nowStamp(now),

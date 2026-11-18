@@ -205,7 +205,7 @@ Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
   ctx.html("cells",wmdCells(e,inv));
   ctx.html("ctx",wmdCtx(e,inv));
   ctx.html("chips",e.stopped||e.down?"":wmdChips(e,inv));
-  ctx.html("note",wmdNote(e));
+  ctx.html("note",wmdNote(e)+wmdHelper(e,inv));
   ctx.list("inst",e.tier?e.tier.mine:[],function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){var h=wmdInst(i);if(d.__h!==h){d.innerHTML=h;d.__h=h}});
  }});
 /** The header actions of a registry-model card: start, stop (confirm when requests are in flight), instance stepper -/+ (local.scale). */
@@ -301,6 +301,14 @@ function winFeedModels(inv){
  WMD={inv:inv};
  Win.update("models",inv);
  wmdSync(inv);
+}
+/** Small-task helper traffic of this runtime's model in the last hour: requests, median latency, fallbacks to rules. */
+function wmdHelper(e,inv){
+ var h=inv&&inv.helper&&inv.helper.models,k,s=null;
+ if(!h)return"";
+ for(k in h)if(k===e.r.name||k==="ollama:"+(e.m&&e.m.model||"")){s=h[k];break}
+ if(!s)return"";
+ return' <span class="num" title="PAI helper requests (low priority, one at a time) in the last hour">helper '+s.perHour+"/h"+(s.medianMs==null?"":" · median "+Math.round(s.medianMs)+" ms")+" · "+s.fallbacks+" fallback"+(s.fallbacks===1?"":"s")+"</span>";
 }
 function wmdOff(){WinA.winClick(Win.el("models").querySelector('[data-act="off"]'),"models","local.off",{},winHost())}
 function modelsDefaults(){
