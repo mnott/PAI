@@ -914,7 +914,15 @@ function assertNoSnapshotDrift(cwd: string, snapshot: string, paths: string[], i
  * <snapshot> <branch>` — are applied straight onto the checkout's working
  * tree as uncommitted edits, exactly like the uncommitted state the worker
  * started from. Works even if `cwd`'s HEAD moved since the snapshot: the
- * diff is applied to files, not merged into a tree.
+ * diff is applied to files, not merged into a tree. The gate (verify, stub
+ * and test-loss scans) runs on the applied change before anything is made
+ * final — a failure reverts the applied diff and keeps the branch; a pass
+ * commits the merge on the checkout's branch ("wip: uncommitted changes of
+ * <id> at merge", author as for worker commits), so code never lands in the
+ * checkout uncommitted (live 2026-11-18: an uncommitted apply skipped the
+ * whole gate and the daemon restart, and the L0 had to test and commit by
+ * hand). `--no-commit` keeps the old shape: applied uncommitted, no gate,
+ * branch and worktree kept for a manual review + commit.
  */
 function mergeSnapshotWorker(
   logDir: string,
@@ -1052,6 +1060,20 @@ function mergeSnapshotWorker(
     { logDir, id }
   );
   if (noCommit) return withGate(gate, noCommitNextSteps(id, branch, worktreeDir, changedPaths));
+  // the gate passed: make the applied change final on the checkout's branch.
+  // A worker merge never leaves code uncommitted in the checkout — an
+  // uncommitted apply skipped the whole gate and the daemon restart
+  // (live 2026-11-18), and left the L0 to test and commit by hand.
+  if (diff.length > 0) {
+    git(st.cwd, ["add", "-A", "--", ...changedPaths]);
+    const author = workerCommitAuthor(worktreeDir, branch);
+    git(st.cwd, [
+      ...(author ? ["-c", `user.name=${author.name}`, "-c", `user.email=${author.email}`] : []),
+      "commit",
+      "-m",
+      `wip: uncommitted changes of ${id} at merge`,
+    ]);
+  }
   if (!keepLive) {
     for (const l of salvageNotes(st.cwd, worktreeDir, id)) console.log(l);
     removeWorktree(st.cwd, worktreeDir, true);
@@ -1064,8 +1086,11 @@ function mergeSnapshotWorker(
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   const base =
-    `applied worker ${id}'s changes (branch ${branch}) to ${st.cwd} as uncommitted changes: ` +
-    `${changedPaths.join(", ")}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed, branch deleted)"}`;
+    diff.length > 0
+      ? `merged worker ${id}'s changes (branch ${branch}) into ${st.cwd} as commit "wip: uncommitted changes of ${id} at merge": ` +
+        `${changedPaths.join(", ")}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed, branch deleted)"}`
+      : `applied worker ${id}'s changes (branch ${branch}) to ${st.cwd} as uncommitted changes: ` +
+        `${changedPaths.join(", ")}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed, branch deleted)"}`;
   const notes: string[] = [];
   if (salvage.committed.length) {
     notes.push(
@@ -1076,6 +1101,29 @@ function mergeSnapshotWorker(
     notes.push(`skipped ${salvage.skipped.join(", ")}`);
   }
   return withGate(gate, notes.length ? `${base}; ${notes.join("; ")}` : base);
+}
+
+/**
+ * The author of the worker's own commits: the author recorded on its branch
+ * tip (salvage and worker commits carry the identity that made them); falls
+ * back to the worktree's git config while its tree stands; null when neither
+ * is readable (the checkout's own identity commits it then, as before).
+ */
+function workerCommitAuthor(wtDir: string, branch: string): { name: string; email: string } | null {
+  try {
+    const line = git(wtDir || ".", ["log", "-1", "--format=%an%x00%ae", branch]).split("\0");
+    if (line[0] && line[1]) return { name: line[0], email: line[1] };
+  } catch {
+    // branch unreadable from here: try the worktree's config below
+  }
+  if (!existsSync(wtDir)) return null;
+  try {
+    const name = git(wtDir, ["config", "user.name"]);
+    const email = git(wtDir, ["config", "user.email"]);
+    return name && email ? { name, email } : null;
+  } catch {
+    return null;
+  }
 }
 
 function noCommitNextSteps(id: string, branch: string, worktreeDir: string, paths: string[]): string {
