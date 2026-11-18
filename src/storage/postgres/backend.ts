@@ -42,6 +42,9 @@ import * as kgTriples from "./kg-triples.js";
 import * as observations from "./observations.js";
 import * as filePaths from "./file-paths.js";
 import { ensureIndexes } from "./ensure-index.js";
+import type { CodeGraphStore } from "../../codegraph/store.js";
+import { PostgresCodeGraphStore } from "../../codegraph/store-postgres.js";
+import { ensureCodeGraphSchemaPostgres } from "../../codegraph/schema-postgres.js";
 
 const { Pool: PgPool } = pg;
 
@@ -50,6 +53,7 @@ export class PostgresBackend implements StorageBackend {
   readonly supportsPostgresFeatures = true;
 
   private pool: Pool;
+  private codeGraphStore: CodeGraphStore | null = null;
 
   /**
    * Ensure the per-user database exists and has the required schema.
@@ -284,6 +288,16 @@ export class PostgresBackend implements StorageBackend {
     await ensureIndexes(pool, [
       { name: "idx_pc_unembedded", table: "pai_chunks", columns: "project_id, id", where: "embedding IS NULL" },
     ]);
+
+    // Migration: code knowledge graph tables (code_files/code_symbols/code_refs
+    // + generated tsvector), repo_root-scoped. Idempotent; see src/codegraph.
+    await ensureCodeGraphSchemaPostgres(pool);
+  }
+
+  /** Code knowledge graph store over this backend's pool. */
+  codeGraph(): CodeGraphStore {
+    if (!this.codeGraphStore) this.codeGraphStore = new PostgresCodeGraphStore(this.pool);
+    return this.codeGraphStore;
   }
 
   constructor(config: PostgresConfig) {

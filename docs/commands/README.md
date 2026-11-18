@@ -17,6 +17,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai clean`](clean.md) | Clean up what PAI leaves on disk (dry run unless --apply) |
 | [`pai clear-names`](clear-names.md) | Wipe the stored tab names (recovery) |
 | [`pai cockpit`](cockpit.md) | The router's web cockpit: layout export |
+| [`pai code`](code.md) | Map a repository: symbols, callers and blast radius |
 | [`pai config`](config.md) | PAI settings: show, read, change |
 | [`pai daemon`](daemon.md) | The background service: status, start, stop, restart, logs |
 | [`pai db`](db.md) | Look into the PAI database (read only) |
@@ -134,6 +135,14 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai cockpit` | The router's web cockpit: layout export |
 | `pai cockpit layout` | The cockpit's default window layout |
 | `pai cockpit layout export` | Write the saved default cockpit layout to the repo's shipped defaults file |
+| `pai code` | Map a repository: symbols, callers and blast radius |
+| `pai code callees` | What a symbol calls or uses |
+| `pai code callers` | Who calls or uses a symbol |
+| `pai code explore` | Answer a question about the code in one call |
+| `pai code impact` | What a change to a symbol could break |
+| `pai code index` | Index a repository |
+| `pai code search` | Find symbols by name |
+| `pai code status` | Show what is indexed for a repository |
 | `pai config` | PAI settings: show, read, change |
 | `pai config get` | Print one setting |
 | `pai config list` | Print all settings (secrets hidden) |

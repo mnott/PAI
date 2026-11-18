@@ -247,6 +247,10 @@ export const ORCHESTRATOR_CONTRACT =
   "Throwaway verification files (test scripts, dumps) go under .pai-scratch/ in your worktree (gitignored, never committed): you may write there, and run them directly; do not commit new tests (tests are governed: tests/KEPT.md). " +
   "When several unit specs share rules, the AG2 report format or a Do-not list, write that block once at the top of each spec between a line `--- shared ---` and a line `--- unit ---` (byte-identical across the specs), then the unit's own goal after the second marker: the pool puts the shared block into the slot's cached system prompt.";
 
+/** One guidance line: map an unfamiliar repo with the code graph before grepping. */
+export const CODE_EXPLORE_LINE =
+  "Before grepping or globbing an unfamiliar repo, run `pai code explore <question or symbol names>` via Bash (or the code_explore tool where the pai MCP server is loaded); it returns definitions, source, callers and blast radius in one answer and indexes the repo on first use.";
+
 /**
  * The system prompt appended to every headless run, chosen by task class and
  * report format. `spotcheck`/`simple` get a short contract (no delegation
@@ -265,6 +269,7 @@ export function workerContractPrompt(
   const short = SHORT_CONTRACT_CLASSES.has(cls ?? "");
   const planner = !short && (PLANNER_CLASSES.has(cls ?? "") || Boolean(orchestrate));
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
+  base += `\n${CODE_EXPLORE_LINE}`;
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;
   // a planner without the flag still gets the exact start/wait/merge commands.

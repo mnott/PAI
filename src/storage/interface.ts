@@ -21,6 +21,7 @@ import type { IndexResult } from "../memory/indexer/types.js";
 import type { RegistryBackend } from "./registry-interface.js";
 import type { Tunnel, FindTunnelsOptions, FindTunnelsResult } from "../memory/tunnels.js";
 import type { ClassifiedObservation } from "../observations/classifier.js";
+import type { CodeGraphStore } from "../codegraph/store.js";
 
 export type { Tunnel, FindTunnelsOptions, FindTunnelsResult };
 export type { KgTriple, KgAddParams, KgQueryParams, KgContradiction };
@@ -692,4 +693,12 @@ export interface StorageBackend {
 
   /** Rename file/chunk rows in bulk (path only — content/embeddings untouched). Returns rows updated. */
   renameFilePaths(moves: Array<{ oldPath: string; newPath: string }>): Promise<number>;
+
+  // -------------------------------------------------------------------------
+  // Code knowledge graph (code_files / code_symbols / code_refs) — both
+  // backends. Repo_root-scoped; see src/codegraph/store.ts for the contract.
+  // -------------------------------------------------------------------------
+
+  /** The code-graph store for this backend (lazily creates its tables on first use). */
+  codeGraph(): CodeGraphStore;
 }
