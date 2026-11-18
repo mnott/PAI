@@ -45,11 +45,12 @@ export function exactNameTokens(query: string): string[] {
   return [...out];
 }
 
-function covers(words: Set<string>, term: string): boolean {
-  if (words.has(term)) return true;
-  if (term.length < 4) return false;
-  for (const w of words) if (w.length >= 4 && (w.startsWith(term) || term.startsWith(w))) return true;
-  return false;
+/** 1 for an exact sub-word, 0.5 for a prefix/stem match (list ~ lists), else 0 */
+function covers(words: Set<string>, term: string): number {
+  if (words.has(term)) return 1;
+  if (term.length < 4) return 0;
+  for (const w of words) if (w.length >= 4 && (w.startsWith(term) || term.startsWith(w))) return 0.5;
+  return 0;
 }
 
 export function pathWords(path: string): Set<string> {
@@ -69,8 +70,8 @@ export function scoreSymbol(s: SymbolRow, terms: string[], exactNames: Set<strin
     const inName = covers(nameW, t);
     const inPath = covers(pathW, t);
     const inDoc = covers(docW, t);
-    if (inName || inPath || inDoc) covered++;
-    score += (inName ? 4 : 0) + (inPath ? 2 : 0) + (inDoc ? 1 : 0);
+    covered += Math.max(inName, inPath, inDoc);
+    score += inName * 4 + inPath * 2 + inDoc;
   }
   if (covered === 0 && !exactNames.has(s.name) && !exactNames.has(s.qualifiedName)) return { symbol: s, score: 0, covered: 0 };
   score += covered * 10;
