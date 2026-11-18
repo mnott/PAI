@@ -26,6 +26,54 @@ const corpus: Array<[string, string, Record<string, unknown>, Record<string, unk
 ];
 const clean = ["Bash", { command: "ls -la", timeout: 5 }] as const;
 
+// a local model's tool call carrying booleans/numbers as strings for declared schema types
+describe("schema-type coercion (local tool calls)", () => {
+  const anth = adapterFor("POST", "/v1/messages")!;
+  const schemas = anth.schemas(bodyFor("anthropic" as WireId));
+  const argsOf = (bad: Record<string, unknown>): { input: Record<string, unknown>; hits: string[] } => {
+    let hits: string[] = [];
+    const reply = JSON.stringify({ content: [{ type: "tool_use", id: "t", name: "Grep", input: bad }] });
+    const out = anth.rewriteJson(reply, schemas, rulesFn, (i) => (hits = i.rules));
+    return { input: JSON.parse(out).content[0].input, hits };
+  };
+
+  it('a boolean property sent as "true" arrives as the boolean true, logged in the rule stats', () => {
+    const { input, hits } = argsOf({ pattern: "x", "-n": "true" });
+    expect(input["-n"]).toBe(true);
+    expect(hits.length).toBeGreaterThan(0); // the repair counts under bool-true / coerce:boolean
+  });
+
+  it('a number property sent as "20" arrives as the number 20', () => {
+    const { input, hits } = argsOf({ pattern: "x", head_limit: "20" });
+    expect(input.head_limit).toBe(20);
+    expect(hits).toContain("coerce:number");
+  });
+
+  it('any case spelling ("TrUe") is coerced to a boolean, logged in the hit stats', () => {
+    const { input, hits } = argsOf({ pattern: "x", multiline: "TrUe" });
+    expect(input.multiline).toBe(true);
+    expect(hits).toContain("coerce:boolean");
+  });
+
+  it("a string property keeps its value byte for byte: \"true\" stays a string", () => {
+    const { input, hits } = argsOf({ pattern: "true", path: "false" });
+    expect(input.pattern).toBe("true");
+    expect(input.path).toBe("false");
+    expect(hits).toEqual([]);
+  });
+
+  it("a value already parsed to the wrong JSON type is coerced too", () => {
+    const { input } = argsOf({ pattern: "x", "-n": 1, head_limit: true });
+    expect(input["-n"]).toBe(true);
+    expect(input.head_limit).toBe(1);
+  });
+
+  it("without declared schemas nothing is touched", () => {
+    const reply = JSON.stringify({ content: [{ type: "tool_use", id: "t", name: "Grep", input: { "-n": "true" } }] });
+    expect(anth.rewriteJson(reply, new Map(), rulesFn, () => {})).toBe(reply);
+  });
+});
+
 const tools = claudeCodeToolsArray();
 const bodyFor = (id: WireId): string =>
   JSON.stringify({

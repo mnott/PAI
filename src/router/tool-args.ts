@@ -193,7 +193,13 @@ export function repairToolInput(
     return v;
   };
 
-  // (d) declared JSON types
+  // (d) declared JSON types: a value whose schema type is boolean/number/integer arrives as that
+  // type. Rule-file bool_true/bool_false spellings fire first (their ids count in the rule stats);
+  // any other case spelling coerces under the pseudo id coerce:boolean, numeric strings under
+  // coerce:number — and a value already parsed to the wrong JSON type (a "true" for a declared
+  // boolean) is coerced the same way: a local model sends it and the client rejects a string.
+  const BOOL_RE = /^(?:true|false)$/i;
+  const INT_RE = /^-?\d+$/;
   const coerce = (key: string, v: string): unknown => {
     const t = typeOf(schema, key);
     const s = v.trim();
@@ -202,7 +208,12 @@ export function repairToolInput(
       if (tr) return hits.add(tr.id), true;
       const fr = of("bool_false").find((r) => r.re.test(s));
       if (fr) return hits.add(fr.id), false;
-    } else if ((t === "number" || t === "integer") && NUMERIC.test(s) && (t === "number" || /^-?\d+$/.test(s.trim()))) {
+      // any case spelling the rules do not list still has to arrive as a boolean
+      if (BOOL_RE.test(s)) {
+        hits.add("coerce:boolean");
+        return s.toLowerCase() === "true";
+      }
+    } else if ((t === "number" || t === "integer") && NUMERIC.test(s) && (t === "number" || INT_RE.test(s))) {
       hits.add("coerce:number");
       return Number(s);
     }
@@ -212,6 +223,19 @@ export function repairToolInput(
   const out: Record<string, unknown> = {};
   for (const [k, v] of named) {
     if (typeof v !== "string") {
+      const t = typeOf(schema, k);
+      // wrong JSON type against the declared schema: a number/integer sent as a boolean, a boolean
+      // or integer sent as a number; never a string property and never content
+      if (t === "boolean" && typeof v === "number") {
+        hits.add("coerce:boolean");
+        out[k] = v !== 0;
+        continue;
+      }
+      if ((t === "number" || t === "integer") && typeof v === "boolean") {
+        hits.add("coerce:number");
+        out[k] = v ? 1 : 0;
+        continue;
+      }
       out[k] = v;
       continue;
     }
