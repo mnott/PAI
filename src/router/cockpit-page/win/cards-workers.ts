@@ -25,7 +25,7 @@ function wkTRow(r){
  var acts=r.actions.filter(function(a){return a.indexOf("prio-")!==0}).map(function(a){var l=WK_LBL[a]||[a,a];return wkAct(r.id,a,l[0],l[1])}).join(" ");
  var pr=r.kind==="command"?"":["low","normal","high","now"].map(function(l){return wkAct(r.id,"prio-"+l,l,l+": "+WK_PTIP[l],r.priority===l)}).join(" ");
  var ses='<button type="button" data-qs="'+esc(r.session)+'" title="all jobs of this session: pause / freeze / deep-freeze / resume">'+esc(r.session)+'</button>';
- return[r.slot==="running"?"run":String(r.slot),'<span style="display:inline-block;min-width:13em;white-space:nowrap" title="'+esc(r.detail||"")+'">'+esc(r.stateText)+'</span>','<span style="display:inline-block;min-width:6em;white-space:nowrap" title="'+esc(r.now||"")+'">'+esc(r.activity||"")+'</span>',esc(r.priority),ses,wkSpan(r.model),'<span title="'+esc(r.id+(r.detail?" · "+r.detail:""))+'">'+esc(r.task)+(r.detail?' <span class="dim">'+esc(r.detail)+'</span>':'')+'</span>',wkDur(r.seconds),acts+(pr?" "+pr:"")];
+ return[r.slot==="running"?"run":String(r.slot),'<span style="display:inline-block;min-width:13em;white-space:nowrap" title="'+esc(r.detail||"")+'">'+esc(r.stateText)+'</span>','<span style="display:inline-block;min-width:6em;white-space:nowrap" title="'+esc(r.now||"")+'">'+esc(r.activity||"")+'</span>',esc(r.priority),ses,wkSpanT(r.model,r.modelFull),'<span title="'+esc(r.id+(r.detail?" · "+r.detail:""))+'">'+esc(r.task)+(r.detail?' <span class="dim">'+esc(r.detail)+'</span>':'')+'</span>',wkDur(r.seconds),acts+(pr?" "+pr:"")];
 }
 /** Session chips above the table + the global actions. */
 function wkBar(q){
@@ -37,6 +37,7 @@ function wkBar(q){
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
 var WQ=null,WK_BLOCKS={},WK_DRAG=null;
 function wkDur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
+function wkSpanT(t,full){return' <span title="'+esc(full||t)+'">'+esc(t)+'</span>'}
 function wkSpan(t){return' <span title="'+esc(t)+'">'+esc(t)+'</span>'}
 function wkCmp(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}
 function wkBuildRow(b,i){var l=wkSpan(b.label+(b.mode==="full"?" [full]":"")+(b.key?" ["+b.key+"]":""));return[b.state==="running"?"":String(i+1),l,wkSpan(b.session),b.state==="running"?"running":"waiting"+(b.why?" ("+esc(b.why)+")":""),wkDur(b.state==="running"?b.ageSec:b.waitedSec)]}
@@ -57,7 +58,7 @@ function wkBlockOf(id){return WK_BLOCKS[id]||null}
 /** A block's card html: the table (plus its footnote); a block that is gone says so. */
 function wkBlockHtml(b){
  if(!b)return WK_NONE;
- if(b.table)return'<div class="dim" style="text-align:left">'+esc(b.foot)+'</div>'+wkBar(WQ||{})+table(b.head,b.rows.filter(function(r){return!WK_FILTER||r[4].indexOf(\'data-qs="\'+esc(WK_FILTER)+\'"\')>=0}));
+ if(b.table)return'<div class="dim" style="text-align:left">'+esc(b.foot)+'</div>'+wkBar(WQ||{})+table(b.head,b.rows.filter(function(r){return!WK_FILTER||r[4].indexOf('data-qs="'+esc(WK_FILTER)+'"')>=0}));
  return table(b.head,b.rows)+(b.foot?'<div class="dim" style="text-align:left">'+esc(b.foot)+'</div>':"");
 }
 /** Make the waiting rows of a card draggable (after every repaint; the morph does not carry the attribute). */

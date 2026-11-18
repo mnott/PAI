@@ -12,6 +12,15 @@ import type { QueueRow } from "./capacity.js";
 import { pausedFree, type WorkerStatus } from "./status.js";
 import type { PaneRunStatus } from "./pane-run.js";
 
+/** Short model label: the provider name for a local model, "cloud: sonnet" for a cloud one (never the full id). */
+export function shortModel(local: boolean, provider: string, model?: string): string {
+  if (local) return provider;
+  const id = (model || "").toLowerCase();
+  const fam = id.match(/(sonnet|opus|haiku|fable)/);
+  const last = id.split("/").pop() || "";
+  return `cloud: ${fam ? fam[1] : last || provider}`;
+}
+
 export type RowState = "running" | "waiting" | "paused" | "frozen" | "deep-frozen";
 export type RowAction =
   | "next" | "up" | "down"
@@ -30,8 +39,10 @@ export interface TableRow {
   stateText: string;
   priority: "low" | "normal" | "high" | "now";
   session: string;
-  /** "local: <model>" / "cloud: <provider> <model>" / "" for a command. */
+  /** Short name: "<provider>" for a local model / "cloud: <short model>" / "" for a command. */
   model: string;
+  /** Full "local: <model id>" / "cloud: <provider> <model id>" for a tooltip. */
+  modelFull?: string;
   local: boolean;
   task: string;
   seconds: number;
@@ -149,7 +160,8 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       stateText,
       priority: prioOf(s, prio),
       session: i.sessionOf(s),
-      model: `${local ? "local" : "cloud"}: ${local ? s.model || s.provider : `${s.provider} ${s.model || ""}`.trim()}`,
+      model: shortModel(local, s.provider, s.model),
+      modelFull: `${local ? "local" : "cloud"}: ${local ? s.model || s.provider : `${s.provider} ${s.model || ""}`.trim()}`,
       local,
       task: s.label || s.id,
       activity: state === "running" ? activityOf(s, false, i.now) : "",
