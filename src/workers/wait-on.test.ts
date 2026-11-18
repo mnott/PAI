@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { waitOn, realDeps, statusQueue, WAIT_RECIPE, WAIT_VERBS, type WaitOnDeps } from "./wait-on.js";
-import { saveStatus, type WorkerStatus } from "./status.js";
+import { runWait, waitWorkers } from "./wait.js";
+import { eventsPath } from "./paths.js";
+import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 /** Fake clock: sleep advances time; the process is alive until `diesAt` ms; rc files served from a map. */
 function fake(o: { diesAt?: number; initial?: "alive" | "gone" | "foreign"; start?: number; files?: Record<string, string>; t0?: number }) {
@@ -239,5 +241,121 @@ describe("waitOn against real processes (the recipe's shape)", () => {
     const log = join(dir, `ended-${process.pid}.log`);
     writeFileSync(log, "build done\n");
     expect(await waitOn({ pid: 999_999, log, tail: 0 }, { ...realDeps, out: () => {} })).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `pai worker wait` follows a rerouted/escalated worker to its continuation
+// (2026-11-17 20:31: the escalation had rerouted the waited id; wait reported
+// killed rc=143 "failed" while the continuation was still running).
+// ---------------------------------------------------------------------------
+
+describe("worker wait follows rerouted workers", () => {
+  const wdir = (): string => mkdtempSync(join(dir, "wait-"));
+  // the incident's shape: a killed origin whose stop was a hand-over (rerouted + fallThroughTo)
+  const origin = (over: Partial<WorkerStatus> = {}): WorkerStatus =>
+    ({ id: "o1", pid: 4321, label: "l", cwd: "/", term: "", provider: "local", model: "m", state: "killed", started: "", updated: "", turns: 0, tools: 0, last: "rerouted: anthropic: queued 15m", rc: 143, secs: null, rerouted: "anthropic: queued 15m", fallThroughTo: "c1", ...over }) as WorkerStatus;
+  const cont = (over: Partial<WorkerStatus> = {}): WorkerStatus =>
+    ({ id: "c1", pid: 9999, label: "l", cwd: "/", term: "", provider: "anthropic", model: "m", state: "running", started: "", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null, ...over }) as WorkerStatus;
+
+  it("a killed origin with fallThroughTo reports the continuation's result under the asked id + followed", async () => {
+    const wd = wdir();
+    saveStatus(wd, origin());
+    saveStatus(wd, cont({ state: "done", rc: 0 }));
+    writeFileSync(eventsPath(wd, "c1"), JSON.stringify({ type: "result", result: "R from c1" }) + "\n");
+    const lines: string[] = [];
+    const rc = await runWait(wd, ["o1"], { max: 5 }, (l) => lines.push(l), () => {});
+    expect(rc).toBe(0); // not exit 1 "failed": the continuation succeeded
+    const j = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(j.id).toBe("o1");
+    expect(j.followed).toEqual(["c1"]);
+    expect(j.state).toBe("done");
+    expect(j.rc).toBe(0);
+    expect(j.ok).toBe(true);
+    expect(j.result).toBe("R from c1");
+  });
+
+  it("a chain of two reroutes follows to the last run", async () => {
+    const wd = wdir();
+    saveStatus(wd, origin({ fallThroughTo: "c1" }));
+    saveStatus(wd, cont({ state: "killed", rc: 143, rerouted: "anthropic: stall", fallThroughTo: "c2" }));
+    saveStatus(wd, cont({ id: "c2", provider: "kimi", state: "failed", rc: 7 }));
+    const { results, timedOut } = await waitWorkers(wd, ["o1"], { timeoutMs: 3000, intervalMs: 5 });
+    expect(timedOut).toEqual([]);
+    expect(results[0]!.followed).toEqual(["c1", "c2"]);
+    expect(results[0]!.id).toBe("o1");
+    expect(results[0]!.state).toBe("failed");
+    expect(results[0]!.rc).toBe(7);
+    expect(results[0]!.ok).toBe(false);
+  });
+
+  it("a plain killed worker without fallThroughTo still reports failed", async () => {
+    const wd = wdir();
+    saveStatus(wd, origin({ rerouted: undefined, fallThroughTo: undefined }));
+    const lines: string[] = [];
+    const rc = await runWait(wd, ["o1"], { max: 5 }, (l) => lines.push(l), (l) => lines.push(`ERR ${l}`));
+    expect(rc).toBe(1);
+    const j = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(j.state).toBe("killed");
+    expect(j.rc).toBe(143);
+    expect(j.ok).toBe(false);
+    expect(j.followed).toBeUndefined();
+    expect(lines.join("\n")).toContain("failed: o1");
+  });
+
+  it("a still-running continuation keeps the wait open, then turns ok when it finishes", async () => {
+    const wd = wdir();
+    saveStatus(wd, origin());
+    saveStatus(wd, cont()); // running: the chain is not at its end yet
+    const lines: string[] = [];
+    const rc0 = await runWait(wd, ["o1"], { max: 2 }, (l) => lines.push(l), () => {});
+    expect(rc0).toBe(3); // still running: the hand-over is not an end
+    const j0 = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(j0.state).toBe("running"); // the continuation's state, under the asked id
+    expect(j0.followed).toEqual(["c1"]);
+    expect(j0.ok).toBeUndefined();
+    // the continuation finishes mid-wait: the next call reports its result
+    const st = loadStatus(wd, "c1")!;
+    st.state = "done";
+    st.rc = 0;
+    saveStatus(wd, st, new Date(), true);
+    const lines2: string[] = [];
+    expect(await runWait(wd, ["o1"], { max: 5 }, (l) => lines2.push(l), () => {})).toBe(0);
+    const j = JSON.parse(lines2[0]!) as Record<string, unknown>;
+    expect(j.state).toBe("done");
+    expect(j.ok).toBe(true);
+    expect(j.followed).toEqual(["c1"]);
+  });
+
+  it("a continued origin (continuedBy + fallThroughTo) reports its continuation too", async () => {
+    const wd = wdir();
+    saveStatus(wd, origin({ rerouted: undefined, continuedBy: "c1" }));
+    saveStatus(wd, cont({ state: "done", rc: 0 }));
+    const { results } = await waitWorkers(wd, ["o1"], { timeoutMs: 3000, intervalMs: 5 });
+    expect(results[0]!.followed).toEqual(["c1"]);
+    expect(results[0]!.state).toBe("done");
+    expect(results[0]!.ok).toBe(true);
+  });
+
+  it("a dangling fallThroughTo (no status file) reports the origin's own end, no follow", async () => {
+    const wd = wdir();
+    saveStatus(wd, origin({ fallThroughTo: "ghost" }));
+    expect(existsSync(join(wd, "ghost.status"))).toBe(false);
+    const { results, timedOut } = await waitWorkers(wd, ["o1"], { timeoutMs: 3000, intervalMs: 5 });
+    expect(timedOut).toEqual([]); // never hangs on a link that leads nowhere
+    expect(results[0]!.state).toBe("killed");
+    expect(results[0]!.rc).toBe(143);
+    expect(results[0]!.followed).toBeUndefined();
+  });
+
+  it("a live continuation whose status file appears after the wait began is picked up", async () => {
+    const wd = wdir();
+    saveStatus(wd, origin({ fallThroughTo: "c1" })); // c1 not announced yet
+    setTimeout(() => saveStatus(wd, cont({ state: "done", rc: 0 })), 250);
+    const { results, timedOut } = await waitWorkers(wd, ["o1"], { timeoutMs: 4000, intervalMs: 50 });
+    expect(timedOut).toEqual([]);
+    expect(results[0]!.followed).toEqual(["c1"]);
+    expect(results[0]!.state).toBe("done");
+    expect(results[0]!.ok).toBe(true);
   });
 });
