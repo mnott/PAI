@@ -2,9 +2,11 @@
  * queue-ops.ts — reads the one queue table of the machine and runs its per-job / per-session actions.
  * Shared by `pai worker queue` and the cockpit router (/cockpit/queue, /cockpit/queue/act) so both do the same.
  */
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { loadStatus, loadStatusesCached, ownsPidCached } from "./status.js";
 import { isLocalProvider, type WorkersConfig } from "./config.js";
-import { providerCap, queueRows, reorderQueue, reorderQueueTo, liveQueue } from "./capacity.js";
+import { providerCap, queueDir, queueRows, reorderQueue, reorderQueueTo, liveQueue } from "./capacity.js";
 import { loadPaneRunStatuses } from "./pane-run.js";
 import { ownerSessionName } from "./scope.js";
 import { frozenSince, freezeAll, thawSome, realFreezeDeps } from "./freeze.js";
@@ -93,9 +95,17 @@ export async function runRowAction(d: OpsDeps, action: RowAction, id: string): P
         message = `now position ${order.indexOf(id) + 1} of ${order.length}`;
         break;
       }
-      case "pause":
+      case "pause": {
+        // a resumed worker that waits for its turn: pausing it again just leaves the queue (nobody else is touched)
+        const tp = join(queueDir(d.logDir, needJob().provider), id);
+        if (existsSync(tp) && st?.paused && !st.pausedBy) {
+          rmSync(tp, { force: true });
+          message = "paused again; left the queue";
+          break;
+        }
         message = setWorkerPaused(d.logDir, id, true, d.by) ? "paused; its slot is free for the next job" : "already paused";
         break;
+      }
       case "resume":
         message = resumeWorker(d.logDir, id, d.by) ? "resumed" : "was not paused";
         break;

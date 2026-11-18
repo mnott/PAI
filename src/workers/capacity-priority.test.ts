@@ -1,13 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { capacityGate, queueRows, writeTicket, type QueueRow } from "./capacity.js";
+import { capacityGate, currentBuildId, isStaleBuild, liveQueue, queueRows, writeTicket, type QueueRow } from "./capacity.js";
+import { setWorkerPaused } from "./engine-control.js";
+import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
+import { requeueStaleWaiters } from "./stale-requeue.js";
 import { localIdleLine } from "./local-idle.js";
 import { buildQueueTable, plainWording, renderQueueTable, type TableInput } from "./queue-table.js";
 import { runGlobalDeep, runRowAction, runSessionAction } from "./queue-ops.js";
 import type { WorkersConfig } from "./config.js";
-import { applyPriority } from "./preempt.js";
+import { admitResumedWaiters, applyPriority, resumeWorker } from "./preempt.js";
 import { holdsSlot, loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { schedulerView } from "./scheduler.js";
 
@@ -211,5 +214,163 @@ describe("paused workers free their slot (one accounting)", () => {
   it("a pane command shows the caller's session", () => {
     const rows = buildQueueTable(qin([], [], { panes: [{ id: "pane-1", label: "build", state: "running", startedMs: QNOW - 5000, session: "gyro-sess" }] }));
     expect(rows[0]).toMatchObject({ kind: "command", session: "gyro-sess" });
+  });
+});
+
+// ---- 2026-11-18: resume never bumps running jobs; queue moves; stale waiters requeue; move-to-local waits ----
+describe("least-impact queue controls", () => {
+  const ticket = (id: string, text = `${process.pid} @1000`): void => writeTicket(join(dir, "queue", "fakeA", id), text);
+  const mst = (id: string, o: Partial<WorkerStatus> = {}): WorkerStatus =>
+    ({ id, label: `task ${id}`, provider: "fakeA", model: "qwen", state: "running", started: "2026-11-18 11:50:00", updated: "2026-11-18 11:59:55", cwd: "/x", pid: process.pid, runPid: process.pid, spec: join(dir, "spec.txt"), ...o }) as WorkerStatus;
+  const ws = { providers: { fakeA: { baseUrl: "http://localhost:1/v1", maxConcurrent: 3 } } } as unknown as WorkersConfig;
+  const tin = (all: WorkerStatus[], local = true): TableInput => ({ statuses: all, queue: queueRows(dir, { fakeA: 3 }, () => true, all, undefined), panes: [], now: Date.now(), isLocal: (p) => local && p === "fakeA", sessionOf: () => "s" });
+  beforeEach(() => {
+    mkdirSync(join(dir, "queue", "fakeA"), { recursive: true });
+    writeFileSync(join(dir, "spec.txt"), "do it", "utf8");
+  });
+
+  it("resume with the cap full queues the job: no running job moves, it takes the next FREE slot only", () => {
+    for (const id of ["r1", "r2", "r3", "p"]) saveStatus(dir, mst(id));
+    setWorkerPaused(dir, "p", true, "cockpit");
+    expect(resumeWorker(dir, "p", "cockpit", Date.now(), () => 0)).toBe(true);
+    for (const id of ["r1", "r2", "r3"]) expect(loadStatus(dir, id)!.state).toBe("running");
+    expect(loadStatus(dir, "p")!.paused).toBe(true);
+    expect(liveQueue(dir, "fakeA")).toEqual(["p"]);
+    expect(admitResumedWaiters(dir, Date.now(), () => 0)).toEqual([]);
+    expect(admitResumedWaiters(dir, Date.now(), () => 1)).toEqual(["p"]);
+    expect(loadStatus(dir, "p")!.paused).toBeFalsy();
+    expect(existsSync(join(dir, "queue", "fakeA", "p"))).toBe(false);
+  });
+
+  it("resume joins behind a higher class, ahead of its own; pausing again leaves the queue", async () => {
+    saveStatus(dir, mst("p"));
+    saveStatus(dir, mst("hi", { state: "queued", priority: "high" }));
+    saveStatus(dir, mst("n1", { state: "queued" }));
+    ticket("hi", `${process.pid} @${Date.now()} p:high`);
+    ticket("n1", `${process.pid} @${Date.now()}`);
+    setWorkerPaused(dir, "p", true, "cockpit");
+    resumeWorker(dir, "p", "cockpit", Date.now(), () => 0);
+    expect(liveQueue(dir, "fakeA")).toEqual(["hi", "p", "n1"]);
+    expect((await runRowAction({ logDir: dir, workers: ws, by: "cockpit" }, "pause", "p")).ok).toBe(true);
+    expect(liveQueue(dir, "fakeA")).toEqual(["hi", "n1"]);
+    expect(loadStatus(dir, "p")!.paused).toBe(true);
+  });
+
+  it("resume with a free slot and nobody waiting runs at once", () => {
+    saveStatus(dir, mst("p"));
+    setWorkerPaused(dir, "p", true, "cockpit");
+    expect(resumeWorker(dir, "p", "cockpit", Date.now(), () => 1)).toBe(true);
+    expect(loadStatus(dir, "p")!.paused).toBeFalsy();
+  });
+
+  it("up / next / down change the ticket order and the table position; edge rows lack the dead moves", async () => {
+    for (const [i, id] of ["a", "b", "c"].entries()) {
+      saveStatus(dir, mst(id, { state: "queued" }));
+      ticket(id, `${process.pid} @${1000 + i}`);
+    }
+    const act = (a: "up" | "next" | "down", id: string) => runRowAction({ logDir: dir, workers: ws, by: "t" }, a, id);
+    const all = () => ["a", "b", "c"].map((id) => loadStatus(dir, id)!);
+    expect((await act("up", "c")).ok).toBe(true);
+    expect(liveQueue(dir, "fakeA")).toEqual(["a", "c", "b"]);
+    expect(buildQueueTable(tin(all())).map((r) => r.id)).toEqual(["a", "c", "b"]);
+    expect((await act("next", "b")).ok).toBe(true);
+    expect(liveQueue(dir, "fakeA")).toEqual(["b", "a", "c"]);
+    expect((await act("down", "b")).ok).toBe(true);
+    expect(liveQueue(dir, "fakeA")).toEqual(["a", "b", "c"]);
+    const by = Object.fromEntries(buildQueueTable(tin(all())).map((r) => [r.id, r.actions]));
+    expect(by.a).not.toContain("up");
+    expect(by.a).not.toContain("next");
+    expect(by.a).toContain("down");
+    expect(by.b).toEqual(expect.arrayContaining(["up", "next", "down"]));
+    expect(by.c).toContain("up");
+    expect(by.c).not.toContain("down");
+    for (const r of buildQueueTable({ ...tin([mst("run"), mst("pz", { paused: true })]), queue: [] })) for (const a of ["up", "down", "next"] as const) expect(r.actions).not.toContain(a);
+  });
+
+  it("staleness follows the release: rebuilt dist, same release or unrecorded release is never stale", () => {
+    expect(isStaleBuild("v1.2.62", "v1.2.62")).toBe(false);
+    expect(isStaleBuild(undefined, "v1.2.62")).toBe(false);
+    expect(isStaleBuild("v1.2.61", "v1.2.62")).toBe(true);
+    expect(isStaleBuild("v1.2.61", undefined)).toBe(false);
+    expect(currentBuildId() === undefined || /^v\d/.test(currentBuildId()!)).toBe(true);
+    saveStatus(dir, mst("w", { state: "queued" }));
+    ticket("w", `${process.pid} @5 b:v1.2.62`);
+    expect(queueRows(dir, {}, () => true, undefined, "v1.2.62")[0]!.stale).toBeUndefined();
+    expect(queueRows(dir, {}, () => true, undefined, "v1.2.63")[0]!.stale).toBe(true);
+  });
+
+  it("a stale waiter is restarted from its spec, its place handed over; the row reads 'restarting on new version'", async () => {
+    saveStatus(dir, mst("w1", { state: "queued" }));
+    ticket("w1", `${process.pid} front 2 @777 p:high b:v1.2.61`);
+    const spawned: string[] = [];
+    const killed: string[] = [];
+    const rows = queueRows(dir, {}, () => true, undefined, "v1.2.62");
+    expect(rows[0]!.stale).toBe(true);
+    const r = await requeueStaleWaiters({
+      logDir: dir,
+      rows,
+      spawn: (s) => {
+        spawned.push(s.id);
+        saveStatus(dir, mst("w2", { state: "queued", fallThroughOf: "w1" }));
+        ticket("w2", `${process.pid} @9999 b:v1.2.62`);
+        expect(loadStatus(dir, "w1")!.restarting).toBe(true);
+        const t = buildQueueTable({ ...tin([loadStatus(dir, "w1")!]), queue: [{ ...rows[0]!, status: loadStatus(dir, "w1")! }] });
+        expect(t[0]!.stateText).toBe("restarting on new version");
+      },
+      kill: async (id) => { killed.push(id); },
+      newIdOf: () => "w2",
+      ticketWaitMs: 500,
+    });
+    expect(r).toEqual(["w1"]);
+    expect(spawned).toEqual(["w1"]);
+    expect(killed).toEqual(["w1"]);
+    const t2 = readFileSync(join(dir, "queue", "fakeA", "w2"), "utf8");
+    expect(t2).toContain("front");
+    expect(t2).toContain("@777");
+    expect(t2).toContain("p:high");
+  });
+
+  describe("moving a running job to local", () => {
+    const deps = (spawned: string[], killed: string[]) => ({
+      logDir: dir,
+      resolve: async (w: string) => ({ provider: w === "local" ? "fakeA" : "anthropic", description: w }),
+      spawn: (s: { id: string }) => { spawned.push(s.id); },
+      kill: async (id: string) => { killed.push(id); },
+      announceMs: 0,
+    });
+    it("the cloud run keeps running until the continuation holds a local slot, then it is stopped", async () => {
+      saveStatus(dir, mst("old", { provider: "anthropic", branch: "b1" }));
+      const spawned: string[] = [];
+      const killed: string[] = [];
+      await rerouteWorker("old", "local", { ...deps(spawned, killed), deferKill: true });
+      expect(spawned).toEqual(["old"]);
+      expect(killed).toEqual([]);
+      expect(loadStatus(dir, "old")!.movingTo).toBe("fakeA");
+      saveStatus(dir, mst("new", { state: "queued", fallThroughOf: "old" }));
+      ticket("new");
+      expect(await finishDeferredMoves(dir, async (id) => { killed.push(id); })).toEqual([]);
+      expect(killed).toEqual([]);
+      const all = [loadStatus(dir, "old")!, loadStatus(dir, "new")!];
+      const rows = buildQueueTable(tin(all));
+      expect(rows.map((r) => r.id)).toEqual(["old"]);
+      expect(rows[0]!.stateText).toBe("running (cloud) · moving to local, waiting #1");
+      rmSync(join(dir, "queue", "fakeA", "new"));
+      saveStatus(dir, mst("new", { state: "running", fallThroughOf: "old" }));
+      expect(await finishDeferredMoves(dir, async (id) => { killed.push(id); })).toEqual(["old"]);
+      expect(killed).toEqual(["old"]);
+    });
+    it("to cloud stays immediate", async () => {
+      saveStatus(dir, mst("loc"));
+      const killed: string[] = [];
+      await rerouteWorker("loc", "cloud", deps([], killed));
+      expect(killed).toEqual(["loc"]);
+      expect(loadStatus(dir, "loc")!.movingTo).toBeUndefined();
+    });
+    it("a failed continuation leaves the cloud run where it was", async () => {
+      saveStatus(dir, mst("old", { provider: "anthropic", movingTo: "fakeA", rerouted: "fakeA: cockpit" }));
+      saveStatus(dir, mst("new", { state: "failed", fallThroughOf: "old" }));
+      expect(await finishDeferredMoves(dir, async () => undefined)).toEqual([]);
+      expect(loadStatus(dir, "old")!.movingTo).toBeUndefined();
+    });
   });
 });
