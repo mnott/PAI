@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { capacityGate, currentBuildId, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, writeTicket, type QueueRow } from "./capacity.js";
+import { capacityGate, currentBuildId, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
@@ -147,7 +147,8 @@ describe("queue table", () => {
   it("activity 'in line': its request waits in the local scheduler queue", () => {
     const rows = buildQueueTable(qin([qst("q")], [], { sched: qsched({ q: { waitingSince: QNOW - 30_000 } }) }));
     expect(rows[0]!.activity).toBe("in line");
-    expect(rows[0]!.activityTip).toContain("waits in the local scheduler queue");
+    // one word, two meanings: an unstarted ticket is at the engine; a started job's own tooltip names the slot
+    expect(rows[0]!.activityTip).toContain("in line at the model: its request is queued at the engine");
   });
   it("activity 'tool': no request open, a tool runs (the worker waits on its Bash)", () => {
     const rows = buildQueueTable(qin([qst("t", { toolWaitSince: QNOW - 5000 })], [], { sched: qsched({ t: {} }) }));
@@ -486,21 +487,84 @@ describe("pull-forward among front tickets without rank", () => {
   });
 });
 
+// 2026-11-18 incident: pushing jobs to the bottom made them run SOONER — a move ranked only what it touched, and a
+// ranked ticket is placed ahead of unranked ones in its tier, so a moved-to-the-bottom job overtook every fair-share job.
+describe("a move writes exactly the order the operator sees", () => {
+  const mstSess = (id: string, session: string): WorkerStatus => ({ id, label: `task ${id}`, provider: "fakeA", model: "qwen", state: "queued", started: "", updated: "", cwd: "/x", pid: process.pid, sessionKey: session }) as WorkerStatus;
+  const e = (id: string, since: number): QueueEntry => ({ id, pid: process.pid, front: false, since });
+  const sess = (id: string): string => (/^o/.test(id) ? "other" : "PAI");
+
+  it("fairOrder keeps a fully ranked queue in exactly that order", () => {
+    const entries = ["p1", "p2", "p3", "o1", "o2"].map((id, i) => ({ ...e(id, 1000 + i), rank: i }));
+    expect(fairOrder({ entries, sessionOf: sess, running: [], now: 5000 }).map((x) => x.id)).toEqual(["p1", "p2", "p3", "o1", "o2"]);
+  });
+
+  it("moving the two other-session tickets to the bottom admits the three PAI jobs first", () => {
+    mkdirSync(join(dir, "queue", "fakeA"), { recursive: true });
+    for (const [i, id] of ["p1", "p2", "p3", "o1", "o2"].entries()) {
+      saveStatus(dir, mstSess(id, sess(id)));
+      writeTicket(join(dir, "queue", "fakeA", id), `${process.pid} @${1000 + i}`);
+    }
+    // the operator pushes o1 and o2 to the bottom (two down moves / one drag each)
+    expect(reorderQueueTo(dir, "fakeA", "o1", 5).length).toBe(5);
+    const after = reorderQueueTo(dir, "fakeA", "o2", 5);
+    expect(after).toEqual(["p1", "p2", "p3", "o1", "o2"]);
+    // and the order sticks through every later read (all tickets are ranked: nothing unranked can overtake)
+    expect(liveQueue(dir, "fakeA")).toEqual(["p1", "p2", "p3", "o1", "o2"]);
+    const rows = queueRows(dir, {}, () => true);
+    expect(rows.map((r) => r.id)).toEqual(["p1", "p2", "p3", "o1", "o2"]);
+  });
+
+  it("a new arrival queues after the ranked block (fair share only orders what no move ordered)", () => {
+    mkdirSync(join(dir, "queue", "fakeA"), { recursive: true });
+    for (const [i, id] of ["p1", "o1"].entries()) {
+      saveStatus(dir, mstSess(id, sess(id)));
+      writeTicket(join(dir, "queue", "fakeA", id), `${process.pid} @${1000 + i}`);
+    }
+    expect(reorderQueueTo(dir, "fakeA", "o1", 2)).toEqual(["p1", "o1"]);
+    // a fresh PAI job arrives (unranked): behind the operator's order
+    saveStatus(dir, mstSess("p2", "PAI"));
+    writeTicket(join(dir, "queue", "fakeA", "p2"), `${process.pid} @9000`);
+    expect(liveQueue(dir, "fakeA")).toEqual(["p1", "o1", "p2"]);
+  });
+
+  it("the gate admits the head of that order: after the move a PAI job takes the free slot, not a moved one", async () => {
+    mkdirSync(join(dir, "queue", "fakeA"), { recursive: true });
+    for (const [i, id] of ["p1", "p2", "o1"].entries()) {
+      saveStatus(dir, mstSess(id, sess(id)));
+      writeTicket(join(dir, "queue", "fakeA", id), `${process.pid} @${1000 + i}`);
+    }
+    reorderQueueTo(dir, "fakeA", "o1", 3);
+    expect(liveQueue(dir, "fakeA")).toEqual(["p1", "p2", "o1"]);
+    // o1 waits at the gate with cap 1 (one holder): it must not be admitted ahead of p1
+    const g = capacityGate({ logDir: dir, self: { id: "o1", provider: "fakeA" }, cap: 1, config: {}, isAlive: () => true, load: () => [{ ...mstSess("h", "other"), state: "running", started: "2026-11-18 11:00:00" }], now: () => QNOW, sleep: () => new Promise((x) => setTimeout(x, 5)) });
+    const raced = await Promise.race([g.then(() => "admitted"), new Promise((x) => setTimeout(() => x("waiting"), 200))]);
+    expect(raced).toBe("waiting");
+    // the gate's own ticket rewrite kept the operator's order: p1 is still the head
+    expect(liveQueue(dir, "fakeA")[0]).toBe("p1");
+    expect(readFileSync(join(dir, "queue", "fakeA", "o1"), "utf8")).toContain(" 2 ");
+    void g;
+  });
+});
+
 // 2026-11-18: ps said "3 of 3 slots busy" while the queue table showed one running job: started jobs that waited to
-// take their slot back (running status + a queue ticket) were listed among the waiting ones.
+// take their slot back (running status + a queue ticket) were listed among the waiting ones. The line counts what
+// the rows show: "N waiting" = not-started jobs only; started jobs in line for a slot back are named apart.
 describe("a started job waiting for its slot back is running everywhere", () => {
-  it("queue table: the ticketed running job is in the running group with activity 'slot back?', not in the waiting list", () => {
+  it("queue table: the ticketed running job is in the running group with activity 'in line' and its slot tooltip, not in the waiting list", () => {
     const back = qst("b1", { toolWaitSince: QNOW - 60_000 });
     const fresh = qst("n1", { state: "queued" });
     const rows = buildQueueTable(qin([back, fresh], [qrow(back, "lm", 1), qrow(fresh, "lm", 2)]));
     expect(rows.map((r) => [r.id, r.state, r.slot])).toEqual([["b1", "running", "running"], ["n1", "waiting", 1]]);
-    expect(rows[0]!.activity).toBe("slot back?");
-    expect(rows[0]!.activityTip).toContain("its slot was lent during a long tool run; waits to get it back");
-    expect(renderQueueTable(rows)[1]).toMatch(/^\[running\] slot back\?/);
+    // one word for both kinds of waiting: the operator sees 'in line'; the tooltip says which one
+    expect(rows[0]!.activity).toBe("in line");
+    expect(rows[0]!.activityTip).toContain("in line for a slot: started, lent its slot during a long tool run, position 1 for getting one back");
+    expect(renderQueueTable(rows)[1]).toMatch(/^\[running\] in line/);
   });
-  it("slot line: holders + lent add up to the running rows; extras are named as engine-idle admissions", () => {
-    const f = { at: new Date(QNOW).toISOString(), gpuPct: 0, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 8, paused: 0, lent: 2, activity: {} }] };
-    expect(localIdleLine(f, QNOW)).toBe("gyro-l: 4 of 3 slots busy · engine idle: admitted 1 extra · 2 lent (waiting on a tool or for their slot back) · 8 waiting · GPU 0%");
+  it("slot line: 'N waiting' counts not-started jobs only; started jobs holding a ticket are named apart", () => {
+    // the incident: 12 tickets (8 not started, 4 started and holding one) read "12 waiting" while the table showed 8 waiting rows
+    const f = { at: new Date(QNOW).toISOString(), gpuPct: 0, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 8, paused: 0, lent: 2, startedHoldingTicket: 4, activity: {} }] };
+    expect(localIdleLine(f, QNOW)).toBe("gyro-l: 4 of 3 slots busy · engine idle: admitted 1 extra · 2 lent (waiting on a tool) · 4 waiting for their slot back · 8 waiting · GPU 0%");
   });
 });
 

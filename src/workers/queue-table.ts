@@ -16,6 +16,7 @@ import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
 import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
 import { topicChip } from "./topic.js";
+import { specMarkTip } from "./denials.js";
 
 /** Short id of a worker or pane run: the last dash-part of its id (a queue row never prints the full id). */
 export const shortId = (id: string): string => id.slice(id.lastIndexOf("-") + 1);
@@ -96,6 +97,10 @@ export interface TableRow {
   activity: string;
   /** Plain sentence of what the activity word means, for its tooltip. */
   activityTip: string;
+  /** Tooltip of the "?" (spec conflict) marker: the guard's count and the first conflicting reason; absent without one. */
+  specTip?: string;
+  /** A started job in line for its slot back (activity "in line", tooltip inLineSlotTip); set by buildQueueTable. */
+  slotBack?: boolean;
   /** The live last tool call, for a tooltip only (it changes every second and must not move the table). */
   now: string;
   /** "continues <old id>" and plain notes. */
@@ -140,7 +145,7 @@ export interface RequestState {
 /** The one line above the table (also the CLI footer): states and priorities in plain words. */
 export const QUEUE_EXPLAIN =
   "running = holds a slot, or started and waiting to take its slot back; waiting = next in line; paused = parked, slot freed for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives reboot. " +
-  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: \"N of M slots busy\" counts jobs holding a slot; \"K lent\" = started jobs waiting on a long tool (or to get their slot back, \"slot back?\"): busy + lent = the running rows; \"engine idle: admitted K extra\" = jobs started above the cap because the model had nothing to do.";
+  "Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: \"N of M slots busy\" counts jobs holding a slot; \"K waiting for their slot back\" = started jobs that hold a ticket to get a slot back (their own rows); \"engine idle: admitted K extra\" = jobs started above the cap because the model had nothing to do.";
 
 /** Plain-words tooltip of each priority. */
 export const PRIORITY_TIP: Record<"low" | "normal" | "high" | "now", string> = {
@@ -194,14 +199,15 @@ export function plainWording(text: string): string {
   return t;
 }
 
-/** The short word of each activity, shown fixed-width in the cell; ACT_TIP carries the sentence for its tooltip. */
-export const SLOT_BACK = "slot back?";
 /** Width of the fixed activity cell (the longest word). */
-export const ACT_WIDTH = SLOT_BACK.length;
-export const ACT_TIP: Record<"writing" | "in line" | "tool" | "waiting" | "slot back?", string> = {
-  "slot back?": "started; its slot was lent during a long tool run; waits to get it back",
+export const ACT_WIDTH = "in line".length;
+/** The two meanings of "in line" — the operator sees one word, the tooltip tells them apart. */
+export const IN_LINE_ENGINE_TIP = "in line at the model: its request is queued at the engine (usually seconds)";
+export const inLineSlotTip = (position: number, total: number): string => `in line for a slot: started, lent its slot during a long tool run, position ${position} for getting one back`;
+export const ACT_TIP: Record<"writing" | "in line" | "tool" | "waiting", string> = {
   writing: "its request is open at the model — the model is writing its reply",
-  "in line": "its request waits in the local scheduler queue, behind other workers at the engine",
+  // the plain word of a job in line at the engine; a started job waiting for its slot back shows the same word with its own tooltip (inLineSlotTip)
+  "in line": IN_LINE_ENGINE_TIP,
   tool: "no request open at the model; a tool (build, test) is running",
   waiting: "waiting for a slot: no request has gone to the model yet",
 };
@@ -313,10 +319,19 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       detail: notes.map(plainWording).join("; "),
       ...(summaryOf(s) ? { summary: summaryOf(s) } : {}),
       ...(s.restarting ? { restarting: true } : {}),
+      ...(specMarkTip(s) ? { specTip: specMarkTip(s) } : {}),
       actions: actionsOf(state, local, waiting, place),
     };
   };
   const out: TableRow[] = [];
+  // where a started job that lent its slot stands in its provider's waiting order (0 = no ticket); the tooltip names the position
+  const backPos = new Map<string, number>();
+  for (const s of i.statuses) {
+    if (!startedWaiting(s)) continue;
+    const q = i.queue.filter((x) => x.provider === s.provider);
+    const mine = q.find((x) => x.id === s.id);
+    if (mine) backPos.set(s.id, 1 + q.filter((x) => x.position < mine.position).length);
+  }
   const runners = live.filter((s) => s.state === "running" && !deepIds.has(s.id) && (!ticket.has(s.id) || startedWaiting(s)) && !gone.has(s.id)).sort((a, b) => stMs(a) - stMs(b) || (a.id < b.id ? -1 : 1));
   // a running job moving to a slot-limited provider keeps running; its continuation waits in the target's queue and is shown on this row
   const moverOf = (id: string) => i.queue.find((q) => q.status?.fallThroughOf === id);
@@ -325,7 +340,11 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     const q = s.movingTo ? moverOf(s.id) : undefined;
     const moving = s.movingTo ? `running (${i.isLocal(s.provider) ? "local" : "cloud"}) · moving to ${i.isLocal(s.movingTo) ? "local" : "cloud"}, waiting #${q ? q.position : "?"}` : undefined;
     const r: TableRow = { slot: "running", ...row(s, false, stMs(s), undefined, undefined, moving) };
-    if (startedWaiting(s) && r.state === "running") r.activity = SLOT_BACK;
+    // a started job without a slot shows the same word as one in line at the engine — "in line" — its own tooltip says what it waits for (the live position comes from activityTip below)
+    if (startedWaiting(s) && r.state === "running") {
+      r.activity = "in line";
+      r.slotBack = true;
+    }
     out.push(r);
   }
   // waiting: per provider in grant order, providers interleaved by position (1st of each, then 2nd of each ...), ties: waited longest first
@@ -348,7 +367,10 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   }
   // one order: running, then waiting, then paused/frozen (stable inside each group)
   const sorted = out.map((r, n) => ({ r, n })).sort((a, b) => rowGroup(a.r) - rowGroup(b.r) || a.n - b.n).map(({ r }) => r);
-  return nestChildren(sorted).map((r) => ({ ...r, activityTip: r.activity ? activityTip(r.activity, r.now) : "" }));
+  return nestChildren(sorted).map((r) => ({
+    ...r,
+    activityTip: !r.activity ? "" : r.slotBack ? inLineSlotTip(backPos.get(r.id) ?? 1, ticket.size) : activityTip(r.activity, r.now),
+  }));
 }
 
 /** A child of an L1 row follows it directly when both are in the same state group; everything else keeps its place. */

@@ -17,7 +17,7 @@
  * of the waiting ones changes.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
@@ -77,7 +77,7 @@ export const sessionScopeKey = (name: string): string => `session~${name}`;
 
 export const queueDir = (logDir: string, provider: string) => join(logDir, "queue", provider.replace(/[^\w.~-]/g, "_"));
 
-interface QueueEntry {
+export interface QueueEntry {
   id: string;
   pid: number;
   front: boolean;
@@ -301,7 +301,7 @@ export function moveUp(logDir: string, provider: string, id: string, isAlive: (p
   if (i <= 0) return false;
   // the run takes the place (and group) of the one it passes
   [order[i - 1], order[i]] = [{ ...order[i], front: order[i - 1].front }, order[i - 1]];
-  order.forEach((e, rank) => writeTicket(join(queueDir(logDir, provider), e.id), entryText({ ...e, rank })));
+  writeOrder(logDir, provider, order);
   return true;
 }
 
@@ -318,8 +318,20 @@ export function moveTo(logDir: string, provider: string, id: string, position: n
   const to = Math.max(0, Math.min(order.length, Math.floor(position) - 1));
   const near = order[to - 1] ?? order[to];
   order.splice(to, 0, { ...e, front: near ? near.front : e.front });
-  order.forEach((x, rank) => writeTicket(join(queueDir(logDir, provider), x.id), entryText({ ...x, rank })));
+  writeOrder(logDir, provider, order);
   return true;
+}
+
+/**
+ * Persist one move's result: EVERY ticket of the provider gets a rank in the new
+ * displayed order. A move used to rank only what it touched — an unranked job
+ * then stayed ahead of a moved-to-the-bottom one by fair share, so moving a job
+ * DOWN made it run sooner (incident 2026-11-18). With all tickets ranked the
+ * operator's order is the admission order: nothing unranked remains to be
+ * overtaken; new arrivals queue after the ranked block.
+ */
+function writeOrder(logDir: string, provider: string, order: QueueEntry[]): void {
+  order.forEach((e, rank) => writeTicket(join(queueDir(logDir, provider), e.id), entryText({ ...e, rank })));
 }
 
 /**
@@ -665,9 +677,18 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const t0 = now();
   const myBuild = (o.buildId ?? currentBuildId)();
   const graceMs = o.headGraceMs ?? HEAD_GRACE_MS;
-  const ticketText = (front: boolean): string => `${self.pid ?? process.pid}${front ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}${myBuild ? ` b:${myBuild}` : ""}`;
-  // a run the preemption sweep parked here ("front", pause closed, no slot): this poll takes the wait over, its place at the head kept
-  const parked = existsSync(entry) && o.priority !== "front";
+  // the rank a move wrote for this ticket (`pai worker queue`, cockpit drag): kept across every rewrite below, so the gate's own re-write never drops the operator's order (2026-11-18: dropping it let fair share overtake a moved job). A run that goes to the front (or returns from a tool) takes place 1.
+  const keptRank = (() => {
+    try {
+      return readEntry(dirname(entry), basename(entry))?.rank;
+    } catch {
+      return undefined;
+    }
+  })();
+  const ticketText = (front: boolean, rank: number | undefined = front ? 0 : keptRank): string => `${self.pid ?? process.pid}${front ? " front" : ""}${rank === undefined ? "" : ` ${rank}`} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}${myBuild ? ` b:${myBuild}` : ""}`;
+  // a run the preemption sweep parked here ("front", pause closed, no slot): this poll takes the wait over, its place at the head kept.
+  // A ticket that merely EXISTS is not a park: without the paused status this is an ordinary waiter (2026-11-18: treating it as parked promoted every waiter to front rank 0, so a job moved to the bottom ran first again).
+  const parked = existsSync(entry) && o.priority !== "front" && loadStatus(logDir, self.id)?.paused === true;
   writeTicket(entry, ticketText(o.priority === "front" || o.returning || parked || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
 
   let madeUrgent = false;
@@ -814,6 +835,24 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
 /** A started, running job holding a queue ticket: it lent its slot during a long tool run and waits to get it back. */
 export function waitsForSlotBack(logDir: string, s: Pick<WorkerStatus, "id" | "provider" | "state" | "paused" | "restarting">): boolean {
   return !!logDir && s.state === "running" && !s.paused && !s.restarting && existsSync(join(queueDir(logDir, s.provider), s.id));
+}
+
+/**
+ * Where a started job that lent its slot stands in its provider's waiting order:
+ * ahead of every not-yet-started job (it holds context and a worktree). 0 = no ticket.
+ */
+export function slotBackPosition(logDir: string, provider: string, id: string, isAlive: (pid: number) => boolean = alive): number {
+  if (!logDir) return 0;
+  const q = liveQueue(logDir, provider, isAlive);
+  const i = q.indexOf(id);
+  return i < 0 ? 0 : i + 1;
+}
+
+/** "in line for a slot: position N of M" — the started job's own place in the waiting order. */
+export function slotBackLine(logDir: string, provider: string, id: string, isAlive: (pid: number) => boolean = alive): string {
+  const q = liveQueue(logDir, provider, isAlive);
+  const i = q.indexOf(id);
+  return i < 0 ? "in line for a slot" : `in line for a slot: position ${i + 1} of ${q.length}`;
 }
 
 /** "waiting for a slot (position n of m)" for a worker that is paused AND holds a queue ticket (a resumed waiter); undefined otherwise. */
