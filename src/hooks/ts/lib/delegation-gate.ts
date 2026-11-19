@@ -28,10 +28,10 @@ export const MODEL_OVERRIDE_REASON = "workers follow the mode chain (`pai worker
 
 /**
  * The local-only window (src/workers/local-only.ts) as the guard sees it: the
- * cloud flags a command asks for. `--class orchestrate|plan` is deliberately
- * absent — their route resolves to the cloud only through workers.yaml, and
- * the hook never reads that config; runWorker's own gate judges those (and the
- * worker CLI refuses them too).
+ * cloud flags a command asks for, and nothing else — never the class or its
+ * possible chain: the hook does not resolve providers, and runWorker's own gate
+ * judges what a run actually resolves to (a resolved local provider always
+ * starts).
  */
 export function localOnlyRefusal(command: string, env: NodeJS.ProcessEnv = process.env): string | null {
   const w = readLocalOnly();
@@ -39,7 +39,12 @@ export function localOnlyRefusal(command: string, env: NodeJS.ProcessEnv = proce
   // --approved-by <gatekeeper> carries the gatekeeper's standing approval through the window
   const m = /--approved-by(?:=|\s+)["']?([^\s"';|&)]+)/.exec(command);
   if (m && m[1] === gatekeeperName()) return null;
-  const asksCloud = /--cloud(?:\s|$)/.test(command) || /--where(?:=|\s+)["']?cloud\b/.test(command);
+  // the flags decide, never the class or its chain (a run that resolves local always starts):
+  // --cloud, --where cloud, and --provider naming the native (cloud) provider.
+  const asksCloud =
+    /--cloud(?:\s|$)/.test(command) ||
+    /--where(?:=|\s+)["']?cloud\b/.test(command) ||
+    modelOverrides(command).some((o) => o.flag === "provider" && o.value === "anthropic");
   if (!asksCloud) return null;
   return localOnlyMessage(w.label);
 }
@@ -278,11 +283,10 @@ export function decideDelegationGate(command: string, env: NodeJS.ProcessEnv, op
     if (overrides.some((o) => !operatorNamesValue(operatorPrompt, o.value)) || whereValues.some((v) => !operatorNamesValue(operatorPrompt, v))) {
       return { decision: "deny", reason: MODEL_OVERRIDE_REASON };
     }
-    // --cloud / --where cloud is a cloud start the window refuses; --approved-by <gatekeeper> passes
-    if (whereValues.includes("cloud") || /--cloud(?:\s|$)/.test(sc)) {
-      const lo = localOnlyRefusal(sc, env);
-      if (lo) return { decision: "deny", reason: lo };
-    }
+    // --cloud / --where cloud / --provider anthropic is a cloud start the window refuses;
+    // --approved-by <gatekeeper> passes; nothing else (never the class) touches the window here
+    const lo = localOnlyRefusal(sc, env);
+    if (lo) return { decision: "deny", reason: lo };
   }
   if (run && !/--class[ \t=]+(?:orchestrate|plan|implement|simple)(?:\s|$)/m.test(sc)) {
     return { decision: "deny", reason: L0_ROUTE_REASON };

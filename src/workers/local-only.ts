@@ -3,7 +3,9 @@
  *
  * While a weekly cloud budget runs down, the operator closes the window:
  * `pai budget local-only --until "YYYY-MM-DD HH:MM"`. Every automatic cloud
- * start and every session's own cloud request is refused until that time;
+ * start and every session's own cloud request is refused until that time —
+ * judged on the run's RESOLVED provider (a class whose chain contains a cloud
+ * entry still runs local while a local server answers);
  * only the gatekeeper session (config key `budget.gatekeeper`, default
  * "PAI") can open a one-time exception with `pai budget approve`, and an
  * operator acting directly (`pai worker reroute`, the cockpit) always passes:
@@ -27,7 +29,6 @@ import { existsSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { writeJsonAtomic } from "../config/json-store.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { ANTHROPIC_NATIVE, getProviderOrNative, readWorkersCached, type WorkersConfig } from "./config.js";
-import { classRoute } from "./route-lists.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
@@ -158,14 +159,15 @@ export function isCloudProviderName(config: WorkersConfig, name: string): boolea
   return !p || !isLoopbackProvider(p);
 }
 
-/** The class's routing list names a cloud entry: the run routes to the cloud even with no flag (orchestrate, plan L1). */
-export function classRoutesCloud(config: WorkersConfig, className: string | undefined): boolean {
-  if (!className) return false;
-  const list = classRoute(config.tiers ?? [], className);
-  return list.some((e) => isCloudProviderName(config, e.split("/")[0]!));
-}
-
-/** Where a cloud start was asked for: --cloud, --where cloud / a cloud provider name, --provider <cloud>, or a class whose route resolves to the cloud. */
+/**
+ * Where a cloud start was asked for: --cloud, --where cloud / a cloud provider
+ * name, --provider <cloud>. Deliberately no class-chain check: a class whose
+ * route list merely CONTAINS a cloud entry is not a cloud ask — the routing
+ * walk (routeRun) picks the running local server first, and this run's RESOLVED
+ * provider decides in localOnlyStartCheck. A run that resolves to a local
+ * provider always starts (2026-11-19: the chain check refused every start of a
+ * cloud-chain class, local ones included).
+ */
 export interface CloudAsk {
   target: string;
   reason: string;
@@ -173,13 +175,12 @@ export interface CloudAsk {
 
 export function detectCloudAsk(
   config: WorkersConfig,
-  f: { cloud?: boolean; whereFlag?: string; providerFlag?: string; className?: string }
+  f: { cloud?: boolean; whereFlag?: string; providerFlag?: string }
 ): CloudAsk | null {
   if (f.cloud) return { target: "cloud", reason: "--cloud" };
   if (f.whereFlag === "cloud") return { target: "cloud", reason: "--where cloud" };
   if (f.whereFlag && f.whereFlag !== "local" && isCloudProviderName(config, f.whereFlag)) return { target: f.whereFlag, reason: `--where ${f.whereFlag}` };
   if (f.providerFlag && isCloudProviderName(config, f.providerFlag)) return { target: f.providerFlag, reason: `--provider ${f.providerFlag}` };
-  if (classRoutesCloud(config, f.className)) return { target: "cloud", reason: `class ${f.className} routes to the cloud` };
   return null;
 }
 
@@ -188,7 +189,8 @@ export interface LocalOnlyCheck {
   cloud?: boolean;
   whereFlag?: string;
   providerFlag?: string;
-  className?: string;
+  /** This run's resolved provider (runWorker resolves first): a local one always starts. */
+  resolvedProvider?: string;
   id?: string;
   label?: string;
   /** --approved-by <session>: the gatekeeper's standing approval, valid only when it names the configured gatekeeper. */
@@ -200,8 +202,11 @@ export interface LocalOnlyCheck {
 }
 
 /**
- * The start-time gate: null lets the run go, a message refuses it. A cloud ask
- * passes on `--approved-by <gatekeeper>` or on a one-time approval token
+ * The start-time gate: null lets the run go, a message refuses it. Judged on
+ * this run alone — its flags and its RESOLVED provider (runWorker resolves
+ * first; the local provider wins when one is up), never on what the class's
+ * route chain could contain. A resolved local provider always starts; a cloud
+ * ask passes on `--approved-by <gatekeeper>` or on a one-time approval token
  * (written by the gatekeeper session's `pai budget approve`); every refusal is
  * ledgered.
  */
@@ -221,17 +226,30 @@ export async function localOnlyStartCheck(o: LocalOnlyCheck): Promise<string | n
   } catch {
     /* no readable config: only the explicit cloud asks below can be judged */
   }
-  const ask: CloudAsk | null = config
-    ? detectCloudAsk(config, o)
-    : o.cloud
-      ? { target: "cloud", reason: "--cloud" }
-      : o.whereFlag === "cloud"
-        ? { target: "cloud", reason: "--where cloud" }
-        : o.whereFlag && o.whereFlag !== "local"
-          ? { target: o.whereFlag, reason: `--where ${o.whereFlag}` }
-          : o.providerFlag === ANTHROPIC_NATIVE
-            ? { target: o.providerFlag, reason: `--provider ${o.providerFlag}` }
-            : null;
+  // the resolved provider decides first: a run that lands on a local (loopback)
+  // provider always starts; one that lands remote is a cloud start even with no flag.
+  if (o.resolvedProvider && config) {
+    const rp = getProviderOrNative(config, o.resolvedProvider);
+    if (rp && isLoopbackProvider(rp)) return null;
+  }
+  const ask: CloudAsk | null = o.resolvedProvider
+    ? // resolved already (runWorker): only a remote provider is this window's cloud
+      o.resolvedProvider === ANTHROPIC_NATIVE || !config
+      ? { target: o.resolvedProvider, reason: `resolved ${o.resolvedProvider}` }
+      : isCloudProviderName(config, o.resolvedProvider)
+        ? { target: o.resolvedProvider, reason: `resolved ${o.resolvedProvider}` }
+        : null
+    : config
+      ? detectCloudAsk(config, o)
+      : o.cloud
+        ? { target: "cloud", reason: "--cloud" }
+        : o.whereFlag === "cloud"
+          ? { target: "cloud", reason: "--where cloud" }
+          : o.whereFlag && o.whereFlag !== "local"
+            ? { target: o.whereFlag, reason: `--where ${o.whereFlag}` }
+            : o.providerFlag === ANTHROPIC_NATIVE
+              ? { target: o.providerFlag, reason: `--provider ${o.providerFlag}` }
+              : null;
   if (!ask) return null;
   if (consumeApproval(o.id, o.label, now)) {
     if (o.logDir) appendLedger(ledgerPath(o.logDir), "LOCAL-ONLY-APPROVED", { kind: "consumed", target: ask.target, worker: o.id ?? "-", label: o.label ?? "-" });
