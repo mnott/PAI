@@ -113,6 +113,20 @@ describe("cockpit page script", () => {
     (ctx as Record<string, unknown>).__g = [mk("x", ["start-now", "pause"]), mk("y", ["pause"], "running")];
     const qh = vm.runInContext("wkQTable(wkView(__g))", ctx) as string;
     expect(qh).toContain(">paused <span class=\"dim\">(none)</span>");
+    // one header per group, above its rows: 6 running + 6 waiting = exactly two headers, each once (distinct sessions so wkSid is unique)
+    const many = Array.from({ length: 6 }, (_, i) => mk("r" + i, ["pause"], "running")).concat(Array.from({ length: 6 }, (_, i) => mk("v" + i, ["start-now", "pause"])));
+    many.forEach((r, i) => (r.session = "s" + i));
+    (ctx as Record<string, unknown>).__m = many;
+    const mh = vm.runInContext("wkQTable(wkView(__m))", ctx) as string;
+    expect((mh.match(/class="wq-g"/g) ?? []).length).toBe(3); // running + waiting, each once, plus the always-shown empty paused "(none)" header
+    expect(mh.indexOf(">running</td>")).toBeLessThan(mh.indexOf('<tr class="wq-r" data-id="r0"'));
+    expect(mh.indexOf(">waiting</td>")).toBeLessThan(mh.indexOf('<tr class="wq-r" data-id="v0"'));
+    expect((mh.match(/>running<\/td>/g) ?? []).length).toBe(1);
+    expect((mh.match(/>waiting<\/td>/g) ?? []).length).toBe(1);
+    // a non-group sort (time) draws the rows flat: no group headers at all
+    vm.runInContext('WK_SORT={col:"time",dir:"asc"}', ctx);
+    expect((vm.runInContext("wkQTable(wkView(__m))", ctx) as string).match(/class="wq-g"/g)).toBeNull();
+    vm.runInContext("WK_SORT=null", ctx);
     expect(vm.runInContext("wkBar({table:__g})", ctx)).toContain("▶ one step toward running · ⏸ one step toward paused · stop and more in …");
   });
   it("the activity word shows with its meaning in the tooltip", async () => {

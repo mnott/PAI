@@ -112,17 +112,17 @@ function wkTRow(r){
  return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
 }
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
-/** The one table: fixed layout, one line per job; each group carries ONE header above its rows (an empty group still shows "(none)"). */
+/** The one table: fixed layout, one line per job. A group's label appears ONCE, above its rows — never after a row and never more than once per group (an empty group still shows "(none)"). */
 function wkQTable(rows){
- // WK_TBLDBG v2
  var g0=wkGroupOf,out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){var k=c[0]==="time"?"time":c[0],sk=k==="state"||k==="session"||k==="time",on=WK_SORT&&WK_SORT.col===k,ar=on?(WK_SORT.dir==="desc"?" ▼":" ▲"):"";return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+(on?' aria-sort="'+(WK_SORT.dir==="desc"?"descending":"ascending")+'"':'')+'>'+(sk?'<button type="button" class="wq-sort'+(on?' on':'')+'" data-qsort="'+k+'" title="sort by '+k+' (click again: ascending, descending, default order)">'+c[0]+ar+'</button>':c[0])+'</th>'}).join("")+'</tr></thead><tbody>';
  var bs=WK_SORT&&WK_SORT.col==="session",flat=WK_SORT&&!bs;
  if(flat){rows.forEach(function(r){out+=wkTRow(r)})}
  else{
-  // one header per group, above its rows: a group with no rows reads "(none)" (a filtered-out group keeps its place)
-  var vis=[0,0,0];(WK_SORT?wkPass((WQ&&WQ.table)||[]):rows).forEach(function(r){vis[g0(r)]++});
+  // one header per group, above its rows: a group with no rows reads "(none)" and keeps its place (a filtered-out group is still named)
+  var vis=[0,0,0];rows.forEach(function(r){vis[g0(r)]++});
   if(bs){var sg=null;rows.forEach(function(r){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}out+=wkTRow(r)})}
-  else{var g=-1;rows.forEach(function(r){var k=g0(r);while(++g<k)out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[g]+(vis[g]?'':' <span class="dim">(none)</span>')+'</td></tr>';if(g!==k){g=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+'</td></tr>'}out+=wkTRow(r)});while(++g<3)out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[g]+(vis[g]?'':' <span class="dim">(none)</span>')+'</td></tr>'}
+  // the group's own position, not a shared loop counter: the header is emitted exactly once per group, before its first row (the old "while(++g&lt;k)" advanced g past k and let every following row re-emit it)
+  else{var last=-1;rows.forEach(function(r){var k=g0(r);if(k!==last){last=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+(vis[k]?'':' <span class="dim">(none)</span>')+'</td></tr>'}out+=wkTRow(r)});[0,1,2].forEach(function(k){if(!vis[k])out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+' <span class="dim">(none)</span></td></tr>'})}
  }
  return out+'</tbody></table>';
 }
