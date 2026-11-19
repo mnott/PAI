@@ -11,8 +11,20 @@ import { eventLine, type Messenger, type RunOrigin } from "./run-events.js";
 import { troublePolicy } from "./notice-policy.js";
 import { loadStatus } from "./status.js";
 import { activeMsOf, frozenSince } from "./freeze.js";
+import { appendDigest, classifyNotice, type NoticePriority } from "./notice-triage.js";
 
 const short = (s: string, n: number): string => s.replace(/\s+/g, " ").trim().slice(0, n);
+
+/** A routine trouble line waits in the origin's digest; without any origin key
+ *  there is no queue to join, and it goes out directly rather than vanish. */
+async function queueDigest(logDir: string, msg: Messenger, origin: RunOrigin, text: string, now: number): Promise<boolean> {
+  const key = origin.claudeSession || origin.iterm || origin.host || origin.name;
+  if (!key) return msg.toSession(origin, text);
+  return appendDigest(logDir, key, text, now);
+}
+
+/** Where a trouble line goes: straight to the session, or into its digest. */
+export type TroubleRoute = (priority: NoticePriority, text: string) => Promise<boolean>;
 
 export class TroubleWatcher {
   private denials: number[] = [];
@@ -29,6 +41,8 @@ export class TroubleWatcher {
     /** The worker's status file is read per tick for the pause window (preemption and `pai worker pause` are not idleness). */
     private readonly logDir: string = "",
     private readonly now: () => number = Date.now,
+    /** Delivery override (tests); default routes by priority through notice-triage. */
+    private readonly deliver?: TroubleRoute,
   ) {
     this.lastActivity = now();
   }
@@ -38,7 +52,15 @@ export class TroubleWatcher {
     if (!force && t - this.lastSent < troublePolicy().throttleMs) return;
     this.lastSent = t;
     const text = eventLine(this.id, kind, fields, sentence);
-    this.chain = this.chain.then(() => this.msg.toSession(this.origin, text).catch(() => false));
+    // urgent lines go out at once; routine ones (an in-line stall) join the
+    // session's digest and leave as one batched message (notice-triage.ts).
+    // The triage runs at send time, so a queued chain reads it fresh.
+    const priority = classifyNotice(text);
+    this.chain = this.chain.then(() =>
+      (this.deliver ?? ((p, tx) =>
+        p === "urgent" ? this.msg.toSession(this.origin, tx) : queueDigest(this.logDir, this.msg, this.origin, tx, this.now())
+      ))(priority, text).catch(() => false)
+    );
   }
 
   private get who(): string {

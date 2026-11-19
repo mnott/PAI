@@ -52,7 +52,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { dirname, join } from "node:path";
 import { alive, isChatPane, loadStatusesCached, nowStamp, type WorkerStatus } from "./status.js";
@@ -75,6 +75,12 @@ import {
   pushable,
 } from "./tool-errors.js";
 import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
+import { appendDigest, classifyNotice, digestPath, digestSessions, flushDigest, type NoticePriority } from "./notice-triage.js";
+import type { Messenger, RunOrigin } from "./run-events.js";
+// lazy on purpose: run-report-wiring pulls the pane/router chain, and a static
+// import here cycles through it back into config.ts (a class-extends undefined
+// at module init). The digest pass runs long after any daemon boot.
+const runMessengerLazy = async (logDir: string): Promise<Messenger> => (await import("./run-report-wiring.js")).runMessenger(logDir);
 import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { endContinuedOrigins, escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
@@ -110,6 +116,8 @@ export interface SupervisionEvent {
   sleepSec?: number | null;
   /** The one-liner that reaches the orchestrator. */
   text: string;
+  /** urgent = pushed at once; routine = queued in the session's digest (notice-triage.ts). Set by runSupervisionTick. */
+  priority?: NoticePriority;
 }
 
 /**
@@ -586,6 +594,8 @@ export interface TickOptions {
   reroutePolicy?: Parameters<typeof escalateOverdue>[3];
   /** Overrides workers.supervision.push; default read from the workers config. */
   pushPolicy?: "harness" | "all";
+  /** Injectable messenger for the digest pass (tests); default the live run messenger. */
+  digest?: { msg?: Pick<Messenger, "toSession"> };
 }
 
 export interface TickResult {
@@ -750,12 +760,23 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
     written.push(ev);
   }
 
+  // urgent vs routine at the source (notice-triage.ts): only urgent events are
+  // pushed now; routine ones queue in the session's digest and leave as ONE
+  // mailbox message at most every notices.digest.everyMinutes.
+  for (const ev of written) ev.priority = classifyNotice(ev.text);
+
   const push = opts.push ?? aibrokerPush;
   const pushed: SupervisionEvent[] = [];
   for (const ev of written) {
     // the owner's iTerm identity is in its worker status, not the event
     const owner = statuses.find((s) => s.id === ev.worker);
     if (!shouldRelay(ev.kind, owner?.outputFormat, !!owner?.fallThroughOf)) continue; // caller reads its own JSON result
+    if (ev.priority === "routine") {
+      // no wake per notice: the line waits in the session's digest file, the
+      // digest pass below delivers it batched (the event file still carries it)
+      appendDigest(logDir, ev.session, ev.text, now.getTime());
+      continue;
+    }
     const target: PushTarget = {
       claudeSession: ev.session || owner?.spawnerSession || null,
       iterm: owner?.session?.id ?? null,
@@ -775,7 +796,53 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   markDelivered(state, written);
   await pointUndrained(logDir, state, statuses, now, opts.pointer);
   saveSupervisionState(statePath, pruneState(state, statuses));
+  // the digest pass rides the tick (the daemon interval is coarser than the
+  // digest interval, so a due digest leaves on the next tick)
+  await flushDigests(logDir, statuses, now.getTime(), opts.digest);
   return { events: written, pushed };
+}
+
+/** The origin of a worker's owning session — the same fields a push resolves from. */
+function originOfStatus(s: WorkerStatus): RunOrigin {
+  return {
+    claudeSession: s.spawnerSession ?? undefined,
+    iterm: s.session?.id ?? undefined,
+    name: s.session?.name || undefined,
+  };
+}
+
+/**
+ * The digest pass: every session with a queued routine digest gets at most one
+ * mailbox message per notices.digest.everyMinutes (flushDigest holds the
+ * interval and drops a digest older than a day). A key no live worker claims
+ * anymore is history and is dropped; a send failure keeps the digest queued.
+ */
+export async function flushDigests(
+  logDir: string,
+  statuses: WorkerStatus[],
+  now: number,
+  deps: { msg?: Pick<Messenger, "toSession"> } = {}
+): Promise<string[]> {
+  const msg = deps.msg ?? (await runMessengerLazy(logDir));
+  const sent: string[] = [];
+  for (const session of digestSessions(logDir)) {
+    const owner = statuses.find((s) => ownershipKey(s) === session);
+    if (!owner) {
+      // no live worker claims this key: the queue is history, not news
+      try {
+        unlinkSync(digestPath(logDir, session));
+      } catch {
+        /* gone already */
+      }
+      continue;
+    }
+    // the digest's own key is the fallback target (a pane-named queue): an
+    // unknown uuid reaches AIBroker as a name substring, like any session name
+    const origin = originOfStatus(owner);
+    if (!origin.name && !owner.session?.id) origin.name = session;
+    if (await flushDigest(logDir, session, msg, origin, now)) sent.push(session);
+  }
+  return sent;
 }
 
 // ---------------------------------------------------------------------------

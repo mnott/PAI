@@ -83,6 +83,12 @@ notices:
     denialThreshold: 3
     # No output for this long while running tells once per quiet spell.
     stallMinutes: 10
+  # The routine-notice digest (src/workers/notice-triage.ts): notices that need
+  # no action (finished rc=0, [model]/[unknown] tool errors, in-line stalls,
+  # test-count reminders) queue per session and leave as ONE mailbox message at
+  # most this often, and only when non-empty. Urgent notices never wait.
+  digest:
+    everyMinutes: 30
 # Notification subsystem configuration.
 notifications:
   mode: auto
