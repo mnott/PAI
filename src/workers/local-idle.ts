@@ -20,6 +20,7 @@ import { eventLine, type Messenger } from "./run-events.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { readLocalStatus, type LocalStatus } from "./local-status.js";
 import { holdsSlot, isChatPane, isLive, pausedFree, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
+import { packageRoot } from "../module-paths.js";
 
 export interface LocalIdleConfig {
   enabled: boolean;
@@ -175,6 +176,89 @@ export function startGpuSampler(intervalMs = 5_000, read: () => Promise<number |
   };
 }
 
+// ---------------------------------------------------------------------------
+// the SoC temperature sampler: tools/pai-sensors once per 30 s, no retry loop
+// ---------------------------------------------------------------------------
+
+/** One SoC temperature reading with its timestamp (°C). */
+export interface SocTempReading {
+  at: number;
+  maxC: number;
+  avgC: number;
+  sensors: number;
+}
+
+/** Why the last helper run produced nothing, beside the last good value. */
+let socTempError = "";
+let socTempLast: SocTempReading | null = null;
+let socTempTimer: ReturnType<typeof setInterval> | null = null;
+
+/** The one-shot helper binary (built like tools/apple-fm-bridge: `swift build -c release`). */
+export const paiSensorsPath = (): string => join(packageRoot(import.meta.url), "tools", "pai-sensors", ".build", "release", "pai-sensors");
+
+/** The helper's JSON line → a reading; null on any malformed/failed output. */
+export function parseSocTempJson(out: string): SocTempReading | null {
+  try {
+    const j = JSON.parse(out.trim()) as { socTempC?: unknown; socTempAvgC?: unknown; sensors?: unknown };
+    if (typeof j.socTempC !== "number" || !Number.isFinite(j.socTempC) || typeof j.socTempAvgC !== "number") return null;
+    return { at: Date.now(), maxC: j.socTempC, avgC: j.socTempAvgC, sensors: typeof j.sensors === "number" ? j.sensors : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** Run the helper once (2 s timeout); a missing binary is a permanent reason, never retried in a loop. */
+export function readSocTemp(path = paiSensorsPath()): Promise<SocTempReading | null> {
+  if (!existsSync(path)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(path, [], { timeout: 2_000 }, (err, stdout) => resolve(err ? null : parseSocTempJson(stdout)));
+  });
+}
+
+/** Record one helper run; a failed read keeps the last value and stores the reason. */
+export function recordSocTemp(t: number, r: SocTempReading | null): void {
+  if (r) {
+    socTempLast = { ...r, at: t };
+    socTempError = "";
+  } else if (!socTempError) {
+    socTempError = existsSync(paiSensorsPath()) ? "helper failed (no plausible reading)" : "helper not built: cd tools/pai-sensors && swift build -c release";
+  }
+}
+
+export function socTempState(): { last: SocTempReading | null; error: string } {
+  return { last: socTempLast, error: socTempError };
+}
+
+/** Reset the sampler's state (tests). */
+export function resetSocTempState(): void {
+  socTempLast = null;
+  socTempError = "";
+}
+
+/**
+ * The daemon's SoC temperature sampler: one `tools/pai-sensors` run every
+ * intervalMs (default 30 s) — a one-shot IOKit HID read, no sudo, no resident
+ * process. A failed run keeps the last value and its reason; there is no retry
+ * loop beyond the cadence itself. Returns the stop function.
+ */
+export function startSocTempSampler(intervalMs = 30_000, read: () => Promise<SocTempReading | null> = readSocTemp, now: () => number = Date.now): () => void {
+  if (socTempTimer) clearInterval(socTempTimer);
+  const tick = async () => {
+    try {
+      recordSocTemp(now(), await read());
+    } catch {
+      recordSocTemp(now(), null);
+    }
+  };
+  void tick();
+  socTempTimer = setInterval(() => void tick(), intervalMs);
+  socTempTimer.unref();
+  return () => {
+    if (socTempTimer) clearInterval(socTempTimer);
+    socTempTimer = null;
+  };
+}
+
 const BUILD_LAST = /\b(build\.sh|install\.sh|xcodebuild|gradlew?|cargo build|npm run build|make)\b/;
 const TEST_LAST = /\b(vitest|jest|pytest|npm (run )?test|bun test|cargo test|go test)\b/;
 
@@ -278,6 +362,16 @@ export interface LocalIdleFile {
   gpuAvgPct?: number | null;
   /** Peak GPU % over the same window. */
   gpuPeakPct?: number | null;
+  /** SoC die temperature max °C from tools/pai-sensors (30 s sampler); absent with no reading yet. */
+  socTempC?: number;
+  /** SoC die temperature avg °C over the same sensors. */
+  socTempAvgC?: number;
+  /** Number of die sensors behind the two numbers. */
+  socSensors?: number;
+  /** Epoch ms of the temperature reading (the sampler's own clock, beside `at`). */
+  socTempAt?: number;
+  /** Why there is no temperature (helper not built / failed); kept beside the last value. */
+  socTempError?: string;
   idleSince: number | null;
   lastNudge: Record<string, number>;
   providers: Array<{ provider: string; cap: number; running: number; free: number; queued: number; paused?: number; lent?: number; startedHoldingTicket?: number; activity: Record<string, number> }>;
@@ -339,11 +433,14 @@ export async function localIdleTick(logDir: string, workers: WorkersConfig, msg:
   const { state: next, nudges } = evaluate(state.current, sample, cfg, new Set(readMuted(logDir)));
   state.current = next;
   const win = gpuStats(sample.at, 60_000);
+  const st = socTempState(); // the 30 s pai-sensors sampler's last value + reason, read without spawning anything
   const file: LocalIdleFile = {
     at: new Date(sample.at).toISOString(),
     gpuPct: sample.gpuPct,
     gpuAvgPct: win.avg,
     gpuPeakPct: win.peak,
+    ...(st.last ? { socTempC: st.last.maxC, socTempAvgC: st.last.avgC, socSensors: st.last.sensors, socTempAt: st.last.at } : {}),
+    ...(st.error ? { socTempError: st.error } : {}),
     idleSince: next.idleSince,
     lastNudge: next.lastNudge,
     providers: sample.providers.map((p) => {
