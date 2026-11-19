@@ -34,13 +34,14 @@ import { resolveBindAddress } from "../router/cockpit-auth.js";
 import { LOOPBACK_HOST } from "../utils/loopback.js";
 import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 import { pidAlive } from "./status.js";
-import { appendLedger, ledgerPath } from "./ledger.js";
+import { appendLedger } from "./ledger.js";
+import { ledgerPath } from "./paths.js";
 import { loadConfig } from "../daemon/config.js";
 import { resolveDaemonPid, LAUNCHD_LABEL, currentUid } from "../daemon/daemon-pid.js";
 import { PaiClient } from "../daemon/ipc-client.js";
 import { routerPort } from "../router/router.js";
 import { routerRunningPid } from "../router/supervisor.js";
-import { readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommands } from "./model-runtimes.js";
+import { readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps } from "./model-runtimes.js";
 import { readLocalConfig, healthUrl, type LocalTier } from "./local-tiers.js";
 import { workersYamlPath } from "./workers-config.js";
 import { runtimeAutostartConfig, liveRuntimeAlive } from "../daemon/runtime-autostart.js";
@@ -167,25 +168,48 @@ async function liveRuntimeUp(name: string): Promise<boolean> {
   } catch {
     /* unreadable local_tiers: only a models.runtimes entry can be probed */
   }
-  const tier = !cmd?.start && !cmd?.ready ? runtimeAutostartConfig(readRuntimeCommands(), tiers).tiers?.[name] : undefined;
+  // the same resolution the autostart uses: a command-less entry is a local_tiers model (its ready URL may be a {port} template)
+  const tier = !cmd?.start ? runtimeAutostartConfig(readRuntimeCommands(), tiers).tiers?.[name] : undefined;
   if (tier) return liveRuntimeOpDeps.getUrl(healthUrl(tier, tier.port));
   if (!cmd?.ready) {
     // no readiness configured: liveness is all there is to ask
     return liveRuntimeAlive(name);
   }
-  return readyIsUrl(cmd.ready) ? liveRuntimeOpDeps.getUrl(cmd.ready.replace(/\{port\}/g, String(tier?.port ?? 0))) : (await liveRuntimeOpDeps.runCmd(cmd.ready)) === 0;
+  // a models.runtimes entry has its own ready URL/command: no {port} template to expand there
+  return readyIsUrl(cmd.ready) ? liveRuntimeOpDeps.getUrl(cmd.ready) : (await liveRuntimeOpDeps.runCmd(cmd.ready)) === 0;
 }
 
-/** The autostart runtimes the machine supervises — the set the check must find up or busy after a restart. */
-export function autostartRuntimesUpBefore(): string[] {
+/**
+ * The runtimes that were UP before the restart — the set the check must find up or busy after it.
+ * Probed once, before anything restarts (a restarted daemon does not know what was up before): a runtime
+ * answers its readiness now, or is alive and working (its port accepts, or requests are in flight) —
+ * busy is not down; a truly down autostart runtime is starting anyway and joins the demanded set.
+ */
+export async function runtimesUpBefore(): Promise<string[]> {
   let tiers: LocalTier[] = [];
   try {
     tiers = Object.values(readLocalConfig(workersYamlPath()).tiers);
   } catch {
     /* no readable local_tiers: the runtimes block alone decides */
   }
-  return Object.keys(runtimeAutostartConfig(readRuntimeCommands(), tiers).runtimes);
+  const cfg = runtimeAutostartConfig(readRuntimeCommands(), tiers);
+  if (!cfg.enabled) return [];
+  const out: string[] = [];
+  for (const name of Object.keys(cfg.runtimes)) {
+    try {
+      if (await liveRuntimeUp(name)) {
+        out.push(name);
+        continue;
+      }
+      // busy is not down: alive (port accepts, scheduler in flight) while readiness is slow means it was up and working
+      if (await liveRuntimeAlive(name)) out.push(name);
+    } catch {
+      /* unreadable runtime: nothing to demand of it */
+    }
+  }
+  return out;
 }
+
 
 /** The previous daemon's start command: launchd's ProgramArguments (macOS) or systemd's ExecStart (Linux); null when neither answers. */
 export function previousDaemonStartCommand(platform: NodeJS.Platform = process.platform): string[] | null {
@@ -302,6 +326,8 @@ export interface RestartGateDeps extends RestartHealthDeps {
   ledger: (event: string, kv: Record<string, string | number>) => void;
   /** Notify the owning session's mailbox (mailbox-only deposit). */
   notify?: (text: string) => Promise<void>;
+  /** The runtimes that were up before the restart, probed BEFORE anything restarted. Default: {@link runtimesUpBefore}. */
+  runtimesUpBefore?: () => Promise<string[]>;
 }
 
 export interface GateResult {
@@ -313,11 +339,24 @@ export interface GateResult {
 }
 
 /**
- * Keep one generation of dist back before a rebuild: the caller calls this BEFORE
- * `npm run build`, so the running build is what lands in dist.prev.
+ * Before a rebuild: keep one generation of dist back (the running build lands in
+ * dist.prev) AND record which runtimes are up now — both must be known before the
+ * new code starts running. The pair feeds {@link gateRestartAfterBuild}.
  */
-export function prepareRestartGate(distDir: string, d: RestartGateDeps): boolean {
-  return d.savePrev(distDir);
+export interface GatePrepare {
+  prevKept: boolean;
+  runtimesUpBefore: string[];
+}
+
+export async function prepareRestartGate(distDir: string, d: RestartGateDeps): Promise<GatePrepare> {
+  const prevKept = d.savePrev(distDir);
+  let runtimes: string[] = [];
+  try {
+    runtimes = await (d.runtimesUpBefore ?? runtimesUpBefore)();
+  } catch {
+    /* unreadable runtimes: the check demands nothing of them */
+  }
+  return { prevKept, runtimesUpBefore: runtimes };
 }
 
 /**
@@ -325,15 +364,15 @@ export function prepareRestartGate(distDir: string, d: RestartGateDeps): boolean
  * and the runtimes that were up before; on a failure restore dist.prev, force the
  * daemon onto it, re-check, and report `restart failed health check: <what>;
  * rolled back to <old version>`. The caller marks the merge reverted in git when
- * this returns rolledBack. `prevKept` is {@link prepareRestartGate}'s answer.
+ * this returns rolledBack. `prepared` is {@link prepareRestartGate}'s answer taken before the build.
  */
-export async function gateRestartAfterBuild(distDir: string, d: RestartGateDeps, prevKept: boolean): Promise<GateResult> {
-  // the set of runtimes to demand is fixed BEFORE any restart happens (a restarted daemon does not know what was up before)
-  const runtimes = prevKept ? autostartRuntimesUpBefore() : [];
+export async function gateRestartAfterBuild(distDir: string, d: RestartGateDeps, prepared: GatePrepare): Promise<GateResult> {
+  // the set of runtimes to demand was fixed BEFORE any restart happened (a restarted daemon does not know what was up before)
+  const runtimes = prepared.runtimesUpBefore;
   const first = await checkRestartHealth(runtimes, d);
   if (first.ok) {
     const line = `restart health: ok (daemon and router answer${runtimes.length ? `, ${runtimes.length} local runtime(s) up or busy` : ""}, ${Math.round(first.ms / 1000)}s)`;
-    d.ledger("RESTART-HEALTH", { result: "ok", ms: first.ms, dist_prev_kept: String(prevKept) });
+    d.ledger("RESTART-HEALTH", { result: "ok", ms: first.ms, dist_prev_kept: String(prepared.prevKept) });
     return { ok: true, line };
   }
   const what = first.failures.join("; ");

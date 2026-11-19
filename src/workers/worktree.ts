@@ -1717,17 +1717,6 @@ async function mergeWorkerInner(
 /** The merge stands but its related tests failed; the CLI exits 3 with the message (merge summary, result, hints). */
 export class RelatedTestsFailedError extends Error {}
 
-/** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */
-function revertMerge(cwd: string, oldHead: string): string {
-  const head = git(cwd, ["rev-parse", "HEAD"]);
-  // everything the gated merge put on this branch (a reapply plus the merge), newest first
-  for (const c of git(cwd, ["rev-list", "--first-parent", `${oldHead}..HEAD`]).split("\n").filter(Boolean)) {
-    const merge = git(cwd, ["rev-list", "--parents", "-n", "1", c]).split(" ").length > 2;
-    git(cwd, merge ? ["revert", "-m", "1", "--no-edit", c] : ["revert", "--no-edit", c]);
-  }
-  return head;
-}
-
 /**
  * Merge a worker branch. The run's own worktree carries a .pai-keep marker while the merge,
  * its tests, build and restart run, so no gc (daemon or chain sibling) reclaims it once the
@@ -1754,17 +1743,12 @@ export type RestartVerifier = () => { restarted: boolean; forced: boolean; detai
 const defaultRestartVerify: RestartVerifier = () => waitForDaemonRestart();
 
 /** The full restart gate (health check + rollback); injectable for tests. Returns the line to print, or null when no gate applies. */
-export type RestartGate = (logDir: string, distDir: string) => Promise<{ ok: boolean; line: string; rolledBack?: boolean } | null>;
-const defaultRestartGate: RestartGate = async (logDir, distDir) => {
-  const { prepareRestartGate, gateRestartAfterBuild, liveRestartGateDeps } = await import("./restart-health.js");
-  const kept = prepareRestartGate(distDir, liveRestartGateDeps(logDir));
-  return gateRestartAfterBuild(distDir, liveRestartGateDeps(logDir), kept);
-};
+export type RestartGate = (logDir: string, distDir: string) => Promise<{ ok: boolean; line: string; rolledBack?: boolean; failures?: string[] } | null>;
 
-/** The live gate AFTER the build, with dist.prev already kept (prevKept from prepareRestartGate). */
-const gateWithPrev: (logDir: string, distDir: string, prevKept: boolean) => ReturnType<RestartGate> = async (logDir, distDir, prevKept) => {
+/** The live gate AFTER the build, with dist.prev and the up-runtimes already recorded by prepareRestartGate. */
+const gatePrepared: (logDir: string, distDir: string, prepared: { prevKept: boolean; runtimesUpBefore: string[] }) => ReturnType<RestartGate> = async (logDir, distDir, prepared) => {
   const { gateRestartAfterBuild, liveRestartGateDeps } = await import("./restart-health.js");
-  return gateRestartAfterBuild(distDir, liveRestartGateDeps(logDir), prevKept);
+  return gateRestartAfterBuild(distDir, liveRestartGateDeps(logDir), prepared);
 };
 
 /** Environment keys a build needs; everything else (tokens, API keys) stays out. */
@@ -1815,13 +1799,13 @@ async function rebuildDist(
   // keep one generation of dist back BEFORE the build replaces it, so a failed
   // health check afterwards has something to roll back to (night 2026-11-17/18)
   const distDir = join(target, "dist");
-  let prevKept: boolean | null = null; // null: the default gate keeps it inside itself
-  if (opts.restartGate !== undefined) {
+  let prepared: { prevKept: boolean; runtimesUpBefore: string[] } | null = null; // null: an injected gate prepares inside itself
+  if (opts.restartGate === undefined) {
     try {
       const { prepareRestartGate, liveRestartGateDeps } = await import("./restart-health.js");
-      prevKept = prepareRestartGate(distDir, liveRestartGateDeps(logDir));
+      prepared = await prepareRestartGate(distDir, liveRestartGateDeps(logDir));
     } catch {
-      prevKept = false;
+      prepared = { prevKept: false, runtimesUpBefore: [] };
     }
   }
   let res: BuildResult;
@@ -1844,12 +1828,7 @@ async function rebuildDist(
     // the full gate: health-check the restarted daemons, roll dist back and revert this merge on a failure
     // (night 2026-11-17/18: restarts left the daemons unable to come up and the night was lost)
     try {
-      const g =
-        opts.restartGate !== undefined
-          ? await opts.restartGate(logDir, distDir)
-          : prevKept === null
-            ? await defaultRestartGate(logDir, distDir)
-            : await gateWithPrev(logDir, distDir, prevKept);
+      const g = opts.restartGate !== undefined ? await opts.restartGate(logDir, distDir) : await gatePrepared(logDir, distDir, prepared ?? { prevKept: false, runtimesUpBefore: [] });
       if (g === null) return line;
       if (g.ok) return `${line}\n${g.line}`;
       if (g.rolledBack) {
