@@ -314,3 +314,54 @@ describe("restart health gate after a merge", () => {
     expect(reverted).toBe(0);
   });
 });
+
+describe("smoke start after a merge build", () => {
+  const f = (): { repo: string; logDir: string } => {
+    const x = fixture();
+    makeWorker(x.repo, x.logDir, "sm", { file: "sm.txt" });
+    return x;
+  };
+  // every step logs its name: the smoke start must run after the build and BEFORE anything restarts the daemon
+  const rig = (smoke: () => Promise<{ ok: boolean; ms: number; error?: string }>) => {
+    const events: string[] = [];
+    return {
+      events,
+      opts: {
+        verifyTests: false,
+        build: () => (events.push("build"), { ok: true, ms: 1, tail: "" }),
+        restartVerify: () => (events.push("restartVerify"), { restarted: true, forced: false, detail: "t" }),
+        restartGate: async () => (events.push("restartGate"), { ok: true, line: "restart health: ok" }),
+        smoke: async () => (events.push("smoke"), smoke()),
+        revertMergeCommits: () => (events.push("revert"), "reverted"),
+      },
+    };
+  };
+
+  it("a smoke start that throws reverts and rebuilds BEFORE the daemon restart check", async () => {
+    const { repo, logDir } = f();
+    const r = rig(async () => {
+      throw new Error("Cannot access 'toolFold' before initialization\n    at foo");
+    });
+    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
+    expect(out).toContain("smoke start failed: Cannot access 'toolFold' before initialization");
+    expect(out).not.toContain("at foo");
+    expect(r.events).toEqual(["build", "smoke", "revert", "build", "restartVerify", "restartGate"]);
+  });
+
+  it("a smoke start that exits non-zero reverts the merge", async () => {
+    const { repo, logDir } = f();
+    const r = rig(async () => ({ ok: false, ms: 5, error: "worker run exited 1" }));
+    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
+    expect(out).toContain("smoke start failed: worker run exited 1");
+    expect(r.events.indexOf("revert")).toBeGreaterThan(r.events.indexOf("smoke"));
+    expect(r.events.indexOf("revert")).toBeLessThan(r.events.indexOf("restartVerify"));
+  });
+
+  it("an ok smoke start keeps the merge and the restart follows it", async () => {
+    const { repo, logDir } = f();
+    const r = rig(async () => ({ ok: true, ms: 1200 }));
+    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
+    expect(out).toContain("smoke start: ok (1.2 s)");
+    expect(r.events).toEqual(["build", "smoke", "restartVerify", "restartGate"]);
+  });
+});

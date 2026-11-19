@@ -50,6 +50,8 @@ export interface ReleaseDeps {
    * null = no gate (another repo's release).
    */
   restartGate?: RestartGateFn | null;
+  /** Smoke start of the built CLI before tagging. Absent = the live one for the PAI repo only; null = none. */
+  smoke?: ((cwd: string) => Promise<{ ok: boolean; ms: number; error?: string }>) | null;
 }
 
 /** The release's restart gate: prepare before `npm run build`, check-and-roll-back after. Null when the gate does not apply. */
@@ -350,6 +352,17 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
         await sh(t.cmd, t.args);
         print(`test: ok (${[t.cmd, ...t.args].join(" ")})`);
       } else print("test: skipped (no unit tests)");
+    }
+
+    // 4b. smoke start: the built CLI must start one worker (offline stub model) before anything is committed or tagged
+    if (at("test") && pkg.scripts?.build) {
+      const smoke = deps.smoke === undefined ? (pkg.name === "@tekmidian/pai" ? async (cwd: string) => (await import("../workers/smoke-start.js")).smokeStart({ cwd }) : null) : deps.smoke;
+      if (smoke) {
+        step = "test";
+        const sm = await smoke(repo).catch((e: unknown) => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
+        if (!sm.ok) throw new StepFailed(`smoke start failed: ${(sm.error ?? "unknown error").split("\n")[0]}`);
+        print(`smoke: ok (${(sm.ms / 1000).toFixed(1)} s)`);
+      }
     }
 
     // 5. commit
