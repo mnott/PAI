@@ -160,6 +160,18 @@ export class PostgresBackend implements StorageBackend {
       process.stderr.write("[pai-postgres] Migration: created kg_triples table\n");
     }
 
+    // Migration: kg_triples keeps at most one OPEN row per (subject, predicate, object).
+    // Existing duplicates collapse to the oldest row; closed rows are untouched.
+    await pool.query(`
+      DELETE FROM kg_triples a USING kg_triples b
+      WHERE a.valid_to IS NULL AND b.valid_to IS NULL
+        AND a.subject = b.subject AND a.predicate = b.predicate AND a.object = b.object
+        AND (a.id, COALESCE(a.source_session, '')) > (b.id, COALESCE(b.source_session, ''))
+    `);
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uq_kg_open_triple ON kg_triples(subject, predicate, object) WHERE valid_to IS NULL`
+    );
+
     // Migration: kg_entities + registry tables (projects, sessions, tags,
     // project_tags, session_tags, aliases, links, compaction_log).
     // Every statement is IF NOT EXISTS — safe to run on every startup.

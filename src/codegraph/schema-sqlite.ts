@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS kg_triples (
   confidence     TEXT DEFAULT 'EXTRACTED',
   created_at     INTEGER NOT NULL
 );
+-- one open row per (subject, predicate, object) — the SQLite twin of Postgres uq_kg_open_triple.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kg_open_triple ON kg_triples(subject, predicate, object) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS idx_kg_subject ON kg_triples(subject);
 CREATE INDEX IF NOT EXISTS idx_kg_object ON kg_triples(object);
 CREATE INDEX IF NOT EXISTS idx_kg_scope ON kg_triples(source_session);

@@ -234,7 +234,7 @@ export const codeCommand: CommandDef = {
       name: "relate",
       summary: "Derive relations between projects and notes",
       description:
-        "Reads the code graphs of the indexed registered projects and writes relations to the knowledge graph (kg_triples): depends-on (manifests), calls-api (routes and MCP tools), shares-protocol (same message types), duplicates (near-identical functions) and, from the vault notes, mentions and cites. " +
+        "Reads the code graphs of the indexed registered projects and writes relations to the knowledge graph (kg_triples): depends-on (manifests), calls-api (routes and MCP tools another project registers), calls-cli (`pai <verb>` / `aibroker <verb>` invocations), shares-protocol (same message types), duplicates (near-identical functions) and, from the vault notes, mentions and cites. " +
         "A relation that disappears gets an end date, never deleted. Index the projects first (pai code index).",
       options: [
         { name: "project", type: "string", value: "SLUG", summary: "Write only this project's relations (all projects are still read)" },
@@ -252,6 +252,7 @@ export const codeCommand: CommandDef = {
           `triples   ${rep.triples} (added ${rep.added}, ended ${rep.closed}, unchanged ${rep.kept})`,
           ...Object.entries(rep.byPredicate).map(([k, v]) => `  ${k.padEnd(16)} ${v}`),
           ...rep.samples.map((x) => `  e.g. ${x.subject} ${x.predicate} ${x.object}`),
+          ...Object.entries(rep.topObjects ?? {}).map(([p, list]) => `  top ${p}: ${list.map((o) => `${o.object}${o.count > 1 ? ` x${o.count}` : ""}`).join(", ")}`),
         ]);
       },
     },
