@@ -35,6 +35,7 @@ import { lowPriorityWrap } from "../builds/gate.js";
 import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
 import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 import { summarizeGateFailure } from "./helper-uses.js";
+import { smokeStart, type SmokeStartDeps } from "./smoke-start.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -1835,7 +1836,7 @@ async function rebuildDist(
   id: string,
   target: string,
   oldHead: string,
-  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string }
+  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string; smoke?: SmokeRunner; smokeDeps?: SmokeStartDeps }
 ): Promise<string | null> {
   if (opts.rebuild === false || loadConfig().workers?.merge?.rebuild === false) return null;
   let same = false;
