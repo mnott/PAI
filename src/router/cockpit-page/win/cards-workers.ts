@@ -32,10 +32,17 @@ function wkNarrow(){return typeof document!=="undefined"&&!!document.documentEle
 function wkSid(r){r.sid=String(r.id).slice(String(r.id).lastIndexOf("-")+1);return r}
 /** "12m left" / "3m over" from the deadline (seconds to the stop; negative = past it); "" without one. */
 function wkLeft(s){if(typeof s!=="number"||!isFinite(s))return"";var x=Math.round(s);return wkDur(x)+(x<0?" over":" left")}
-function wkView(rows){
+function wkView(rows){return wkSort(wkPass(rows))}
+/** Filtered rows in admission order (no sort): the group headers count over these. */
+function wkPass(rows){
  wkAssign((rows||[]).map(function(x){return x.session}));
  var r=(rows||[]).map(function(x,i){return{x:wkSid(x),i:i}});
  if(WK_FILTERS.length||WK_TF.length)r=r.filter(function(o){return WK_FILTERS.indexOf(o.x.session)>=0||(!!o.x.topic&&WK_TF.indexOf(wkTk(o.x))>=0)});
+ return r.map(function(o){return o.x});
+}
+/** Filtered by the chosen sessions, then sorted (admission order is the tie-break and the default). */
+function wkSort(rows){
+ var r=(rows||[]).map(function(x,i){return{x:x,i:i}});
  if(WK_SORT){var c=WK_SORT.col,sg=WK_SORT.dir==="desc"?-1:1;r.sort(function(a,b){var u=c==="session"?(a.x.session<b.x.session?-1:a.x.session>b.x.session?1:0):c==="time"?a.x.seconds-b.x.seconds:wkGroupOf(a.x)-wkGroupOf(b.x);return u?u*sg:a.i-b.i})}
  return r.map(function(o){return o.x});
 }
@@ -105,12 +112,18 @@ function wkTRow(r){
  return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
 }
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
-/** The one table: fixed layout, one line per job, a thin labelled separator where the group changes. */
+/** The one table: fixed layout, one line per job. A group's label appears ONCE, above its rows — never after a row and never more than once per group (an empty group still shows "(none)"). */
 function wkQTable(rows){
- var out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){var k=c[0]==="time"?"time":c[0],sk=k==="state"||k==="session"||k==="time",on=WK_SORT&&WK_SORT.col===k,ar=on?(WK_SORT.dir==="desc"?" ▼":" ▲"):"";return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+(on?' aria-sort="'+(WK_SORT.dir==="desc"?"descending":"ascending")+'"':'')+'>'+(sk?'<button type="button" class="wq-sort'+(on?' on':'')+'" data-qsort="'+k+'" title="sort by '+k+' (click again: ascending, descending, default order)">'+c[0]+ar+'</button>':c[0])+'</th>'}).join("")+'</tr></thead><tbody>',g=-1;
- var bs=WK_SORT&&WK_SORT.col==="session",flat=WK_SORT&&!bs,sg=null;
- rows.forEach(function(r){if(bs){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}}else if(!flat){var k=wkGroupOf(r);while(++g<k)out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[g]+' <span class="dim">(none)</span></td></tr>';if(g!==k){g=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+'</td></tr>'}}out+=wkTRow(r)});
- while(++g<3)out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[g]+' <span class="dim">(none)</span></td></tr>';
+ var g0=wkGroupOf,out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){var k=c[0]==="time"?"time":c[0],sk=k==="state"||k==="session"||k==="time",on=WK_SORT&&WK_SORT.col===k,ar=on?(WK_SORT.dir==="desc"?" ▼":" ▲"):"";return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+(on?' aria-sort="'+(WK_SORT.dir==="desc"?"descending":"ascending")+'"':'')+'>'+(sk?'<button type="button" class="wq-sort'+(on?' on':'')+'" data-qsort="'+k+'" title="sort by '+k+' (click again: ascending, descending, default order)">'+c[0]+ar+'</button>':c[0])+'</th>'}).join("")+'</tr></thead><tbody>';
+ var bs=WK_SORT&&WK_SORT.col==="session",flat=WK_SORT&&!bs;
+ if(flat){rows.forEach(function(r){out+=wkTRow(r)})}
+ else{
+  // one header per group, above its rows: a group with no rows reads "(none)" and keeps its place (a filtered-out group is still named)
+  var vis=[0,0,0];rows.forEach(function(r){vis[g0(r)]++});
+  if(bs){var sg=null;rows.forEach(function(r){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}out+=wkTRow(r)})}
+  // the group's own position, not a shared loop counter: the header is emitted exactly once per group, before its first row (the old "while(++g&lt;k)" advanced g past k and let every following row re-emit it)
+  else{var last=-1;rows.forEach(function(r){var k=g0(r);if(k!==last){last=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+(vis[k]?'':' <span class="dim">(none)</span>')+'</td></tr>'}out+=wkTRow(r)});[0,1,2].forEach(function(k){if(!vis[k])out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+' <span class="dim">(none)</span></td></tr>'})}
+ }
  return out+'</tbody></table>';
 }
 /** The open menu (row, session or All jobs), fixed at the clicked button. */
