@@ -97,6 +97,15 @@ workers:
   # Legacy fixed handoff threshold; superseded by timeBudget below (the
   # progress-based budget replaces the automatic cloud fall-through). 0 = off.
   localHandoffMinutes: 0
+  # Context window Claude Code is told for local (loopback) workers, in tokens.
+  # Claude Code does not know an unrecognised local model's window and assumes
+  # 200k, so it compacts only near that — on one local engine every turn then
+  # costs a 130k+ context (slow prefill after cache eviction, slower decode, RAM
+  # pressure). The value goes to the worker as CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  # (Claude Code's autocompact-window setting; an explicit provider env for that
+  # key still wins). `pai worker resume` on a local provider above this cap
+  # starts a fresh conversation instead of --resume. Cloud runs are untouched.
+  localContextTokens: 65536
   # Progress-based time budget (src/workers/time-budget.ts): a run opens with
   # `start` minutes of own time; at each checkpoint, new edits/commits, test
   # runs, or (read-only jobs) successful tool calls double the allowance up to

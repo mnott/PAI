@@ -634,6 +634,17 @@ export interface WorkersConfig {
   defaultMaxMinutes: number;
   /** Active minutes after which a still-running local worker hands its branch to a cloud worker (workers.localHandoffMinutes); 0 = off. Replaced by the progress-based timeBudget below: kept for --budget-less legacy reads, never armed by default. */
   localHandoffMinutes: number;
+  /**
+   * Context window Claude Code is told for local (loopback) workers, in tokens
+   * (workers.localContextTokens; default 65536). Claude Code does not know an
+   * unrecognised local model's window and assumes 200k, so it compacts only
+   * near that — on one local engine every turn then costs a 130k+ context. The
+   * value goes to the worker as CLAUDE_CODE_AUTO_COMPACT_WINDOW (Claude Code's
+   * own autocompact-window setting; an explicit provider env for the key still
+   * wins). `pai worker resume` on a local provider above this cap starts a
+   * fresh conversation instead of --resume (resume-args.ts). Cloud runs are untouched.
+   */
+  localContextTokens: number;
   /** Progress-based time budget (workers.timeBudget, time-budget.ts): opening allowance, doubling factor, ceiling in minutes. */
   timeBudget: TimeBudgetConfig;
   /** Minutes a run may queue for a slot before the owner is told (workers.waitAlarmMinutes); default 120. */
@@ -768,6 +779,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     cacheKeepaliveSecs: num(w.cacheKeepaliveSecs, 0),
     defaultMaxMinutes: num(w.defaultMaxMinutes, 60),
     localHandoffMinutes: num(w.localHandoffMinutes, 0),
+    localContextTokens: num(w.localContextTokens, 65536),
     timeBudget: { ...DEFAULT_TIME_BUDGET, ...obj(w.timeBudget) },
     waitAlarmMinutes: num(w.waitAlarmMinutes, 120),
     scanBudgetMs: num(w.scanBudgetMs, 5000),
@@ -1507,6 +1519,13 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
     localHandoffMinutes = w.localHandoffMinutes;
   }
+  let localContextTokens = d.localContextTokens ?? 65536;
+  if (w.localContextTokens !== undefined) {
+    if (typeof w.localContextTokens !== "number" || !Number.isInteger(w.localContextTokens) || w.localContextTokens < 1000) {
+      bad(".localContextTokens", "must be an integer of at least 1000 tokens (Claude Code accepts a window from 100k down to its floor; PAI's own cap may go below it)");
+    }
+    localContextTokens = w.localContextTokens;
+  }
   let timeBudget: TimeBudgetConfig = { ...d.timeBudget };
   if (w.timeBudget !== undefined) {
     if (typeof w.timeBudget !== "object" || w.timeBudget === null || Array.isArray(w.timeBudget)) {
@@ -1746,6 +1765,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     cacheKeepaliveSecs,
     defaultMaxMinutes,
     localHandoffMinutes,
+    localContextTokens,
     timeBudget,
     waitAlarmMinutes,
     scanBudgetMs,
@@ -1965,6 +1985,7 @@ export function writeWorkersSection(
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
         localHandoffMinutes: workers.localHandoffMinutes,
+        localContextTokens: workers.localContextTokens,
         timeBudget: workers.timeBudget,
         waitAlarmMinutes: workers.waitAlarmMinutes,
         scanBudgetMs: workers.scanBudgetMs,

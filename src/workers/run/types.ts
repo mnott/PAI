@@ -42,6 +42,8 @@ export interface RunOptions {
   modelDefault?: boolean;
   /** --spec value, resolved for display/recording ("-" for stdin). */
   specPath?: string;
+  /** A resume's prompt written by PAI itself (local fresh-thread resume: spec + summary + text): kept as the run's task copy under `<id>.prompt` instead of a --spec path. */
+  specOverride?: string;
   /** --mcp value: server/set names, comma-separated. */
   mcpFlag?: string;
   /** Everything after `--` (the claude args). */
@@ -234,6 +236,8 @@ export interface FinaliseArgs {
 }
 
 export interface ExecuteArgs {
+  /** A resume's prompt written by PAI itself (local fresh-thread resume): gateStart keeps it as the run's task copy under `<id>.prompt` instead of the --spec path. */
+  specOverride?: string;
   /** capacity + stagger gates already passed (set by gateStart) */
   gated?: boolean;
   /** onWorkerStart already fired for this run's id: gateStart announces at the queue (a --detach starter returns while queued), so foldRun/tryPoolRun must not announce it again. An ungated interactive run has foldRun clear it and announce at the real start. */

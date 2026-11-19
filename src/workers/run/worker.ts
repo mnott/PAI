@@ -475,6 +475,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         mcpFlag: opts.mcpFlag,
         cwd: opts.cwd,
         specPath: opts.specPath,
+        ...(opts.specOverride ? { specOverride: opts.specOverride } : {}),
         parent: parent ?? undefined,
         stage: opts.stage,
         quiet: opts.quiet,

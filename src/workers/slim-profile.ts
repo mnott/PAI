@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import type { WorkerProvider } from "./config.js";
 import { claudeHomeDir } from "../config/pai-home.js";
+import { isLoopbackUrl } from "../utils/loopback.js";
 import { writePrivateFile } from "./settings-file.js";
 
 /** Hook commands kept for a worker; everything else is context or bookkeeping. */
@@ -81,10 +82,24 @@ type HookGroup = { matcher?: string; hooks?: Array<{ type?: string; command?: st
  * goes, and thinking is switched off (no `thinking`, no effort in the request)
  * unless the provider asks for it.
  */
-function applyProviderEnv(e: Record<string, unknown>, provider: WorkerProvider): void {
+function applyProviderEnv(e: Record<string, unknown>, provider: WorkerProvider, procEnv: NodeJS.ProcessEnv = {}): void {
   const cap = provider.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
   if (cap !== undefined) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = cap;
   else delete e.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
+  // The user settings' env outranks the process env, so a local worker's early
+  // autocompact window (buildRunEnv's CLAUDE_CODE_AUTO_COMPACT_WINDOW, from
+  // workers.localContextTokens) rides into this file — and whatever the
+  // operator set for their own first-party session goes: the user's percentage
+  // override rescales compaction against it and never applies to a provider route.
+  // the spawner's own value (the local cap) rides into the file: settings env
+  // outranks the process env, and this file is where a provider run reads env.
+  // Only for a loopback provider — a cloud worker keeps whatever the user set.
+  const win = isLoopbackUrl(provider.baseUrl)
+    ? provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? procEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    : undefined;
+  if (win !== undefined) e.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win;
+  else delete e.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  delete e.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
   delete e._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL;
   if (!provider.thinking) {
     e.CLAUDE_CODE_DISABLE_THINKING = "1";
@@ -107,7 +122,7 @@ export function slimSettings(
   if ((out.env && typeof out.env === "object") || nonNative) {
     const e = { ...((out.env ?? {}) as Record<string, unknown>) };
     for (const k of PROVIDER_KEYS) if (procEnv[k]) delete e[k];
-    if (provider && nonNative) applyProviderEnv(e, provider);
+    if (provider && nonNative) applyProviderEnv(e, provider, procEnv);
     out.env = e;
   }
   const hooks: Record<string, HookGroup[]> = {};
