@@ -719,3 +719,44 @@ describe("deep freeze", () => {
     expect(escalationReason(s, Date.parse("2026-11-18T14:00:00"))).toBeNull();
   });
 });
+
+import { armDeadline } from "./deadline.js";
+import { ownMsOf } from "./freeze.js";
+import type { SchedSnapshot } from "../router/scheduler.js";
+
+describe("one own-time clock: stall alert and time budget", () => {
+  const M = 60_000;
+  const quiet = st("OT1", 100, { updated: "2026-11-19 10:00:00", turns: 3, spawnerSession: "own" });
+  const at = new Date("2026-11-19 10:15:00"); // 15 min without a turn
+  const base = { stallMs: 10 * M, now: at, isAlive: () => true };
+  const sched = (waitingSince: number): SchedSnapshot => ({ at: at.getTime(), engines: {}, workers: { OT1: { waitMsTotal: 0, waitingSince } } as unknown as SchedSnapshot["workers"] });
+
+  it("ownMsOf subtracts in-line time from the spell", () => {
+    expect(ownMsOf("none", 0, 20 * M, 15 * M, 0)).toBe(5 * M);
+  });
+
+  it("stall alert: silent while in line the whole quiet spell, as today without the line", () => {
+    expect(detectSupervisionEvents([quiet], { ...base, sched: sched(Date.parse("2026-11-19 10:00:00")) })).toEqual([]);
+    expect(detectSupervisionEvents([quiet], base).map((e) => e.kind)).toEqual(["stalled"]);
+  });
+
+  it("budget checkpoint: 15 min in line + 5 min work does not fire at 20 min wall", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      let inLine = 0;
+      let fired = 0;
+      const proc = { kill: () => true, exitCode: null, signalCode: null };
+      armDeadline(proc, { deadlineAt: 20 * M, minutes: 20 }, () => { fired++; }, undefined, () => inLine, Date.now, { active: async () => false, factor: () => 1 });
+      inLine = 15 * M; // 15 min of the allowance spent in line
+      vi.advanceTimersByTime(20 * M);
+      expect(fired).toBe(0); // 20 min wall, 5 own
+      vi.advanceTimersByTime(14 * M);
+      expect(fired).toBe(0);
+      vi.advanceTimersByTime(2 * M);
+      expect(fired).toBe(1); // 20 own min reached at 35 wall
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

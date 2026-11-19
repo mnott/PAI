@@ -389,6 +389,11 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // progress stops it for review with its work salvaged onto the branch. The
   // opening line of ps: "budget 20m".
   let budgetMin = a.budgetMin ?? null;
+  // the own-time anchor of the current allowance: blockedMsOf (the one own-time
+  // clock: in line at the engine, build-gate, paused, frozen) as read when the
+  // allowance began; only blocked time accrued since slides the checkpoint, so
+  // time in line never burns the allowance and old waits never over-credit a new one
+  let budgetBlockedAtAnchor = blockedMsOf(logDir, wid);
   if (headless && budgetMin) {
     status.budgetMin = budgetMin;
     status.budgetExtensions = 0;
@@ -398,6 +403,10 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // `pai worker extend <id>` on a live run writes the bigger allowance to the
   // status file; this poll (the blockedMs tracker's cadence) picks it up and
   // re-arms the checkpoint timer at once — extended time is not checkpointed.
+  /** A new allowance (checkpoint extend, hand extend) starts on fresh own time. */
+  const reanchorBudget = (): void => {
+    budgetBlockedAtAnchor = blockedMsOf(logDir, wid);
+  };
   let lastBudgetRead = 0;
   const raisedBudget = (): void => {
     if (!headless || !budgetMin) return;
@@ -409,6 +418,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       status.budgetMin = budgetMin = cur.budgetMin;
       saveStatus(logDir, status);
       process.stderr.write(`pai worker: ${wid} extended to ${budgetMin} min by hand\n`);
+      reanchorBudget();
       armBudget();
     }
   };
@@ -425,7 +435,10 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const armBudget = (): void => {
     stopBudget?.();
     if (!headless || !budgetMin) return;
-    // the checkpoint timer is the deadline's: active time only, Low Power stretch, waits slide it
+    // the checkpoint timer is the deadline's: active time only, Low Power stretch, waits slide it —
+    // and on the run's OWN time: minutes in line at the engine (accrued since the
+    // allowance began) push the wall checkpoint out too, so a worker that waited
+    // 15 of its first 20 min in the router queue is not stopped for "no progress"
     stopBudget = armDeadline(
       proc,
       budgetLimit(budgetMin),
@@ -438,6 +451,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           // ps counts the allowance from its start like a minutes-based limit
           status.deadlineAt = Date.now() + d.minutes * 60_000;
           budgetPrev = cur;
+          reanchorBudget();
           saveStatus(logDir, status);
           process.stderr.write(`pai worker: ${wid} ${d.why}\n`);
           armBudget();
@@ -447,7 +461,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         fireBudgetStop(logDir, status, ledger, d.why);
       },
       undefined,
-      () => blockedMsOf(logDir, wid),
+      () => Math.max(0, blockedMsOf(logDir, wid) - budgetBlockedAtAnchor),
       Date.now,
       {},
       wid
