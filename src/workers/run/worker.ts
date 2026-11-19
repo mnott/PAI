@@ -95,12 +95,17 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   mkdirSync(logDir, { recursive: true });
   // a continuation (escalation, fall-through, reroute) carries the operator goals of the runs it continues
   opts = { ...opts, claudeArgs: carryGoals(logDir, opts.claudeArgs, opts._priorIds) };
-  try {
-    const gc = gcWorktreesThrottled(logDir, 60, Date.now(), { olderThanHours: config.gcOlderThanHours, maxGb: config.worktreesMaxGb })?.filter((r) => r.archive);
-    // the gc pass lands in the ledger, never on this start's stdout/stderr: a waiting reroute reads that output as the start's own (2026-11-18: "archived 3 leftover worktree(s)" was shown as the reason a restart "did not start").
-    if (gc?.length) appendLedger(ledgerPath(logDir), "WORKTREE-GC", { kind: "at-start", archived: gc.length });
-  } catch {
-    // best effort: a gc pass never fails or delays a start
+  // PAI_NO_WORKTREE_GC=1: the merge-gate/release smoke start. Its 30 s window measures only the start; a throttled
+  // gc pass archiving 1000+ commits blew it and read as "worker did not start" (merge 2026-11-19 14:31). The daemon's
+  // hourly worktree gc (daemon/worktree-gc.ts) owns the archiving; a skipped pass here is not lost.
+  if (process.env.PAI_NO_WORKTREE_GC !== "1") {
+    try {
+      const gc = gcWorktreesThrottled(logDir, 60, Date.now(), { olderThanHours: config.gcOlderThanHours, maxGb: config.worktreesMaxGb })?.filter((r) => r.archive);
+      // the gc pass lands in the ledger, never on this start's stdout/stderr: a waiting reroute reads that output as the start's own (2026-11-18: "archived 3 leftover worktree(s)" was shown as the reason a restart "did not start").
+      if (gc?.length) appendLedger(ledgerPath(logDir), "WORKTREE-GC", { kind: "at-start", archived: gc.length });
+    } catch {
+      // best effort: a gc pass never fails or delays a start
+    }
   }
 
   // class plan is not one worker but the planner orchestration (planner.ts)

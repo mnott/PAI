@@ -55,6 +55,7 @@ import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
 import { callerMergeTarget, discardWorker, discardWorktree,leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker, WorkerRunningError } from "../../workers/worktree.js";
+import { MergeRevertedError } from "../../workers/merge-reverted.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
@@ -988,7 +989,7 @@ const mergeCommand: CommandDef = {
   name: "merge",
   summary: "Merge a worker's branch into your checkout",
   description:
-    "Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. A worker that is still queued or running is refused (exit 3): wait with `pai worker wait ID` or stop it with `pai worker kill ID` first; --force merges anyway and leaves the worktree in place until the worker ends (gc reclaims it). With --verify (or the workers.yaml `merge.verify` default, which --verify overrides and --no-verify skips) the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1. A built-in stub scan always runs after the merge: added lines under src/ matching `TODO: implement`, `Promise.resolve(0) // TODO` or `throw new Error(\"not implemented` revert the merge the same way.",
+    "Merges branch worker/ID into the original checkout, then removes the worktree and deletes the branch. A worker that is still queued or running is refused (exit 3): wait with `pai worker wait ID` or stop it with `pai worker kill ID` first; --force merges anyway and leaves the worktree in place until the worker ends (gc reclaims it). With --verify (or the workers.yaml `merge.verify` default, which --verify overrides and --no-verify skips) the command runs on the merged tree first; if it exits non-zero the merge is reverted (git revert, never reset), the branch and worktree are kept, and the exit code is 1. A built-in stub scan always runs after the merge: added lines under src/ matching `TODO: implement`, `Promise.resolve(0) // TODO` or `throw new Error(\"not implemented` revert the merge the same way. Any gate step that reverts the merge (verify, a scan, related tests, the smoke start of the rebuilt CLI, a restart-health rollback) exits 4 and prints `MERGE REVERTED: <reason>` as its last line — never ok-looking lines after it.",
   args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker pending`)" }],
   options: [
     { name: "no-commit", type: "boolean", summary: "Apply the changes uncommitted; keep branch and worktree" },
@@ -1019,6 +1020,12 @@ const mergeCommand: CommandDef = {
         out(await mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, force: flag(ctx, "force"), verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build"), targetToplevel: target }));
         await reindexAfterMerge(target ?? process.cwd());
       } catch (e) {
+        // a gate step reverted the merge: the message already ends with "MERGE REVERTED: <reason>" as its last
+        // line; exit 4, never 0 and never ok-looking lines after the revert (merge 2026-11-19 14:31)
+        if (e instanceof MergeRevertedError) {
+          out(e.message);
+          return MergeRevertedError.EXIT_CODE;
+        }
         if (e instanceof RelatedTestsFailedError) throw new CliError(e.message, "the merge was kept; fix forward or revert it", 3);
         if (e instanceof WorkerRunningError) throw new CliError(e.message, `pai worker wait ${ctx.args.ID}   or: pai worker kill ${ctx.args.ID} --reason 'merge now'`, 3);
         throw e;
