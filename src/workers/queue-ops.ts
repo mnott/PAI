@@ -32,6 +32,7 @@ export function readQueueTable(logDir: string, workers: WorkersConfig, now = Dat
   const deepFrozenSet = deepfrozenIds();
   const live = statuses.filter((s) => s.state === "queued" || (s.state === "running" && owns(s)) || (s.state === "deepfrozen" && deep(s.id)));
   return buildQueueTable({
+    logDir,
     statuses: live,
     queue: queueRows(logDir, caps, undefined, statuses),
     // the cached pane-run list (the cockpit's window): the table marks a dead runner "lost" itself below
