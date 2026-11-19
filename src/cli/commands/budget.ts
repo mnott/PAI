@@ -50,7 +50,7 @@ const localOnlyCommand: CommandDef = {
   name: "local-only",
   summary: "The machine-wide local-only window: no cloud starts until --until (off closes it)",
   description:
-    "While the window is open every session's cloud start (--cloud, --provider/--where naming a cloud provider, a class whose route resolves to the cloud) is refused, automatic escalation never targets the cloud, and reroutes to the cloud are refused. The operator's own moves (pai worker reroute, the cockpit) always pass; the gatekeeper session (`pai budget approve`, config key budget.gatekeeper, default \"PAI\") can open a one-time exception.",
+    "While the window is open every cloud start is refused — judged on the run's resolved provider (a class whose chain contains a cloud entry still runs local while a local server answers) plus --cloud and --provider/--where naming a cloud provider; a run that resolves to a local provider always starts. Automatic escalation never targets the cloud, and reroutes to the cloud are refused. The operator's own moves (pai worker reroute, the cockpit) always pass; the gatekeeper session (`pai budget approve`, config key budget.gatekeeper, default \"PAI\") can open a one-time exception.",
   args: [{ name: "off", summary: "\"off\" closes the window; with --until it opens it" }],
   options: [
     { name: "until", type: "string", value: "WHEN", summary: "Close the cloud until this local time, \"YYYY-MM-DD HH:MM\" (e.g. \"2026-11-21 07:00\")" },
@@ -117,7 +117,7 @@ export const budgetCommand: CommandDef = {
   name: "budget",
   summary: "The local-only budget window: local-only, status, approve",
   description:
-    "`pai budget local-only --until \"YYYY-MM-DD HH:MM\"` closes the cloud machine-wide until that time; `off` reopens it. While open, cloud starts and automatic cloud moves are refused with \"local-only window until <time> (budget): ask the PAI session to approve a cloud run\"; the gatekeeper session approves single runs through (`pai budget approve`). The operator's own reroutes always pass.",
+    "`pai budget local-only --until \"YYYY-MM-DD HH:MM\"` closes the cloud machine-wide until that time; `off` reopens it. While open, a start is judged on its resolved provider — one that resolves to a local provider always starts; cloud starts and automatic cloud moves are refused with \"local-only window until <time> (budget): ask the PAI session to approve a cloud run\"; the gatekeeper session approves single runs through (`pai budget approve`). The operator's own reroutes always pass.",
   examples: ['pai budget local-only --until "2026-11-21 07:00"', "pai budget status", "pai budget approve 20261118-211428-86670"],
   seeAlso: ["pai worker mode", "pai freeze"],
   subcommands: [localOnlyCommand, statusCommand, approveCommand],

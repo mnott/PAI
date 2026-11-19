@@ -102,15 +102,6 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     // best effort: a gc pass never fails or delays a start
   }
 
-  // the local-only window (local-only.ts): a cloud start is refused while it is
-  // open, unless the gatekeeper approved this one (--approved-by <gatekeeper>,
-  // or a one-time token from `pai budget approve`). Judged before the planner:
-  // a plan L1 whose class routes to the cloud is a cloud start too.
-  {
-    const why = await localOnlyStartCheck({ config, cloud: opts.cloud, whereFlag: opts.whereFlag, providerFlag: opts.providerFlag, className: opts.className, label: opts.label, approvedBy: opts.approvedBy, logDir });
-    if (why) throw new LocalProviderRefusedError(why);
-  }
-
   // class plan is not one worker but the planner orchestration (planner.ts)
   if (opts.className === "plan" && !opts._planner) {
     const { runPlanner } = await import("../planner.js");
@@ -264,6 +255,16 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         cwd: opts.cwd,
       });
   assertProviderRunnable(target.providerName, target.provider);
+  // the local-only window (local-only.ts): judged on THIS run's resolved
+  // provider — a run that lands on a local provider always starts; only one
+  // that resolves remote is a cloud start the window refuses (plus the
+  // explicit --cloud / --where cloud / --provider <cloud> asks). Never judged
+  // on the class's possible chain, and never before resolution (2026-11-19:
+  // that refused every start of a cloud-chain class, local ones included).
+  {
+    const why = await localOnlyStartCheck({ config, cloud: opts.cloud, whereFlag: opts.whereFlag, providerFlag: opts.providerFlag, resolvedProvider: target.providerName, label: opts.label, approvedBy: opts.approvedBy, logDir });
+    if (why) throw new LocalProviderRefusedError(why);
+  }
   // A named provider that is a local (loopback) one gets the same guard
   // --local has: never wait for a server that is down, never run on a
   // disabled one. The probe is resolveLocalProvider's (httpModelsCheck,
