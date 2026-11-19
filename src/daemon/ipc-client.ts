@@ -89,6 +89,11 @@ export class PaiClient {
     await this.send("index_now", {});
   }
 
+  /** Trigger an immediate embed pass. */
+  async triggerEmbed(): Promise<void> {
+    await this.send("embed_now", {});
+  }
+
   // -------------------------------------------------------------------------
   // Notification methods
   // -------------------------------------------------------------------------
