@@ -37,9 +37,18 @@ function wtWire(ctx){
   Win.update("data",data);
  });
 }
+/** Narrow mode: the header's controls (search, hidden, rules) move into the card body's compact row under the header (never wrapping mid-word); wide mode puts them back. The action widgets register themselves on their spec (script-hide's hideHeadAction does), so no id is needed. */
+function wtHeadCtl(ctx){
+ var hc=ctx.body.querySelector('[data-hc="1"]'),narrow=document.documentElement.classList.contains("narrow");
+ var ctl=function(a){return a&&a.el&&a.el.parentNode?a.el:null};
+ var ss=ctx.spec.actions||[],i,e;
+ for(i=0;i<ss.length;i++){e=ctl(ss[i]);if(!e)continue;if(narrow&&hc&&e.parentNode!==hc)hc.appendChild(e);else if(!narrow&&e.parentNode===hc)ctx.head.insertBefore(e,ctx.min)}
+}
+/** After a runs redraw: fit, and move the header's "hidden"/"rules" controls with the mode. */
+function wtRunsAfter(ctx){wtFit(ctx);wtHeadCtl(ctx)}
 /** After a sessions redraw: scroll the turn a search hit opened into view once its detail is drawn. */
 function wtSessAfter(ctx){
- wtFit(ctx);
+ wtFit(ctx);wtHeadCtl(ctx);
  if(!SESS_SCROLL)return;
  var el=ctx.body.querySelector(".sd-hl");
  if(el){SESS_SCROLL=false;el.scrollIntoView({block:"center"})}
@@ -47,8 +56,8 @@ function wtSessAfter(ctx){
 }
 /** The sessions card's header search: a box (name / id / model of the rows) with a mode toggle to search prompt text instead (server hits, plus the open timeline). */
 function wtSessSearch(){
- return{id:"search",label:"search",title:"filter sessions, or search prompts",make:function(ctx){
-  var w=document.createElement("span");w.className="wsearch";
+ var act={id:"search",label:"search",title:"filter sessions, or search prompts",make:function(ctx){
+  var w=document.createElement("span");w.className="wsearch";act.el=w;
   var inp=document.createElement("input");inp.type="search";inp.className="cbtn";inp.placeholder="search sessions";inp.setAttribute("aria-label","search sessions");inp.value=SESS_Q||"";
   var mode=document.createElement("button");mode.type="button";mode.className="cbtn";mode.setAttribute("aria-pressed",SESS_MODE==="prompts"?"true":"false");mode.textContent="prompts";mode.title="search inside the prompts of all sessions";
   var redraw=function(){Win.update("data",data)},tm=0;
@@ -58,11 +67,12 @@ function wtSessSearch(){
   w.appendChild(inp);w.appendChild(mode);
   return w;
  }};
+ return act;
 }
 function wtView(build,after){return function(d){return d&&d.bySession?{html:build(d),after:after||wtFit}:null}}
 function tablesDefaults(){
  var f=["data"],cards=[{id:"perf-group",type:"group",title:"Performance details",info:"per-pause cache verdicts, sessions and worker runs"},
-  {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,actions:[hideHeadAction("runs")],view:wtView(workersHtml),mount:wtWire,resize:wtFit},
+  {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,actions:[hideHeadAction("runs")],view:wtView(workersHtml,wtRunsAfter),mount:wtWire,resize:wtFit},
   {id:"sessions",type:"list",cls:"wm",title:"Sessions by tokens",feeds:f,actions:[wtSessSearch(),hideHeadAction("sessions")],view:wtView(sessionsHtml,wtSessAfter),mount:wtWire,resize:wtFit},
   {id:"pause",type:"table",title:"Cache verdict by pause",info:WT_INFO.pause,feeds:f,view:function(d){return d&&d.bySession?{html:pauseHtml(d),after:pauseFit}:null},resize:pauseFit}];
  return{parts:[[{tree:WinT.leaf("perf-group"),kids:{"perf-group":WinT.split("c",[WinT.leaf("speed"),WinT.leaf("runs"),WinT.leaf("sessions"),WinT.leaf("pause")],[0.25,0.25,0.25,0.25])},stDefaults:{},cards:cards},760]]};
