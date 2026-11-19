@@ -35,7 +35,10 @@ import { lowPriorityWrap } from "../builds/gate.js";
 import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
 import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 import { summarizeGateFailure } from "./helper-uses.js";
-import { smokeStart, type SmokeStartDeps } from "./smoke-start.js";
+import type { SmokeStartResult } from "./smoke-start.js";
+
+/** The smoke start of a freshly built CLI (injectable; the live one starts a real worker on an offline stub model). */
+export type SmokeRunner = (cwd: string) => Promise<SmokeStartResult>;
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -1552,7 +1555,7 @@ const MERGE_KEEP = "merge in progress:";
 async function mergeWorkerInner(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string; cliRoot?: string | null; targetToplevel?: string | null; install?: DepInstaller } = {}
+  opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string; cliRoot?: string | null; targetToplevel?: string | null; install?: DepInstaller; smoke?: SmokeRunner } = {}
 ): Promise<string> {
   const live = opts.force ? liveWorker(logDir, id) : assertWorkerEnded(logDir, id);
   // --force on a live worker: still run the configured verify gate unless the caller opted out
@@ -1836,7 +1839,7 @@ async function rebuildDist(
   id: string,
   target: string,
   oldHead: string,
-  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string; smoke?: SmokeRunner; smokeDeps?: SmokeStartDeps }
+  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string; smoke?: SmokeRunner }
 ): Promise<string | null> {
   if (opts.rebuild === false || loadConfig().workers?.merge?.rebuild === false) return null;
   let same = false;
@@ -1880,8 +1883,26 @@ async function rebuildDist(
     // (night 2026-11-17/18: restarts left the daemons unable to come up and the night was lost)
     try {
       const g = opts.restartGate !== undefined ? await opts.restartGate(logDir, distDir) : await gatePrepared(logDir, distDir, prepared ?? { prevKept: false, runtimesUpBefore: [] });
-      if (g === null) return line;
-      if (g.ok) return `${line}\n${g.line}`;
+      if (g === null || g.ok) {
+        const ok = g === null ? line : `${line}\n${g.line}`;
+        // a smoke start of the new build: every worker start crashing got through the gate once (2026-11-19, toolFold)
+        const smoke = opts.smoke ?? (opts.build === undefined ? async (cwd: string) => (await import("./smoke-start.js")).smokeStart({ cwd }) : null);
+        if (!smoke) return ok;
+        const sm = await smoke(target).catch((e: unknown): SmokeStartResult => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
+        if (sm.ok) return `${ok}\nsmoke start: ok (${(sm.ms / 1000).toFixed(1)} s)`;
+        const err = (sm.error ?? "unknown error").split("\n")[0];
+        let tail = "";
+        try {
+          (opts.revertMergeCommits ?? revertMerge)(target, oldHead);
+          // dist still holds the build that cannot start a worker: rebuild it from the reverted tree
+          const rb = (opts.build ?? defaultBuild)(target);
+          tail = rb.ok ? "; merge reverted, dist rebuilt" : "; merge reverted, dist rebuild FAILED: run `npm run build`";
+        } catch (e) {
+          tail = `; WARNING: the revert failed: ${(e as Error).message}`;
+        }
+        appendLedger(ledgerPath(logDir), "WORKER-MERGE-SMOKE-FAIL", { id, reason: err.slice(0, 300) });
+        return `${ok}\nsmoke start failed: ${err}${tail}`;
+      }
       if (g.rolledBack) {
         // the old build is back on disk: mark this merge reverted in git too, so main matches what runs
         const revertFn = opts.revertMergeCommits ?? revertMerge;

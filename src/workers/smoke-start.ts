@@ -41,7 +41,7 @@ export const SMOKE_TIMEOUT_MS = 60_000;
 
 /** Spawn seam of the smoke (tests inject a runner; no real CLI is started). */
 export interface SmokeStartDeps {
-  /** Runs the built CLI's `worker run --detach …` and waits for its end; returns rc + the worker id. */
+  /** Runs the built CLI's `worker run …` and waits for its end; returns rc + the worker id. */
   start?: (opts: SmokeRunOpts) => Promise<{ rc: number; id: string }>;
   /** The offline stub model server: a loopback provider pointing here speaks OpenAI through the PAI proxy. */
   serve?: () => Promise<{ url: string; close: () => Promise<void> }>;
@@ -82,6 +82,12 @@ async function startStubServer(): Promise<{ url: string; close: () => Promise<vo
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
+      if (req.url?.endsWith("/models")) {
+        // the run gate's liveness probe of a named loopback provider
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ object: "list", data: [{ id: SMOKE_MODEL, object: "model" }] }));
+        return;
+      }
       if (!req.url?.includes("/chat/completions")) {
         res.writeHead(404, { "content-type": "application/json" });
         res.end('{"error":"not found"}');
@@ -114,7 +120,7 @@ function smokeProviderYaml(url: string): string {
     `  ${SMOKE_PROVIDER_NAME}:`,
     `    enabled: true`,
     `    protocol: "openai"`,
-    `    url: ""`,
+    `    url: ${JSON.stringify(url)}`, // loopback: the local-only window must not read the smoke as a cloud start
     `    key_file: null`,
     `    upstream_url: ${JSON.stringify(url)}`,
     `    router: false`,
@@ -174,6 +180,7 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
   const start = deps.start ?? defaultStart;
   // the worker's own test runs must not fight the gate's slot; held here while the smoke runs
   const lease = holdsTestSlot() ? null : await acquireTestSlot();
+  let runId: string | null = null;
   let stub: { url: string; close: () => Promise<void> } | null = null;
   const ops = deps.addProvider || deps.removeProvider ? null : new TempCopyProviderOps();
   try {
@@ -182,6 +189,7 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     else deps.addProvider?.(stub.url);
     const id = newWorkerId();
     const r = await start({ id, cwd: opts.cwd, timeoutMs });
+    runId = r.id;
     if (r.rc !== 0) return { ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}`, id: r.id };
     const ev = parseLastResultEvent(eventsPath(workersLogDir(readWorkersSection().workers), r.id));
     if (!ev || typeof ev.result !== "string" || !ev.result.trim()) return { ok: false, ms: Date.now() - t0, error: "no result event from the smoke worker", id: r.id };
@@ -201,8 +209,15 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     } catch {
       /* best effort */
     }
+    if (runId) forgetRun(runId);
     lease?.release();
   }
+}
+
+/** The smoke's run files go once the verdict is read: it is not a session's worker, so it leaves no stats, notice or history. */
+function forgetRun(id: string): void {
+  const logDir = workersLogDir(readWorkersSection().workers);
+  for (const ext of ["status", "jsonl", "prompt", "log", "out"]) rmSync(join(logDir, `${id}.${ext}`), { force: true });
 }
 
 /** The live start: the built CLI detaches one worker on the smoke provider and this waits for its end. */
@@ -213,11 +228,12 @@ async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }
   delete env.PAI_WORKER;
   delete env.PAI_WORKER_ID;
   delete env.PAI_WORKER_ORCHESTRATOR;
-  const id = await startDetachedWorker(
+  // infrastructure like the keepalive beat: no spawning session, no terminal identity, so supervision has no owner to notify
+  for (const k of ["CLAUDE_CODE_SESSION_ID", "ITERM_SESSION_ID", "TERM_SESSION_ID"]) delete env[k];
+  const announced = await startDetachedWorker(
     logDir,
     [
       "run",
-      "--detach",
       "--provider",
       SMOKE_PROVIDER_NAME,
       "--no-worktree",
@@ -230,8 +246,15 @@ async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }
       "--allowedTools",
       "Read",
     ],
-    { cwd: o.cwd, env, timeoutMs: Math.min(30_000, o.timeoutMs) }
+    { cwd: logDir, env, timeoutMs: Math.min(30_000, o.timeoutMs) }
   );
+  // the id file holds the run's status JSON ({id,state}); older builds wrote the bare id
+  let id = announced;
+  try {
+    id = (JSON.parse(announced) as { id?: string }).id ?? announced;
+  } catch {
+    /* bare id */
+  }
   const deadline = Date.now() + o.timeoutMs;
   for (;;) {
     const st = loadStatus(logDir, id);

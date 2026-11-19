@@ -314,3 +314,59 @@ describe("restart health gate after a merge", () => {
     expect(reverted).toBe(0);
   });
 });
+
+describe("smoke start after a merge build", () => {
+  const f = (): { repo: string; logDir: string } => {
+    const x = fixture();
+    makeWorker(x.repo, x.logDir, "sm", { file: "sm.txt" });
+    return x;
+  };
+  const opts = {
+    verifyTests: false,
+    build: () => ({ ok: true, ms: 1, tail: "" }),
+    restartVerify: () => ({ restarted: true, forced: false, detail: "t" }),
+    restartGate: async () => ({ ok: true, line: "restart health: ok" }),
+  };
+
+  it("a smoke start that throws reverts the merge: smoke start failed: <first line>", async () => {
+    const { repo, logDir } = f();
+    const reverted: string[] = [];
+    const out = await mergeWorker(logDir, "sm", {
+      ...opts,
+      cliRoot: repo,
+      smoke: async () => {
+        throw new Error("Cannot access 'toolFold' before initialization\n    at foo");
+      },
+      revertMergeCommits: (_c: string, oldHead: string) => (reverted.push(oldHead), "reverted"),
+    });
+    expect(out).toContain("smoke start failed: Cannot access 'toolFold' before initialization");
+    expect(out).not.toContain("at foo");
+    expect(reverted).toHaveLength(1);
+  });
+
+  it("a smoke start that exits non-zero reverts the merge", async () => {
+    const { repo, logDir } = f();
+    let reverted = 0;
+    const out = await mergeWorker(logDir, "sm", {
+      ...opts,
+      cliRoot: repo,
+      smoke: async () => ({ ok: false, ms: 5, error: "worker run exited 1" }),
+      revertMergeCommits: () => ((reverted += 1), "reverted"),
+    });
+    expect(out).toContain("smoke start failed: worker run exited 1");
+    expect(reverted).toBe(1);
+  });
+
+  it("an ok smoke start keeps the merge", async () => {
+    const { repo, logDir } = f();
+    let reverted = 0;
+    const out = await mergeWorker(logDir, "sm", {
+      ...opts,
+      cliRoot: repo,
+      smoke: async () => ({ ok: true, ms: 1200 }),
+      revertMergeCommits: () => ((reverted += 1), "reverted"),
+    });
+    expect(out).toContain("smoke start: ok (1.2 s)");
+    expect(reverted).toBe(0);
+  });
+});
