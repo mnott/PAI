@@ -1241,6 +1241,7 @@ export function cockpitQueue(
   // one pass over the status files per window (the single flight above calls this at most once per
   // window): the live subset is collected here and reused below, so a queue round walks the cache twice, not four times
   const statuses = loadStatusesCached(logDir);
+  // the session cap file is passed to the table once, not re-read per worker: one stat per queue pass
   const profiles = readProfiles();
   const live: WorkerStatus[] = [];
   for (const s of statuses) {
@@ -1321,7 +1322,8 @@ const cockpitQueueShared = singleFlight<CockpitQueue, { now: number; logDir: str
   { ttlMs: queueTtlMs, key: (a) => `${workersConfigStamp()}:${a.logDir}` }
 );
 /** The /cockpit/queue payload through the shared window; `queueLogDir` is the handler's seam (tests redirect it). */
-async function cockpitQueueAsync(queueLogDir: (workers: WorkersConfig) => string, now = Date.now()): Promise<SharedResult<CockpitQueue>> {
+/** Exported for the bench and tests: the same shared window the /cockpit/queue route serves through. */
+export async function cockpitQueueAsync(queueLogDir: (workers: WorkersConfig) => string, now = Date.now()): Promise<SharedResult<CockpitQueue>> {
   const workers = readWorkersCached();
   return cockpitQueueShared({ now, logDir: queueLogDir(workers), workers });
 }
