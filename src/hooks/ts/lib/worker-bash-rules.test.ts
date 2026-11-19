@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths, dbWriteReason, liveContainerReason, type DbWriteContext } from "./worker-bash-rules.js";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -547,5 +547,65 @@ describe("worker guard GNU sed X,+N range", () => {
   });
   it.skipIf(process.platform !== "darwin")("still denies a computed start with a mutating command", () => {
     expect(run(`sed -n "$(grep -n x f),+8d" f`).decision).toBe("deny");
+  });
+});
+
+// the worktree write fence (2026-11-19: worker 20261119-191808-81967 edited another repo's files from its PAI worktree)
+describe("worker guard Edit/Write stays inside the worktree and scratch dirs", () => {
+  const base = mkdtempSync(join(tmpdir(), "fence-"));
+  // <base>/wt is the worker's git worktree; <base>/other is a sibling repo; <base>/scratch/pai-scratch/<id> is its scratch dir
+  const wt = join(base, "wt");
+  const other = join(base, "other");
+  const scratchRoot = join(base, "scratch", "pai-scratch");
+  const scratchId = join(scratchRoot, "w1");
+  mkdirSync(join(wt, ".pai-scratch"), { recursive: true });
+  mkdirSync(other, { recursive: true });
+  mkdirSync(scratchId, { recursive: true });
+  writeFileSync(join(other, "cli.ts"), "export const x = 1;\n");
+  symlinkSync(other, join(wt, "link-out"));
+  const gctx = (): WorkerGuardContext => ({
+    cwd: wt,
+    home: "/home/u",
+    worktreeRoot: wt,
+    inWorktree: true,
+    mainCheckout: join(base, "main"),
+    testScript: () => null,
+    scratchDirs: [scratchId],
+  });
+  const call = (tool_name: string, tool_input: unknown) =>
+    decideWorkerGuard({ tool_name, tool_input } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" }, gctx);
+  it("allows an Edit inside the worktree", () => {
+    expect(call("Edit", { file_path: join(wt, "src", "a.ts"), old_string: "a", new_string: "b" }).decision).not.toBe("deny");
+  });
+  it("denies an Edit into a sibling repo (the 2026-11-19 incident)", () => {
+    const d = call("Edit", { file_path: join(other, "cli.ts"), old_string: "x = 1", new_string: "x = 2" });
+    expect(d.decision).toBe("deny");
+    expect((d as { reason?: string }).reason).toContain("file writes outside your worktree are blocked");
+    expect((d as { reason?: string }).reason).toContain("L0 can hand it over");
+  });
+  it("allows a Write to .pai-scratch inside the worktree", () => {
+    expect(call("Write", { file_path: join(wt, ".pai-scratch", "probe.ts"), content: "1\n" }).decision).not.toBe("deny");
+  });
+  it("allows a Write to the run's $TMPDIR scratch dir (the pai-scratch/<id> path)", () => {
+    expect(call("Write", { file_path: join(scratchId, "x.txt"), content: "1\n" }).decision).not.toBe("deny");
+    // and the env form: TMPDIR set to the run's scratch dir allows anywhere under it
+    const d = decideWorkerGuard({ tool_name: "Write", tool_input: { file_path: join(scratchId, "y.txt"), content: "1\n" } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir", TMPDIR: scratchId }, () => ({ ...gctx(), scratchDirs: undefined }));
+    expect(d.decision).not.toBe("deny");
+  });
+  it("denies a Write to another pai-scratch worker's dir", () => {
+    expect(call("Write", { file_path: join(scratchRoot, "w2", "x.txt"), content: "1\n" }).decision).toBe("deny");
+  });
+  it("denies a ../ path escaping the worktree", () => {
+    expect(call("Write", { file_path: join(wt, "..", "other", "cli.ts"), content: "x" }).decision).toBe("deny");
+  });
+  it("denies a symlink inside the worktree pointing outside", () => {
+    expect(call("Edit", { file_path: join(wt, "link-out", "cli.ts"), old_string: "x = 1", new_string: "x = 2" }).decision).toBe("deny");
+  });
+  it("denies a Bash redirect into another repo (the parser already has write targets)", () => {
+    const bash = (command: string) => decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" }, gctx);
+    expect(bash(`echo hi > ${join(other, "cli.ts")}`).decision).toBe("deny");
+    expect(bash(`echo hi | tee ${join(other, "cli.ts")}`).decision).toBe("deny");
+    expect(bash(`echo hi > ${join(wt, "src", "ok.txt")}`).decision).not.toBe("deny");
+    expect(bash("echo hi > /dev/null").decision).not.toBe("deny"); // /dev writes are exempt
   });
 });
