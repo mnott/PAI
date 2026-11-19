@@ -22,7 +22,7 @@ import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
-import { alive, isLive, loadStatus, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatus, loadStatusCached, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig, QueuePriority };
 
@@ -266,8 +266,9 @@ function liveEntries(logDir: string, provider: string, isAlive: (pid: number) =>
     // an empty or unparsable ticket is unknown, not dead: keep it, leave it out of the order
     if (!Number.isInteger(e.pid) || e.pid <= 0) continue;
     if (isAlive(e.pid)) {
-      // the operator's level (`pai worker priority`) lives in the status file, the durable copy: it outranks the ticket, which a restart or rebuild writes from the run's start options
-      const lvl = loadStatus(logDir, id)?.priority as string | undefined;
+      // the operator's level (`pai worker priority`) lives in the status file, the durable copy: it outranks the ticket, which a restart or rebuild writes from the run's start options.
+      // The cached read: this runs per live ticket inside queue walks and admission sweeps (2026-11-18 daemon hang); a writer invalidates the entry on save, so a fresh priority is always seen.
+      const lvl = loadStatusCached(logDir, id)?.priority as string | undefined;
       if (lvl && (QUEUE_PRIORITIES as readonly string[]).includes(lvl)) e.priority = lvl as QueuePriority;
       out.push(e);
     }
