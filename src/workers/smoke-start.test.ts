@@ -37,7 +37,7 @@ describe("smokeStart", () => {
   it("the smoke child runs with the at-start housekeeping off and no inherited worker identity", async () => {
     // the env defaultStart builds for the detached CLI (merge 2026-11-19 14:31: a throttled worktree gc archiving
     // 1000+ commits ran before the smoke worker announced, blew its 30 s start window and read as "worker did not
-    // start"). runWorker skips the at-start gc pass exactly on PAI_NO_WORKTREE_GC=1 — proven by housekeeping.test.ts.
+    // start"). runWorker gates its at-start gc pass on exactly this flag (src/workers/run/worker.ts).
     const logDir = workersLogDir(readWorkersSection().workers);
     let seen: NodeJS.ProcessEnv | undefined;
     const r = await smokeStart(

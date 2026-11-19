@@ -1763,25 +1763,27 @@ async function mergeWorkerInner(
   }
   if (autoNote) notes.unshift(`auto-resolved conflicts: ${autoNote}`);
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
-  // a reverted gate never reaches here: the throw below carries MergeRevertedError through mergeWorkerInner
+  // a reverted gate never reaches here: the earlier throw carries the revert through mergeWorker's catch
   const text = withGate(verifyLine, merged);
   if (related?.status === "failed") {
-    const msg = [text, related.line, ...failureHints(related, mergeCommit)].join("\n");
-    throw new RelatedTestsFailedError(asMergeReverted(msg) ? `${msg}\n${mergeRevertedLine(revertReasonOf(msg))}` : msg);
+    // the keep-on-fail path keeps the merge on main: exit 3 with hints, never a MERGE REVERTED line
+    throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
   }
   // the build + restart gate is async: a failed health check rolls dist back and reverts the merge commit too
   return withBuild(`${text}${related ? `\n${related.line}` : ""}`, await rebuildDist(logDir, id, st.cwd, oldHead, opts));
 }
 
-/** The reason text of a gate step that reverted the merge (the smoke failure line or the rollback's health line). */
+/** The reason of a gate step that reverted the merge: its first line that is not part of a detail block (indented
+ * lines are verify's captured output, hints and summaries — they never name the gate that reverted). */
 function revertReasonOf(text: string): string {
-  const first = text.split("\n").find((l) => l.trim());
+  const first = text.split("\n").find((l) => l.trim() && !/^\s/.test(l));
   return first ? first.trim() : "merge reverted";
 }
 
-/** A failed smoke start reverted the merge and rebuilt dist from the old tree: stop the gate, exit non-zero. */
-function revertMergeAfterSmokeFail(reason: string): never {
-  throw new MergeRevertedError(`${reason}\n${mergeRevertedLine(reason)}`);
+/** A failed smoke start reverted the merge and rebuilt dist from the old tree: stop the gate, exit non-zero.
+ * The reason line is the smoke failure; `detail` (the rebuild's outcome) rides on its own line before the revert line. */
+function revertMergeAfterSmokeFail(reason: string, detail?: string): never {
+  throw new MergeRevertedError([reason, detail, mergeRevertedLine(reason)].filter(Boolean).join("\n"));
 }
 
 /** The merge stands but its related tests failed; the CLI exits 3 with the message (merge summary, result, hints). */
@@ -1803,7 +1805,7 @@ export async function mergeWorker(logDir: string, id: string, opts: Parameters<t
     // never followed by ok-looking lines (merge 2026-11-19 14:31: a smoke revert printed "build: ok … restart
     // health: ok" after the failure and exited 0)
     const reverted = asMergeReverted(e);
-    if (reverted) throw new MergeRevertedError(`${reverted.message}\n${mergeRevertedLine(reverted.message)}`);
+    if (reverted) throw reverted; // its message already ends with the MERGE REVERTED line: never re-wrapped, it stays last exactly once
     throw e;
   } finally {
     if (mark && existsSync(dir!) && keepMarker(dir!)?.startsWith(MERGE_KEEP)) rmSync(join(dir!, KEEP_FILE), { force: true });
@@ -1911,8 +1913,9 @@ async function rebuildDist(
           tail = `; WARNING: the revert failed: ${(e as Error).message}`;
         }
         appendLedger(ledgerPath(logDir), "WORKER-MERGE-SMOKE-FAIL", { id, reason: err.slice(0, 300) });
-        // the merge is gone from main and dist runs the old tree: this is a reverted merge, not a note on an ok line
-        revertMergeAfterSmokeFail(`smoke start failed: ${err}${tail.replace(/^; /, "")}`);
+        // the merge is gone from main and dist runs the old tree: this is a reverted merge, not a note on an ok line;
+        // the reason is the smoke failure itself — the rebuild tail rides on its own line after it
+        revertMergeAfterSmokeFail(`smoke start failed: ${err}`, `merge reverted${tail.replace(/^; /, "")}`);
       }
     }
     let line = "build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)";
@@ -2231,8 +2234,10 @@ async function growthAlarm(logDir: string, repo: string, output: string): Promis
   }
 }
 
-export function runVerify(cwd: string, cmd: string, oldHead: string): string {
-  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null);
+/** Run --verify on a tree; a failure reverts to oldHead and throws `verify failed …` (the caller's catch classifies
+ * it as a reverted merge). `keep` keeps the full gate output for a failing-test report. */
+export function runVerify(cwd: string, cmd: string, oldHead: string, keep?: { logDir: string; id: string }): string {
+  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null, () => null, () => null, keep);
 }
 
 /** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */

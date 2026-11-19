@@ -288,16 +288,18 @@ describe("restart health gate after a merge", () => {
   };
   const opts = { verifyTests: false, build: () => ({ ok: true, ms: 1, tail: "" }), restartVerify: () => ({ restarted: true, forced: false, detail: "t" }) };
 
+  // the rollback is a reverted gate: it throws MergeRevertedError (exit ≠ 0, MERGE REVERTED last), never returns ok text
   it("a failing health check reverts the merge and writes the rollback ledger line", async () => {
     const { repo, logDir } = base();
     const reverted: string[] = [];
-    const out = await mergeWorker(logDir, "hc", {
+    const e = await mergeWorker(logDir, "hc", {
       ...opts,
       cliRoot: repo,
       restartGate: async () => ({ ok: false, rolledBack: true, failures: ["router down"], line: "restart failed health check: router down; rolled back to 1.0.0" }),
       revertMergeCommits: (_cwd: string, oldHead: string) => (reverted.push(oldHead), "reverted"),
-    });
-    expect(out).toContain("restart failed health check: router down; rolled back to 1.0.0");
+    }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MergeRevertedError);
+    expect((e as Error).message).toContain("restart failed health check: router down; rolled back to 1.0.0");
     expect(reverted).toHaveLength(1);
     expect(readFileSync(join(logDir, "ledger.log"), "utf8")).toContain("WORKER-MERGE-RESTART-ROLLBACK");
   });
@@ -343,19 +345,24 @@ describe("smoke start after a merge build", () => {
     const r = rig(async () => {
       throw new Error("Cannot access 'toolFold' before initialization\n    at foo");
     });
-    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
-    expect(out).toContain("smoke start failed: Cannot access 'toolFold' before initialization");
-    expect(out).not.toContain("at foo");
-    expect(r.events).toEqual(["build", "smoke", "revert", "build", "restartVerify", "restartGate"]);
+    // a failed smoke reverts the merge: the gate throws (exit ≠ 0, MERGE REVERTED last), never returns ok text;
+    // dist is rebuilt from the old tree and NOTHING restarts after — main runs the old code again
+    const e = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MergeRevertedError);
+    expect((e as Error).message).toContain("smoke start failed: Cannot access 'toolFold' before initialization");
+    expect((e as Error).message).not.toContain("at foo");
+    expect(r.events).toEqual(["build", "smoke", "revert", "build"]);
   });
 
   it("a smoke start that exits non-zero reverts the merge", async () => {
     const { repo, logDir } = f();
     const r = rig(async () => ({ ok: false, ms: 5, error: "worker run exited 1" }));
-    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
-    expect(out).toContain("smoke start failed: worker run exited 1");
+    const e = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MergeRevertedError);
+    expect((e as Error).message).toContain("smoke start failed: worker run exited 1");
+    // the revert follows the smoke failure and nothing restarts after it (the gate stopped at the revert)
     expect(r.events.indexOf("revert")).toBeGreaterThan(r.events.indexOf("smoke"));
-    expect(r.events.indexOf("revert")).toBeLessThan(r.events.indexOf("restartVerify"));
+    expect(r.events).not.toContain("restartVerify");
   });
 
   it("an ok smoke start keeps the merge and the restart follows it", async () => {
@@ -450,15 +457,17 @@ describe("a reverted merge gate exits non-zero with MERGE REVERTED last", () => 
     expect(out).not.toContain("MERGE REVERTED");
   });
 
-  it("RelatedTestsFailedError keeps its exit 3 and gains the revert line last (the merge reverted)", async () => {
-    // the keep-on-fail path keeps the merge and throws RelatedTestsFailedError without a revert: exit 3, no revert line
+  it("a related-tests revert classifies as a reverted merge; the keep-on-fail path stays exit 3", async () => {
+    // the gate's own revert line ("…: reverted <sha>; branch kept…") is a reverted merge, exit ≠ 0;
+    // the keep-on-fail path keeps the merge on main and throws RelatedTestsFailedError without that line: exit 3, no revert text
     const prev = process.env.PAI_MERGE_KEEP_ON_FAIL;
     process.env.PAI_MERGE_KEEP_ON_FAIL = "1";
     try {
-      const { repo, logDir } = g();
-      // the related-tests gate needs real test files on the branch; skip if the runner finds none — pin the classifier instead
       expect(asMergeReverted(new Error("related tests failed: x.test.ts: reverted deadbeef; branch kept"))).toBeInstanceOf(MergeRevertedError);
       expect(mergeExitCode(asMergeReverted(new Error("related tests failed: reverted deadbeef; branch kept")))).not.toBe(0);
+      const msg = "merged worker/rg\nrelated tests failed: x.test.ts — merge kept, fix forward";
+      expect(asMergeReverted(new Error(msg))).toBeNull(); // no revert happened: not a reverted merge
+      expect(mergeExitCode(Object.assign(new Error(msg), { name: "RelatedTestsFailedError" }))).toBe(3);
     } finally {
       if (prev === undefined) delete process.env.PAI_MERGE_KEEP_ON_FAIL;
       else process.env.PAI_MERGE_KEEP_ON_FAIL = prev;
