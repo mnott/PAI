@@ -49,6 +49,8 @@ import { preambleLine } from "../preamble.js";
 import { armResultGrace, leftoverNote } from "../result-grace.js";
 import { armDeadline } from "../deadline.js";
 import { fireHandoff, handoffLimit } from "./handoff.js";
+import { budgetCheck, budgetLimit, fireBudget, type BudgetSnapshot } from "../time-budget.js";
+import { isTestCommand } from "../hang-probe.js";
 import { blockedMsOf } from "../active-time.js";
 import { createOperatorServer } from "../operator.js";
 import { reapRunTree } from "./lifecycle.js";
@@ -81,6 +83,7 @@ import {
   trackBlocked,
   recordKilledEnd,
   finaliseRun,
+  fireBudgetStop,
   relaunchOptions,
   worktreeExtras,
   identityExtras,
@@ -357,10 +360,67 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   stopDeadline = () => {
     stopLimit?.();
     stopHandoff?.();
+    // the budget timer is disarmed through this too (stopBudget exists below)
+    stopBudget?.();
   };
 
   const readOnly = isReadOnlyJob(parsed.allowedTools);
   if (readOnly) status.readOnly = true;
+  // --- the progress-based time budget (time-budget.ts): at the end of each
+  // allowance a checkpoint runs here, no model call. Progress (new edits or
+  // commits, new successful test runs, or — read-only jobs — new successful
+  // tool calls) doubles the allowance and the run continues untouched; no
+  // progress stops it for review with its work salvaged onto the branch. The
+  // opening line of ps: "budget 20m".
+  let budgetMin = a.budgetMin ?? null;
+  if (headless && budgetMin) {
+    status.budgetMin = budgetMin;
+    status.budgetExtensions = 0;
+    saveStatus(logDir, status);
+    appendLedger(ledger, "WORKER-BUDGET-START", { id: wid, minutes: budgetMin });
+  }
+  let toolsOk = 0;
+  const snapBudget = (): BudgetSnapshot => ({
+    progressAtMs: status.progressAt ? Date.parse(status.progressAt.replace(" ", "T")) : 0,
+    testsPassed: toolFold.bashRuns.filter((r) => !r.failed && isTestCommand(r.command)).length,
+    toolsOk,
+    commits: worktree ? commitLines(worktree.dir, worktree.base).length : (status.commits ?? 0),
+  });
+  let budgetPrev = snapBudget();
+  let stopBudget: (() => void) | null = null;
+  const armBudget = (): void => {
+    stopBudget?.();
+    if (!headless || !budgetMin) return;
+    // the checkpoint timer is the deadline's: active time only, Low Power stretch, waits slide it
+    stopBudget = armDeadline(
+      proc,
+      budgetLimit(budgetMin),
+      () => {
+        const cur = snapBudget();
+        const d = budgetCheck(budgetPrev, cur, { readOnly, minutes: budgetMin!, cfg: config.timeBudget, maxMinutes: limit?.minutes ?? null });
+        fireBudget(status, ledger, { ...d, minutes: "minutes" in d ? d.minutes : budgetMin! });
+        if (d.action === "extend") {
+          budgetMin = d.minutes;
+          // ps counts the allowance from its start like a minutes-based limit
+          status.deadlineAt = Date.now() + d.minutes * 60_000;
+          budgetPrev = cur;
+          saveStatus(logDir, status);
+          process.stderr.write(`pai worker: ${wid} ${d.why}\n`);
+          armBudget();
+        } else {
+          // no progress at the checkpoint: stop like a deadline so the salvage runs; finaliseRun ends it "review"
+          fireBudgetStop(logDir, status, ledger, d.why);
+        }
+      },
+      undefined,
+      () => blockedMsOf(logDir, wid),
+      Date.now,
+      {},
+      wid
+    );
+  };
+  armBudget();
+
   const toolFold = createToolFold({
     logDir,
     worker: wid,
@@ -426,6 +486,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
             const d = parseDenialText(toolResultText(block.content), "?");
             if (d) state.trouble?.onDenial(d.hook, d.reason);
           }
+          if (!toolResultFailed(block)) toolsOk += 1;
           toolFold.onToolResult(block);
           const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
           if (use && !toolResultFailed(block) && (isProgressTool(use.name, use.input) || readOnly)) {
