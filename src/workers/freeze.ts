@@ -300,6 +300,17 @@ export function activeMsOf(
   return Math.max(0, now - since - ms);
 }
 
+/** The ms of the spell [since, now] spent in line at the engine: `lineNow` is the worker's cumulative in-line time (the router's accounting) at `now`, `lineAtSince` its value when the spell began — only waits that began inside the spell count. */
+export function inLineMs(lineNow: number, lineAtSince: number): number {
+  return Math.max(0, (Number(lineNow) || 0) - (Number(lineAtSince) || 0));
+}
+
+/** The worker's own quiet time since `since`: its active ms (freeze and pause never count) minus the ms it spent in line at the engine inside that spell — the ONE own-time clock every stall notice, escalation verdict and time-budget checkpoint runs on. A worker waiting for a model slot is starved, not stuck: in-line minutes are the wait alarm's, never a stall's. */
+export function ownMsOf(id: string, since: number, now: number, lineNow = 0, lineAtSince = 0, pause: { paused?: boolean; pausedAt?: number; pausedMs?: number } = {}): number {
+  const wall = activeMsOf(id, since, now, pause);
+  return Math.max(0, wall - Math.min(wall, inLineMs(lineNow, lineAtSince)));
+}
+
 /** A clock that stands still while frozen: the wait verbs' --max budgets run on it. */
 export const activeNow = (): number => Date.now() - frozenTotalMs();
 

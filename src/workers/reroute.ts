@@ -21,7 +21,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { join } from "node:path";
 import { queueDir } from "./capacity.js";
 import { escalationPolicy } from "./config.js";
-import { activeMsOf, frozenSince } from "./freeze.js";
+import { activeMsOf, frozenSince, inLineMs, ownMsOf } from "./freeze.js";
 import { appendLedger } from "./ledger.js";
 import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
@@ -98,11 +98,12 @@ function overdueReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, sched: 
   if ((s.consecFails ?? 0) >= p.stallFailedCalls) return `${s.consecFails} failed tool calls in a row`;
   const last = stampMs(s.progressAt) ?? stampMs(s.started);
   const wallMs = last === null ? 0 : activeMsOf(s.id, last, nowMs, pause);
-  // a local job's requests wait their turn at the model: that time is not the job's own (starved, not stuck)
+  // a local job's requests wait their turn at the model: that time is not the job's own (starved, not stuck) —
+  // the one own-time clock (freeze.ts ownMsOf), shared by the stall alert and the time budget
   const a = sched?.workers[s.id];
   const lineNow = a ? a.waitMsTotal + (a.waitingSince ? Math.max(0, nowMs - a.waitingSince) : 0) : 0;
-  const lineMs = Math.min(wallMs, Math.max(0, lineNow - (s.lineAtProgressMs ?? 0)));
-  const ownMin = (wallMs - lineMs) / 60_000;
+  const ownMin = ownMsOf(s.id, last ?? nowMs, nowMs, lineNow, s.lineAtProgressMs ?? 0, pause) / 60_000;
+  const lineMs = Math.min(wallMs, inLineMs(lineNow, s.lineAtProgressMs ?? 0));
   if (ownMin < p.stallMaxMin) return null;
   const what = s.readOnly ? "no successful tool call" : "no edit or commit";
   return lineMs > 0 ? `${what} for ${Math.floor(ownMin)}m of own time (${Math.floor(wallMs / 60_000)}m wall, ${Math.floor(lineMs / 60_000)}m in line)` : `${what} for ${Math.floor(ownMin)}m`;
