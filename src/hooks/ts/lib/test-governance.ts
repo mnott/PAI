@@ -119,8 +119,24 @@ function pathExists(p: string): boolean {
  */
 function looksLikeTest(target: string): boolean {
   if (isScratchPath(target) || isTmpPath(target) || outsideGovernedRepos(target)) return false;
-  if (UNRESOLVABLE.test(target)) return governedRoot(target) !== null && isTestPath(target); // unresolvable: fail closed on the literal shape, but only in a governed repo
-  return !pathExists(target) && isTestPath(target); // an existing file: an edit, always allowed
+  if (UNRESOLVABLE.test(target)) {
+    // unresolvable (variable, glob): fail closed on the literal shape, but only
+    // where the rule runs. Resolve the variable tail to its nearest existing
+    // ancestor first — a `$TMPDIR/…` target is temp and passes even ungoverned;
+    // inside an ungoverned repo it never denies (the incident of 2026-11-19:
+    // `cp $TMPDIR/ts_orig.py terminal/serve/test_server.py` in a third-party
+    // engine repo with no tests/KEPT.md).
+    let dir = dirname(target);
+    while (!existsSync(dir)) {
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return !isTmpPath(dir) && governedRoot(dir) !== null && isTestPath(target);
+  }
+  // an existing file is an in-place write, never new; a missing one is a new
+  // test file only inside a governed repo — the rule does not run outside one.
+  return !pathExists(target) && isTestPath(target) && governedRoot(dirname(target)) !== null;
 }
 
 /** Simple same-command assignments (`D=/tmp/x`) with a literal value, later ones winning. */
