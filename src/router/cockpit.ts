@@ -54,7 +54,7 @@ import { loadPaneRunStatuses, paneRunRows } from "../workers/pane-run.js";
 import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
-import { readSchedFile, schedPlain, sharedScheduler } from "./scheduler.js";
+import { readSchedFile, schedPlain, sharedScheduler, type SchedSnapshot } from "./scheduler.js";
 import { isLive, loadStatus, loadStatusesCached, ownsPidCached, type WorkerStatus } from "../workers/status.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
 import { buildSpeed, percentile } from "./speed.js";
@@ -1281,16 +1281,8 @@ export function cockpitQueue(
   // the scheduler line resolves through the display-name order: the agent-sessions
   // registry gives every session a project slug, and a session's own background-job
   // name beats that slug; a worker's own session name tops both
-  const names = loadSessionMap({ workerDirs: [], agentSessionsFile: paiHomePath("agent-sessions.json"), jobsDir: defaultSources().jobsDir });
-  for (const e of Object.values(snap?.engines ?? {})) {
-    for (const sid of [e.inflight?.session, ...Object.keys(e.queued), ...Object.keys(e.counters)]) {
-      if (!sid || names.get(sid)?.aibroker) continue;
-      const job = jobSessionName(sid, defaultSources().jobsDir);
-      if (job) names.set(sid, { ...(names.get(sid) ?? {}), name: job });
-    }
-  }
-  for (const [id, name] of Object.entries(schedNames(logDir))) names.set(id, { ...(names.get(id) ?? {}), name });
-  const sched = schedPlain(snap, Object.fromEntries([...names].map(([id, info]) => [id, info.name])));
+  // the scheduler line is a display string: its sources (the agent-sessions registry, the job names) are read at most once per window
+  const sched = sharedSchedLine(snap, logDir);
   return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now, (id) => { const w = statuses.find((x) => x.id === id); return w ? sessionGroup(w) : undefined; }), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 
@@ -1332,6 +1324,40 @@ const cockpitQueueShared = singleFlight<CockpitQueue, { now: number; logDir: str
 async function cockpitQueueAsync(queueLogDir: (workers: WorkersConfig) => string, now = Date.now()): Promise<SharedResult<CockpitQueue>> {
   const workers = readWorkersCached();
   return cockpitQueueShared({ now, logDir: queueLogDir(workers), workers });
+}
+
+/**
+ * The scheduler line of the queue panel's footer. Its display-name sources (the agent-sessions
+ * registry, each session's background-job name) are re-read at most once per window; a snapshot
+ * inside that window resolves through the remembered names, so N polls in one window read them once.
+ */
+let schedNamesMemo: { at: number; logDir: string; names: Map<string, SessionInfo> } | null = null;
+function sharedSchedLine(snap: SchedSnapshot | null, logDir: string): { text: string; title: string } {
+  const now = Date.now();
+  if (!schedNamesMemo || schedNamesMemo.logDir !== logDir || now - schedNamesMemo.at >= queueTtlMs()) {
+    // the display-name order: the agent-sessions registry gives every session a project slug, and a
+    // session's own background-job name beats that slug; a worker's own session name tops both
+    const names = loadSessionMap({ workerDirs: [], agentSessionsFile: paiHomePath("agent-sessions.json"), jobsDir: defaultSources().jobsDir });
+    for (const e of Object.values(snap?.engines ?? {})) {
+      for (const sid of [e.inflight?.session, ...Object.keys(e.queued), ...Object.keys(e.counters)]) {
+        if (!sid || names.get(sid)?.aibroker) continue;
+        const job = jobSessionName(sid, defaultSources().jobsDir);
+        if (job) names.set(sid, { ...(names.get(sid) ?? {}), name: job });
+      }
+    }
+    for (const [id, name] of Object.entries(schedNames(logDir))) names.set(id, { ...(names.get(id) ?? {}), name });
+    schedNamesMemo = { at: now, logDir, names };
+  } else if (snap) {
+    // a fresh snapshot inside the window: its engine sessions resolve their job names against the cache
+    for (const e of Object.values(snap.engines)) {
+      for (const sid of [e.inflight?.session, ...Object.keys(e.queued)]) {
+        if (!sid || schedNamesMemo.names.get(sid)?.aibroker) continue;
+        const job = jobSessionName(sid, defaultSources().jobsDir); // itself 30 s cached
+        if (job && !schedNamesMemo.names.get(sid)?.name) schedNamesMemo.names.set(sid, { ...(schedNamesMemo.names.get(sid) ?? {}), name: job });
+      }
+    }
+  }
+  return schedPlain(snap, Object.fromEntries([...schedNamesMemo.names].map(([id, info]) => [id, info.name])));
 }
 
 const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;
