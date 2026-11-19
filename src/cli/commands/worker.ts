@@ -195,6 +195,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       urgent: o.urgent === true ? true : undefined,
       localOk: o["local-ok"] === true ? true : undefined,
       cloud: o.cloud === true ? true : undefined,
+      approvedBy: str(o["approved-by"]),
       className: className ?? agentClass,
       topic: normalizeTopic(o.topic),
       modelFlag: str(o.model),
@@ -341,6 +342,7 @@ const runCommand: CommandDef = {
     { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "Run on the local model PAI resolves: the first running one in the class's routing tier order, else the workers.yaml `local:` preference when running (a `local:` that is not running is ignored), else the most recently used running model; --local NAME picks a specific running model" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
     { name: "cloud", type: "boolean", summary: "This run goes to the cloud under the prefer-local or auto policy" },
+    { name: "approved-by", type: "string", value: "SESSION", summary: "During a local-only window (`pai budget local-only`): this cloud start carries the named session's standing approval — only the configured gatekeeper session (budget.gatekeeper, default PAI) lets it through; a one-time token from `pai budget approve` is consumed beside it" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label shown in ps, follow and the status line" },
     { name: "spec", type: "string", value: "FILE", summary: "Read the task from this file (or - for stdin) instead of -p" },
     { name: "cwd", type: "string", value: "DIR", summary: "Directory the worker runs in (default: here)" },
@@ -876,9 +878,9 @@ const rerouteCommand: CommandDef = {
     guard("pai worker reroute <id> --where cloud|local|<provider>", async () => {
       const where = str(ctx.opts.where);
       if (!where) throw new Error("--where is required: cloud, local or a provider name");
-      const { rerouteWorker } = await import("../../workers/reroute.js");
+      const { rerouteMessage, rerouteWorker } = await import("../../workers/reroute.js");
       const r = await rerouteWorker(ctx.args.ID as string, where, { logDir: logDir(), by: "cli" });
-      out(`${r.id}: ${r.was} -> started again on ${r.provider}${r.branch ? ` (continues branch ${r.branch})` : ""}`);
+      out(rerouteMessage(r));
     }),
 };
 

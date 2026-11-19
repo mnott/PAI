@@ -27,6 +27,7 @@ import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
 import { loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
+import { localOnlyRerouteCheck, readLocalOnly } from "./local-only.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { markHandover } from "./run/follow-reroute.js";
 import { escalationOff, getProfile } from "./session-profile-store.js";
@@ -203,7 +204,7 @@ export interface RerouteDeps {
    * the restart announced its id and throws when it did not start — rerouteWorker then keeps the old run where it
    * is (queued or running) and clears its marker; a reroute that cannot restart must not drop the job.
    */
-  spawn?: (s: SpawnSpec) => void | Promise<void>;
+  spawn?: (s: SpawnSpec) => void | RerouteResult["queuedAtTarget"] | Promise<void | RerouteResult["queuedAtTarget"]>;
   /** Wait before the kill so the old pane can print its line (default 1500 when the worker has a pane, tests pass 0). */
   announceMs?: number;
   /** A running job keeps running until its continuation holds a slot on the target (move to a slot-limited provider); finishDeferredMoves stops it then. A queued job is not deferred. */
@@ -221,7 +222,13 @@ export interface RerouteResult {
   branch?: string;
   specFile: string;
   description: string;
+  /** The continuation waits at the target's cap instead of running (the local provider is full): never lost, it goes when a slot frees. */
+  queuedAtTarget?: { position: number; queued: number };
 }
+
+/** "moved to <provider>, waiting at position N of M" — shown when the continuation queued at a full target. */
+export const rerouteMessage = (r: RerouteResult): string =>
+  r.queuedAtTarget ? `${r.id}: moved to ${r.provider}, waiting at position ${r.queuedAtTarget.position} of ${r.queuedAtTarget.queued}` : `${r.id}: ${r.was} -> started again on ${r.provider}${r.branch ? ` (continues branch ${r.branch})` : ""}`;
 
 /** The note a continued task starts with. */
 export const continuedNote = (id: string, branch: string): string => `continued from ${id} on branch ${branch} — its commits are there, start from that branch. If the work is already done on it, change nothing and report \"nothing to do\" as a success (r=+), never a failure`;
@@ -376,7 +383,7 @@ export async function startDetachedWorker(
  * It returns once the new process announced its worker id; it throws when that process dies or never announces —
  * rerouteWorker then leaves the old run alone (a failed restart must not drop the job).
  */
-export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession): (s: SpawnSpec) => Promise<void> {
+export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession): (s: SpawnSpec) => Promise<RerouteResult["queuedAtTarget"] | void> {
   return async (s) => {
     const st = loadStatus(logDir, s.id);
     if (!st) throw new Error(`no worker named "${s.id}" to restart`);
@@ -402,9 +409,18 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
     const newId = await waitAnnouncedId(idFile, pid, 60_000);
     if (!newId) {
       await abandonRestart(logDir, idFile, pid);
+      // judged by the announced id and the process, never by the output text: the start's own stdout can carry
+      // unrelated lines (a worktree gc pass) that are not a failure (2026-11-18: gc output read as "did not start").
       const out = join(logDir, "runs", `reroute-${s.id}.out`);
       const tail = existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").slice(-5).join(" / ") : "";
       throw new Error(`the restart on ${s.provider} did not start${tail ? `: ${tail}` : ""}`);
+    }
+    // the target may be full: an announced id whose status says queued is a success — the continuation waits
+    // there (never lost) and runs when a slot frees. The caller reports the position.
+    const ns = loadStatus(logDir, newId);
+    if (ns?.state === "queued") {
+      const cap = ns.capacity;
+      return { position: cap?.position ?? 1, queued: cap?.queued ?? cap?.total ?? 1 };
     }
   };
 }
@@ -451,6 +467,12 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const old = load(id);
   if (!old) throw new Error(`no worker named "${id}"`);
   if (old.state !== "queued" && old.state !== "running") throw new Error(`worker ${id} is ${old.state}; only a queued or running worker can be rerouted`);
+  // the local-only window blocks automatic cloud moves (escalations, pane commands); an operator's own
+  // reroute — the CLI, the cockpit — always passes (local-only.ts).
+  {
+    const why = await localOnlyRerouteCheck(where, { logDir: d.logDir, by: d.by });
+    if (why) throw new Error(why);
+  }
   const target = await (d.resolve ?? defaultResolve)(where);
   if (target.provider === old.provider) throw new Error(`worker ${id} already runs on ${old.provider}`);
   const text = taskText(d.logDir, old);
@@ -482,12 +504,16 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     markHandover(d.logDir, id, old.rerouted ?? `rerouted to ${target.provider} (${reason})`);
     await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
   };
-  const start = (): Promise<void> | void => (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+  const start = async (): Promise<NonNullable<RerouteResult["queuedAtTarget"]> | undefined> => (await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile })) ?? undefined;
   if (d.deferKill && old.state === "running") {
     // least impact: the continuation joins the target's queue (it waits there, not running) and the old run keeps working;
     // finishDeferredMoves stops the origin once the continuation holds a slot.
     try {
-      await start();
+      const q = await start();
+      if (q) {
+        appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });
+        return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description, queuedAtTarget: q };
+      }
     } catch (e) {
       unmark();
       appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
@@ -517,18 +543,22 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
       end.rerouted = old.rerouted;
       saveStatus(d.logDir, end, new Date(), true);
     }
+    let q: NonNullable<RerouteResult["queuedAtTarget"]> | undefined;
     try {
-      await start();
+      q = await start();
     } catch (e) {
       appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 200) });
       throw e;
     }
-    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
+    // the continuation queued at a full target: it waits there (never lost); the stopped origin's work stays on its branch.
+    if (q) appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });
+    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description, ...(q ? { queuedAtTarget: q } : {}) };
   }
   // a queued origin: the restart first — nothing is stopped before it announced its id; a restart that cannot start
   // must leave the job where it was and say so, never drop it (2026-11-16: 93019 lost this way)
+  let q: NonNullable<RerouteResult["queuedAtTarget"]> | undefined;
   try {
-    await start();
+    q = await start();
   } catch (e) {
     unmark();
     appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
@@ -543,7 +573,8 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `stop failed after the restart: ${(e as Error).message}`.slice(0, 200) });
     throw e;
   }
-  return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
+  if (q) appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });
+  return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description, ...(q ? { queuedAtTarget: q } : {}) };
 }
 
 export interface Escalation {
@@ -568,6 +599,8 @@ export async function escalateOverdue(
   const done: Escalation[] = [];
   const sched = readSchedFile(d.logDir, nowMs);
   for (const s of statuses) {
+    // the local-only window blocks automatic cloud moves: an overdue job stays where it is until the window ends (rerouteWorker would refuse it anyway — this keeps its marker clean and the retry honest)
+    if (readLocalOnly(nowMs)) continue;
     const reason = escalationReason(s, nowMs, policy, sched);
     if (!reason) {
       // a stall the session switch holds back stays visible in ps / the cockpit

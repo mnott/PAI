@@ -88,7 +88,7 @@ import {
   printResult,
   loopStopResult,
 } from "./finalise.js";
-import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
+import { CLOUD, continuedLocally, fallThroughTarget, tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
 import { readSchedFile } from "../../router/scheduler.js";
@@ -693,7 +693,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       if (escalated !== null) return escalated;
       const why = headless && !reviewed ? fallThroughReason(a.route, st, rep, label, ranLocal(a, st)) : null;
       if (why && a.route && !st.escalated) {
-        return rerunOn(a, wid, why, st);
+        // the local-only window or the session's escalate-off: the continuation runs on the same local provider again
+        const to = ranLocal(a, st) ? fallThroughTarget(a, st) : CLOUD;
+        return rerunOn(a, wid, to === CLOUD ? why : continuedLocally(why), st, to);
       }
       if (headless && !a.quiet) {
         // a loop-stop kills claude before it emits a result: print the stop reason and usage so far, not nothing
