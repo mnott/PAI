@@ -2,11 +2,11 @@
  * queue-ops.ts — reads the one queue table of the machine and runs its per-job / per-session actions.
  * Shared by `pai worker queue` and the cockpit router (/cockpit/queue, /cockpit/queue/act) so both do the same.
  */
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { loadStatus, loadStatusesCached, ownsPidCached } from "./status.js";
+import { loadStatus, loadStatusesCached, ownsPidCached, saveStatus, isLive, pausedFree, type WorkerStatus } from "./status.js";
 import { isLocalProvider, type WorkersConfig } from "./config.js";
-import { providerCap, queueDir, queueRows, reorderQueue, reorderQueueTo, liveQueue } from "./capacity.js";
+import { capacityOf, providerCap, queueDir, queueRows, reorderQueue, reorderQueueTo, liveQueue, writeTicket } from "./capacity.js";
 import { loadPaneRunStatuses } from "./pane-run.js";
 import { ownerSessionName } from "./scope.js";
 import { frozenSince, freezeAll, thawSome, realFreezeDeps } from "./freeze.js";
@@ -47,6 +47,9 @@ export function readQueueTable(logDir: string, workers: WorkersConfig, now = Dat
       // cached 2-sentence TL;DR from the small local model; generated in the background, the rule-based first sentences meanwhile
       return cachedTldr(logDir, s.id, text) ?? taskSummary(text);
     },
+    caps,
+    idleExtraMax: workers.capacity?.idleExtraMax,
+    isAlive: (pid) => owns({ pid, started: "" }),
     frozen: (id) => frozenSince(id) !== undefined,
     deepFrozen: deep,
     sched,
@@ -85,6 +88,39 @@ async function realDeep(logDir: string, by: string, sel: DeepSelect | undefined,
 
 const stateOf = (d: OpsDeps, id: string): string | undefined => readQueueTable(d.logDir, d.workers, Date.now(), undefined, d.owns).find((r) => r.id === id)?.stateText;
 
+/** Started jobs on a provider right now — the same accounting the capacity gate uses (running, live, not an operator pause that freed its slot). */
+function startedOn(d: OpsDeps, s: WorkerStatus): number {
+  return loadStatusesCached(d.logDir).filter((x) => x.provider === s.provider && x.state === "running" && !pausedFree(x) && isLive(x, d.owns ?? ownsPidCached)).length;
+}
+
+/**
+ * "start now": admit this waiting job at once, over the provider's nominal cap. The ceiling is the one engine-idle
+ * admission uses — cap + idleExtraMax started jobs — and beyond it nothing starts (the row shows the reason).
+ * A run already queued at the gate takes its grant on the next poll; a paused resumed worker gets its ticket at
+ * the head of the line and the waiting loop picks the wait up. Nothing else moves.
+ */
+function startNow(d: OpsDeps, id: string, s: WorkerStatus): string {
+  const cap = providerCap(d.workers, s.provider);
+  if (cap !== undefined && cap > 0) {
+    const extraMax = capacityOf(d.workers.capacity).idleExtraMax;
+    const started = startedOn(d, s);
+    if (started >= cap + extraMax) throw new Error(`the limit of started jobs on ${s.provider} is reached (${started} of ${cap} slots + ${extraMax} over)`);
+  }
+  if (s.state === "queued") return `starting now${cap !== undefined ? `, over the cap of ${cap}` : ""}: takes its slot at once`;
+  // a paused resumed worker waiting for its turn: mark it started-over-cap and put its ticket at the head; with no queue file (no wait loop alive), start it outright
+  if (!existsSync(join(queueDir(d.logDir, s.provider), s.id))) {
+    const r = setWorkerPaused(d.logDir, s.id, false, `${d.by}:start-now`);
+    return r ? `started now${cap !== undefined && startedOn(d, s) > cap ? ", over the cap" : ""}` : "was not paused";
+  }
+  reorderQueue(d.logDir, s.provider, s.id, "front");
+  const fresh = loadStatus(d.logDir, id) ?? s;
+  if (cap !== undefined && startedOn(d, fresh) >= cap) {
+    fresh.overCapBy = d.by;
+    saveStatus(d.logDir, fresh);
+  }
+  return `first in line and past the cap: starts at once${cap !== undefined ? ` (over the cap of ${cap}, up to ${cap + capacityOf(d.workers.capacity).idleExtraMax})` : ""}`;
+}
+
 /** One action on one job. Throws nothing: an error is the result's message. */
 export async function runRowAction(d: OpsDeps, action: RowAction, id: string): Promise<ActionResult> {
   try {
@@ -115,6 +151,21 @@ export async function runRowAction(d: OpsDeps, action: RowAction, id: string): P
           break;
         }
         message = setWorkerPaused(d.logDir, id, true, d.by) ? "paused; its slot is free for the next job" : "already paused";
+        break;
+      }
+      case "back-to-queue": {
+        // running → the front of its provider's waiting list: parked like a pause (slot freed, process and context kept), plus a ticket at position 1
+        const s = needJob();
+        if (!setWorkerPaused(d.logDir, id, true, d.by)) throw new Error(s.paused ? "already paused" : `worker ${id} is ${s.state}; only a running worker can go back to the queue`);
+        mkdirSync(queueDir(d.logDir, s.provider), { recursive: true });
+        writeTicket(join(queueDir(d.logDir, s.provider), id), `${s.runPid ?? s.pid} front @${Date.now()}`);
+        message = "back to the queue: first in line, slot free for the next job, its work kept";
+        break;
+      }
+      case "start-now": {
+        const s = needJob();
+        if (!(s.paused || s.state === "queued")) throw new Error(`worker ${id} is ${s.state}; only a waiting job can start now`);
+        message = startNow(d, id, s);
         break;
       }
       case "resume":

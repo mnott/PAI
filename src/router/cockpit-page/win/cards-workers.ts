@@ -8,13 +8,13 @@
  *  drag is active in a card that card is not repainted (WK_DRAG, the card.busyDrag of the spec). The `table`/`note` types
  *  are the generic types of win/types.ts; the cards here only carry views (wkTableView / wkLocalView / wkWtView). */
 
-export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted, then the paused and frozen ones. Every button acts on that one job (or on every job of a session) and the state badge shows the effect at once.";
+export const WIN_WORKERS_JS = String.raw`var WK_INFO="One table for the whole machine: running jobs first, then the waiting ones in the order they will be admitted, then the paused and frozen ones. Every button acts on that one job (or on every job of a session) and the state badge shows the effect at once. ▶ one step toward running · ⏸ one step toward paused · stop and more in …";
 var WK_EXPLAIN="running = holds a slot, or started and waiting to take its slot back; waiting = next in line; paused = parked, its slot is free for the next job; frozen = stopped in memory, lost on reboot; deep-frozen = stopped and saved, survives a reboot. Priority: low = others go first; normal = default; high = ahead of normal; now = front of the queue, pauses all other local jobs while it runs. Slots: N of M slots busy counts jobs holding a slot; K waiting for their slot back = started jobs that hold a ticket to get a slot back (their own rows); engine idle: admitted K extra = jobs started above the cap because the model had nothing to do.";
 var WK_ACT="Activity: writing = its request is open at the model, the model is writing its reply; in line = waiting for the model, either at the engine or for a slot (the tooltip says which); tool = no request open, a tool (build, test) is running; waiting = waiting for a slot, no request has gone to the model yet; idle Nm = no request at the model and no tool running for N minutes, it may be stuck.";
-var WK_BTNS="Buttons: ▶ one step toward running (resume / resume saved), ⏸ one step toward paused, ⤒ next in line, ↑ move up, ↓ move down, ■ stop, ⋯ more actions. Chips: the coloured session chip filters to that session, the dashed topic chip filters to that topic, the model chip names the model (↑ = why it is not local).";
+var WK_BTNS="Buttons: ▶ one step toward running (paused → resume to the front of the line, waiting → start now over the cap up to the ceiling), ⏸ one step toward paused (running / waiting → pause, its work kept), ⋯ more actions (stop, back to queue, freeze, move, priority). Chips: the coloured session chip filters to that session, the dashed topic chip filters to that topic, the model chip names the model (↑ = why it is not local).";
 var WK_COLS=[["state","state",150],["session","session",130],["task","task","40%"],["model","model",110],["prio","prio",90],["time","time r",80],["actions","actions",210]];
 var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now":"front of the queue and pauses all other local jobs while it runs"};
-var WK_GROUPS=["running","waiting","paused / frozen"];
+var WK_GROUPS=["running","waiting","paused"];
 var WK_BADGE={"running":"wq-run","waiting":"wq-wait","paused":"wq-pause","frozen":"wq-frozen","deep-frozen":"wq-deep"};
 var WK_FILTERS=[],WK_TF=[],WK_SORT=null,WK_MENU=null,WK_COPY=null;
 /** Filters (session names) and sort ({col,dir}) persist in localStorage. */
@@ -33,8 +33,8 @@ function wkView(rows){
  if(WK_SORT){var c=WK_SORT.col,sg=WK_SORT.dir==="desc"?-1:1;r.sort(function(a,b){var u=c==="session"?(a.x.session<b.x.session?-1:a.x.session>b.x.session?1:0):c==="time"?a.x.seconds-b.x.seconds:wkGroupOf(a.x)-wkGroupOf(b.x);return u?u*sg:a.i-b.i})}
  return r.map(function(o){return o.x});
 }
-var WK_LBL={"next":["run next","goes to the front of the waiting jobs and takes the next free slot"],"up":["move up","one place earlier in the waiting order"],"down":["move down","one place later in the waiting order"],"pause":["pause","stops taking model time, frees its slot for the next job, keeps its work"],"resume":["resume","goes back into the queue and continues"],"freeze":["freeze","stops its processes in memory (lost on reboot)"],"thaw":["thaw","continues the frozen processes"],"deep-freeze":["deep-freeze","saves its work and stops it; survives a reboot"],"deep-resume":["resume","continues from the saved stop"],"to-local":["move to local","restarts the job on the local model and continues its branch"],"to-cloud":["move to cloud","restarts the job on a cloud provider and continues its branch"],"stop":["stop","ends this command"]};
-var WK_SURE={"deep-freeze":1,"to-local":1,"to-cloud":1},WK_CONF=null,WK_CT=null;
+var WK_LBL={"next":["run next","goes to the front of the waiting jobs and takes the next free slot"],"up":["move up","one place earlier in the waiting order"],"down":["move down","one place later in the waiting order"],"pause":["pause","stops taking model time, frees its slot for the next job, keeps its work"],"resume":["resume","goes back into the queue at the front of the line and continues"],"back-to-queue":["back to queue","stops taking model time, frees its slot, waits first in line, keeps its work"],"start-now":["start now","runs now even if all slots are busy (over the cap, up to the hard ceiling)"],"freeze":["freeze","stops its processes in memory (lost on reboot)"],"thaw":["thaw","continues the frozen processes"],"deep-freeze":["deep-freeze","saves its work and stops it; survives a reboot"],"deep-resume":["resume","continues from the saved stop"],"to-local":["move to local","restarts the job on the local model and continues its branch"],"to-cloud":["move to cloud","restarts the job on a cloud provider and continues its branch"],"stop":["stop","ends this command for good; its work stays on its branch"]};
+var WK_SURE={"deep-freeze":1,"to-local":1,"to-cloud":1,"stop":1},WK_CONF=null,WK_CT=null;
 /** One-click inline confirm: the first click arms the button ("confirm?") for 3 s, the second runs it. True = run now. */
 function wkArm(key,a,rd){if(!WK_SURE[a]||WK_CONF===key){WK_CONF=null;return true}WK_CONF=key;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_CONF=null;rd()},3000);rd();return false}
 /** 12 clearly distinct hues (readable on the dark background). A name takes the hue of its stable hash; sessions visible together never share one (wkAssign). */
@@ -57,14 +57,19 @@ function wkModel(r){if(!r.model)return'<span class="dim">–</span>';var up=!r.l
 var WK_LTIP={1:"L1 coordinates: splits the work, starts L2 workers, checks their results",2:"L2 does the work"};
 /** The level badge before the task text; an L2 under an L1 row of the table gets a "└" prefix. */
 function wkLevel(r,kid){return(kid?'<span class="wq-kid" aria-hidden="true">└</span>':'')+'<span class="wq-lv wq-l'+(r.level===1?1:2)+'" title="'+esc(WK_LTIP[r.level===1?1:2])+'">L'+(r.level===1?1:2)+'</span>'}
-var WK_ICO={"pause":"⏸","resume":"▶","stop":"■","next":"⤒","up":"↑","down":"↓","deep-resume":"▶"};
-function wkIconBtn(id,a){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic'+(a==="up"||a==="down"?" wq-sm":"")+'" data-qa="'+a+'" data-id="'+esc(id)+'" title="'+esc(t)+'" aria-label="'+esc(l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
+var WK_ICO={"pause":"⏸","resume":"▶","start-now":"▶","back-to-queue":"⤒","stop":"■","next":"⤒","up":"↑","down":"↓","deep-resume":"▶"};
+/** One icon button of a row: data-qa = the action, data-id = the job; label in the tooltip and the aria-label. A disabled one says why (disabled buttons carry no tooltip: the reason rides in the aria-label). */
+function wkIconBtn(id,a,why){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<button type="button" class="wq-ic'+(a==="up"||a==="down"?" wq-sm":"")+'" data-qa="'+a+'" data-id="'+esc(id)+'"'+(why?' disabled aria-disabled="true"':'')+' title="'+esc(why?l[0]+" — "+why:t)+'" aria-label="'+esc(why?l[0]+": "+why:l[0]+": "+l[1])+'">'+(WK_ICO[a]||l[0])+'</button>'}
 function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯</button>'}
 /** Copy the full worker id to the clipboard (the queue never shows it in full); a prompt fallback when the clipboard API is absent. */
 function wkCopyId(id){var done=function(){WK_COPY=id;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_COPY=null},1600)};try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(String(id)).then(done,function(){window.prompt("worker id (copy it)",String(id))});return}}catch(e){}window.prompt("worker id (copy it)",String(id))}
 function wkTRow(r){
- var has=function(a){return r.actions.indexOf(a)>=0},main=has("deep-resume")?"deep-resume":has("resume")?"resume":"pause";
- var acts=(has(main)?wkIconBtn(r.id,main):"")+(has("next")?wkIconBtn(r.id,"next"):"")+(has("up")?wkIconBtn(r.id,"up"):"")+(has("down")?wkIconBtn(r.id,"down"):"")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
+ var has=function(a){return r.actions.indexOf(a)>=0};
+ // the inline buttons carry one meaning each: ▶ one step toward running (paused → resume, waiting → start now), ⏸ one step toward paused (running / waiting → pause); stop and everything else in …
+ var acts;
+ if(r.state==="running")acts=wkIconBtn(r.id,"pause")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
+ else if(r.state==="waiting")acts=(has("start-now")?wkIconBtn(r.id,"start-now",r.startNowWhy):wkIconBtn(r.id,"start-now",r.startNowWhy||"the limit of started jobs is reached"))+wkIconBtn(r.id,"pause")+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
+ else acts=(has("deep-resume")?wkIconBtn(r.id,"deep-resume"):has("resume")?wkIconBtn(r.id,"resume"):wkIconBtn(r.id,"resume","this job cannot resume right now"))+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
  var badge=r.state==="waiting"&&typeof r.slot==="number"?"waiting #"+r.slot:r.state;
  var st='<span class="wq-b '+(WK_BADGE[r.state]||"")+'" title="'+esc(r.stateText+(r.detail?" · "+r.detail:""))+'">'+esc(badge)+'</span>'+(r.activity&&r.state==="running"?' <span class="wq-act" title="'+esc(r.activityTip||r.now||"")+'">'+esc(r.activity)+'</span>':"");
  var tip=r.task;if(r.summary)tip+="\n\n"+r.summary;tip+="\nid: "+r.id;if(r.waits&&r.waits.length){for(var wi=0;wi<r.waits.length;wi++)tip+="\na session waits for this job: "+r.waits[wi].label}
@@ -80,7 +85,8 @@ function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
 function wkQTable(rows){
  var out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){var k=c[0]==="time"?"time":c[0],sk=k==="state"||k==="session"||k==="time",on=WK_SORT&&WK_SORT.col===k,ar=on?(WK_SORT.dir==="desc"?" ▼":" ▲"):"";return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+(on?' aria-sort="'+(WK_SORT.dir==="desc"?"descending":"ascending")+'"':'')+'>'+(sk?'<button type="button" class="wq-sort'+(on?' on':'')+'" data-qsort="'+k+'" title="sort by '+k+' (click again: ascending, descending, default order)">'+c[0]+ar+'</button>':c[0])+'</th>'}).join("")+'</tr></thead><tbody>',g=-1;
  var bs=WK_SORT&&WK_SORT.col==="session",flat=WK_SORT&&!bs,sg=null;
- rows.forEach(function(r){if(bs){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}}else if(!flat){var k=wkGroupOf(r);if(k!==g){g=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+'</td></tr>'}}out+=wkTRow(r)});
+ rows.forEach(function(r){if(bs){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}}else if(!flat){var k=wkGroupOf(r);while(++g<k)out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[g]+' <span class="dim">(none)</span></td></tr>';if(g!==k){g=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+'</td></tr>'}}out+=wkTRow(r)});
+ while(++g<3)out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[g]+' <span class="dim">(none)</span></td></tr>';
  return out+'</tbody></table>';
 }
 /** The open menu (row, session or All jobs), fixed at the clicked button. */
@@ -90,7 +96,8 @@ function wkMenuHtml(){
  if(k==="all")items=[["data-qg","freeze","freeze all","stop every worker's processes in memory (lost on reboot)"],["data-qg","thaw","thaw all","continue all frozen processes"],["data-qg","deep-freeze",WK_CONF==="qg:deep-freeze"?"confirm?":"deep-freeze all","pai stop: save all work and stop everything; survives a reboot"],["data-qg","deep-resume","resume all","pai resume: restore everything saved"]];
  else if(k.indexOf("sess:")===0)items=[["pause","pause"],["freeze","freeze"],["deep-freeze","deep-freeze"],["deep-resume","resume saved"],["resume","resume"]].map(function(x){return["data-qx",x[0],(WK_CONF==="qx:"+x[0]?"confirm?":x[1]+" all of "+k.slice(5)),x[1]+" every job of this session: "+(WK_LBL[x[0]]||["",""])[1]]});
  else{r=((WQ&&WQ.table)||[]).filter(function(x){return"row:"+x.id===k})[0];if(!r)return"";
-  items=["freeze","thaw","deep-freeze","deep-resume","to-cloud","to-local"].filter(function(a){return r.actions.indexOf(a)>=0}).map(function(a){var l=WK_LBL[a];return["data-qa",a,WK_CONF===r.id+":"+a?"confirm?":l[0],l[1],r.id]});
+  items=["back-to-queue","next","up","down","freeze","thaw","deep-freeze","deep-resume","to-cloud","to-local"].filter(function(a){return r.actions.indexOf(a)>=0}).map(function(a){var l=WK_LBL[a];return["data-qa",a,WK_CONF===r.id+":"+a?"confirm?":l[0],l[1],r.id]});
+  if(r.kind==="job")items.push(["data-qa","stop",WK_CONF===r.id+":stop"?"confirm?":"stop","ends this job for good (click again to confirm); its work stays on its branch",r.id]);
   items.push(["data-copy","copy",WK_COPY==="copy:"+r.id?"copied":"copy id","copy the full worker id to the clipboard: "+r.id,r.id])}
  return'<div class="wq-menu" role="menu" style="left:'+WK_MENU.x+'px;top:'+WK_MENU.y+'px">'+items.map(function(x){return'<button type="button" role="menuitem" '+x[0]+'="'+esc(x[1])+'"'+(x[4]?' data-id="'+esc(x[4])+'"':'')+' title="'+esc(x[3])+'">'+esc(x[2])+'</button>'}).join("")+'</div>';
 }

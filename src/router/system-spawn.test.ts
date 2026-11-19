@@ -35,7 +35,7 @@ describe("cockpit page script", () => {
     expect(scripts.length).toBeGreaterThan(0);
     for (const src of scripts) expect(() => new Script(src)).not.toThrow();
   });
-  it("queue row renders as one line with at most five action buttons (pause, next, up, down, menu)", async () => {
+  it("queue row renders as one line with at most three action buttons (start now, pause, menu)", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
     const ctx = vm.createContext({});
@@ -70,28 +70,50 @@ describe("cockpit page script", () => {
     expect(vm.runInContext("wkMenuHtml()", ctx)).toContain('data-copy="copy"');
     expect(vm.runInContext("wkMenuHtml()", ctx)).toContain("copy id");
   });
-  it("waiting rows show inline move up and move down only where they change something", async () => {
+  it("inline buttons are ▶/⏸ only (one step toward/away from running); the moves live in the … menu, only where they change something", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
     const ctx = vm.createContext({});
     vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
-    const mk = (id: string, actions: string[]) => ({ slot: 1, kind: "job", id, state: "waiting", stateText: "", priority: "normal", session: "mdf", model: "", local: true, task: id, seconds: 5, activity: "", now: "", detail: "", actions });
-    (ctx as Record<string, unknown>).__f = mk("f", ["pause", "next", "down"]);
-    (ctx as Record<string, unknown>).__m = mk("m", ["pause", "next", "up", "down"]);
-    (ctx as Record<string, unknown>).__l = mk("l", ["pause", "next", "up"]);
+    const mk = (id: string, actions: string[], state = "waiting") => ({ slot: 1, kind: "job", id, state, stateText: "", priority: "normal", session: "mdf", model: "", local: true, task: id, seconds: 5, activity: "", now: "", detail: "", actions });
+    (ctx as Record<string, unknown>).__f = mk("f", ["start-now", "pause", "next", "down"]);
+    (ctx as Record<string, unknown>).__m = mk("m", ["start-now", "pause", "next", "up", "down"]);
+    (ctx as Record<string, unknown>).__l = mk("l", ["start-now", "pause", "next", "up"]);
     const row = (n: string) => vm.runInContext(`wkTRow(__${n})`, ctx) as string;
-    expect(row("m")).toContain('data-qa="up"');
-    expect(row("m")).toContain('data-qa="down"');
-    expect(row("m")).toContain("move down: one place later in the waiting order");
-    expect(row("m")).toContain("move up: one place earlier in the waiting order");
-    expect(row("f")).not.toContain('data-qa="up"');
-    expect(row("f")).toContain('data-qa="down"');
-    expect(row("l")).toContain('data-qa="up"');
-    expect(row("l")).not.toContain('data-qa="down"');
-    // not duplicated in the … menu
-    (ctx as Record<string, unknown>).__rows = [mk("m", ["pause", "next", "up", "down"])];
-    vm.runInContext("WQ={table:__rows};WK_MENU={key:'row:m',x:0,y:0}", ctx);
-    expect(vm.runInContext("wkMenuHtml()", ctx)).not.toContain('data-qa="down"');
+    // the row itself carries only ▶ (start now) and ⏸ (pause) — never the moves, never stop
+    for (const n of ["f", "m", "l"]) {
+      const h = row(n);
+      expect(h).toContain('data-qa="start-now"');
+      expect(h).toContain('data-qa="pause"');
+      for (const gone of ["up", "down", "next", "stop", "back-to-queue"]) expect(h).not.toContain(`data-qa="${gone}"`);
+    }
+    // the … menu carries the moves, only where they change something
+    const menu = (id: string) => { vm.runInContext(`WQ={table:[__${id}]};WK_MENU={key:'row:${id}',x:0,y:0}`, ctx); return vm.runInContext("wkMenuHtml()", ctx) as string; };
+    expect(menu("m")).toContain('data-qa="up"');
+    expect(menu("m")).toContain('data-qa="down"');
+    expect(menu("m")).toContain('title="one place later in the waiting order"');
+    expect(menu("f")).not.toContain('data-qa="up"');
+    expect(menu("l")).not.toContain('data-qa="down"');
+    // a running row: ⏸ only inline; back-to-queue and stop in the … menu (stop confirms)
+    (ctx as Record<string, unknown>).__r = mk("r", ["pause", "back-to-queue"], "running");
+    const rh = vm.runInContext("wkTRow(__r)", ctx) as string;
+    expect(rh).toContain('data-qa="pause"');
+    expect(rh).not.toContain('data-qa="start-now"');
+    vm.runInContext("WQ={table:[__r]};WK_MENU={key:'row:r',x:0,y:0}", ctx);
+    const rm = vm.runInContext("wkMenuHtml()", ctx) as string;
+    expect(rm).toContain('data-qa="back-to-queue"');
+    expect(rm).toContain("waits first in line, keeps its work");
+    expect(rm).toContain('data-qa="stop"');
+    // a waiting row at the ceiling: start-now disabled with the reason in its aria-label (disabled buttons carry no tooltip)
+    (ctx as Record<string, unknown>).__c = { ...mk("c", ["pause"]), startNowWhy: "the limit of started jobs on lm is reached (6 of 3 slots + 3 over)" };
+    const ch = vm.runInContext("wkTRow(__c)", ctx) as string;
+    expect(ch).toMatch(/data-qa="start-now"[^>]*disabled/);
+    expect(ch).toContain('aria-label="start now: the limit of started jobs on lm is reached (6 of 3 slots + 3 over)"');
+    // the PAUSED group shows even when empty, so the three lists are obvious; the (i) legend names the two inline buttons
+    (ctx as Record<string, unknown>).__g = [mk("x", ["start-now", "pause"]), mk("y", ["pause"], "running")];
+    const qh = vm.runInContext("wkQTable(wkView(__g))", ctx) as string;
+    expect(qh).toContain(">paused <span class=\"dim\">(none)</span>");
+    expect(vm.runInContext("wkBar({table:__g})", ctx)).toContain("▶ one step toward running · ⏸ one step toward paused · stop and more in …");
   });
   it("the activity word shows with its meaning in the tooltip", async () => {
     const vm = await import("node:vm");
