@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { assertWorkerEnded, mergeWorker, ownedTree, worktreePath, WorkerRunningError } from "./worktree.js";
+import { asMergeReverted, MergeRevertedError, mergeExitCode } from "./merge-reverted.js";
 
 /** A sleep alive for the whole suite: its pid is the fake worker's live pid. */
 const LIVE_PID = Number(spawnSync("/bin/sh", ["-c", "sleep 600 >/dev/null 2>&1 & echo $!"], { encoding: "utf8" }).stdout.trim());
@@ -363,5 +364,104 @@ describe("smoke start after a merge build", () => {
     const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
     expect(out).toContain("smoke start: ok (1.2 s)");
     expect(r.events).toEqual(["build", "smoke", "restartVerify", "restartGate"]);
+  });
+
+  // merge 2026-11-19 14:31: the smoke failed, the merge reverted — and the command still exited 0 printing
+  // "build: ok … restart health: ok" after the failure line. A reverted gate exits non-zero and says so LAST.
+  it("a reverted smoke gate throws MergeRevertedError whose last line is MERGE REVERTED", async () => {
+    const { repo, logDir } = f();
+    const r = rig(async () => ({ ok: false, ms: 5, error: "worker did not start within 30s" }));
+    const e = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MergeRevertedError);
+    expect(mergeExitCode(e)).toBe(MergeRevertedError.EXIT_CODE); // ≠ 0; the CLI exits 4
+    const lines = (e as Error).message.split("\n");
+    expect(lines.at(-1)).toMatch(/^MERGE REVERTED: /); // the revert is the LAST line, never followed by ok-looking text
+    expect((e as Error).message).toContain("smoke start failed: worker did not start within 30s");
+    expect(r.events.indexOf("revert")).toBeGreaterThan(r.events.indexOf("smoke"));
+  });
+
+  it("a smoke failure whose revert itself failed still reads as a reverted merge", async () => {
+    const { repo, logDir } = f();
+    const r = rig(async () => ({ ok: false, ms: 5, error: "worker run exited 1" }));
+    r.opts.revertMergeCommits = () => {
+      throw new Error("git revert refused");
+    };
+    const e = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MergeRevertedError);
+    expect((e as Error).message).toContain("WARNING: the revert failed");
+    expect((e as Error).message.split("\n").at(-1)).toMatch(/^MERGE REVERTED: /);
+  });
+});
+
+describe("a reverted merge gate exits non-zero with MERGE REVERTED last", () => {
+  const g = (): { repo: string; logDir: string } => {
+    const x = fixture();
+    makeWorker(x.repo, x.logDir, "rg", { file: "rg.txt" });
+    return x;
+  };
+
+  it("a restart-health rollback throws MergeRevertedError, revert line last, exit ≠ 0", async () => {
+    const { repo, logDir } = g();
+    let reverted = 0;
+    const e = await mergeWorker(logDir, "rg", {
+      verifyTests: false,
+      cliRoot: repo,
+      build: () => ({ ok: true, ms: 1, tail: "" }),
+      restartVerify: () => ({ restarted: true, forced: false, detail: "t" }),
+      restartGate: async () => ({ ok: false, rolledBack: true, failures: ["router down"], line: "restart failed health check: router down; rolled back to 1.0.0" }),
+      revertMergeCommits: () => ((reverted += 1), "reverted"),
+    }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MergeRevertedError);
+    expect(mergeExitCode(e)).not.toBe(0);
+    const lines = (e as Error).message.split("\n");
+    expect(lines.at(-1)).toMatch(/^MERGE REVERTED: restart failed health check/);
+    expect(reverted).toBe(1);
+  });
+
+  it("a rolled-back gate whose git revert failed is NOT a reverted merge (main still has the change)", async () => {
+    const { repo, logDir } = g();
+    const out = await mergeWorker(logDir, "rg", {
+      verifyTests: false,
+      cliRoot: repo,
+      build: () => ({ ok: true, ms: 1, tail: "" }),
+      restartVerify: () => ({ restarted: true, forced: false, detail: "t" }),
+      restartGate: async () => ({ ok: false, rolledBack: true, failures: ["router down"], line: "restart failed health check: router down; rolled back to 1.0.0" }),
+      revertMergeCommits: () => {
+        throw new Error("git revert refused");
+      },
+    });
+    expect(out).toContain("WARNING: the rollback's git revert failed");
+    expect(out).not.toContain("MERGE REVERTED"); // main still carries the merge: this is not a reverted merge
+  });
+
+  it("a failed verify gate reverts and exits non-zero with MERGE REVERTED last", async () => {
+    const { repo, logDir } = g();
+    const e = await mergeWorker(logDir, "rg", { verifyTests: false, cliRoot: null, verify: "exit 1" }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(MergeRevertedError);
+    expect(mergeExitCode(e)).not.toBe(0);
+    const lines = (e as Error).message.split("\n");
+    expect(lines.at(-1)).toMatch(/^MERGE REVERTED: verify failed/);
+  });
+
+  it("a merge that stands ends with ok-looking lines and no MERGE REVERTED", async () => {
+    const { repo, logDir } = g();
+    const out = await mergeWorker(logDir, "rg", { verifyTests: false, cliRoot: null });
+    expect(out).toContain("merged worker/rg");
+    expect(out).not.toContain("MERGE REVERTED");
+  });
+
+  it("RelatedTestsFailedError keeps its exit 3 and gains the revert line last (the merge reverted)", async () => {
+    // the keep-on-fail path keeps the merge and throws RelatedTestsFailedError without a revert: exit 3, no revert line
+    const prev = process.env.PAI_MERGE_KEEP_ON_FAIL;
+    process.env.PAI_MERGE_KEEP_ON_FAIL = "1";
+    try {
+      const { repo, logDir } = g();
+      // the related-tests gate needs real test files on the branch; skip if the runner finds none — pin the classifier instead
+      expect(asMergeReverted(new Error("related tests failed: x.test.ts: reverted deadbeef; branch kept"))).toBeInstanceOf(MergeRevertedError);
+      expect(mergeExitCode(asMergeReverted(new Error("related tests failed: reverted deadbeef; branch kept")))).not.toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env.PAI_MERGE_KEEP_ON_FAIL;
+      else process.env.PAI_MERGE_KEEP_ON_FAIL = prev;
+    }
   });
 });

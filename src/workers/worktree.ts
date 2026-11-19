@@ -36,6 +36,7 @@ import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
 import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 import { summarizeGateFailure } from "./helper-uses.js";
 import type { SmokeStartResult } from "./smoke-start.js";
+import { asMergeReverted, mergeRevertedLine, MergeRevertedError } from "./merge-reverted.js";
 
 /** The smoke start of a freshly built CLI (injectable; the live one starts a real worker on an offline stub model). */
 export type SmokeRunner = (cwd: string) => Promise<SmokeStartResult>;
@@ -1762,10 +1763,25 @@ async function mergeWorkerInner(
   }
   if (autoNote) notes.unshift(`auto-resolved conflicts: ${autoNote}`);
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
+  // a reverted gate never reaches here: the throw below carries MergeRevertedError through mergeWorkerInner
   const text = withGate(verifyLine, merged);
-  if (related?.status === "failed") throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
+  if (related?.status === "failed") {
+    const msg = [text, related.line, ...failureHints(related, mergeCommit)].join("\n");
+    throw new RelatedTestsFailedError(asMergeReverted(msg) ? `${msg}\n${mergeRevertedLine(revertReasonOf(msg))}` : msg);
+  }
   // the build + restart gate is async: a failed health check rolls dist back and reverts the merge commit too
   return withBuild(`${text}${related ? `\n${related.line}` : ""}`, await rebuildDist(logDir, id, st.cwd, oldHead, opts));
+}
+
+/** The reason text of a gate step that reverted the merge (the smoke failure line or the rollback's health line). */
+function revertReasonOf(text: string): string {
+  const first = text.split("\n").find((l) => l.trim());
+  return first ? first.trim() : "merge reverted";
+}
+
+/** A failed smoke start reverted the merge and rebuilt dist from the old tree: stop the gate, exit non-zero. */
+function revertMergeAfterSmokeFail(reason: string): never {
+  throw new MergeRevertedError(`${reason}\n${mergeRevertedLine(reason)}`);
 }
 
 /** The merge stands but its related tests failed; the CLI exits 3 with the message (merge summary, result, hints). */
@@ -1782,6 +1798,13 @@ export async function mergeWorker(logDir: string, id: string, opts: Parameters<t
   const mark = !!dir && !opts.noCommit && !opts.force && !isSlotWorktree(dir);
   try {
     return await mergeWorkerInner(logDir, id, opts);
+  } catch (e) {
+    // a gate step that reverted the merge must not read as success: the reason goes out with the revert line LAST,
+    // never followed by ok-looking lines (merge 2026-11-19 14:31: a smoke revert printed "build: ok … restart
+    // health: ok" after the failure and exited 0)
+    const reverted = asMergeReverted(e);
+    if (reverted) throw new MergeRevertedError(`${reverted.message}\n${mergeRevertedLine(reverted.message)}`);
+    throw e;
   } finally {
     if (mark && existsSync(dir!) && keepMarker(dir!)?.startsWith(MERGE_KEEP)) rmSync(join(dir!, KEEP_FILE), { force: true });
   }
@@ -1888,7 +1911,8 @@ async function rebuildDist(
           tail = `; WARNING: the revert failed: ${(e as Error).message}`;
         }
         appendLedger(ledgerPath(logDir), "WORKER-MERGE-SMOKE-FAIL", { id, reason: err.slice(0, 300) });
-        smokeNote = `smoke start failed: ${err}${tail}\n`;
+        // the merge is gone from main and dist runs the old tree: this is a reverted merge, not a note on an ok line
+        revertMergeAfterSmokeFail(`smoke start failed: ${err}${tail.replace(/^; /, "")}`);
       }
     }
     let line = "build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)";
@@ -1917,9 +1941,15 @@ async function rebuildDist(
           return `${line}\n${g.line}\nWARNING: the rollback's git revert failed: ${(e as Error).message} — main still has this merge while dist runs the old build`;
         }
         appendLedger(ledgerPath(logDir), "WORKER-MERGE-RESTART-ROLLBACK", { id, reason: (g.failures ?? []).join("; ").slice(0, 300) });
+        // dist runs the old build and main was reverted: a rolled-back gate is a reverted merge, exit non-zero,
+        // never an ok-looking line after it (merge 2026-11-19 14:31)
+        const reason = revertReasonOf(g.line);
+        throw new MergeRevertedError(`${line}\n${g.line}\n${mergeRevertedLine(reason)}`);
       }
       return `${line}\n${g.line}`;
     } catch (e) {
+      // a gate that reverted the merge exits non-zero with MERGE REVERTED last, never swallowed into an ok-looking line
+      if (e instanceof MergeRevertedError) throw e;
       return `${line}\nrestart health gate not run: ${(e as Error).message} — run \`pai daemon status\` and \`pai router status\``;
     }
   }

@@ -16,6 +16,9 @@
  * `~`, so the real config is never written and no home-git commit happens. Its
  * `router: false` keeps the run off the live router; the stub answers loopback
  * only. The smoke holds the test slot while it runs, like every other gate step.
+ * Its start carries PAI_NO_WORKTREE_GC=1 so no at-start housekeeping (worktree
+ * gc / salvage / archive) runs before the worker announces: the 30 s window
+ * measures only the start (2026-11-19 14:31 merge gate false failure).
  */
 
 import { createServer } from "node:http";
@@ -48,12 +51,16 @@ export interface SmokeStartDeps {
   /** Points the config at the smoke provider (tests inject; default edits a temp workers.yaml copy). */
   addProvider?: (url: string) => void;
   removeProvider?: () => void;
+  /** The env the detached smoke child runs with (defaultStart); tests inspect it instead of spawning a CLI. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface SmokeRunOpts {
   id: string;
   cwd: string;
   timeoutMs: number;
+  /** Test seam: the env prep defaultStart would do (default process.env); the runner receives it in `env`. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface SmokeStartResult {
@@ -177,7 +184,25 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
   const t0 = Date.now();
   const timeoutMs = opts.timeoutMs ?? SMOKE_TIMEOUT_MS;
   const serve = deps.serve ?? startStubServer;
+  // an injected runner still runs through the real env prep (deps.env), so a test can prove the smoke start
+  // carries PAI_NO_WORKTREE_GC=1 without spawning a CLI
   const start = deps.start ?? defaultStart;
+  // the env prep defaultStart does before spawning: drop the worker identity and terminal keys, add the smoke's own
+  const childEnv = (base: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+    const env: NodeJS.ProcessEnv = { ...base };
+    // the smoke must not inherit a worker identity or an orchestrator mode
+    delete env.PAI_WORKER;
+    delete env.PAI_WORKER_ID;
+    delete env.PAI_WORKER_ORCHESTRATOR;
+    // infrastructure like the keepalive beat: no spawning session, no terminal identity, so supervision has no owner to notify
+    for (const k of ["CLAUDE_CODE_SESSION_ID", "ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE"]) delete env[k];
+    // the smoke's 30 s start window measures only the start: the at-start worktree gc (salvage/archive of finished
+    // workers' trees) is skipped for this run — a big pass blew the window and read as "worker did not start"
+    // (merge 2026-11-19 14:31). The daemon's hourly gc owns the archiving; the normal start path is unchanged.
+    env.PAI_NO_WORKTREE_GC = "1";
+    return env;
+  };
+  const runOpts = (o: SmokeRunOpts): SmokeRunOpts => ({ ...o, env: childEnv(deps.env ?? process.env) });
   // the worker's own test runs must not fight the gate's slot; held here while the smoke runs
   const lease = holdsTestSlot() ? null : await acquireTestSlot();
   let runId: string | null = null;
@@ -188,7 +213,7 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     if (ops) ops.add(stub.url);
     else deps.addProvider?.(stub.url);
     const id = newWorkerId();
-    const r = await start({ id, cwd: opts.cwd, timeoutMs });
+    const r = await start(runOpts({ id, cwd: opts.cwd, timeoutMs }));
     runId = r.id;
     if (r.rc !== 0) return { ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}`, id: r.id };
     const ev = parseLastResultEvent(eventsPath(workersLogDir(readWorkersSection().workers), r.id));
@@ -223,13 +248,8 @@ function forgetRun(id: string): void {
 /** The live start: the built CLI detaches one worker on the smoke provider and this waits for its end. */
 async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }> {
   const logDir = workersLogDir(readWorkersSection().workers);
-  const env: NodeJS.ProcessEnv = { ...process.env, PAI_BIN: join(o.cwd, "dist", "cli", "index.mjs") };
-  // the smoke must not inherit a worker identity or an orchestrator mode
-  delete env.PAI_WORKER;
-  delete env.PAI_WORKER_ID;
-  delete env.PAI_WORKER_ORCHESTRATOR;
-  // infrastructure like the keepalive beat: no spawning session, no terminal identity, so supervision has no owner to notify
-  for (const k of ["CLAUDE_CODE_SESSION_ID", "ITERM_SESSION_ID", "TERM_SESSION_ID"]) delete env[k];
+  // smokeStart's childEnv already dropped the worker identity and terminal keys and set PAI_NO_WORKTREE_GC=1
+  const env: NodeJS.ProcessEnv = { ...(o.env ?? process.env), PAI_BIN: join(o.cwd, "dist", "cli", "index.mjs") };
   const announced = await startDetachedWorker(
     logDir,
     [
