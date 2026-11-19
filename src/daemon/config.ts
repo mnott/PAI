@@ -142,10 +142,8 @@ export interface RouterConfig {
   claudeUpstream: string;
   /** Milliseconds a stopping router waits for in-flight requests before force-closing. Default: 120000. */
   drainMs: number;
-  /** After a handover the old router stops accepting and finishes its in-flight requests; `drainMaxSecs` bounds that (then they end with a retryable error). Default: 120. */
+  /** After a handover the old router stops accepting and finishes its in-flight requests; `drainMaxSecs` bounds that (then they end with a retryable error). Default: 1800. */
   handover?: { drainMaxSecs?: number };
-  /** Seconds a local request may be in flight while the engine shows no activity (GPU idle) before the router releases it so the client retries. 0 = off. Default: 90. */
-  engineIdleSecs?: number;
   /** Daemon watchdog: restart the router after this many consecutive cloud requests failed with ENOTFOUND/ECONNREFUSED/ETIMEDOUT within 60 s while the daemon itself reaches the upstream. Default: failStreak 5. */
   watchdog?: { failStreak?: number };
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */

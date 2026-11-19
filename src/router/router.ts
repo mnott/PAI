@@ -60,8 +60,6 @@ import { createUpstreamStreak } from "./preflight.js";
 import { acquireEngine, engineAgent, isResetError, RESET_BACKOFF_MS } from "./engine-limit.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
-import { engineIdleFrom } from "./engine-idle.js";
-import { readLocalIdle } from "../workers/local-idle.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { tierProviderNames, withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
@@ -258,7 +256,7 @@ export interface RouterOptions {
   /** Retry a local answer that carries an unparsed tool-call block once; default router.localToolCallRetry (true). */
   localToolCallRetry?: boolean;
   /** Receives every ENGINE-SLOT-RELEASED event (client-gone / stale); default: a ledger line. */
-  onSlotReleased?: (info: { reason: "client-gone" | "stale" | "engine-idle"; worker: string; engine: string; idleSec?: number }) => void;
+  onSlotReleased?: (info: { reason: "client-gone" | "stale"; worker: string; engine: string; idleSec?: number }) => void;
   /** Guard on replies; default router.guard.mode (off). monitor records only; enforce rewrites a tool call the rules deny. `deps` replaces evaluate/rules (tests). */
   guard?: { mode?: "off" | "monitor" | "enforce"; deps?: ProxyGuardDeps };
   remoteAllowed?: (remoteAddress: string | undefined) => boolean;
@@ -492,21 +490,6 @@ function defaultToolArgsFix(log: (line: string) => void): NonNullable<RouterOpti
       text,
     });
   };
-}
-
-/** Ends a response the router gave up on: SSE error event when the stream began, else 503 + Retry-After; closing it aborts the upstream request. */
-export function endRetryable(res: http.ServerResponse, message: string): void {
-  if (res.writableEnded || res.destroyed) return;
-  try {
-    if (res.headersSent) res.write(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "overloaded_error", message } })}\n\n`);
-    else {
-      res.writeHead(503, { "content-type": "application/json", "retry-after": "1", connection: "close" });
-      res.write(JSON.stringify({ type: "error", error: { type: "overloaded_error", message } }));
-    }
-    res.end();
-  } catch {
-    /* socket already gone */
-  }
 }
 
 /** ENGINE-SLOT-RELEASED ledger line: a scheduler slot freed because its client left or its upstream went quiet. */
@@ -1184,10 +1167,6 @@ export function routerHandler(
           });
           scheduled = true;
           sched.onStale = (e, w, _s, idle) => slotReleased({ reason: "stale", worker: w, engine: e, idleSec: Math.round(idle / 1000) });
-          // idle-engine watchdog: a request in flight while the GPU shows nothing is released so its client retries
-          sched.engineIdle = () => engineIdleFrom(readLocalIdle(workersLogDir(readWorkersSection().workers)), Date.now());
-          sched.engineIdleSecs = () => loadConfig().router.engineIdleSecs ?? 90;
-          sched.onEngineIdle = (e, w, _s, ms) => slotReleased({ reason: "engine-idle", worker: w, engine: e, idleSec: Math.round(ms / 1000) });
           const queue = (): void => {
             startPings();
             sched
@@ -1196,7 +1175,6 @@ export function routerHandler(
                 (ticket) => {
                   stopPings();
                   touchHold = () => ticket.touch();
-                  ticket.onReap = () => endRetryable(res, "engine idle, retry the request");
                   // the client may leave at any moment from here on: free the engine slot and stop the upstream request
                   const onGone = (): void => {
                     if (!res.writableEnded) slotReleased({ reason: "client-gone", worker, engine });

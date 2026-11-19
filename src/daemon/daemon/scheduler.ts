@@ -29,7 +29,6 @@ import { stallMinutes, stallReleaseMinutes } from "../../builds/config.js";
 import { buildStallTick, directAlert, realReleaseDeps } from "../../builds/stall.js";
 import { appendLedger } from "../../workers/ledger.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
-import { realDuplicateDeps, stopDuplicateRouters } from "../../router/duplicates.js";
 import { probeRouter, routerSwapArgs, startHandover, routerIsStale, routerRunningPid, runRouterTick, spawnRouter, createRouterWatchdog } from "../../router/supervisor.js";
 import { restartRouter } from "../../router/restart.js";
 import { routerRestartDeps } from "../../router/service-control.js";
@@ -1080,18 +1079,10 @@ export function startRouterSupervisor(): void {
     log: (l) => process.stderr.write(`[pai-daemon] ${l}\n`),
   });
   const guard = () => void watchdog().catch((e) => process.stderr.write(`[pai-daemon] Router watchdog error: ${e instanceof Error ? e.message : String(e)}\n`));
-  // at most one router per port: keep the serving one, stop leftovers by exact pid (ledger ROUTER-DUPLICATE-STOPPED)
-  const dedupe = () => {
-    const graceSec = (daemonConfig.router.handover?.drainMaxSecs ?? 120) + 10;
-    const stopped = stopDuplicateRouters(daemonConfig.router.port, routerRunningPid() ?? undefined, graceSec, realDuplicateDeps(ledgerPath(workersLogDir(readWorkersSection().workers))));
-    if (stopped.length) process.stderr.write(`[pai-daemon] Router supervisor: stopped duplicate router(s) ${stopped.join(", ")}\n`);
-  };
   tick();
-  let ticks = 0;
   const timer = setInterval(() => {
     tick();
     guard();
-    if (++ticks % 2 === 0) dedupe();
   }, ROUTER_TICK_MS);
   if (timer.unref) timer.unref();
   process.stderr.write(`[pai-daemon] Router supervisor: every ${ROUTER_TICK_MS / 1000}s\n`);

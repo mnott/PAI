@@ -25,7 +25,6 @@ import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
 import { trackInflight } from "../../router/inflight.js";
-import { realDuplicateDeps, stopDuplicateRouters } from "../../router/duplicates.js";
 import { routerSwapArgs, startHandover, routerHandoverFile, routerHandoverStatusFile, readHandoverStatus, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { engineControlReader } from "../../workers/engine-control.js";
 import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
@@ -261,13 +260,6 @@ const runCommand: CommandDef = {
         bound.then(() => {
           claimPidFiles();
           process.send?.({ ready: true });
-          // leftover older routers for this port (stuck in-flight requests): stop them once past the drain window, now and again right after it
-          if (managed) {
-            const graceSec = (loadConfig().router.handover?.drainMaxSecs ?? 120) + 10;
-            const sweep = () => void stopDuplicateRouters(port, process.pid, graceSec, realDuplicateDeps(ledgerPath(workersLogDir(readWorkersSection().workers))));
-            sweep();
-            setTimeout(sweep, (graceSec + 5) * 1000).unref();
-          }
         }, (e: unknown) => {
           process.stderr.write(`pai: router: ${(e as Error).message}\n`);
           process.exit(1);
@@ -297,13 +289,11 @@ const runCommand: CommandDef = {
         const bye = (handedOver = false) => {
           draining = true;
           cancelTail?.();
-          const maxMs = handedOver ? (loadConfig().router.handover?.drainMaxSecs ?? 120) * 1000 : loadConfig().router.drainMs;
+          const maxMs = handedOver ? (loadConfig().router.handover?.drainMaxSecs ?? 1800) * 1000 : loadConfig().router.drainMs;
           if (handedOver) {
             writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "draining", inflight: inflight.count() }));
             process.stderr.write(`pai: router: handed over, finishing ${inflight.count()} in-flight request(s) (at most ${maxMs / 1000}s)\n`);
           }
-          // backstop: whatever keeps the drain from finishing (a wedged socket), the old router still exits shortly after its limit
-          setTimeout(() => process.exit(0), maxMs + 10_000).unref();
           void drainServers(tail?.listening ? [server, tail] : [server], {
             timeoutMs: maxMs,
             idleGraceMs: 1500,
