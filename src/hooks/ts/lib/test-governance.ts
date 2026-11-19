@@ -1,12 +1,16 @@
 /**
  * test-governance.ts — the decision behind the PreToolUse test-file guard.
  *
- * Tests are governed, not banned: a NEW test file is by default a one-time
- * test and may only be created under `.pai-scratch/` (gitignored, deleted
- * when the worker's worktree goes). Creating one anywhere else is denied
- * unless it is promoted with evidence: an entry in the project's
- * `tests/KEPT.md` ledger naming the file and its evidence (a real bug it
- * guards, a security or destructive-op guard, an external contract).
+ * Tests are governed, not banned — and only in repos that opted in: the rule
+ * runs where the project carries the governance marker `tests/KEPT.md` (the
+ * promotion ledger doubles as the opt-in); a repo without it has no ledger to
+ * promote into, so nothing there is ever blocked by this rule. In a governed
+ * repo a NEW test file is by default a one-time test and may only be created
+ * under `.pai-scratch/` (gitignored, deleted when the worker's worktree goes).
+ * Creating one anywhere else is denied unless it is promoted with evidence: an
+ * entry in the project's `tests/KEPT.md` ledger naming the file and its
+ * evidence (a real bug it guards, a security or destructive-op guard, an
+ * external contract).
  * Editing an EXISTING test file is always allowed — a project may still keep
  * a suite; governance only stops the suite from growing without limit.
  *
@@ -18,10 +22,13 @@
  * Bash coverage: a command creating such a file — `>`/`>>`/`tee` targets,
  * `cp`/`mv` destinations, `touch`/`mkdir` targets, or an interpreter script
  * that writes one (python/node/ruby/perl, inline `-c`/`-e` or a /tmp script).
- * An in-place editor (`perl -i`, `sed -i`, `ruby -i`, …) edits its file
+ * A target that already exists is written in place — restoring a file copied
+ * aside (`cp $TMPDIR/x f`, `mv b f`) — and is never a new test file. An
+ * in-place editor (`perl -i`, `sed -i`, `ruby -i`, …) edits its file
  * arguments: existing files are edits and always pass; only a target that
  * does not exist is treated as a new-test write. Unresolvable targets
- * (variables, globs) fail closed; `.pai-scratch/` and the worker's private
+ * (variables, globs) fail closed on the repo's own governance state — in a
+ * governed repo they still deny; `.pai-scratch/` and the worker's private
  * $TMPDIR pass, a bare /tmp path does not (shared across workers). Heredoc
  * bodies are data, not commands, so the guard reads a `cat > f <<EOF` start
  * line directly rather than scanning the body.
@@ -34,7 +41,7 @@
  * hook entry (pre-tool-use/test-file-governance.ts) only does stdin I/O.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { ensureScratchExcluded, isGitRepo } from "../../../workers/worktree.js";
@@ -94,11 +101,26 @@ export function outsideGovernedRepos(abs: string, home: string = homedir()): boo
 /** A target whose extension cannot be trusted (variable or glob tail): unknown, fail closed. */
 const UNRESOLVABLE = /[$`(){}~]|\*|\?|\[/;
 
-/** True when the (already cwd-resolved) target names a test file we cannot prove exists. */
+/** True when p names an existing filesystem entry. lstat, not stat: a broken symlink is not an existing file — writing to it creates one. */
+function pathExists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the (already cwd-resolved) target names a test file we cannot prove exists.
+ * An existing entry is written in place — an edit, or restoring a file copied aside
+ * (`cp $TMPDIR/x f`) — never a new test file. Unresolvable targets fail closed on the
+ * literal shape only inside a governed repo: outside one the rule does not run at all.
+ */
 function looksLikeTest(target: string): boolean {
   if (isScratchPath(target) || isTmpPath(target) || outsideGovernedRepos(target)) return false;
-  if (UNRESOLVABLE.test(target)) return isTestPath(target); // unresolvable: fail closed on the literal shape
-  return !existsSync(target) && isTestPath(target); // an existing file: an edit, always allowed
+  if (UNRESOLVABLE.test(target)) return governedRoot(target) !== null && isTestPath(target); // unresolvable: fail closed on the literal shape, but only in a governed repo
+  return !pathExists(target) && isTestPath(target); // an existing file: an edit, always allowed
 }
 
 /** Simple same-command assignments (`D=/tmp/x`) with a literal value, later ones winning. */
@@ -325,25 +347,36 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
 /** The ledger folder as projects spell it: `tests/KEPT.md` or `Tests/KEPT.md` (case-sensitive volumes too). */
 const LEDGER_PATHS = [KEPT_LEDGER, join("Tests", "KEPT.md")];
 
-/** True when tests/KEPT.md (project root) names this path or its basename. */
-function promoted(abs: string, cwd: string): boolean {
-  let dir = resolve(cwd);
+/**
+ * The repo root that opted into test governance — the nearest ancestor of
+ * `start` carrying the marker `tests/KEPT.md` (the promotion ledger doubles
+ * as the opt-in), or null. A repo without it has no ledger to promote into,
+ * so this rule never runs there: nothing is blocked by it.
+ */
+export function governedRoot(start: string): string | null {
+  let dir = resolve(start);
   for (;;) {
-    const ledger = LEDGER_PATHS.map((p) => join(dir, p)).find((p) => existsSync(p));
-    if (ledger) {
-      let text = "";
-      try {
-        text = readFileSync(ledger, "utf8");
-      } catch {
-        return false;
-      }
-      const rel = abs.startsWith(dir + "/") ? abs.slice(dir.length + 1) : abs;
-      return parseKept(text).some((e) => e.file === rel);
-    }
+    if (LEDGER_PATHS.some((p) => existsSync(join(dir, p)))) return dir;
     const parent = dirname(dir);
-    if (parent === dir) return false;
+    if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/** True when the governance ledger (at the governed repo root) names this path. */
+function promoted(abs: string, cwd: string): boolean {
+  const dir = governedRoot(cwd);
+  if (!dir) return false;
+  const ledger = LEDGER_PATHS.map((p) => join(dir, p)).find((p) => existsSync(p));
+  if (!ledger) return false;
+  let text = "";
+  try {
+    text = readFileSync(ledger, "utf8");
+  } catch {
+    return false;
+  }
+  const rel = abs.startsWith(dir + "/") ? abs.slice(dir.length + 1) : abs;
+  return parseKept(text).some((e) => e.file === rel);
 }
 
 export interface TestGovernanceInput {
@@ -358,15 +391,20 @@ export interface TestGovernanceInput {
 export type TestGovernanceDecision = { decision: "allow" } | { decision: "deny"; reason: string };
 
 /**
- * The decision. New test file outside scratch and not promoted -> deny.
- * Existing files, scratch paths, prose and everything else -> allow.
- * First sight of a git project whose info/exclude lacks the line: add it.
+ * The decision. Only repos carrying the governance marker (tests/KEPT.md) are
+ * governed; everywhere else this rule never fires. In a governed repo: a new
+ * test file outside scratch and not promoted -> deny. Existing files, scratch
+ * paths, prose and everything else -> allow. First sight of a git project
+ * whose info/exclude lacks the line: add it (harmless housekeeping, ungoverned
+ * repos get the same).
  */
 export function decideTestGovernance(input: TestGovernanceInput): TestGovernanceDecision {
   if (input.tool === "Bash") {
     if (!input.command) return { decision: "allow" };
     ensureScratchIgnored(input.cwd);
-    const why = bashCreatesNewTest(input.command, resolve(input.cwd));
+    const cwd = resolve(input.cwd);
+    if (governedRoot(cwd) === null) return { decision: "allow" }; // ungoverned repo: the rule does not run
+    const why = bashCreatesNewTest(input.command, cwd);
     return why ? { decision: "deny", reason: why } : { decision: "allow" };
   }
   if (!["Write", "Edit", "MultiEdit"].includes(input.tool)) return { decision: "allow" };
@@ -374,7 +412,8 @@ export function decideTestGovernance(input: TestGovernanceInput): TestGovernance
   if (!abs || !isTestPath(abs)) return { decision: "allow" };
   ensureScratchIgnored(input.cwd);
   if (isScratchPath(abs) || isTmpPath(abs) || outsideGovernedRepos(abs)) return { decision: "allow" };
-  if (existsSync(abs)) return { decision: "allow" }; // an edit of an existing test file
+  if (pathExists(abs)) return { decision: "allow" }; // an edit of, or an in-place write to, an existing test file
+  if (governedRoot(dirname(abs)) === null) return { decision: "allow" }; // ungoverned repo: the rule does not run
   if (promoted(abs, input.cwd)) return { decision: "allow" };
   return { decision: "deny", reason: DENY_TEXT };
 }
