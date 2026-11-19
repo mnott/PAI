@@ -41,10 +41,10 @@ export function localOnlyRefusal(command: string, env: NodeJS.ProcessEnv = proce
   // gatekeeper approved needs no flag — the approval follows the job, judged by
   // runWorker's own gate from the old status (cloudApproved), not by this hook.
   const m = /--approved-by(?:=|\s+)["']?([^\s"';|&)]+)/.exec(command);
-  if (m && m[1] === gatekeeperName()) return null;
-  // a resume with no cloud flag never asks for the cloud here: its provider is
-  // the old worker's, and runWorker's gate judges it (with the carried approval)
-  if (/pai\s+worker\s+resume(?:\s|$)/.test(command)) return null;
+  // a resume carries no cloud ask of its own (its provider is the old worker's,
+  // and runWorker's gate judges it, carried approval included), so only an
+  // approved resume passes here; an unapproved one still reads the window's refusal
+  if (m && (m[1] === gatekeeperName() || /pai\s+worker\s+resume(?:\s|$)/.test(command))) return null;
   // the flags decide, never the class or its chain (a run that resolves local always starts):
   // --cloud, --where cloud, and --provider naming the native (cloud) provider.
   const asksCloud =

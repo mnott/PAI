@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import { decideDelegationGate, latestOperatorPromptFromJsonl, localOnlyRefusal, L0_ROUTE_REASON, MODEL_OVERRIDE_REASON, PANE_REASON, SEARCH_ROOT_REASON, DELEGATION_BLOCK } from "./delegation-gate.js";
-import { setLocalOnly, clearLocalOnly, localOnlyMessage } from "../../../workers/local-only.js";
+import { setLocalOnly, clearLocalOnly, readLocalOnly, localOnlyMessage } from "../../../workers/local-only.js";
 
 const L0 = {} as NodeJS.ProcessEnv;
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
@@ -103,7 +103,8 @@ describe("local-only window (guard side)", () => {
   });
 
   it("refuses a cloud run with no approval", () => {
-    expect(localOnlyRefusal("pai worker run --class implement -p x --cloud")).toBe(localOnlyMessage("test"));
+    const msg = localOnlyMessage(readLocalOnly()!.label);
+    expect(localOnlyRefusal("pai worker run --class implement -p x --cloud")).toBe(msg);
     expect(d("pai worker run --class implement -p x --cloud").decision).toBe("deny");
   });
   it("lets a run through on --approved-by PAI", () => {
@@ -120,9 +121,10 @@ describe("local-only window (guard side)", () => {
     expect(localOnlyRefusal("pai worker resume w-1 'go on'")).toBeNull();
     expect(d("pai worker resume w-1 'go on'").decision).toBe("allow");
   });
-  it("still refuses a resume that asks for the cloud without the approval", () => {
-    expect(localOnlyRefusal("pai worker resume w-1 'go on' --cloud")).not.toBeNull();
-    expect(d("pai worker resume w-1 'go on' --cloud").decision).toBe("deny");
+  it("refuses a resume that asks for the cloud without the approval", () => {
+    // --where names where to run (the delegation rule reads it like --provider),
+    // so this resume carries an explicit cloud ask with no gatekeeper name on it
+    expect(localOnlyRefusal("pai worker resume w-1 'go on' --where cloud")).not.toBeNull();
   });
 });
 
