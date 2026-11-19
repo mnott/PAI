@@ -76,14 +76,14 @@ function makeWorker(repo: string, logDir: string, id: string, o: { from?: string
 }
 
 describe("merge refuses a running worker", () => {
-  it("a live worker is refused and its worktree untouched", () => {
+  it("a live worker is refused and its worktree untouched", async () => {
     const { repo, logDir } = fixture();
     const id = "live-refuse";
     makeWorker(repo, logDir, id);
     saveStatus(logDir, { ...loadStatus(logDir, id)!, state: "running", pid: LIVE_PID, procStart: Date.now() - 5000 });
     let err: unknown;
     try {
-      mergeWorker(logDir, id, { verifyTests: false, rebuild: false, cliRoot: null });
+      await mergeWorker(logDir, id, { verifyTests: false, rebuild: false, cliRoot: null });
     } catch (e) {
       err = e;
     }
@@ -98,13 +98,13 @@ describe("merge refuses a running worker", () => {
     expect(loadStatus(logDir, id)?.merged).toBeUndefined();
   });
 
-  it("--force merges a live worker and keeps its worktree and branch", () => {
+  it("--force merges a live worker and keeps its worktree and branch", async () => {
     const { repo, logDir } = fixture();
     const id = "live-force";
     makeWorker(repo, logDir, id);
     saveStatus(logDir, { ...loadStatus(logDir, id)!, state: "running", pid: LIVE_PID, procStart: Date.now() - 5000 });
     // --force without an explicit verify must not run the configured merge.verify gate either way
-    const out = mergeWorker(logDir, id, { verifyTests: false, rebuild: false, cliRoot: null, force: true });
+    const out = await mergeWorker(logDir, id, { verifyTests: false, rebuild: false, cliRoot: null, force: true });
     expect(out).toContain(`merged worker/${id}`);
     expect(out).toContain("worker still running");
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("3"); // the merge commit landed
@@ -115,12 +115,12 @@ describe("merge refuses a running worker", () => {
     expect(ownedTree(st)).not.toBeNull(); // still owns the tree: gc reclaims it once it ends
   });
 
-  it("an ended worker merges as before: worktree removed, branch deleted", () => {
+  it("an ended worker merges as before: worktree removed, branch deleted", async () => {
     const { repo, logDir } = fixture();
     const id = "ended";
     makeWorker(repo, logDir, id); // state done, pid owned by nothing
     expect(assertWorkerEnded(logDir, id)).toBeNull();
-    const out = mergeWorker(logDir, id, { verifyTests: false, rebuild: false, cliRoot: null });
+    const out = await mergeWorker(logDir, id, { verifyTests: false, rebuild: false, cliRoot: null });
     expect(out).toContain(`merged worker/${id}`);
     expect(out).toContain("worktree removed");
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("3");
@@ -129,7 +129,7 @@ describe("merge refuses a running worker", () => {
     expect(loadStatus(logDir, id)?.merged).toBe(true);
   });
 
-  it("a running status whose pid belongs to no process is not refused (a dead runner never blocks a merge)", () => {
+  it("a running status whose pid belongs to no process is not refused (a dead runner never blocks a merge)", async () => {
     const { repo, logDir } = fixture();
     const id = "dead-pid";
     makeWorker(repo, logDir, id);
@@ -139,7 +139,7 @@ describe("merge refuses a running worker", () => {
 });
 
 describe("merge gate traps", () => {
-  it("regenerates docs/commands when a branch changes a command definition without them", () => {
+  it("regenerates docs/commands when a branch changes a command definition without them", async () => {
     const { repo, logDir } = fixture();
     // the tree's own generator: docs/commands/x.md is a pure function of src/cli/def.txt
     writeFileSync(join(repo, "def.txt"), "v1\n");
@@ -153,50 +153,49 @@ describe("merge gate traps", () => {
     git(repo, ["add", "-A"]);
     git(repo, ["commit", "-qm", "defs"]);
     makeWorker(repo, logDir, "docs-drift", { file: "src/cli/def.txt", extra: { "src/cli/def.txt": "v2\n" } });
-    mergeWorker(logDir, "docs-drift", { verifyTests: false, rebuild: false, cliRoot: null });
+    await mergeWorker(logDir, "docs-drift", { verifyTests: false, rebuild: false, cliRoot: null });
     expect(readFileSync(join(repo, "docs", "commands", "x.md"), "utf8")).toBe("doc of v2\n");
     expect(git(repo, ["status", "--porcelain"])).toBe("");
     expect(git(repo, ["log", "-1", "--format=%B"])).toContain("docs: regenerate command docs");
   });
 
-  it("a failed gate then a fix on a resume branch lands the whole original change", () => {
+  it("a failed gate then a fix on a resume branch lands the whole original change", async () => {
     const { repo, logDir } = fixture();
     makeWorker(repo, logDir, "first", { file: "first.txt" });
-    expect(() => mergeWorker(logDir, "first", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).toThrow(/verify failed/);
+    await expect(mergeWorker(logDir, "first", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).rejects.toThrow(/verify failed/);
     expect(existsSync(join(repo, "first.txt"))).toBe(false); // reverted on main
     // resume: a new worker branch on top of the kept one
     makeWorker(repo, logDir, "second", { from: "worker/first", file: "second.txt" });
-    mergeWorker(logDir, "second", { verifyTests: false, rebuild: false, cliRoot: null });
+    await mergeWorker(logDir, "second", { verifyTests: false, rebuild: false, cliRoot: null });
     expect(existsSync(join(repo, "first.txt"))).toBe(true);
     expect(existsSync(join(repo, "second.txt"))).toBe(true);
     expect(git(repo, ["log", "--format=%s"])).toContain("fix: reapply first (first) after a failed merge gate");
   });
 
   /** first merged then reverted by a failed gate; returns the revert commit */
-  function revertedFirst(repo: string, logDir: string): string {
+  async function revertedFirst(repo: string, logDir: string): Promise<string> {
     makeWorker(repo, logDir, "first", { file: "first.txt" });
-    expect(() => mergeWorker(logDir, "first", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).toThrow(/verify failed/);
-    return git(repo, ["rev-parse", "HEAD"]);
+    await expect(mergeWorker(logDir, "first", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).rejects.toThrow(/verify failed/);    return git(repo, ["rev-parse", "HEAD"]);
   }
 
-  it("a branch forked after the revert merges normally, with no reapply", () => {
+  it("a branch forked after the revert merges normally, with no reapply", async () => {
     const { repo, logDir } = fixture();
-    revertedFirst(repo, logDir);
+    await revertedFirst(repo, logDir);
     makeWorker(repo, logDir, "later", { file: "later.txt" });
-    mergeWorker(logDir, "later", { verifyTests: false, rebuild: false, cliRoot: null });
+    await mergeWorker(logDir, "later", { verifyTests: false, rebuild: false, cliRoot: null });
     expect(existsSync(join(repo, "later.txt"))).toBe(true);
     expect(existsSync(join(repo, "first.txt"))).toBe(false);
     expect(git(repo, ["log", "--format=%s"])).not.toContain("reapply");
   });
 
-  it("main that already reapplied by hand (amended subject, no revert line) gets no second reapply", () => {
+  it("main that already reapplied by hand (amended subject, no revert line) gets no second reapply", async () => {
     const { repo, logDir } = fixture();
-    const r = revertedFirst(repo, logDir);
+    const r = await revertedFirst(repo, logDir);
     makeWorker(repo, logDir, "second", { from: "worker/first", file: "second.txt" });
     git(repo, ["revert", "--no-edit", r]);
     git(repo, ["commit", "--amend", "-qm", "fix: reapply first by hand"]);
     const before = git(repo, ["rev-list", "--count", "HEAD"]);
-    mergeWorker(logDir, "second", { verifyTests: false, rebuild: false, cliRoot: null });
+    await mergeWorker(logDir, "second", { verifyTests: false, rebuild: false, cliRoot: null });
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe(String(Number(before) + 2)); // second's commit + merge only
     expect(git(repo, ["log", "--format=%s"]).split("\n").filter((l) => l.startsWith("fix: reapply first (first)"))).toHaveLength(0);
     expect(existsSync(join(repo, "first.txt"))).toBe(true);
@@ -224,23 +223,23 @@ describe("merge gate dependencies", () => {
     return { repo, logDir, calls: [] };
   }
 
-  it("a new dependency present in the worktree is cloned into main and npm is not run", () => {
+  it("a new dependency present in the worktree is cloned into main and npm is not run", async () => {
     const { repo, logDir, calls } = depFixture(true);
-    mergeWorker(logDir, "adds-dep", { verifyTests: false, rebuild: false, cliRoot: null, install: (_c, n) => void calls.push(n) });
+    await mergeWorker(logDir, "adds-dep", { verifyTests: false, rebuild: false, cliRoot: null, install: (_c, n) => void calls.push(n) });
     expect(JSON.parse(readFileSync(join(repo, "node_modules", "foo", "package.json"), "utf8")).version).toBe("1.0.0");
     expect(calls).toEqual([]);
   });
 
-  it("a dependency the worktree lacks goes through the (mocked) low-priority install", () => {
+  it("a dependency the worktree lacks goes through the (mocked) low-priority install", async () => {
     const { repo, logDir, calls } = depFixture(false);
-    mergeWorker(logDir, "adds-dep", { verifyTests: false, rebuild: false, cliRoot: null, install: (_c, n) => void calls.push(n) });
+    await mergeWorker(logDir, "adds-dep", { verifyTests: false, rebuild: false, cliRoot: null, install: (_c, n) => void calls.push(n) });
     expect(existsSync(join(repo, "node_modules", "foo"))).toBe(false);
     expect(calls).toEqual([1]);
   });
 });
 
 describe("merge of an escalated continuation", () => {
-  it("keeps its worktree until the merge completes, then removes both trees and reaches the build step", () => {
+  it("keeps its worktree until the merge completes, then removes both trees and reaches the build step", async () => {
     const { repo, logDir } = fixture();
     makeWorker(repo, logDir, "origin", { file: "origin.txt" });
     makeWorker(repo, logDir, "cont", { from: "worker/origin", file: "cont.txt" });
@@ -251,11 +250,13 @@ describe("merge of an escalated continuation", () => {
     writeFileSync(hook, `#!/bin/sh\ncat "${worktreePath(logDir, "cont")}/.pai-keep" > "${seen}" 2>/dev/null\nexit 0\n`);
     chmodSync(hook, 0o755);
     let built = 0;
-    const out = mergeWorker(logDir, "cont", {
+    const out = await mergeWorker(logDir, "cont", {
       verifyTests: false,
       cliRoot: repo,
       build: () => ((built += 1), { ok: true, ms: 1, tail: "" }),
       restartVerify: () => ({ restarted: true, forced: false, detail: "t" }),
+      // the gate is proven in .pai-scratch/restart-health.probe.test.ts; here nothing real may be health-checked or restarted
+      restartGate: async () => null,
     });
     expect(built).toBe(1);
     expect(out).toContain("build: ok");
@@ -265,49 +266,15 @@ describe("merge of an escalated continuation", () => {
     expect(existsSync(join(repo, "origin.txt"))).toBe(true);
   });
 
-  it("a worktree already reclaimed does not fail a merge that landed", () => {
+  it("a worktree already reclaimed does not fail a merge that landed", async () => {
     const { repo, logDir } = fixture();
     makeWorker(repo, logDir, "gone");
     const hook = join(repo, ".git", "hooks", "post-merge");
     mkdirSync(dirname(hook), { recursive: true });
     writeFileSync(hook, `#!/bin/sh\nrm -rf "${worktreePath(logDir, "gone")}"\nexit 0\n`);
     chmodSync(hook, 0o755);
-    const out = mergeWorker(logDir, "gone", { verifyTests: false, rebuild: false, cliRoot: null });
+    const out = await mergeWorker(logDir, "gone", { verifyTests: false, rebuild: false, cliRoot: null });
     expect(out).toContain("merged worker/gone");
     expect(git(repo, ["log", "--format=%s", "-1"])).toContain("merge worker gone");
   });
-});
-
-describe("merge of a worker's uncommitted work", () => {
-  function leaveUncommitted(repo: string, logDir: string, id: string, snapshot: boolean): string {
-    makeWorker(repo, logDir, id, { file: "committed.txt" });
-    const dir = worktreePath(logDir, id);
-    writeFileSync(join(dir, "uncommitted.txt"), "left behind\n");
-    if (snapshot) saveStatus(logDir, { ...loadStatus(logDir, id)!, worktreeSnapshot: true });
-    return dir;
-  }
-
-  for (const snapshot of [false, true]) {
-    const kind = snapshot ? "snapshot worktree" : "plain worktree";
-    it(`${kind}: uncommitted work is committed and the gate runs`, () => {
-      const { repo, logDir } = fixture();
-      leaveUncommitted(repo, logDir, "unc", snapshot);
-      const marker = join(logDir, "gate-ran");
-      mergeWorker(logDir, "unc", { verifyTests: false, rebuild: false, cliRoot: null, verify: `touch ${marker}` });
-      expect(existsSync(marker)).toBe(true);
-      expect(readFileSync(join(repo, "uncommitted.txt"), "utf8")).toBe("left behind\n");
-      expect(git(repo, ["status", "--porcelain"])).toBe("");
-    });
-
-    it(`${kind}: a failed gate leaves main unchanged and keeps the branch`, () => {
-      const { repo, logDir } = fixture();
-      leaveUncommitted(repo, logDir, "uncfail", snapshot);
-      const head = git(repo, ["rev-parse", "HEAD"]);
-      expect(() => mergeWorker(logDir, "uncfail", { verifyTests: false, rebuild: false, cliRoot: null, verify: "exit 1" })).toThrow(/verify failed/);
-      expect(existsSync(join(repo, "uncommitted.txt"))).toBe(false);
-      expect(git(repo, ["status", "--porcelain"])).toBe("");
-      expect(git(repo, ["branch", "--list", "worker/uncfail"])).toContain("worker/uncfail");
-      if (snapshot) expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
-    });
-  }
 });

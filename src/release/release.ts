@@ -9,10 +9,10 @@
  * effect goes through the injected `run` (git, npm, gh) and `syncMirrors`.
  */
 
-import { existsSync, mkdtempSync, readFileSync, copyFileSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, copyFileSync, rmSync, readdirSync, realpathSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { bumpVersion, detectGithubRepo, githubRepoOf, isGithubUrl, parseGithubRepo, remoteUrl, stableAssetName, versionedAssetName } from "./repo-facts.js";
 import { deriveForge, syncMirrors as realSyncMirrors, formatMirror, type MirrorSyncResult } from "../builds/mirror-sync.js";
 
@@ -42,7 +42,23 @@ export interface ReleaseDeps {
   packDir?: () => string;
   /** Tag visibility polling on GitHub: attempts and delay. */
   tagPoll?: { attempts: number; delayMs: number };
+  /**
+   * The restart gate around the build step, for a release of a RUNNING PAI (its
+   * dist rebuild restarts the daemons): keep prev before the build, health-check
+   * after it, roll back on failure. Injectable for tests; the live one comes from
+   * src/workers/restart-health.ts. Absent = decide by repo (gate only for the running PAI);
+   * null = no gate (another repo's release).
+   */
+  restartGate?: RestartGateFn | null;
 }
+
+/** The release's restart gate: prepare before `npm run build`, check-and-roll-back after. Null when the gate does not apply. */
+export type RestartGateFn = {
+  /** Keep one generation of dist back (the running build) and record the runtimes that are up now. */
+  prepare: () => Promise<{ prevKept: boolean; runtimesUpBefore: string[] }>;
+  /** Health-check the restarted daemons; on failure restore dist.prev and report. */
+  afterBuild: (prepared: { prevKept: boolean; runtimesUpBefore: string[] }) => Promise<{ ok: boolean; line: string; rolledBack?: boolean }>;
+};
 
 export const STEPS = ["check", "bump", "build", "test", "commit", "tag", "push", "mirror", "pack", "release"] as const;
 export type Step = (typeof STEPS)[number];
@@ -66,6 +82,34 @@ export interface ReleaseResult {
 }
 
 class StepFailed extends Error {}
+
+/**
+ * The release's live restart gate, only when the repo being released IS the
+ * running PAI (its dist rebuild restarts the daemons); null for any other repo.
+ */
+async function defaultReleaseGate(repo: string): Promise<RestartGateFn | null> {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return null;
+    const runningRoot = realpathSync(dirname(dirname(dirname(entry))));
+    if (realpathSync(repo) !== runningRoot) return null;
+    const rh = await import("../workers/restart-health.js");
+    const { workersLogDir } = await import("../workers/paths.js");
+    const { readWorkersSection } = await import("../workers/config.js");
+    const logDir = workersLogDir(readWorkersSection().workers);
+    const distDir = rh.distDirOf(runningRoot);
+    const deps = rh.liveRestartGateDeps(logDir);
+    return {
+      prepare: async () => rh.prepareRestartGate(distDir, deps),
+      afterBuild: async (prepared) => {
+        const g = await rh.gateRestartAfterBuild(distDir, deps, prepared);
+        return { ok: g.ok, line: g.line, rolledBack: g.rolledBack };
+      },
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** Parse `--from` / `--skip` values; throws a plain Error naming the valid steps. */
 export function parseStep(value: string, flag: string): Step {
@@ -279,12 +323,22 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
       print(`bump: ${pkg.version} -> ${version}`);
     }
 
-    // 3. build
+    // 3. build — a release of the RUNNING PAI rebuilds dist and restarts the daemons:
+    // keep one generation back first, health-check after, roll back on failure
+    // (night 2026-11-17/18: restarts left the daemons unable to come up and the night was lost)
     if (at("build")) {
       step = "build";
       if (pkg.scripts?.build) {
+        const gate = deps.restartGate === undefined ? await defaultReleaseGate(repo) : deps.restartGate;
+        const prepared = gate ? await gate.prepare() : { prevKept: false, runtimesUpBefore: [] as string[] };
         await sh("npm", ["run", "build"]);
         print("build: ok");
+        if (gate) {
+          const g = await gate.afterBuild(prepared);
+          print(g.line);
+          // a rolled-back restart means this release's build is NOT running: stop here, resume with `pai release --from test` once the machine serves the new build again
+          if (!g.ok) throw new StepFailed(g.rolledBack ? `${g.line} — release stopped before commit: v${version} is not committed or tagged; re-run \`pai release\` after the machine runs the new build` : g.line);
+        }
       } else print("build: skipped (no build script)");
     }
 
