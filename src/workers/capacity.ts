@@ -99,7 +99,19 @@ export const HEAD_GRACE_MS = 10_000;
  * A rebuild of dist (every merge gate does one) is not a new release: a waiter is "older" only when a newer version was released
  * after it queued, never because dist was rebuilt minutes after it started.
  */
+let buildIdMemo: { at: number; id: string | undefined } | null = null;
+/** The release never changes while the process runs and a rebuild does not move it: one walk of package.json per 30 s, not one per queue pass. */
+const BUILD_ID_TTL_MS = 30_000;
+
 export function currentBuildId(): string | undefined {
+  const now = Date.now();
+  if (buildIdMemo && now - buildIdMemo.at < BUILD_ID_TTL_MS) return buildIdMemo.id;
+  const id = readCurrentBuildId();
+  buildIdMemo = { at: now, id };
+  return id;
+}
+
+function readCurrentBuildId(): string | undefined {
   const entry = process.argv[1];
   if (!entry) return undefined;
   let dir = dirname(entry);

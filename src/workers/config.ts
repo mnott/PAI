@@ -366,6 +366,8 @@ export interface CapacityConfig {
   idleAdmitMs: number;
   /** Hard ceiling of started jobs above the cap that engine-idle admission may reach (`workers.capacity.idleExtraMax`; cap + this). */
   idleExtraMax: number;
+  /** Window in ms a computed /cockpit/queue payload is served to every client and endpoint before it is recomputed (router/cockpit.ts single flight); default 2000. Read by the router only, so it stays out of the validated shape. */
+  cockpitQueueTtlMs?: number;
 }
 
 /** Queue admission priority of a run: higher is admitted first (capacity.ts). */

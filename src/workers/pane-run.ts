@@ -10,8 +10,9 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { invalidateParse } from "../config/parse-cache.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { nowStamp, ownsPidCached } from "./status.js";
 import { fmtElapsed } from "./plan-status.js";
@@ -58,6 +59,7 @@ export function writePaneRunStatus(logDir: string, s: PaneRunStatus): void {
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(s), "utf8");
   renameSync(tmp, path);
+  invalidatePaneRunCache(logDir);
 }
 
 export function loadPaneRunStatus(logDir: string, id: string): PaneRunStatus | null {
@@ -70,31 +72,114 @@ export function loadPaneRunStatus(logDir: string, id: string): PaneRunStatus | n
   }
 }
 
+/** One pane-run entry's disk identity: ns mtime/ctime + inode (a rewrite in the same clock tick with the same byte count still changes one of them). */
+interface PaneEntryId {
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  ino: number;
+}
+function paneFileIdentity(path: string): PaneEntryId {
+  const st = statSync(path, { bigint: true });
+  return { mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs, ino: Number(st.ino) };
+}
+const paneFresh = (hit: { id: PaneEntryId }, id: PaneEntryId): boolean => hit.id.mtimeNs === id.mtimeNs && hit.id.ctimeNs === id.ctimeNs && hit.id.ino === id.ino;
+
+interface PaneCacheEntry {
+  at: number;
+  /** The list as built: every entry parsed from disk (no lost-marking), with its file identity. */
+  raw: Array<{ s: PaneRunStatus; id: PaneEntryId }>;
+  /** The served view: `raw` with a dead runner's entry copy-on-written to "lost"; shared, read-only. */
+  out: PaneRunStatus[];
+  /** Ids whose lost state was persisted this window (the on-disk rewrite happens once per run). */
+  marked: Set<string>;
+}
+const paneCache = new Map<string, PaneCacheEntry>();
+/** loadPaneRunStatuses recomputes at most this often per logDir: the cockpit polls every few seconds and an unchanged set costs one stat per entry. */
+export const PANE_RUN_TTL_MS = 2_000;
+
+/** Drop this dir's cached pane-run list (a writer in this process, or a test that moves the clock). */
+export function invalidatePaneRunCache(logDir: string): void {
+  paneCache.delete(logDir);
+}
 
 /**
  * Every pane-run entry. A run whose runner died without writing its end is recorded as lost on disk
  * (so the pane reaper sees it ended and closes its pane); entries ended for over a day are removed.
+ * Cached per logDir for PANE_RUN_TTL_MS: within the window every caller (the cockpit queue, the queue
+ * table, the audit) gets the same list, and an entry whose file did not change is not even re-parsed —
+ * one stat each. The served objects are shared with the cache: read-only. A writer in this process
+ * drops the window through writePaneRunStatus; a rewrite by another process lands on a new inode or a
+ * changed ns time and fails the identity check on the next window.
  */
 export function loadPaneRunStatuses(logDir: string, now = Date.now()): PaneRunStatus[] {
   if (!existsSync(logDir)) return [];
-  const out: PaneRunStatus[] = [];
-  let keepMs: number | undefined; // the policy reads the config: once per call, and only when an entry has ended
+  const hit = paneCache.get(logDir);
+  if (hit && now - hit.at < PANE_RUN_TTL_MS) {
+    // the window is open: re-check liveness only for entries still believed running
+    let changed = false;
+    const out = hit.out.map((s, i) => {
+      if (s.state !== "running" || ownsPidCached({ pid: s.pid, started: s.started })) return s;
+      changed = true;
+      return { ...hit.raw[i]!.s, state: "lost" as const };
+    });
+    if (changed) hit.out = out;
+    persistLost(logDir, hit);
+    return out;
+  }
+  let keepMs: number | undefined; // the policy reads the config: once per rebuild, and only when an entry has ended
+  const raw: PaneCacheEntry["raw"] = [];
   for (const n of readdirSync(logDir).filter((x) => x.endsWith(".panestatus")).sort()) {
     const id = n.slice(0, -".panestatus".length);
-    const s = loadPaneRunStatus(logDir, id);
-    if (!s) continue;
+    const path = paneRunStatusFile(logDir, id);
     try {
-      if (s.state !== "running" && now - s.startedMs > (keepMs ??= panePolicy().runKeepMs)) {
-        unlinkSync(paneRunStatusFile(logDir, id));
+      let entry = hit?.raw.find((r) => r.s.id === id);
+      const fid = paneFileIdentity(path);
+      if (!entry || !paneFresh(entry, fid)) {
+        const s = JSON.parse(readFileSync(path, "utf8")) as PaneRunStatus;
+        entry = { s, id: fid };
+      }
+      if (entry.s.state !== "running" && now - entry.s.startedMs > (keepMs ??= panePolicy().runKeepMs)) {
+        unlinkSync(path);
         continue;
       }
-      if (s.state === "lost" && (JSON.parse(readFileSync(paneRunStatusFile(logDir, id), "utf8")) as PaneRunStatus).state === "running") writePaneRunStatus(logDir, s);
+      raw.push(entry);
     } catch {
-      /* the entry is a view; a failed rewrite is retried next tick */
+      /* a half-written or damaged entry is not worth a crash; a vanished file is simply gone */
     }
-    out.push(s);
   }
-  return out;
+  const fresh: PaneCacheEntry = { at: now, raw, out: [], marked: new Set() };
+  fresh.out = raw.map(({ s }) => (s.state === "running" && !ownsPidCached({ pid: s.pid, started: s.started }) ? { ...s, state: "lost" as const } : s));
+  persistLost(logDir, fresh);
+  // only a rebuilt list is cached: a rebuild at `now` that the next call would still serve is stored, one landing on its expiry is not (a caller passing a future `now` never poisons the window)
+  if (Date.now() - now < PANE_RUN_TTL_MS) paneCache.set(logDir, fresh);
+  return fresh.out;
+}
+
+/** The cached list itself, without the lost-marking: for a caller that marks liveness itself (the queue table). */
+export function loadPaneRunStatusesRawCached(logDir: string, now = Date.now()): PaneRunStatus[] {
+  const e = paneCache.get(logDir);
+  if (e && now - e.at < PANE_RUN_TTL_MS) return e.raw.map((r) => r.s);
+  loadPaneRunStatuses(logDir, now); // rebuilds the window (and marks lost on disk)
+  return (paneCache.get(logDir)?.raw ?? []).map((r) => r.s);
+}
+
+/** Record a lost run on disk once per window (the reaper then sees it ended and closes its pane). */
+function persistLost(logDir: string, e: PaneCacheEntry): void {
+  for (let i = 0; i < e.out.length; i++) {
+    const s = e.out[i]!;
+    if (s.state !== "lost" || e.marked.has(s.id)) continue;
+    try {
+      if ((JSON.parse(readFileSync(paneRunStatusFile(logDir, s.id), "utf8")) as PaneRunStatus).state === "running") {
+        writePaneRunStatus(logDir, s);
+        // the rewrite changed this entry's file: re-stamp its identity so the next window does not see it as new
+        const r = e.raw[i];
+        if (r) r.id = paneFileIdentity(paneRunStatusFile(logDir, s.id));
+      }
+      e.marked.add(s.id);
+    } catch {
+      /* the entry is a view; a failed rewrite is retried next window */
+    }
+  }
 }
 
 /** ps lines of the running pane commands: label, cwd, running time, log path. */
