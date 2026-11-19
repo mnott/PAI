@@ -181,10 +181,15 @@ export function shippedWorkersDefaults(): Record<string, unknown> {
  * file → the defaults alone. `path` overrides the user JSON location (tests).
  */
 export function effectiveMainConfig(path: string): Record<string, unknown> {
-  const defaults = shippedMainDefaults();
+  // one stat per file (defaults + the user's config.yaml/json): the merge is reused until either changes,
+  // so a poll reads the merged main config without re-parsing or re-merging it
   const userPath = join(dirname(path), "config.yaml");
-  const user = existsSync(userPath) || existsSync(path) ? readDualFormatConfigRaw(path) : {};
-  return deepMergeConfig(defaults, user);
+  return cachedParse(
+    path,
+    () => deepMergeConfig(shippedMainDefaults(), existsSync(userPath) || existsSync(path) ? readDualFormatConfigRaw(path) : {}),
+    "main-effective",
+    [shippedMainDefaultsPath()]
+  );
 }
 
 /**

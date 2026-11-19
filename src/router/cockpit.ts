@@ -22,7 +22,7 @@ import { setProviderCap } from "../workers/providers.js";
 import { helperStats } from "../workers/helper.js";
 import { HideRuleError, hideMatcher, parseHideRules, readHideRules, writeHideRules } from "./cockpit-hide.js";
 import { cockpitLayout } from "./cockpit-layout.js";
-import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
+import { readWorkersCached, readWorkersSection, workersConfigStamp, type CapacityConfig, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, ticketSessionOf, waitReason, type SessionOfWorker } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { WORKER_ID_RE, ledgerPath, workersLogDir } from "../workers/paths.js";
@@ -32,6 +32,8 @@ import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runt
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
 import { registryModels, type RegistryModel } from "./cockpit-registry-models.js";
 import { readLocalConfig, tierButtons, type LocalTier } from "../workers/local-tiers.js";
+import { cachedParseRaw } from "../config/parse-cache.js";
+import { singleFlight, type SharedResult } from "../utils/single-flight.js";
 import { loopbackRefusal, isTailnetOrLocalName } from "../utils/loopback-guard.js";
 import { instanceEngineKey, readLiveInstances } from "../workers/local-instances.js";
 import { createEndpointHealth, type EndpointHealth } from "../workers/endpoint-health.js";
@@ -210,7 +212,7 @@ export function enabledLocalLimits(ls: ProviderLimits[], providers: Record<strin
 
 function configuredProviders(): Record<string, { enabled?: boolean; baseUrl?: string; models?: Record<string, unknown> }> {
   try {
-    return readWorkersSection().workers.providers;
+    return readWorkersCached().providers;
   } catch {
     return {};
   }
@@ -219,11 +221,17 @@ function configuredProviders(): Record<string, { enabled?: boolean; baseUrl?: st
 /** workers.yaml `local:` — the preferred (active) local provider; only that one is "down" when its port is silent. */
 function configuredLocal(): string | null {
   try {
-    const doc = parseYaml(readFileSync(workersYamlPath(), "utf8")) as { local?: unknown } | null;
+    // the parse is cached by mtime/size: a cockpit poll costs one stat, not a YAML parse
+    const doc = cachedParseRaw(workersYamlPath(), () => parseYaml(readFileSync(workersYamlPath(), "utf8")) as unknown, "cockpit-yaml") as { local?: unknown } | null;
     return typeof doc?.local === "string" && doc.local ? doc.local : null;
   } catch {
     return null;
   }
+}
+
+/** readLocalConfig(workers.yaml) parsed once and reused until the file's mtime/size changes (one stat per request at most). */
+function localConfigCached(): ReturnType<typeof readLocalConfig> {
+  return cachedParseRaw(workersYamlPath(), () => localConfigCached(), "cockpit-local");
 }
 
 /** Every local tier provider whose server answers: the set of running models, in limits order. */
@@ -238,7 +246,7 @@ export function activeLocalProvider(l: ProviderLimits[], tierProviders: string[]
 
 function tierProviderList(): string[] {
   try {
-    return Object.values(readLocalConfig(workersYamlPath()).tiers).map((t) => t.provider);
+    return Object.values(localConfigCached().tiers).map((t) => t.provider);
   } catch {
     return [];
   }
@@ -753,7 +761,7 @@ function registryLogDir(yamlPath: string): string {
   };
   const cfg = paiConfigFilePath();
   const key = `${cfg}:${mt(cfg)}:${yamlPath}:${mt(yamlPath)}`;
-  if (registryLogDirMemo?.key !== key) registryLogDirMemo = { key, dir: workersLogDir(readWorkersSection().workers) };
+  if (registryLogDirMemo?.key !== key) registryLogDirMemo = { key, dir: workersLogDir(readWorkersCached()) };
   return registryLogDirMemo.dir;
 }
 
@@ -822,9 +830,9 @@ export async function cockpitModelsPayload(): Promise<unknown> {
 /** Every registry model with its live instances, stopped ones included (the model cards). */
 function registryModelsNow(): RegistryModel[] {
   try {
-    const providers = readWorkersSection().workers.providers;
+    const providers = readWorkersCached().providers;
     const { concurrencyMin, concurrencyMax } = cockpitLayout();
-    const cfg = readLocalConfig(workersYamlPath());
+    const cfg = localConfigCached();
     return registryModels(cfg, localInstanceRows(), weightsBytes, (t) => providers[t.provider]?.maxConcurrent).map((m) => {
       const provider = cfg.tiers[m.tier]?.provider;
       const p = provider ? providers[provider] : undefined;
@@ -887,7 +895,7 @@ function consumersFor(): Array<{ name: string; runtime: string; purpose: string;
 /** The local starts in flight (loading) or failed, one view per instance, from the records startInstance keeps; empty when none. */
 function currentStarts(): LocalStartView[] {
   try {
-    return Object.values(readLocalStarts(workersLogDir(readWorkersSection().workers)))
+    return Object.values(readLocalStarts(workersLogDir(readWorkersCached())))
       .sort((a, b) => a.startedAt - b.startedAt)
       .map((s) => localStartView(s)!);
   } catch {
@@ -920,7 +928,7 @@ export function withStarting(ls: ProviderLimits[], views: LocalStartView | Local
 export function withWeights<T extends ProviderLimits>(ls: T[], sizeOf: (t: LocalTier) => number | undefined = weightsBytes): T[] {
   let tiers: LocalTier[];
   try {
-    tiers = Object.values(readLocalConfig(workersYamlPath()).tiers);
+    tiers = Object.values(localConfigCached().tiers);
   } catch {
     return ls;
   }
@@ -942,7 +950,7 @@ export async function withInstances<T extends ProviderLimits>(
   rssOf: (pid: number) => Promise<number | undefined> = async (pid) => ((await processTreeRssMb(String(pid))) || undefined),
   providerOf: (model: string) => string | undefined = (m) => {
     try {
-      return readLocalConfig(workersYamlPath()).tiers[m]?.provider;
+      return localConfigCached().tiers[m]?.provider;
     } catch {
       return undefined;
     }
@@ -968,7 +976,7 @@ export async function withInstances<T extends ProviderLimits>(
 function tierAtPort(port: number | undefined): string | undefined {
   if (port === undefined) return undefined;
   try {
-    return Object.values(readLocalConfig(workersYamlPath()).tiers).find((t) => t.port === port)?.tier;
+    return Object.values(localConfigCached().tiers).find((t) => t.port === port)?.tier;
   } catch {
     return undefined;
   }
@@ -977,7 +985,7 @@ function tierAtPort(port: number | undefined): string | undefined {
 /** The tiers (name, label, memory need, instance cap), for the cards' Start/Stop row. */
 function localTierNames(): { tier: string; label: string; memoryGb?: number; maxInstances?: number }[] {
   try {
-    const cfg = readLocalConfig(workersYamlPath());
+    const cfg = localConfigCached();
     return tierButtons(cfg).map((b) => ({ ...b, maxInstances: cfg.tiers[b.tier]?.maxInstances }));
   } catch {
     return [];
@@ -987,7 +995,7 @@ function localTierNames(): { tier: string; label: string; memoryGb?: number; max
 /** The managed instances (id, model, port, pid, state) with the requests running or queued on each, for the model cards' per-instance rows. */
 function localInstanceRows(): Array<{ id: string; model: string; port: number; pid?: number; state: string; error?: string; inflight: number }> {
   try {
-    const logDir = workersLogDir(readWorkersSection().workers);
+    const logDir = workersLogDir(readWorkersCached());
     const engines = sharedScheduler().snapshot().engines;
     return readLiveInstances(logDir).map((i) => {
       const e = engines[instanceEngineKey(i)];
@@ -1001,12 +1009,12 @@ function localInstanceRows(): Array<{ id: string; model: string; port: number; p
 /** The tier of the running model local work goes to: the owner's pick (local-provider.ts pickLocal), null when none runs. */
 async function localDefaultTier(): Promise<string | null> {
   try {
-    const { workers } = readWorkersSection();
+    const workers = readWorkersCached();
     const logDir = workersLogDir(workers);
     const st = readLocalStatus(logDir);
     if (!st?.running.length) return null;
     const pick = pickLocal(st.running.map((r) => r.provider), logDir, workersYamlPath(), localTierOrder(workers));
-    return Object.values(readLocalConfig(workersYamlPath()).tiers).find((t) => t.provider === pick.name)?.tier ?? null;
+    return Object.values(localConfigCached().tiers).find((t) => t.provider === pick.name)?.tier ?? null;
   } catch {
     return null;
   }
@@ -1015,10 +1023,10 @@ async function localDefaultTier(): Promise<string | null> {
 /** The running local models, one per tier provider that answers; `tier` is the tier of that provider. */
 async function localRunningInfo(): Promise<Array<{ tier: string; label: string; model: string; memGb: string; provider: string }>> {
   try {
-    const logDir = workersLogDir(readWorkersSection().workers);
+    const logDir = workersLogDir(readWorkersCached());
     const st = readLocalStatus(logDir);
     if (!st?.running.length) return [];
-    const tiers = Object.values(readLocalConfig(workersYamlPath()).tiers);
+    const tiers = Object.values(localConfigCached().tiers);
     const inv = readInventory(logDir);
     return st.running.map((run) => {
       const tier = tiers.find((t) => t.provider === run.provider);
@@ -1040,7 +1048,7 @@ export function setEndpointHealth(h: EndpointHealth): void {
 /** The routing table with the selectors a row can take and the endpoint registry (per tier the ordered models with their live state, read from the same limits the gauges show) and the flow line of what each tier resolves to now. */
 async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; flow: string; choices: { entry: string; label: string }[]; endpoints: EndpointRow[] }> {
   try {
-    const { workers } = readWorkersSection();
+    const workers = readWorkersCached();
     const budgets: BudgetMap = {};
     for (const l of ls) {
       if (l.kind === "local" || !l.windows.length) continue;
@@ -1111,7 +1119,7 @@ export function cachedPoolCarry(): () => PoolCarry | null {
       at = Date.now();
       carry = null;
       try {
-        const { workers } = readWorkersSection();
+        const workers = readWorkersCached();
         carry = poolCarry(readPoolMetrics(poolMetricsPath(join(workersLogDir(workers)))));
       } catch {
         carry = null;
@@ -1230,15 +1238,23 @@ export function cockpitQueue(
     return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
   };
   const sessionMax: SessionLimits = {};
+  // one pass over the status files per window (the single flight above calls this at most once per
+  // window): the live subset is collected here and reused below, so a queue round walks the cache twice, not four times
   const statuses = loadStatusesCached(logDir);
+  const profiles = readProfiles();
+  const live: WorkerStatus[] = [];
   for (const s of statuses) {
-    // only a queued or live run needs its profile read: thousands of finished statuses would each reread the file
-    if (!s.sessionKey || !(s.state === "queued" || (s.state === "running" && isLive(s, owns)))) continue;
-    const max = getProfile(s.sessionKey)?.max_parallel;
+    // only a queued or live run matters: thousands of finished statuses are skipped without a stat
+    if (!(s.state === "queued" || (s.state === "running" && isLive(s, owns)))) continue;
+    live.push(s);
+    // the session's max_parallel gate lives in its profile (read once per pass now)
+    if (!s.sessionKey) continue;
+    const max = profiles[s.sessionKey]?.max_parallel;
     if (max) sessionMax[sessionGroup(s)] = max;
   }
-  for (const s of statuses) {
-    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model, priority: s.priority ?? "normal", ...(s.paused ? { paused: true } : {}) });
+  for (const s of live) {
+    if (s.state !== "running") continue;
+    row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model, priority: s.priority ?? "normal", ...(s.paused ? { paused: true } : {}) });
   }
   for (const r of queueRows(logDir, caps, undefined, statuses)) {
     const s = r.status;
@@ -1276,6 +1292,46 @@ export function cockpitQueue(
   for (const [id, name] of Object.entries(schedNames(logDir))) names.set(id, { ...(names.get(id) ?? {}), name });
   const sched = schedPlain(snap, Object.fromEntries([...names].map(([id, info]) => [id, info.name])));
   return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now, (id) => { const w = statuses.find((x) => x.id === id); return w ? sessionGroup(w) : undefined; }), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
+}
+
+export interface CockpitQueue {
+  now: number;
+  plans: ReturnType<typeof planRows>;
+  panes: ReturnType<typeof paneRunRows>;
+  paneViolations: Array<{ id: string; mark: string; why?: string }>;
+  providers: QueueProvider[];
+  sessionMax: SessionLimits;
+  builds: CockpitBuilds;
+  table: TableRow[];
+  worktrees: string;
+  localModel: string;
+  localModelTitle: string;
+}
+
+/** The queue window's age at which it is recomputed (workers.capacity.cockpitQueueTtlMs in config.yaml, default 2 s). */
+function queueTtlMs(): number {
+  try {
+    const c = readWorkersCached().capacity as CapacityConfig & { cockpitQueueTtlMs?: number };
+    return typeof c.cockpitQueueTtlMs === "number" && Number.isFinite(c.cockpitQueueTtlMs) && c.cockpitQueueTtlMs >= 0 ? c.cockpitQueueTtlMs : 2_000;
+  } catch {
+    return 2_000;
+  }
+}
+
+/**
+ * The /cockpit/queue payload behind a single flight: at most one computation per window (default
+ * 2 s, workers.capacity.cockpitQueueTtlMs), and every client and endpoint in that window — including
+ * requests that arrive while it is still running — gets the same result. N cockpit tabs polling then
+ * cost one queue walk, not N; the config stamp keys the window so a saved change lands at once.
+ */
+const cockpitQueueShared = singleFlight<CockpitQueue, { now: number; logDir: string; workers: WorkersConfig }>(
+  (a) => cockpitQueue(a.logDir, a.workers, a.now),
+  { ttlMs: queueTtlMs, key: (a) => `${workersConfigStamp()}:${a.logDir}` }
+);
+/** The /cockpit/queue payload through the shared window; `queueLogDir` is the handler's seam (tests redirect it). */
+async function cockpitQueueAsync(queueLogDir: (workers: WorkersConfig) => string, now = Date.now()): Promise<SharedResult<CockpitQueue>> {
+  const workers = readWorkersCached();
+  return cockpitQueueShared({ now, logDir: queueLogDir(workers), workers });
 }
 
 const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;
@@ -1389,12 +1445,12 @@ export function handleCockpit(
       const { action, id, session, all } = b as { action?: unknown; id?: unknown; session?: unknown; all?: unknown };
       if (typeof action !== "string" || !ROW_ACTIONS.has(action)) return send(400, "application/json", JSON.stringify({ ok: false, message: "unknown action" }));
       if (all === true && (action === "deep-freeze" || action === "deep-resume")) {
-        const { workers: w0 } = readWorkersSection();
+        const w0 = readWorkersCached();
         const r0 = await runGlobalDeep({ logDir: queueLogDir(w0), workers: w0, by: "cockpit" }, action === "deep-resume");
         return send(r0.ok ? 200 : 409, "application/json", JSON.stringify(r0));
       }
       if (typeof id === "string" ? !WORKER_ID_RE.test(id) && !/^pane-[\w.-]+$/.test(id) : typeof session !== "string") return send(400, "application/json", JSON.stringify({ ok: false, message: "id or session required" }));
-      const { workers } = readWorkersSection();
+      const workers = readWorkersCached();
       const d = { logDir: queueLogDir(workers), workers, by: "cockpit", reroute: async (wid: string, where: "cloud" | "local") => { const r = await rerouteWorker(wid, where, { logDir: queueLogDir(workers), by: "cockpit", deferKill: where === "local" }); return rerouteMessage(r); } };
       const r = typeof id === "string" ? await runRowAction(d, action as RowAction, id) : await runSessionAction(d, action as RowAction, session as string);
       send(r.ok ? 200 : 409, "application/json", JSON.stringify(r));
@@ -1410,7 +1466,7 @@ export function handleCockpit(
       const move = url.pathname.endsWith("/move");
       if (move && !(typeof position === "number" && Number.isFinite(position) && position >= 1)) return send(400, "application/json", JSON.stringify({ ok: false, message: "position (>= 1) required", error: "position (>= 1) required" }));
       try {
-        const { workers } = readWorkersSection();
+        const workers = readWorkersCached();
         const logDir = queueLogDir(workers);
         const status = loadStatus(logDir, id);
         if (!status) return send(404, "application/json", JSON.stringify({ ok: false, message: `no worker named "${id}"`, error: `no worker named "${id}"` }));
@@ -1455,7 +1511,7 @@ export function handleCockpit(
       const { delta } = b as { delta?: unknown };
       if (delta !== 1 && delta !== -1) return send(400, "application/json", JSON.stringify({ ok: false, message: "delta must be +1 or -1" }));
       try {
-        const cur = readWorkersSection().workers.providers[name]?.maxConcurrent;
+        const cur = readWorkersCached().providers[name]?.maxConcurrent;
         if (cur === undefined) return send(404, "application/json", JSON.stringify({ ok: false, message: `provider "${name}" has no concurrency cap` }));
         const { concurrencyMin, concurrencyMax } = cockpitLayout();
         // a stored cap above max stays there: "+" must not lower it, only "-" steps down
@@ -1553,12 +1609,11 @@ export function handleCockpit(
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/queue") {
-    try {
-      const { workers } = readWorkersSection();
-      send(200, "application/json", JSON.stringify(cockpitQueue(queueLogDir(workers), workers)));
-    } catch (e) {
-      send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
-    }
+    // one computation per window serves every client and endpoint polling in it (single flight)
+    cockpitQueueAsync(queueLogDir).then(
+      (q) => send(200, "application/json", JSON.stringify(q.value)),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then((l0) => enabledLocalLimits(l0, configuredProviders())).then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
       async ([l, routing]) => {

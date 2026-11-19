@@ -8,6 +8,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
+import { cachedParse, invalidateParse } from "../config/parse-cache.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { migrateSessionRoutes } from "./route-lists.js";
 
@@ -136,6 +137,7 @@ function writeAtomic(path: string, profiles: Profiles): void {
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, stringify(profiles));
   renameSync(tmp, path);
+  invalidateParse(path, "profiles"); // a cached reader in this process must see the write at once
 }
 
 /** Fold the old session-workers.json (name -> provider) into the store, then drop it. */
@@ -161,6 +163,12 @@ function migrateLegacy(path: string, profiles: Profiles): boolean {
 
 /** All profiles; the legacy session-workers.json is migrated on the way. A broken file reads as empty and is never overwritten by a read. */
 export function readProfiles(path: string = profilesPath()): Profiles {
+  // parsed once and reused until the file's mtime/size changes (one stat per request at most):
+  // a cockpit queue pass reads it per live worker, and a write through this module invalidates first
+  return cachedParse(path, () => readProfilesUncached(path), "profiles");
+}
+
+function readProfilesUncached(path: string): Profiles {
   const profiles: Profiles = {};
   if (existsSync(path)) {
     try {

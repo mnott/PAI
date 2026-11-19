@@ -83,11 +83,20 @@ function writeRecord(r: DeepRecord): void {
   const tmp = `${p}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(r, null, 2));
   renameSync(tmp, p);
+  deepIdsCache = null; // a cached id set in this process must not hide the freeze
 }
 
 /** The ids a deep freeze is stopping (or has stopped): their own end paths write "deepfrozen", never "killed". */
+let deepIdsCache: { at: number; ids: Set<string> } | null = null;
+/** The id set behind a 2 s window: the cockpit queue path reads it per pass and the file only changes when an operator freezes. */
+const DEEP_IDS_TTL_MS = 2_000;
+
 export function deepfrozenIds(): Set<string> {
-  return new Set(readDeepfreeze()?.workers.map((w) => w.id) ?? []);
+  const now = Date.now();
+  if (deepIdsCache && now - deepIdsCache.at < DEEP_IDS_TTL_MS) return deepIdsCache.ids;
+  const ids = new Set(readDeepfreeze()?.workers.map((w) => w.id) ?? []);
+  deepIdsCache = { at: now, ids };
+  return ids;
 }
 
 /**
