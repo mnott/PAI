@@ -613,7 +613,12 @@ describe("deep freeze", () => {
 
   const resumeDeps = (started: string[], over: Partial<DeepResumeDeps> = {}): DeepResumeDeps => ({
     statuses: (d) => require_loadStatuses(d),
-    start: async (_d, w) => (started.push(w.id), `${w.id}-r`),
+    // the announce is not a start: stand in for a run that announced AND reached "running"
+    start: async (_d, w) => {
+      started.push(w.id);
+      saveStatus(logDir, worker(`${w.id}-r`, "2026-11-18 13:00:00", { state: "running", provider: w.provider }));
+      return `${w.id}-r`;
+    },
     setPriority: () => undefined,
     ready: async () => true,
     sleep: async () => undefined,
@@ -639,7 +644,7 @@ describe("deep freeze", () => {
     expect(r.skipped).toEqual(["b"]);
     expect(readDeepfreeze()).toBeNull();
     expect(told).toHaveLength(1);
-    expect(told[0]).toContain("resumed 2 workers");
+    expect(told[0]).toContain("started 2, queued 0");
   });
 
   it("waits for readiness (bounded) before resuming", async () => {
@@ -707,9 +712,60 @@ describe("deep freeze", () => {
 
   it("a failed start stays in the record", async () => {
     await freezeThree();
-    const r = await deepResume(logDir, resumeDeps([], { start: async (_d, w) => { if (w.id === "c") throw new Error("boom"); return `${w.id}-r`; } }));
+    const r = await deepResume(logDir, resumeDeps([], { start: async (_d, w) => { if (w.id === "c") throw new Error("boom"); saveStatus(logDir, worker(`${w.id}-r`, "2026-11-18 14:00:00", { state: "running" })); return `${w.id}-r`; } }));
     expect(r.failed).toEqual(["c"]);
     expect(readDeepfreeze()!.workers.map((w) => w.id)).toEqual(["c"]);
+    expect(readDeepfreeze()!.workers[0].resumeNote).toContain("boom"); // the reason travels with the entry
+  });
+
+  it("an announced run whose status never left deepfrozen is not resumed: kept in the record with its reason", async () => {
+    await freezeThree();
+    const r = await deepResume(logDir, resumeDeps([], { start: async (_d, w) => `${w.id}-r` })); // announces, no status ever written
+    expect(r.started).toEqual([]);
+    expect(r.queued).toEqual([]);
+    expect(r.failed).toEqual(["a", "c"]);
+    expect(readDeepfreeze()!.workers.map((w) => w.id)).toEqual(["a", "c"]);
+    expect(readDeepfreeze()!.workers[0].resumeNote).toMatch(/status says no status/); // the announced run left nothing behind
+  });
+
+  it("9 entries at cap 3: 3 start, 6 queue on their tickets, record kept until all are started or queued", async () => {
+    // nine workers frozen; one provider with cap 3 (the slot gate's accounting): the first three runs run,
+    // the rest announce and park at the gate with their ticket. Stubs only — no real workers spawn.
+    for (const i of "123456789") saveStatus(logDir, worker(`w${i}`, `2026-11-18 11:0${i}:00`, { provider: "gyro-l" }));
+    await deepFreeze(logDir, "t", deps());
+    const CAP = 3;
+    const running = (): number => require_loadStatuses(logDir).filter((s) => s.state === "running").length;
+    const r = await deepResume(logDir, resumeDeps([], {
+      start: async (_d, w) => {
+        // the real gateStart announces before the gates wait: a run past the cap stays queued at the gate
+        if (running() < CAP) saveStatus(logDir, worker(`${w.id}-r`, "2026-11-18 14:00:00", { state: "running", provider: w.provider }));
+        else mkdirSync(join(logDir, "queue", "gyro-l"), { recursive: true }), writeFileSync(join(logDir, "queue", "gyro-l", `${w.id}-r`), `${process.pid} @0`); // the gate's ticket (writeTicket)
+        return `${w.id}-r`;
+      },
+    }));
+    expect(r.started.length).toBe(3);
+    expect(r.queued.length).toBe(6);
+    expect(r.failed).toEqual([]);
+    expect(r.resumed.length).toBe(9); // started or queued = resumed
+    expect(readDeepfreeze()).toBeNull(); // every entry took: the record is gone, truthfully this time
+  });
+
+  it("an announced run that never takes (status stays deepfrozen) keeps the record even when the others queue", async () => {
+    saveStatus(logDir, worker("x1", "2026-11-18 11:00:00"));
+    saveStatus(logDir, worker("x2", "2026-11-18 11:01:00"));
+    await deepFreeze(logDir, "t", deps());
+    const r = await deepResume(logDir, resumeDeps([], {
+      start: async (_d, w) => {
+        if (w.id === "x2") mkdirSync(join(logDir, "queue", "anthropic"), { recursive: true }), writeFileSync(join(logDir, "queue", "anthropic", `${w.id}-r`), `${process.pid} @0`); // queued at the gate's ticket
+        return `${w.id}-r`; // x1 announces and never starts — the 2026-11-19 failure mode
+      },
+    }));
+    expect(r.started).toEqual([]);
+    expect(r.queued).toEqual(["x2->x2-r"]);
+    expect(r.failed).toEqual(["x1"]);
+    const rec = readDeepfreeze()!; // the record survives with only the entry that did not take
+    expect(rec.workers.map((w) => w.id)).toEqual(["x1"]);
+    expect(rec.workers[0].resumeNote).toMatch(/status says no status/);
   });
 
   it("deepfrozen workers trigger no failure, stall or escalation", () => {
