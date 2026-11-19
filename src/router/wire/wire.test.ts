@@ -554,4 +554,47 @@ describe("router vs engine resets and concurrency (2026-11-18)", () => {
     expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 200]);
     expect(max).toBe(1);
   }, 15000);
+
+  it("20 concurrent requests waiting at a saturated engine keep the event loop responsive", async () => {
+    // the in-flight queue must be promise/event based: waiting is awaiting, never spinning. A polling
+    // loop or synchronous retry would block the loop and blow the lag budget while requests sit queued.
+    const up = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        setTimeout(() => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(OK);
+        }, 30);
+      });
+    });
+    const upPort = await listen(up);
+    const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: `http://127.0.0.1:${upPort}`, models: { default: "gyro-m" } } } }).providers;
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, undefined, undefined, { instances: () => [] });
+    const port = await listen(r);
+    const body = JSON.stringify({ model: "gyro-m", stream: false, messages: [{ role: "user", content: "hi" }] });
+    const one = () =>
+      new Promise<number>((resolve) => {
+        const q = http.request({ port, host: "127.0.0.1", path: "/p/gyro/v1/chat/completions", method: "POST", headers: { "content-type": "application/json" } }, (x) => {
+          x.resume();
+          x.on("end", () => resolve(x.statusCode ?? 0));
+          x.on("error", () => resolve(0));
+        });
+        q.on("error", () => resolve(0));
+        q.end(body);
+      });
+    // a timer that should fire every 5 ms: how late it actually fires is the loop lag
+    let maxLag = 0;
+    let expectAt = Date.now() + 5;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      maxLag = Math.max(maxLag, now - expectAt);
+      expectAt = now + 5;
+    }, 5);
+    const statuses = await Promise.all(Array.from({ length: 20 }, one));
+    clearInterval(timer);
+    r.close();
+    up.close();
+    expect(statuses).toEqual(Array(20).fill(200));
+    expect(maxLag).toBeLessThan(100);
+  }, 30000);
 });
