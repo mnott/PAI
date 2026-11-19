@@ -7,7 +7,7 @@
 import { modelFrozen, realFreezeDeps, thawModelServers } from "../freeze.js";
 import { readUrgency } from "../urgency.js";
 import { setRunWorker } from "./worker-ref.js";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { parseRunnerArgs, shortText } from "../args.js";
 import { ANTHROPIC_NATIVE, assertProviderRunnable, getProviderOrNative, isLocalProvider, pinProviderForModel, readWorkersSection } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
@@ -59,13 +59,30 @@ import {
   recordPoolSkip,
   gateStart,
 } from "./gate.js";
-import { resolveTopic } from "../topic.js";
+import { pickTopicAsync, resolveTopic } from "../topic.js";
 import { executeImageRun, executeRun, executeCodexRun, executeOpencodeRun } from "./execute.js";
 import { executeUhpRun } from "./execute-uhp.js";
 import { carryGoals } from "../note-delivery.js";
 import { applyModeToConfig } from "../mode.js";
 import { gatekeeperSession, localOnlyStartCheck } from "../local-only.js";
 import { parseHarnessFlag, resolveHarnessProvider } from "../uhp.js";
+
+/** A spec file's text for the topic pick; unreadable = no brief, never a thrown start. */
+function safeReadText(f: string): string | undefined {
+  try {
+    return readFileSync(f, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The -p task text from the raw claude args (the same scan parseRunnerArgs does). */
+function promptFromArgs(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === "-p" || args[i] === "--print") && i + 1 < args.length && !args[i + 1].startsWith("-")) return args[i + 1];
+  }
+  return undefined;
+}
 
 /**
  * Run one worker. Returns the process exit code to pass through.
@@ -120,6 +137,16 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const parent = launchParent(opts.parent, process.env, logDir);
   if (parent) assertChildAllowed(logDir, parent, config.tree);
   const topic = resolveTopic(logDir, opts.topic, [opts._fallThroughOf, opts.resumeOf, opts._restartOf, ...(opts._priorIds ?? []).slice().reverse()], parent);
+  // no --topic, nothing inherited: the small local model coins one word (topic.ts), fired once
+  // the id exists (trackStart below). Fire-and-forget — never blocks this start; when apple-fm
+  // is off/down/busy the job keeps no topic, and nothing here ever falls back to a big engine.
+  // A real --topic above always wins: with one set this hook never runs.
+  const specForTopic = opts.specOverride ?? (opts.specPath ? safeReadText(opts.specPath) : undefined) ?? promptFromArgs(opts.claudeArgs);
+  const trackStart = (wid: string) => {
+    workerId = wid;
+    if (!topic && !opts.printCmd && specForTopic?.trim()) pickTopicAsync(logDir, wid, opts.label ?? "", specForTopic);
+    opts.onWorkerStart?.(wid);
+  };
 
   // An explicit --provider always bypasses capability resolution entirely;
   // otherwise --capability, or a class whose implied capability is not
@@ -350,11 +377,6 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // foldRun/tryPoolRun skip theirs; an ungated interactive run has no gate announce and foldRun clears
   // the flag to announce at its real start. trackStart stays per-call: an escalation or fall-through
   // re-run announces its new id through it.
-  const trackStart = (wid: string) => {
-    workerId = wid;
-    opts.onWorkerStart?.(wid);
-  };
-
   try {
     let rc: number;
     // image, codex and opencode runs never go through the pool; the skip is recorded under the id they mint

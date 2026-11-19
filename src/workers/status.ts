@@ -417,6 +417,9 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (onDisk.controlsHeld) status.controlsHeld = true;
     // Written by `pai worker goal` (another process); the runner's copy never sets it.
     if (onDisk.note !== undefined) status.note = onDisk.note;
+    // The helper's async topic pick (`helperPickTopic`, topic.ts): set once, after the start,
+    // by the same process — the runner's in-memory copy has no topic and must not drop it.
+    if (status.topic === undefined && onDisk.topic) status.topic = onDisk.topic;
     if (onDisk.notePending !== undefined) status.notePending = onDisk.notePending;
     if (onDisk.noteDeliveredAt !== undefined) status.noteDeliveredAt = onDisk.noteDeliveredAt;
     if (onDisk.goals !== undefined) status.goals = onDisk.goals;
