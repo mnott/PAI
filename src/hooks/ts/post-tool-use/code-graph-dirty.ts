@@ -8,7 +8,7 @@
  */
 
 import { dirname } from "node:path";
-import { resolveRoot } from "../../../codegraph/api.js";
+import { graphRoot } from "../../../codegraph/api.js";
 import { markDirty } from "../../../codegraph/session.js";
 import { readHookInput } from "../lib/read-stdin.js";
 
@@ -16,7 +16,9 @@ async function main() {
   const input = await readHookInput<{ cwd?: string; tool_input?: { file_path?: string; notebook_path?: string } }>();
   const file = input?.tool_input?.file_path ?? input?.tool_input?.notebook_path;
   if (!file || !file.startsWith("/")) return;
-  markDirty(resolveRoot(dirname(file)), file);
+  // the graph's index root: a linked worktree shares its main checkout's rows,
+  // so the dirty list goes under the same key ensureFresh consumes (one list)
+  markDirty(graphRoot(dirname(file)), file);
 }
 
 main().then(() => process.exit(0), () => process.exit(0));

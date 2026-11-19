@@ -13,8 +13,9 @@
  * comments, top refs), never whole files, and is called one module at a time.
  */
 
-import { readFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
 import { sha256 } from "../utils/hash.js";
 import type { CodeGraphStore, CodeFileRow, SummaryRow, SymbolRow } from "./store.js";
@@ -273,11 +274,36 @@ export async function summarizeRepo(backend: StorageBackend, root: string, o: Su
 }
 
 /**
+ * The graph's index root for `root`: the main checkout when it is a linked
+ * worktree of one, else its git toplevel, else the path itself. Same rule as
+ * api.ts's graphRoot — duplicated here because importing api.js would be a
+ * cycle (api.ts reads summaries).
+ */
+function indexRootOf(root: string): string {
+  const r = resolve(root);
+  let common = "";
+  try {
+    // --path-format=relative keeps --git-common-dir symlink-free (older git prints
+    // a relative path anyway) — see api.ts's toplevelOf for why realpath is fatal
+    common = execFileSync("git", ["rev-parse", "--path-format=relative", "--git-common-dir"], { cwd: r, encoding: "utf8" }).trim();
+  } catch {
+    try {
+      common = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd: r, encoding: "utf8" }).trim();
+    } catch { /* not a git repo */ }
+  }
+  if (!common) return r;
+  const abs = isAbsolute(common) ? common : resolve(r, common);
+  const main = basename(abs) === ".git" ? dirname(abs) : abs;
+  return main !== r && existsSync(main) ? main : r;
+}
+
+/**
  * The summary for a key, a directory or a file path: the nearest enclosing
  * module's, falling back up the tree to the repo's. Null when none stored.
  */
 export async function findSummary(store: CodeGraphStore, root: string, keyOrPath: string): Promise<SummaryRow | null> {
-  const rows = await store.listSummaries(resolve(root));
+  // keyed by the index root (as everywhere); a linked worktree reads the parent repo's
+  const rows = await store.listSummaries(indexRootOf(root));
   if (!rows.length) return null;
   const byPath = new Map(rows.map((r) => [r.path, r]));
   let p = pathOfKey(keyOrPath).replace(/^\.\//, "").replace(/\/+$/, "") || ".";

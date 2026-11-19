@@ -96,10 +96,14 @@ function extractSource(buf: Buffer, input: Parameters<typeof extractFile>[0]): R
  * Index `root` into the store. Incremental: only files whose mtime differs and
  * whose sha256 then differs are re-extracted; files gone from disk are deleted
  * (their symbols/refs cascade). Resolution runs for every affected ref.
+ *
+ * `readFrom` reads and lists the tree from a different checkout than the rows'
+ * key — a worker worktree indexes its own files into the parent repo's rows.
  */
-export async function indexRoot(store: CodeGraphStore, root: string, opts: { force?: boolean } = {}): Promise<IndexCounts & { files: number }> {
+export async function indexRoot(store: CodeGraphStore, root: string, opts: { force?: boolean } = {}, readFrom?: string): Promise<IndexCounts & { files: number }> {
   const rootAbs = resolve(root);
-  const disk = listFiles(rootAbs);
+  const tree = readFrom ? resolve(readFrom) : rootAbs;
+  const disk = listFiles(tree);
   const stored = await store.listFiles(rootAbs);
   const storedByPath = new Map(stored.map((f) => [f.path, f]));
 
@@ -124,8 +128,9 @@ export async function indexRoot(store: CodeGraphStore, root: string, opts: { for
   }
 
   for (const path of disk) {
-    const abs = join(rootAbs, path);
-    const st = statSync(abs);
+    const abs = join(tree, path);
+    let st;
+    try { st = statSync(abs); } catch { continue; } // listed but gone
     if (st.size > MAX_FILE_BYTES) continue;
     const prev = storedByPath.get(path);
     if (!opts.force && prev && prev.mtime === Math.round(st.mtimeMs)) continue; // mtime unchanged → skip the read entirely
@@ -166,20 +171,25 @@ export async function indexRoot(store: CodeGraphStore, root: string, opts: { for
 /**
  * Cheap reconcile for ensureFresh(): mtime → hash only for files whose mtime
  * moved; deletions are picked up from the git listing. Returns null when
- * nothing changed (the common case).
+ * nothing changed (the common case). `readFrom` reconciles against a different
+ * checkout than the rows' key — a worker worktree against the parent repo's rows.
  *
  * // ponytail: file watcher daemon would replace per-query reconcile; upgrade path
  */
-export async function reconcile(store: CodeGraphStore, root: string): Promise<IndexCounts | null> {
+export async function reconcile(store: CodeGraphStore, root: string, readFrom?: string): Promise<IndexCounts | null> {
   const rootAbs = resolve(root);
-  const disk = listFiles(rootAbs);
+  const tree = readFrom ? resolve(readFrom) : rootAbs;
+  const disk = listFiles(tree);
   const stored = await store.listFiles(rootAbs);
   const storedByPath = new Map(stored.map((f) => [f.path, f]));
   const diskSet = new Set(disk);
 
   let touched = false;
+  // a second checkout (a worker worktree over the parent's rows) never deletes:
+  // files it does not carry are the main checkout's own. Deletions are reconciled
+  // when querying the main tree, and indexRepo --force wipes+rebuilds anyway.
   const deleted: string[] = [];
-  for (const f of stored) if (!diskSet.has(f.path)) { deleted.push(f.path); touched = true; }
+  if (tree === rootAbs) for (const f of stored) if (!diskSet.has(f.path)) { deleted.push(f.path); touched = true; }
 
   const changedPaths: string[] = [];
   const brokenRefIds: number[] = [];
@@ -189,10 +199,13 @@ export async function reconcile(store: CodeGraphStore, root: string): Promise<In
   for (const path of disk) {
     const prev = storedByPath.get(path);
     if (!prev) { touched = true; continue; } // new file → full index needed
-    const abs = join(rootAbs, path);
+    const abs = join(tree, path);
     let st;
     try { st = statSync(abs); } catch { continue; }
-    if (prev.mtime === Math.round(st.mtimeMs)) continue; // mtime first — the cheap gate
+    // mtime first — the cheap gate. Across two checkouts (a worker worktree over
+    // the parent's rows) an equal mtime says nothing: a committed file keeps its
+    // author's timestamp, so content must be hashed before it is skipped.
+    if (prev.mtime === Math.round(st.mtimeMs) && tree === rootAbs) continue;
     const hash = hashOf(readFileSync(abs));
     if (hash === prev.contentHash) {
       // mtime-only change: refresh the stored mtime, keep symbols/refs
@@ -224,8 +237,10 @@ export async function reconcile(store: CodeGraphStore, root: string): Promise<In
  * Index exactly these repo-relative files (the dirty list, merged files): new and
  * changed ones are extracted, vanished ones deleted. No directory listing.
  */
-export async function indexFiles(store: CodeGraphStore, root: string, paths: string[]): Promise<IndexCounts> {
+/** `readFrom` reads the files from a different checkout than the rows' key (worktree freshness). */
+export async function indexFiles(store: CodeGraphStore, root: string, paths: string[], readFrom?: string): Promise<IndexCounts> {
   const rootAbs = resolve(root);
+  const tree = readFrom ? resolve(readFrom) : rootAbs;
   const stored = new Map((await store.listFiles(rootAbs)).map((f) => [f.path, f]));
   const brokenRefIds: number[] = [];
   const changedPaths: string[] = [];
@@ -233,7 +248,7 @@ export async function indexFiles(store: CodeGraphStore, root: string, paths: str
   let changed = 0;
   for (const path of [...new Set(paths)]) {
     if (skipped(path)) continue;
-    const abs = join(rootAbs, path);
+    const abs = join(tree, path);
     let st;
     try { st = statSync(abs); } catch { st = null; }
     if (!st || !st.isFile()) {
@@ -242,7 +257,8 @@ export async function indexFiles(store: CodeGraphStore, root: string, paths: str
     }
     if (st.size > MAX_FILE_BYTES) continue;
     const prev = stored.get(path);
-    if (prev && prev.mtime === Math.round(st.mtimeMs)) continue;
+    // same two-checkout rule as reconcile: across trees an equal mtime proves nothing
+    if (prev && prev.mtime === Math.round(st.mtimeMs) && tree === rootAbs) continue;
     const content = readFileSync(abs);
     const hash = hashOf(content);
     if (prev && prev.contentHash === hash) { await store.touchFileMtime(rootAbs, path, Math.round(st.mtimeMs), st.size); continue; }

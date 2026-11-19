@@ -10,7 +10,7 @@ import type { StorageBackend } from "../../storage/interface.js";
 import type { ToolResult } from "./types.js";
 import { registeredProjects } from "../../codegraph/projects.js";
 import { related, formatRelated, type Domain } from "../../codegraph/graph.js";
-import { resolveRoot, ensureFresh, explore, searchSymbols, callers } from "../../codegraph/api.js";
+import { explore, searchSymbols, callers } from "../../codegraph/api.js";
 import { findSummary } from "../../codegraph/summaries.js";
 
 function ok(text: string): ToolResult {
@@ -34,8 +34,9 @@ export interface CodeExploreParams {
 
 export async function toolCodeExplore(backend: StorageBackend, params: CodeExploreParams): Promise<ToolResult> {
   try {
-    const root = params.root ?? resolveRoot(process.cwd());
-    await ensureFresh(backend, root);
+    // cwd as-is: the graph API resolves it to the index root (a worker worktree
+    // moves to its parent repo's rows) and reads fresh source from this tree
+    const root = params.root ?? process.cwd();
     const r = await explore(backend, root, params.query, {
       budgetTokens: params.budget_tokens ?? 4000,
       depth: params.depth,
@@ -55,8 +56,7 @@ export interface CodeSearchParams {
 
 export async function toolCodeSearch(backend: StorageBackend, params: CodeSearchParams): Promise<ToolResult> {
   try {
-    const root = params.root ?? resolveRoot(process.cwd());
-    await ensureFresh(backend, root);
+    const root = params.root ?? process.cwd();
     const hits = await searchSymbols(backend, root, params.query, params.limit);
     return ok(JSON.stringify(hits, null, 2));
   } catch (e) {
@@ -72,8 +72,7 @@ export interface CodeCallersParams {
 
 export async function toolCodeCallers(backend: StorageBackend, params: CodeCallersParams): Promise<ToolResult> {
   try {
-    const root = params.root ?? resolveRoot(process.cwd());
-    await ensureFresh(backend, root);
+    const root = params.root ?? process.cwd();
     const hits = await callers(backend, root, params.name, params.limit);
     return ok(JSON.stringify(hits, null, 2));
   } catch (e) {
@@ -89,8 +88,8 @@ export interface CodeSummaryParams {
 
 export async function toolCodeSummary(backend: StorageBackend, params: CodeSummaryParams): Promise<ToolResult> {
   try {
-    const root = params.root ?? resolveRoot(process.cwd());
-    const row = await findSummary(backend.codeGraph(), root, params.target);
+    // findSummary resolves the index root itself (a worktree reads the parent repo's)
+    const row = await findSummary(backend.codeGraph(), params.root ?? process.cwd(), params.target);
     if (!row) return ok(`No summary stored for ${params.target}. Run: pai code summarize`);
     return ok(`${row.key}\n${row.summary}\n\n(model ${row.model}, generated ${new Date(row.generatedAt).toISOString()})`);
   } catch (e) {
