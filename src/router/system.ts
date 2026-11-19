@@ -5,8 +5,11 @@
  *   direct   cheap no-sudo reads: CPU load from os.cpus() tick deltas (no
  *            subprocess), swap from `sysctl vm.swapusage`, memory total and
  *            pressure from `sysctl`, wired/compressed/used from `vm_stat`
- *   GPU/ANE/SoC temperature/power rails: not sampled (mactop is never spawned
- *            by the router; powermetrics needs sudo); they show "n/a"
+ *   daemon   readings the daemon already takes, read from its state files — no
+ *            subprocess per cockpit request: GPU load from the local-idle fast
+ *            sampler (avg + peak of ~5 s ioreg instants), system watts from the
+ *            battery guard's telemetry. ANE and the SoC power rails stay
+ *            unsampled (mactop is never spawned; powermetrics needs sudo).
  *
  * Every 1-min sample is appended to a small JSONL ring (7 days) so day and
  * week windows chart power and memory history and report watt-hours. Metrics
@@ -21,8 +24,12 @@ import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { bucketStart, WINDOWS, type CockpitWindow } from "./cockpit.js";
 import { batteryCockpitLine, readTelemetryLines, summarizeTelemetry, telemetryFile, type TelemetryLine } from "../daemon/battery-guard.js";
+import { readLocalIdle, type LocalIdleFile } from "../workers/local-idle.js";
+import { defaultWorkersConfig, expandHome } from "../workers/config.js";
 
 export const systemRingFile = (): string => paiHomePath("logs", "router-system.jsonl");
+/** The daemon's local-idle state (the GPU sampler's persisted 1-min summary). */
+const defaultWorkersLogDir = (): string => process.env.PAI_HOME ? paiHomePath("logs", "workers") : expandHome(defaultWorkersConfig().logDir);
 const MIN = 60_000;
 const DAY = 86_400_000;
 /** direct commands are sub-second; never wait longer */
@@ -57,6 +64,8 @@ export interface SystemSample {
   compressed?: number;
   /** kern.memorystatus_level, 1-100; higher = less pressure */
   pressureLevel?: number;
+  /** peak GPU % of the last minute's ~5 s instants (daemon sampler), beside the avg `gpu` */
+  gpuPeak?: number;
   source: "direct" | "mactop" | "vmstat";
   /** why metrics are missing or stale, shown as tooltip */
   notes?: string[];
@@ -141,6 +150,8 @@ export interface SystemBucket {
   adapterW?: number;
   batteryW?: number;
   drainW?: number;
+  /** peak GPU % in the bucket, beside its avg `gpu` (the tile shows both; the sparkline stays the averages) */
+  gpuPeak?: number;
 }
 
 export interface SystemSeries {
@@ -176,6 +187,8 @@ export function buildSystemSeries(samples: SystemSample[], win: SystemWindow, no
   const series: SystemBucket[] = [];
   for (let t = from; t <= now; t += bucket) series.push({ t, n: 0 });
   const sums = series.map(() => new Map<string, { s: number; n: number }>());
+  /** bucket index -> max GPU peak of its samples (a peak is a max over the bucket, not an average) */
+  const gpuPeaks = new Map<number, number>();
 
   const wh: Record<SystemWindow, number> = { "1h": 0, "24h": 0, "7d": 0 };
   const coveredMin: Record<SystemWindow, number> = { "1h": 0, "24h": 0, "7d": 0 };
@@ -202,6 +215,7 @@ export function buildSystemSeries(samples: SystemSample[], win: SystemWindow, no
         a.n++;
         acc.set("memPct", a);
       }
+      if (typeof s.gpuPeak === "number") gpuPeaks.set(b, Math.max(gpuPeaks.get(b) ?? 0, s.gpuPeak));
     }
     if (typeof s.totalW === "number") {
       for (const w of Object.keys(spans) as SystemWindow[]) {
@@ -235,6 +249,9 @@ export function buildSystemSeries(samples: SystemSample[], win: SystemWindow, no
       const avg = a.n ? a.s / a.n : undefined;
       if (avg !== undefined) (b as unknown as Record<string, number>)[k] = avg;
     }
+    // the bucket's peak GPU rides beside its average (the instant read jumps 0↔97 within seconds)
+    const gp = gpuPeaks.get(i);
+    if (gp !== undefined) b.gpuPeak = gp;
   });
   for (const w of Object.keys(wh) as SystemWindow[]) wh[w] = Math.round(wh[w] * 10) / 10;
 
@@ -259,7 +276,12 @@ export interface SystemSnapshot {
   battery: string;
   /** Latest battery guard telemetry line; absent with no telemetry file (desktop Mac, guard never ran). */
   power?: PowerReading;
+  /** Why a metric can never be shown here (tooltip); e.g. the SoC temperature needs sudo. */
+  hints?: Record<string, string>;
 }
+
+/** Shown while no source gives a SoC temperature without sudo (powermetrics is root-only; AppleSmartBattery has no temp key). */
+export const SOC_TEMP_HINT = "SoC temperature needs sudo (powermetrics); no non-sudo source on this Mac";
 
 export interface PowerReading {
   adapterW: number | null;
@@ -302,6 +324,8 @@ export interface SystemDeps {
   keepMs?: number;
   /** injectable command runner (tests) */
   run?: (cmd: string, args: string[]) => Promise<string>;
+  /** the daemon's local-idle state dir (GPU sampler summary); default the workers logDir */
+  workersLogDir?: () => string;
   now?: () => number;
 }
 
@@ -325,6 +349,7 @@ export class SystemMonitor {
   private readonly ringMs: number;
   private readonly keepMs: number;
   private readonly run: (cmd: string, args: string[]) => Promise<string>;
+  private readonly idleDir: () => string;
   private readonly now: () => number;
   private cached: SystemSample | null = null;
   private cachedAt = 0;
@@ -341,7 +366,35 @@ export class SystemMonitor {
     this.ringMs = deps.ringMs ?? MIN;
     this.keepMs = deps.keepMs ?? 7 * DAY;
     this.run = deps.run ?? sh;
+    this.idleDir = deps.workersLogDir ?? defaultWorkersLogDir;
     this.now = deps.now ?? Date.now;
+  }
+
+  /** The daemon's local-idle GPU summary (the ~5 s sampler's 1-min avg/peak), null with no fresh sample. */
+  private gpuSample(now: number): { avg: number; peak?: number; at: number } | undefined {
+    let f: LocalIdleFile | null = null;
+    try {
+      f = readLocalIdle(this.idleDir());
+    } catch {
+      /* the daemon has not written yet */
+    }
+    if (!f) return undefined;
+    const at = Date.parse(f.at);
+    if (!Number.isFinite(at) || now - at > 120_000) return undefined; // stale: the sampler stopped
+    const avg = f.gpuAvgPct ?? (f.gpuPct === null ? undefined : Math.round(f.gpuPct));
+    if (typeof avg !== "number") return undefined;
+    return { avg, ...(f.gpuPeakPct != null ? { peak: f.gpuPeakPct } : {}), at };
+  }
+
+  /** System watts from the battery guard's latest telemetry line (its own tick reads ioreg; none here). */
+  private powerWatts(now: number): { w?: number; at: number } | undefined {
+    const lines = readTelemetryLines(this.telemetryPath);
+    const l = lines?.at(-1);
+    if (!l) return undefined;
+    const at = typeof l.at === "number" ? l.at : Date.parse(String(l.at));
+    if (!Number.isFinite(at) || now - at > 30 * 60_000) return undefined; // stale: the guard stopped
+    const w = l.systemLoadW ?? undefined;
+    return { ...(w !== undefined && !implausibleW(w) ? { w } : {}), at };
   }
 
   /**
@@ -380,11 +433,26 @@ export class SystemMonitor {
     const vm = vmOut === undefined ? undefined : parseVmStat(vmOut, memTotal);
     const level = lvlOut === undefined ? undefined : num(Number(lvlOut.trim()));
     const swap = swOut === undefined ? undefined : parseSwapUsage(swOut);
-    const notes: string[] = ["power/temp/gpu unavailable: no usage sampling subprocess runs (mactop is never spawned)"];
+    const notes: string[] = ["ANE and the SoC power rails are not sampled (mactop is never spawned; powermetrics needs sudo)"];
     const cpuFresh = this.topCpu !== undefined;
+    // the daemon's own readings, merged in without any subprocess here: GPU from the local-idle
+    // fast sampler's persisted summary, watts from the battery guard's telemetry line
+    const gpu = this.gpuSample(now);
+    if (gpu) {
+      notes.push(`GPU avg ${Math.round(gpu.avg)}% of ~5 s samples (${Math.round((now - gpu.at) / 1000)}s ago)`);
+      if (gpu.peak !== undefined) notes.push(`GPU peak ${Math.round(gpu.peak)}%`);
+    } else {
+      notes.push("GPU unavailable: the daemon's sampler has no fresh sample (local-idle off?)");
+    }
+    const pw = this.powerWatts(now);
+    if (pw?.w !== undefined) notes.push(`system watts from the battery guard's ioreg telemetry (${Math.round((now - pw.at) / 1000)}s ago)`);
+    else if (!pw) notes.push("power unavailable: no battery guard telemetry line");
     const sample: SystemSample = {
       t: now,
       ...(cpuFresh ? { cpu: this.topCpu } : {}),
+      ...(gpu ? { gpu: gpu.avg } : {}),
+      ...(gpu?.peak !== undefined ? { gpuPeak: gpu.peak } : {}),
+      ...(pw?.w !== undefined ? { systemW: pw.w, totalW: pw.w } : {}),
       ...(memTotal ? { memTotal } : {}),
       ...(vm?.used ? { memUsed: vm.used } : {}),
       ...(vm ? { wired: vm.wired, compressed: vm.compressed } : {}),
@@ -462,6 +530,7 @@ export class SystemMonitor {
       series: buildSystemSeries(this.samples(), win, now, readTelemetryLines(tfile) ?? []),
       battery: batteryCockpitLine(now),
       ...(power ? { power } : {}),
+      hints: { "soc-temp": SOC_TEMP_HINT },
     };
   }
 }
