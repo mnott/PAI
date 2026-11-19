@@ -391,8 +391,6 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     firstWrittenLabel.set(status.id, status.label);
   }
   // `external`: a one-shot writer of another process (goal, the note hook) whose copy is the fresh load, so nothing on disk may override it.
-  // `external`: a one-shot writer of another process (goal, the note hook) whose copy is the fresh load, so nothing on disk may override it.
-  // ONE read per call: the old code parsed the disk copy up to twice (baseline + promptFile). A supervision tick writes every live worker once per sweep; with thousands of historical files that double parse was seconds held off the daemon loop (2026-11-18 daemon hang).
   const onDisk = baseline === undefined || external ? undefined : loadStatus(logDir, status.id);
   // the task copy gate.ts kept beside the placeholder status: a fresh status for the same id (pool host, executeRun —
   // a process with no baseline yet) never drops it
@@ -483,38 +481,16 @@ export function setWorkerNote(logDir: string, id: string, note: string): WorkerS
   return status;
 }
 
-/**
- * Load every status file in the logDir, oldest id first, skipping damage. Reads go through the shared cache:
- * an unchanged file is not parsed again (one stat instead), so a caller that walks all statuses more than once
- * per process pays the parse only for files that actually changed. Writers invalidate their entry on save, so
- * a warm cache never hides a write (2026-11-18 daemon hang: resumeWorker re-parsed every status file per
- * waiter; with thousands of historical files that was seconds per call). The returned objects are copies —
- * callers may mutate them, and the cached copy stays read-only.
- */
-export function loadStatuses(logDir: string, now = Date.now()): WorkerStatus[] {
+/** Load every status file in the logDir, oldest id first, skipping damage. */
+export function loadStatuses(logDir: string): WorkerStatus[] {
   if (!existsSync(logDir)) return [];
   const out: WorkerStatus[] = [];
   for (const name of readdirSync(logDir).sort()) {
     if (!name.endsWith(".status")) continue;
-    const path = join(logDir, name);
     try {
-      let hit = statusCache.get(path);
-      const id = statusFileIdentity(path);
-      if (!hit || !statusEntryFresh(hit, id)) {
-        let status: WorkerStatus | null = null;
-        try {
-          status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
-        } catch {
-          // a half-written or damaged status file is not worth a crash
-        }
-        hit = { ...id, status, checked: now };
-        statusCache.set(path, hit);
-      } else {
-        hit.checked = now;
-      }
-      if (hit.status) out.push(structuredClone(hit.status));
+      out.push(JSON.parse(readFileSync(join(logDir, name), "utf8")) as WorkerStatus);
     } catch {
-      statusCache.delete(path);
+      // a half-written or damaged status file is not worth a crash
     }
   }
   return out;
