@@ -81,6 +81,7 @@ function buildContext(cwd: string): WorkerGuardContext {
       }
     },
     isIgnored: (p: string, dir: string) => git(dir, ["check-ignore", "-q", "--", p]) !== null,
+    // the write fence's scratch roots come from env (TMPDIR + the pai-scratch convention) via the guard defaults
     // the live-database write allowlist (workers guard.dbWriteAllow); an unreadable config falls back to the defaults
     dbWriteAllow: (() => {
       try {

@@ -16,8 +16,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { basename, dirname, extname, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { livePaiHomeDirs } from "../../../config/pai-home.js";
 import { type GateDecision } from "./render-decision.js";
 import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
@@ -41,7 +41,7 @@ import { currentWorkerId } from "../../../workers/worker-id.js";
 export interface WorkerGuardInput {
   tool_name?: string;
   cwd?: string;
-  tool_input?: { command?: string; file_path?: string; path?: string; content?: string; timeout?: number };
+  tool_input?: { command?: string; file_path?: string; path?: string; notebook_path?: string; content?: string; timeout?: number };
 }
 
 export interface WorkerGuardContext {
@@ -60,6 +60,8 @@ export interface WorkerGuardContext {
   testScript: () => string | null;
   /** Whether git ignores this path (git check-ignore) as seen from `dir` (where the command runs); absent = nothing is ignored. */
   isIgnored?: (path: string, dir: string) => boolean;
+  /** The worker's scratch roots (env TMPDIR, <tmp>/pai-scratch/*); absent = the defaults from env.TMPDIR. */
+  scratchDirs?: string[];
   /** The operator's go for benchmarks and model servers (env PAI_BENCH_GO=1). */
   benchGo?: boolean;
   /** Whether a command runs a test runner or a door in test mode (worker-test-rules.ts); the caller reads the project's doors. */
@@ -329,6 +331,53 @@ function configMutationReason(words: string[], env: Record<string, string | unde
   return LIVE_CONFIG_REASON;
 }
 
+/** realpath of `p`, or of its deepest existing ancestor plus the missing rest (a new file's path resolves through its parent). */
+function realish(p: string): string {
+  let head = p;
+  let rest = "";
+  for (;;) {
+    try {
+      return join(realpathSync(head), rest);
+    } catch {
+      const up = dirname(head);
+      if (up === head) return p;
+      rest = join(basename(head), rest);
+      head = up;
+    }
+  }
+}
+
+/** A worker's scratch roots: TMPDIR and the pai-scratch convention (same shapes as isScratchPath in worker-bash-rules.ts). */
+function defaultScratchDirs(env: Record<string, string | undefined>): string[] {
+  const out: string[] = [];
+  const tmp = env.TMPDIR?.replace(/\/+$/, "");
+  if (tmp) out.push(tmp);
+  out.push("/tmp/pai-scratch");
+  if (tmp) out.push(`${tmp.replace(/^\/private/, "")}/pai-scratch`);
+  return out;
+}
+
+/** realpath of every allowed write root: the worktree plus each scratch dir, missing ones resolved through their parent. */
+function allowedWriteRoots(c: WorkerGuardContext, env: Record<string, string | undefined>): string[] {
+  const roots = [c.worktreeRoot, ...(c.scratchDirs ?? defaultScratchDirs(env))].filter((r): r is string => !!r);
+  return [...new Set(roots.map((r) => realish(r)))];
+}
+
+/** True when a resolved path lies inside one of the allowed roots. */
+const isInsideAny = (p: string, roots: string[]): boolean =>
+  roots.some((root) => p === root || p.startsWith(root.endsWith("/") ? root : `${root}/`));
+
+/** Deny message when an Edit/Write/MultiEdit/NotebookEdit target resolves outside the worker's worktree and scratch dirs. */
+function outsideWorktreeReason(p: string, c: WorkerGuardContext, env: Record<string, string | undefined>): string | null {
+  if (!c.worktreeRoot) return null; // no git tree: nothing to fence against
+  const real = realish(p);
+  if (isInsideAny(real, allowedWriteRoots(c, env))) return null;
+  return `worker: file writes outside your worktree are blocked (${p}); work in ${c.worktreeRoot}, or report what another repo needs so L0 can hand it over`;
+}
+
+/** A Bash redirect target every command legitimately writes to regardless of the fence: /dev/null (and its symlink), /dev/stdout, /dev/fd/N. */
+const DEV_WRITE = /^\/dev\/(null|zero|stdout|stderr|fd\/\d+)$/;
+
 const isTodo = (p: string): boolean => p === "Notes/TODO.md" || p.endsWith("/Notes/TODO.md");
 
 function protectedPathReason(p: string, home: string): string | null {
@@ -344,7 +393,11 @@ function writeTargets(words: string[], redirects: string[]): string[] {
   const out = [...redirects];
   if (cmd === "tee" || cmd === "mv") out.push(...pos);
   else if (cmd === "cp" && pos.length) out.push(pos[pos.length - 1]);
-  else if (cmd === "sed" && args.some((a) => /^-[a-zA-Z]*i|^--in-place/.test(a))) out.push(...pos);
+  // sed -i's write targets are the file operands only: BSD sed reads the first operand as the backup suffix when -i has no attached value (`sed -i '~' 's/a/b/' f` writes f, '~' is a suffix)
+  else if (cmd === "sed" && args.some((a) => /^-[a-zA-Z]*i|^--in-place/.test(a))) {
+    const bare = args.some((a) => a === "-i") || args.some((a) => /^--in-place$/.test(a));
+    out.push(...(bare ? pos.slice(1) : pos));
+  }
   return out;
 }
 
@@ -577,6 +630,9 @@ function rootWalkReason(cmd: string, args: string[], cwd: string, home: string):
   return paths.some(isRoot) ? SEARCH_ROOT_REASON : null;
 }
 
+/** The env for the Bash write fence (scratch roots from TMPDIR); set by decideWorkerGuard before command decisions. */
+let FENCE_ENV: Record<string, string | undefined> = {};
+
 /** Decide one segment; `st.cwd` is the tracked working directory. The segments come from parseCommand (heredoc bodies blanked), and `st.raw` — what a git commit message check reads — has them blanked too: heredoc text is data, not commands. */
 function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
   const words = stripPrefix(seg.words);
@@ -587,6 +643,10 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: s
     const p = abs(t, st.cwd, ctx.home);
     const why = p && protectedPathReason(p, ctx.home);
     if (why) return deny(`write to ${t} blocked: ${why}`);
+    // the same worktree fence as Edit/Write: a redirect or tee/mv/cp/sed -i target outside the worktree and scratch dirs.
+    // /dev writes are exempt, and `sed -i <suffix>`'s suffix word (a backup suffix, not a path) is skipped by writeTargets' caller below.
+    const out = p && !DEV_WRITE.test(p) && outsideWorktreeReason(p, ctx, FENCE_ENV);
+    if (out) return deny(out);
   }
   if (!cmd) return ALLOW;
 
@@ -918,6 +978,7 @@ export function decideWorkerGuard(
   ctx: () => WorkerGuardContext
 ): GateDecision {
   if (env.PAI_WORKER !== "1") return ALLOW;
+  FENCE_ENV = env; // the Bash write fence reads TMPDIR from here
   const tool = input.tool_name;
   const ti = input.tool_input ?? {};
 
@@ -1004,10 +1065,14 @@ export function decideWorkerGuard(
     return d;
   }
   if (tool === "Edit" || tool === "Write" || tool === "MultiEdit" || tool === "NotebookEdit") {
-    const f = ti.file_path ?? ti.path;
+    const f = ti.file_path ?? ti.path ?? ti.notebook_path;
     if (typeof f !== "string") return ALLOW;
     const c = ctx();
     const p = abs(f, c.cwd, c.home);
+    // the worktree fence first: a worker may only write inside its own worktree or scratch dirs
+    // (2026-11-19: a worker edited another repo's files from its PAI worktree)
+    const out = p && outsideWorktreeReason(p, c, env);
+    if (out) return deny(out);
     const ba = p && browserAutomationEditReason(p, addedText(ti as never));
     if (ba) return deny(ba);
     const why = p && protectedPathReason(p, c.home);
