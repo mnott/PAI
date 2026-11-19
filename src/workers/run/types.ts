@@ -72,6 +72,8 @@ export interface RunOptions {
   deadline?: string;
   /** --budget 20m: this run's opening time allowance (time-budget.ts); default workers.timeBudget.start. */
   budgetMin?: number;
+  /** Internal: `pai worker extend` raised this run's allowance above the config start (carried across relaunches). */
+  _budgetOverride?: boolean;
   /** --no-pool: run fresh, never ask the pool (recorded as WORKER-POOL-SKIP reason=opted-out). */
   noPool?: boolean;
   /** --browser / --no-browser: undefined follows workers.noBrowserByDefault. */

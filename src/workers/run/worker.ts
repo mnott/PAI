@@ -279,9 +279,14 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const limit = resolveLimit(opts, parsed.headless ? config.defaultMaxMinutes : 0);
   // the progress-based budget: a headless run opens with its allowance and
   // checkpoints double it while it progresses (time-budget.ts)
+  // an extend's --budget is the whole allowance: it never doubles from there
   const budgetMin =
     parsed.headless && !opts.deadline
-      ? initialBudgetMinutes(opts.budgetMin !== undefined ? { ...config.timeBudget, start: opts.budgetMin } : config.timeBudget, limit?.minutes ?? null)
+      ? opts.budgetMin !== undefined
+        ? opts._budgetOverride
+          ? Math.max(1, Math.min(opts.budgetMin, config.timeBudget.cap))
+          : initialBudgetMinutes({ ...config.timeBudget, start: opts.budgetMin }, limit?.minutes ?? null)
+        : initialBudgetMinutes(config.timeBudget, limit?.minutes ?? null)
       : null;
   const label =
     opts.label ??

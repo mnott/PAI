@@ -379,6 +379,23 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     saveStatus(logDir, status);
     appendLedger(ledger, "WORKER-BUDGET-START", { id: wid, minutes: budgetMin });
   }
+  // `pai worker extend <id>` on a live run writes the bigger allowance to the
+  // status file; this poll (the blockedMs tracker's cadence) picks it up and
+  // re-arms the checkpoint timer at once — extended time is not checkpointed.
+  let lastBudgetRead = 0;
+  const raisedBudget = (): void => {
+    if (!headless || !budgetMin) return;
+    const now = Date.now();
+    if (now - lastBudgetRead < 15_000) return;
+    lastBudgetRead = now;
+    const cur = loadStatus(logDir, wid);
+    if (cur?.budgetMin && cur.budgetMin !== budgetMin) {
+      status.budgetMin = budgetMin = cur.budgetMin;
+      saveStatus(logDir, status);
+      process.stderr.write(`pai worker: ${wid} extended to ${budgetMin} min by hand\n`);
+      armBudget();
+    }
+  };
   let toolsOk = 0;
   const snapBudget = (): BudgetSnapshot => ({
     progressAtMs: status.progressAt ? Date.parse(status.progressAt.replace(" ", "T")) : 0,
@@ -388,6 +405,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   });
   let budgetPrev = snapBudget();
   let stopBudget: (() => void) | null = null;
+  /** The allowance this timer was armed for; a hand extend re-arms instead of checkpointing. */
   const armBudget = (): void => {
     stopBudget?.();
     if (!headless || !budgetMin) return;
@@ -420,6 +438,15 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     );
   };
   armBudget();
+  if (headless && budgetMin) {
+    const budgetPoll = setInterval(raisedBudget, 15_000);
+    budgetPoll.unref();
+    const stopBudgetRun = stopDeadline;
+    stopDeadline = () => {
+      clearInterval(budgetPoll);
+      stopBudgetRun?.();
+    };
+  }
 
   const toolFold = createToolFold({
     logDir,

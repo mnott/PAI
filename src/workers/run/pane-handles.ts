@@ -135,7 +135,7 @@ export function paneWaiver(config: { panes?: { required: boolean } }, env: NodeJ
  * `pai worker run` from a session — its own visible pane, pane record registered — never headless.
  */
 export function isPaiContinuation(opts: { _fallThroughOf?: string; _escalatedFrom?: string[]; _priorIds?: string[]; _reroutes?: number; _emptyRetried?: boolean; label?: string }): boolean {
-  return !!(opts._fallThroughOf || (opts._escalatedFrom?.length ?? 0) > 0 || (opts._priorIds?.length ?? 0) > 0 || (opts._reroutes ?? 0) > 0 || opts._emptyRetried || / \((rerouted|fall-through|handed off)\)$/.test(opts.label ?? ""));
+  return !!(opts._fallThroughOf || (opts._escalatedFrom?.length ?? 0) > 0 || (opts._priorIds?.length ?? 0) > 0 || (opts._reroutes ?? 0) > 0 || opts._emptyRetried || / \((rerouted|fall-through|handed off|extended)\)$/.test(opts.label ?? ""));
 }
 
 /**

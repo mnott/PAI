@@ -16,7 +16,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { applyUrgency, listUrgency, readUrgency } from "../../workers/urgency.js";
-import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
+import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersCached, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { specPathsWarning } from "../../workers/spec-paths.js";
 import { longInlinePromptHint,parseRunnerArgs } from "../../workers/args.js";
@@ -33,7 +33,9 @@ import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/us
 import { workerFreezeCommand, workerThawCommand } from "./freeze.js";
 import { setWorkerPaused } from "../../workers/engine-control.js";
 import { resumeWorker } from "../../workers/preempt.js";
-import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
+import { ageOf, elapsedOf, loadStatus, nowStamp, saveStatus, setWorkerNote } from "../../workers/status.js";
+import { parseExtendMinutes } from "../../workers/time-budget.js";
+import { appendLedger } from "../../workers/ledger.js";
 import { normalizeTopic } from "../../workers/topic.js";
 import { providerCap } from "../../workers/capacity.js";
 import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
@@ -1144,6 +1146,69 @@ const killCommand: CommandDef = {
 };
 
 // ---------------------------------------------------------------------------
+// Time budget
+// ---------------------------------------------------------------------------
+
+/**
+ * `pai worker extend <id> 30m` (time-budget.ts): a running run gets the bigger
+ * allowance on its status (ps shows it at once); a run a checkpoint stopped for
+ * review restarts detached from its saved task with the new allowance as a flat
+ * ceiling — extended time is given, not doubled again.
+ */
+const extendCommand: CommandDef = {
+  name: "extend",
+  summary: "Give a worker more time (its progress-based budget)",
+  description:
+    "DUR is the new total allowance (30m, 1h): a running worker's checkpoint timer reads it from its status; a worker a budget checkpoint stopped as \"needs review\" restarts detached on its saved task with DUR as its flat allowance (never doubled further), continuing on its branch. The ceiling is workers.timeBudget.cap.",
+  args: [
+    { name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" },
+    { name: "DUR", required: true, summary: "New allowance: 30m, 90, 1h" },
+  ],
+  examples: ["pai worker extend w-20260101-abc 30m", "pai worker ps   (find the id first)"],
+  seeAlso: ["pai worker ps", "pai worker resume", "pai worker run --budget"],
+  run: (ctx) =>
+    guard("pai worker extend <id> 30m", async () => {
+      const dir = logDir();
+      const id = ctx.args.ID as string;
+      const minutes = parseExtendMinutes(String(ctx.args.DUR ?? ""));
+      if (!minutes) throw new Error(`extend: expected a duration like 30m, 90 or 1h, got "${ctx.args.DUR}"`);
+      const st = loadStatus(dir, id);
+      if (!st) throw new Error(`no worker named "${id}"`);
+      const ledger = ledgerPath(dir);
+      if (st.state === "running" || st.state === "queued") {
+        st.budgetMin = minutes;
+        saveStatus(dir, st);
+        appendLedger(ledger, "WORKER-BUDGET-EXTEND", { id, minutes, why: `extended to ${minutes} min by hand`, byHand: 1 });
+        out(`${id}: budget is now ${minutes}m`);
+        return;
+      }
+      if (st.state !== "review") throw new Error(`worker ${id} is ${st.state}; extend acts on a running worker or one stopped for review`);
+      const cap = readWorkersCached().timeBudget.cap;
+      const m = Math.max(1, Math.min(minutes, cap));
+      const file = [st.promptFile, st.spec, join(dir, `${id}.prompt`)].find((f): f is string => !!f && f !== "-" && existsSync(f));
+      if (!file) throw new Error(`worker ${id} kept no copy of its task — nothing to restart; resume it with a note instead: pai worker resume ${id} '<note>'`);
+      const ranMs = Date.now() - Date.parse(st.started.replace(" ", "T"));
+      // with a budget history the allowance counts from the job's start (the
+      // time it already used is spent); without one, DUR is the new allowance
+      const newId = await runWorker({
+        providerFlag: st.provider,
+        modelFlag: st.model,
+        className: st.className,
+        ...(st.topic ? { topic: st.topic } : {}),
+        ...(st.cwd ? { cwd: st.cwd } : {}),
+        label: `${st.label} (extended)`,
+        claudeArgs: ["-p", readFileSync(file, "utf8")],
+        budgetMin: st.budgetMin ? Math.max(1, Math.ceil((ranMs + m * 60_000) / 60_000)) : m,
+        _budgetOverride: true,
+        // the chain this review-stop belongs to (fall-through/escalation ids included)
+        _priorIds: [...(st.fallThroughOf ? [st.fallThroughOf] : []), id],
+      });
+      appendLedger(ledger, "WORKER-BUDGET-EXTEND", { id, minutes: m, why: `extended to ${m} min by hand`, restart: newId, byHand: 1 });
+      out(`${id}: extended to ${m} min — restarted as ${newId}, continuing on its branch`);
+    }),
+};
+
+// ---------------------------------------------------------------------------
 // Waiting
 // ---------------------------------------------------------------------------
 
@@ -1449,6 +1514,7 @@ export const workerCommand: CommandDef = {
     discardCommand,
     gcCommand,
     keepCommand,
+    extendCommand,
     killCommand,
     queueCommand,
     waitOnCommand,
