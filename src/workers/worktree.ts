@@ -2228,7 +2228,10 @@ async function growthAlarm(logDir: string, repo: string, output: string): Promis
     if (!text) return;
     process.stderr.write(text + "\n");
     const { aibrokerMessenger, originFromEnv } = await import("./run-events.js");
-    await aibrokerMessenger(logDir).toSession(originFromEnv(), text);
+    const { routeNotice } = await import("./notice-triage.js");
+    // the reminder is routine: it queues in the merging session's digest and
+    // leaves as one batched message, at most once per day per repo (alarm cap)
+    await routeNotice(logDir, aibrokerMessenger(logDir), originFromEnv(), text);
   } catch {
     /* the alarm is advisory */
   }

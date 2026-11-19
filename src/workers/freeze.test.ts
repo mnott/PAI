@@ -262,7 +262,8 @@ describe("supervision stands down while frozen", () => {
     // the messenger chain is async: count when the line lands in toSession
     let n = 0;
     const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), n++, true) } as unknown as Messenger;
-    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, "", () => now);
+    // deliver overrides the digest routing: this test counts direct sends
+    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, "", () => now, async (_p, t) => msg.toSession({} as RunOrigin, t));
     // quiet 30 min BEFORE the freeze even began: the freeze covers none of it
     now -= 30 * 60_000;
     w.activity();
@@ -350,7 +351,7 @@ describe("supervision stands down while frozen", () => {
     let n = 0;
     const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), n++, true) } as unknown as Messenger;
     writeFileSync(join(dir, "L1.status"), JSON.stringify({ id: "L1", pid: 100, state: "running", paused: true, pausedAt: now - 20 * 60_000 }), "utf8");
-    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, dir, () => now);
+    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, dir, () => now, async (_p, t) => msg.toSession({} as RunOrigin, t));
     (w as unknown as { lastActivity: number }).lastActivity = now - 30 * 60_000; // quiet 30 min on the injected clock
     w.tick();
     await w.flush();

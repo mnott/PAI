@@ -424,14 +424,16 @@ describe("a rerouted run's end reaches its owning session", () => {
   const ended = (over: Partial<WorkerStatus>): WorkerStatus =>
     ({ id: "r2", pid: 999999, label: "l", cwd: "/", term: "", provider: "anthropic", model: "m", state: "done", started: "2026-11-17 08:00:00", updated: "2026-11-17 09:00:00", turns: 3, tools: 1, last: "", rc: 0, secs: 5, outputFormat: "json", spawnerSession: "owner-sess", ...over }) as WorkerStatus;
 
-  it("pushes the finished notice once for a json-format restart, not for a plain json run", async () => {
+  it("pushes the restart's notice once for a json-format restart, not for a plain json run", async () => {
     const { runSupervisionTick } = await import("./supervision.js");
     const pushed: string[] = [];
+    // failed (rc=1): urgent, so it pushes — the plain run's rc=0 finish is now
+    // routine and goes to the digest instead of a push (notice-triage.ts)
     const push = async (_l: string, _t: unknown, ev: { worker: string }): Promise<boolean> => {
       pushed.push(ev.worker);
       return true;
     };
-    const statuses = [ended({ id: "r2", fallThroughOf: "r1" }), ended({ id: "plain" })];
+    const statuses = [ended({ id: "r2", fallThroughOf: "r1", state: "failed", rc: 1 }), ended({ id: "plain" })];
     const opts = { statuses, push: push as never, reroute: false, now: new Date("2026-11-17T09:05:00"), isAlive: () => false };
     await runSupervisionTick(dir, { ...opts, statuses: [] }); // the first tick only baselines
     await runSupervisionTick(dir, opts);

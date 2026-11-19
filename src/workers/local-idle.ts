@@ -17,6 +17,7 @@ import { defaultWorkersConfig, isLocalProvider, type WorkersConfig } from "./con
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { eventLine, type Messenger } from "./run-events.js";
+import { routeNotice } from "./notice-triage.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { readLocalStatus, type LocalStatus } from "./local-status.js";
 import { holdsSlot, isChatPane, isLive, pausedFree, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
@@ -461,7 +462,9 @@ export async function localIdleTick(logDir: string, workers: WorkersConfig, msg:
       const who = t.iterm ?? t.name ?? t.claudeSession ?? "?";
       let reason = "";
       try {
-        const ok = await msg.toSession({ iterm: t.iterm, name: t.name, claudeSession: t.claudeSession }, nudgeText(n, t.ids, cfg.minutes));
+        // routed through the triage (notice-triage.ts): a budget/gatekeeper ask
+        // is urgent and goes out at once; anything unrecognised stays urgent too
+        const ok = await routeNotice(logDir, msg, { iterm: t.iterm, name: t.name, claudeSession: t.claudeSession }, nudgeText(n, t.ids, cfg.minutes));
         if (!ok) reason = msg.lastError || "AIBroker did not accept the message";
       } catch (e) {
         reason = String(e);
