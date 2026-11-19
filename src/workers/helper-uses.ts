@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { helperComplete, helperCompleteSync, helperConfig, helperRejected, type HelperDeps } from "./helper.js";
-import type { ErrorClass, ToolErrorGroup } from "./tool-errors.js";
+import { harnessEvidence, type ErrorClass, type ToolErrorGroup } from "./tool-errors.js";
 
 const model0 = (deps: HelperDeps): string => (deps.config ?? helperConfig()).models[0] ?? "helper";
 
@@ -35,8 +35,9 @@ export async function classifyAlert(g: Pick<ToolErrorGroup, "signature" | "sampl
       maxTokens: 60,
       keep: "head",
       task:
-        "A tool call of an AI coding agent failed. Decide who is at fault: harness (the tooling, config, server, permissions or environment is broken), " +
-        "model (the agent asked for something wrong or outside its grant), or benign (a normal answer such as no match or a failing test the agent is meant to see). " +
+        "A tool call of an AI coding agent failed. Decide who is at fault: harness (the tooling, config, server or environment is broken), " +
+        "model (the agent itself asked for something wrong — a bad path, a wrong edit, a broken one-off command, a compile error in its own files), " +
+        "or benign (a normal answer such as no match or a failing test the agent is meant to see). " +
         'Reply on ONE line as "<harness|model|benign>: <reason in at most 12 words>".',
       input: `signature: ${g.signature}\nerror: ${g.sample}${g.sampleInput ? `\ninput: ${g.sampleInput}` : ""}`,
     },
@@ -44,7 +45,15 @@ export async function classifyAlert(g: Pick<ToolErrorGroup, "signature" | "sampl
   );
   if (text === null) return null;
   const v = parseAlertVerdict(text);
-  if (!v) helperRejected("alert", model0(deps), deps);
+  if (!v) {
+    helperRejected("alert", model0(deps), deps);
+    return null;
+  }
+  // The helper may only refine an [unknown]; it may not invent a harness fault.
+  // [harness] needs a matching marker — a message or stack frame from the pai
+  // CLI, the guard, the router or the daemon (harnessEvidence) — else fall back
+  // to null and the record stays unknown ("[unknown] → inspect").
+  if (v.cls === "harness" && !harnessEvidence(`${g.signature}\n${g.sample}${g.sampleInput ? `\ninput: ${g.sampleInput}` : ""}`)) return null;
   return v;
 }
 

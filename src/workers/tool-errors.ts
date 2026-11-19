@@ -97,6 +97,37 @@ function wrongCaseTool(raw: string): string | null {
   return CASED_TOOLS.find((t) => t.toLowerCase() === name.toLowerCase()) ? name : null;
 }
 
+/**
+ * The worker's own mistake, named deterministically before the model runs: a
+ * compile/type error in a file it changed, a syntax error in its own one-off
+ * command (perl/sed/awk/python/node -e, a heredoc script), "No such file" for
+ * a path it invented, or an Edit whose old_string does not match. The 2026-11-19
+ * evidence: two workers' own tsc and perl errors were labelled [harness] and
+ * reached the L0 as "fix the cause in PAI/AIBroker" — a worker mistake is never
+ * the harness's fault, so these rules stand before every harness rule.
+ */
+const WORKER_MISTAKE: Array<{ test: (r: ToolErrorRecord) => boolean; hint: string; loopAt: number }> = [
+  // A compile/type error in a file the worker changed: its own edit, not the tooling's.
+  { test: (r) => /error TS\d+/.test(r.raw), hint: "compile/type error in the worker's own files", loopAt: 5 },
+  // A syntax/regex error in the worker's own one-off command: perl "Unmatched ) in regex", python/node SyntaxError, a heredoc script that fails to parse.
+  { test: (r) => /Unmatched [)(\[\]{}]|unterminated (?:s||tr|y|[qQ])|[Bb]ad (?:replacement|\?\? operator|quantifier)|syntax error in regular expression|invalid regex|Invalid \w+ expression|(?:SyntaxError|ParseError|parse error|Unexpected .* while parsing|not compiled|failed to parse|command not found: -c)/.test(r.raw), hint: "syntax error in the worker's own one-off command", loopAt: 5 },
+  // "No such file" for a path the worker invented (its own interpreter/run, not a tool's structured answer).
+  { test: (r) => /No such file or directory|can't open file|No such file/i.test(r.raw) && r.tool !== "Read", hint: "worker used a path that does not exist", loopAt: 5 },
+  // An Edit whose old_string is not in the file.
+  { test: (r) => /String to replace not found/i.test(r.raw), hint: "Edit with a wrong old_string", loopAt: 5 },
+];
+
+/**
+ * Markers that a failure comes from PAI's own code — the pai CLI, the guard,
+ * the router or the daemon: their message prefixes and stack frames. The LLM
+ * refinement may only label an error [harness] when one of these matches (2026-11-19:
+ * two workers' own tsc and perl errors were labelled harness with no such marker).
+ */
+const HARNESS_EVIDENCE = new RegExp([GUARD_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "pai:\\s", "pai code explore|pai worker |pai issue |pai launch", "loop guard:", "LOOP-GUARD-EVASION", "(?:at .*?/src/(?:cli|hooks|router|daemon|workers|guard)/)", "/(bin|lib)/(?:pai|pai-daemon|pai-router)\\b"].join("|"), "i");
+export function harnessEvidence(text: string): boolean {
+  return HARNESS_EVIDENCE.test(text);
+}
+
 /** Tool name X of "No such tool available: X", else null. */
 function missingToolName(raw: string): string | null {
   return raw.match(/No such tool available:?\s*(\S+)/i)?.[1]?.replace(/[.,;:"'`]+$/, "") ?? null;
@@ -262,6 +293,8 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | 
   { test: (r) => /^loop guard:/i.test(r.raw), c: { cls: "model", hint: "loop: same command repeated without a change", loopAt: Infinity } },
   { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
   { test: (r) => r.raw.includes(GUARD_MARKER), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
+  // Worker mistakes are [model] deterministically, before any harness rule (see WORKER_MISTAKE).
+  ...WORKER_MISTAKE.map((m) => ({ test: m.test, c: { cls: "model" as ErrorClass, hint: m.hint, loopAt: m.loopAt } })),
   // The harness's own argument schema rejected the call. A local provider's
   // tool-call parser is ours to fix; a cloud provider's is the model's to blame.
   {
@@ -279,7 +312,7 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | 
     },
     c: { cls: "model", hint: "Read of a missing file inside the worker cwd", loopAt: Infinity },
   },
-  { test: (r) => /exactly the same|String to replace not found/i.test(r.raw), c: { cls: "model", hint: "Edit with a wrong old_string", loopAt: 5 } },
+  { test: (r) => /exactly the same/i.test(r.raw), c: { cls: "model", hint: "Edit with a wrong old_string", loopAt: 5 } },
   { test: (r) => /no AI attribution/i.test(r.raw), c: { cls: "model", hint: "commit guard: AI attribution denied", loopAt: 3 } },
   { test: (r) => /git checkout .*blocked|checkout .* blocked/i.test(r.raw), c: { cls: "model", hint: "guard: git checkout blocked", loopAt: 3 } },
   { test: (r) => /Bash timeout .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: Bash timeout blocked", loopAt: 3 } },

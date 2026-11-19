@@ -138,6 +138,14 @@ describe("uses fall back to rules", () => {
     expect(await classifyAlert({ signature: "s", sample: "e" }, on)).toEqual({ cls: "model", reason: "asked for a missing tool" });
   });
 
+  it("a harness verdict needs a PAI marker in the error, else the record stays unknown", async () => {
+    const noMarker = deps(async () => msg("harness: configuration file parsing error in worker script"));
+    expect(await classifyAlert({ signature: "Bash|Exit code <N> Unmatched ) in regex", sample: "Unmatched ) in regex; marked by <-- HERE in m/( )/" }, noMarker)).toBeNull();
+    resetHelperState();
+    const guard = deps(async () => msg("harness: the guard itself threw"));
+    expect(await classifyAlert({ signature: "s", sample: "PAI guard: internal error" }, guard)).toEqual({ cls: "harness", reason: "the guard itself threw" });
+  });
+
   it("cachedTldr returns null at first (caller keeps first sentences), then the cached text", async () => {
     const d = deps(async () => msg("Adds a helper for small tasks. It runs on the local model."));
     expect(cachedTldr(d.logDir!, "job1", "spec text", d)).toBeNull();
