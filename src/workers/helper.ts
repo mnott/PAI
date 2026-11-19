@@ -126,6 +126,9 @@ function logDirOf(deps: HelperDeps): string | null {
 
 export const HELPER_CALLS_FILE = "helper-calls.jsonl";
 
+/** Why a helper call failed: the cockpit and the audit read it off the log line. */
+export type HelperFailKind = "timeout" | "error" | "empty" | "rejected";
+
 export interface HelperCall {
   ts: number;
   model: string;
@@ -133,6 +136,8 @@ export interface HelperCall {
   ms: number;
   /** false: the caller fell back to its rules (timeout, error, down, or an answer it could not use). */
   ok: boolean;
+  /** Set when ok is false: what failed (HelperFailKind). Absent on older lines. */
+  kind?: HelperFailKind;
 }
 
 export function recordHelperCall(c: HelperCall, deps: HelperDeps = {}): void {
@@ -146,9 +151,15 @@ export function recordHelperCall(c: HelperCall, deps: HelperDeps = {}): void {
   }
 }
 
-/** A caller could not use the helper's answer: counts as a fallback. */
+/** A caller could not use the helper's answer ("rejected"): counts as a fallback. */
 export function helperRejected(label: string, model: string, deps: HelperDeps = {}): void {
-  recordHelperCall({ ts: (deps.now ?? Date.now)(), model, label, ms: 0, ok: false }, deps);
+  recordHelperCall({ ts: (deps.now ?? Date.now)(), model, label, ms: 0, ok: false, kind: "rejected" }, deps);
+}
+
+/** timeout / error from a thrown transport failure; empty when the model answered with nothing usable. */
+function failKind(e: unknown): HelperFailKind {
+  const m = e instanceof Error ? e.message : String(e);
+  return /abort|timeout|timed[- ]out/i.test(m) ? "timeout" : "error";
 }
 
 export interface HelperStats {
@@ -337,11 +348,11 @@ export function helperCompleteSync(req: HelperRequest, deps: HelperDeps = {}): s
     if (per < 500) break;
     try {
       const text = textOf(w.kind, fetchWireSync(w, per));
-      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: !!text }, deps);
+      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: !!text, ...(text ? {} : { kind: "empty" as const }) }, deps);
       if (text) out = text;
-    } catch {
+    } catch (e) {
       coolUntil.set(spec, now() + COOLDOWN_MS);
-      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: false }, deps);
+      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: false, kind: failKind(e) }, deps);
     }
   }
   return out;
@@ -365,12 +376,12 @@ async function run(p: Plan, req: HelperRequest, deps: HelperDeps, send: (w: Wire
     if (per < 500) break;
     try {
       const text = textOf(w.kind, await send(w, per));
-      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: !!text }, deps);
+      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: !!text, ...(text ? {} : { kind: "empty" as const }) }, deps);
       if (text) return text;
-    } catch {
+    } catch (e) {
       // down, busy behind a normal-priority request (timed out) or failed: skip it for a while
       coolUntil.set(spec, now() + COOLDOWN_MS);
-      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: false }, deps);
+      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: now() - t0, ok: false, kind: failKind(e) }, deps);
     }
   }
   return null;

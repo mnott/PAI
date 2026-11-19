@@ -62,15 +62,42 @@ export async function classifyAlert(g: Pick<ToolErrorGroup, "signature" | "sampl
 const pending = new Set<string>();
 const retryAt = new Map<string, number>();
 const TLDR_RETRY_MS = 10 * 60_000;
+/** Chars of a spec a TL;DR is worth making from: the task body's first lines. */
+const TLDR_INPUT_CHARS = 1200;
 
 const tldrPath = (logDir: string, id: string): string => join(logDir, `${id}.tldr`);
 
+/** The worker-rules block every PAI-spawned local spec starts with: boilerplate, never the task. */
+const BOILERPLATE_RE = /^local worker rules:/i;
+
+/**
+ * Trim a spec to what a TL;DR needs: past the "Local worker rules" preamble (the
+ * same block in every spec — it only burns the 8k window and slows the answer),
+ * then at most TLDR_INPUT_CHARS. An input without the marker is kept whole up
+ * to the cap. Pure, exported for tests.
+ */
+export function trimTldrInput(specText: string): string {
+  const t = specText.trim();
+  if (BOILERPLATE_RE.test(t)) {
+    const i = t.indexOf("\n\n");
+    const rest = i >= 0 ? t.slice(i + 2).trim() : "";
+    if (rest) return rest.length > TLDR_INPUT_CHARS ? `${rest.slice(0, TLDR_INPUT_CHARS)}\n[...truncated...]` : rest;
+  }
+  return t.length > TLDR_INPUT_CHARS ? `${t.slice(0, TLDR_INPUT_CHARS)}\n[...truncated...]` : t;
+}
+
 export function cleanTldr(text: string): string | null {
   const t = text.replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  // complete sentences when there are any; otherwise the whole short answer — a one-liner
+  // with no final period ("Adds the chip. It lands in the status file") is still usable
   const sentences = t.match(/[^.!?]+[.!?]+(?=\s|$)/g);
-  if (!sentences?.length) return null;
-  const out = sentences.slice(0, 2).map((x) => x.trim()).join(" ");
-  return out.length >= 20 ? out.slice(0, 400) : null;
+  let out = sentences?.length ? sentences.slice(0, 2).map((x) => x.trim()).join(" ") : t;
+  if (out.length < 15 && sentences?.length) {
+    const rest = t.slice(sentences.reduce((n, s) => n + s.length, 0)).trim();
+    if (rest) out += ` ${rest}`;
+  }
+  return out.length >= 15 ? out.slice(0, 400) : null;
 }
 
 /**
@@ -90,10 +117,13 @@ export function cachedTldr(logDir: string, id: string, specText: string, deps: H
   pending.add(id);
   void (async () => {
     try {
-      const raw = await helperComplete(
-        { label: "tldr", maxTokens: 120, keep: "head", task: "Summarize this task spec in exactly 2 plain sentences: what is to be built or fixed, and where. No lists, no markdown.", input: specText },
-        deps
-      );
+      const input = trimTldrInput(specText);
+      const task = "Summarize this task spec in exactly 2 plain sentences: what is to be built or fixed, and where. No lists, no markdown.";
+      // the small engine answers empty now and then: one retry inside this call, before the
+      // 10-minute cooldown; a model that failed outright is cooling down, so the retry skips it
+      const raw =
+        (await helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs: 8_000, task, input }, deps)) ??
+        (await helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs: 12_000, task, input }, deps));
       const t = raw === null ? null : cleanTldr(raw);
       if (raw !== null && !t) helperRejected("tldr", model0(deps), deps);
       if (t) {

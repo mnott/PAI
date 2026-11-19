@@ -1,10 +1,13 @@
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { RequestScheduler } from "../router/scheduler.js";
-import { DEFAULT_HELPER, helperComplete, helperConfig, helperStats, resetHelperState, truncateInput, type HelperDeps, type WireRequest } from "./helper.js";
-import { cachedTldr, classifyAlert, cleanGateSummary, cleanTldr, parseAlertVerdict, resetTldrState } from "./helper-uses.js";
+import { readFileSync } from "node:fs";
+import { DEFAULT_HELPER, HELPER_CALLS_FILE, helperComplete, helperConfig, helperStats, resetHelperState, truncateInput, type HelperCall, type HelperDeps, type WireRequest } from "./helper.js";
+import { cachedTldr, classifyAlert, cleanGateSummary, cleanTldr, parseAlertVerdict, resetTldrState, trimTldrInput } from "./helper-uses.js";
+import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { helperPickTopic, parseTopicWord, pickTopicAsync, resolveTopic, resetTopicPickState, TOPIC_WORDS } from "./topic.js";
 
 const msg = (text: string): string => JSON.stringify({ content: [{ type: "text", text }] });
 const ollama = (text: string): string => JSON.stringify({ message: { content: text } });
@@ -20,9 +23,35 @@ function deps(fetch: HelperDeps["fetch"], over: Partial<HelperDeps> = {}): Helpe
   };
 }
 
+const callsOf = (d: HelperDeps): HelperCall[] =>
+  readFileSync(join(d.logDir!, HELPER_CALLS_FILE), "utf8").trim().split("\n").map((l) => JSON.parse(l) as HelperCall);
+
 beforeEach(() => {
   resetHelperState();
   resetTldrState();
+  resetTopicPickState();
+});
+
+const workerStatus = (id: string): WorkerStatus => ({
+  id,
+  pid: 1,
+  runPid: 1,
+  procStart: 1,
+  label: "some task",
+  cwd: "/tmp",
+  term: "",
+  provider: "gyro-l",
+  model: "m",
+  state: "running",
+  started: "2026-11-19 00:00:00",
+  updated: "2026-11-19 00:00:00",
+  turns: 0,
+  tools: 0,
+  last: "x",
+  rc: null,
+  secs: null,
+  origin: "spawn",
+  outputFormat: "json",
 });
 
 describe("truncateInput", () => {
@@ -146,6 +175,24 @@ describe("uses fall back to rules", () => {
     expect(await classifyAlert({ signature: "s", sample: "PAI guard: internal error" }, guard)).toEqual({ cls: "harness", reason: "the guard itself threw" });
   });
 
+  it("a failed call names its kind on the log line: timeout, error, empty; a rejected answer says rejected", async () => {
+    const timed = deps(async () => {
+      throw new Error("This operation was aborted");
+    });
+    await helperComplete({ task: "t", input: "i", label: "tldr" }, timed);
+    expect(callsOf(timed)[0].kind).toBe("timeout");
+    resetHelperState();
+    const broken = deps(async () => {
+      throw new Error("HTTP 500");
+    });
+    await helperComplete({ task: "t", input: "i", label: "tldr" }, broken);
+    expect(callsOf(broken)[0].kind).toBe("error");
+    resetHelperState();
+    const blank = deps(async () => msg("   "));
+    await helperComplete({ task: "t", input: "i", label: "alert" }, blank);
+    expect(callsOf(blank)[0]).toMatchObject({ ok: false, kind: "empty" });
+  });
+
   it("cachedTldr returns null at first (caller keeps first sentences), then the cached text", async () => {
     const d = deps(async () => msg("Adds a helper for small tasks. It runs on the local model."));
     expect(cachedTldr(d.logDir!, "job1", "spec text", d)).toBeNull();
@@ -168,8 +215,132 @@ describe("uses fall back to rules", () => {
     expect(cleanGateSummary("1. a\n2. b\n3. c\n4. d")).toBe("a\nb\nc");
   });
 
+  it("cleanTldr keeps a short answer with no final period (guardrail refusals and plain one-liners)", () => {
+    expect(cleanTldr("I cannot summarize this text")).toBe("I cannot summarize this text");
+    expect(cleanTldr("Adds the chip. It lands in the status file")).toBe("Adds the chip. It lands in the status file");
+    expect(cleanTldr("too short")).toBeNull();
+    expect(cleanTldr("   ")).toBeNull();
+  });
+
+  it("trimTldrInput drops the worker-rules boilerplate and caps the rest at 1200 chars", () => {
+    const spec = "Local worker rules:\n1. Type-check first.\n2. Read files whole.\n\nTrim the TL;DR input so the small model sees only the task.";
+    expect(trimTldrInput(spec)).toBe("Trim the TL;DR input so the small model sees only the task.");
+    const long = "x".repeat(5000);
+    const cut = trimTldrInput(long);
+    expect(cut.length).toBeLessThanOrEqual(1200 + "\n[...truncated...]".length);
+    expect(cut).toContain("truncated");
+    // boilerplate with no task after it: the whole text, capped — never an empty prompt
+    expect(trimTldrInput("Local worker rules:\n1. only rules")).toBe("Local worker rules:\n1. only rules");
+  });
+
+  it("cachedTldr trims its input and retries once inside the call when the model answers empty", async () => {
+    const inputs: string[] = [];
+    let n = 0;
+    // apple-fm answers empty (the real failure mode); the retry skips the cooling-down model and ollama answers
+    const d = deps(async (w) => {
+      inputs.push(String(w.body));
+      n++;
+      return w.kind === "messages" ? msg("") : ollama("Trims the spec input. Retries an empty answer.");
+    });
+    const spec = "Local worker rules:\n1. Type-check first.\n\nFix the TL;DR lane.";
+    cachedTldr(d.logDir!, "job3", spec, d);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(n).toBe(2); // one empty apple-fm answer, one retry — both inside this call
+    for (const p of inputs) {
+      expect(p).toContain("Fix the TL;DR lane.");
+      expect(p).not.toContain("Type-check first"); // the boilerplate never reached the model
+    }
+    expect(existsSync(join(d.logDir!, "job3.tldr"))).toBe(true);
+    const st = helperStats(d);
+    expect(st.models["apple-fm"].fallbacks).toBe(1); // the empty answer, kind "empty"
+    expect(st.models["ollama:qwen3:8b"].perHour).toBe(1);
+  });
+
+  it("cachedTldr still returns null when both attempts fail (helper down)", async () => {
+    const d = deps(async () => {
+      throw new Error("down");
+    });
+    cachedTldr(d.logDir!, "job4", "spec text", d);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cachedTldr(d.logDir!, "job4", "spec text", d)).toBeNull();
+    // the retry skipped the cooling-down apple-fm and fell to ollama: one call per model, not two
+    const by = callsOf(d);
+    expect(by.filter((c) => c.model === "apple-fm").length).toBe(1);
+    expect(by.filter((c) => c.model === "ollama:qwen3:8b").length).toBe(1);
+    expect(by.every((c) => c.ok === false && c.kind === "error")).toBe(true);
+  });
+
   it("config defaults", () => {
     expect(helperConfig({}).models).toEqual(["apple-fm", "ollama:qwen3:8b"]);
     expect(helperConfig({ uses: { tldr: false } }).uses.tldr).toBe(false);
+  });
+});
+
+describe("helper topic word", () => {
+  it("parseTopicWord takes the word out of a decorated one-word answer, rejects prose", () => {
+    expect(parseTopicWord("strata")).toBe("strata");
+    expect(parseTopicWord("Strata")).toBe("strata");
+    expect(parseTopicWord(" Topic: queue.")).toBe("queue");
+    expect(parseTopicWord('"tests"')).toBe("tests");
+    expect(parseTopicWord("I think this is about the router")).toBeNull();
+    expect(parseTopicWord("code graph")).toBeNull();
+    expect(parseTopicWord("")).toBeNull();
+  });
+
+  it("the closed list covers the topics the status files already use", () => {
+    for (const w of ["harness", "workers", "cockpit", "router", "strata", "memory", "tests"]) expect(TOPIC_WORDS).toContain(w);
+  });
+
+  it("helperPickTopic picks a word from the list and caches it per worker", async () => {
+    let asked = "";
+    const d = deps(async (w) => ((asked = w.body), msg("strata")));
+    expect(await helperPickTopic(d.logDir!, "w1", "research: Strata disk cache", "park conversations on SSD", d)).toBe("strata");
+    expect(asked).toContain("harness"); // the closed list rode along in the prompt
+    expect(readFileSync(join(d.logDir!, "w1.topic"), "utf8").trim()).toBe("strata");
+    let asked2 = 0;
+    const d2 = deps(async () => (asked2++, msg("router")));
+    expect(await helperPickTopic(d.logDir!, "w1", "anything", "anything", d2)).toBe("strata");
+    expect(asked2).toBe(0); // cached: the model is never asked again
+  });
+
+  it("helperPickTopic accepts a new single lowercase word the list lacks", async () => {
+    const d = deps(async () => msg("telemetry"));
+    expect(await helperPickTopic(d.logDir!, "w2", "instrument the router", "spec", d)).toBe("telemetry");
+  });
+
+  it("junk answers and a down helper give no topic", async () => {
+    const junk = deps(async () => msg("I think this job is about general matters"));
+    expect(await helperPickTopic(junk.logDir!, "w3", "l", "s", junk)).toBeNull();
+    resetHelperState();
+    const down = deps(async () => {
+      throw new Error("down");
+    });
+    expect(await helperPickTopic(down.logDir!, "w4", "l", "s", down)).toBeNull();
+    expect(existsSync(join(down.logDir!, "w4.topic"))).toBe(false);
+  });
+
+  it("pickTopicAsync lands the word on the status file; a worker's own next save keeps it; helper down = no topic, no throw", async () => {
+    const d = deps(async () => msg("mailbox"));
+    saveStatus(d.logDir!, workerStatus("w5"));
+    pickTopicAsync(d.logDir!, "w5", "digest noise", "spec text", d);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(loadStatus(d.logDir!, "w5")?.topic).toBe("mailbox");
+    // the runner's periodic save passes its in-memory copy (no topic): the pick survives it
+    saveStatus(d.logDir!, workerStatus("w5"));
+    expect(loadStatus(d.logDir!, "w5")?.topic).toBe("mailbox");
+    resetHelperState();
+    const down = deps(async () => {
+      throw new Error("down");
+    });
+    saveStatus(down.logDir!, workerStatus("w6"));
+    pickTopicAsync(down.logDir!, "w6", "l", "s", down);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(loadStatus(down.logDir!, "w6")?.topic).toBeUndefined();
+  });
+
+  it("an explicit --topic always wins", () => {
+    const dir = mkdtempSync(join(tmpdir(), "topic-"));
+    expect(resolveTopic(dir, "harness", [], null)).toBe("harness");
+    writeFileSync(join(dir, "keep"), "");
   });
 });
