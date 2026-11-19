@@ -119,7 +119,6 @@ export const codeCommand: CommandDef = {
       run: async (ctx) => {
         const backend = await getStorageBackend();
         const r = rootOf(ctx);
-        await cg.ensureFresh(backend, r);
         const hits = await cg.searchSymbols(backend, r, words(ctx, "QUERY"), num(ctx.opts.limit));
         print(ctx, hits, hits.map(sym));
       },
@@ -135,7 +134,6 @@ export const codeCommand: CommandDef = {
       run: async (ctx) => {
         const backend = await getStorageBackend();
         const r = rootOf(ctx);
-        await cg.ensureFresh(backend, r);
         const hits = await cg.callers(backend, r, ctx.args.NAME as string, num(ctx.opts.limit));
         print(ctx, hits, hits.map(ref));
       },
@@ -151,7 +149,6 @@ export const codeCommand: CommandDef = {
       run: async (ctx) => {
         const backend = await getStorageBackend();
         const r = rootOf(ctx);
-        await cg.ensureFresh(backend, r);
         const hits = await cg.callees(backend, r, ctx.args.NAME as string, num(ctx.opts.limit));
         print(ctx, hits, hits.map(ref));
       },
@@ -167,7 +164,6 @@ export const codeCommand: CommandDef = {
       run: async (ctx) => {
         const backend = await getStorageBackend();
         const r = rootOf(ctx);
-        await cg.ensureFresh(backend, r);
         const res = await cg.impact(backend, r, ctx.args.NAME as string, num(ctx.opts.depth));
         print(ctx, res, [`${res.files.length} files, ${res.symbols.length} symbols`, ...res.files.map((f) => `  ${f}`), ...res.symbols.map((s) => `  ${sym(s)}`)]);
       },

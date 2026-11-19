@@ -60,32 +60,20 @@ function toHit(s: SymbolRow): SymbolHit {
   };
 }
 
-/** git toplevel of cwd (default process.cwd()), else cwd itself */
-export function resolveRoot(cwd?: string): string {
-  const start = resolve(cwd ?? process.cwd());
-  try {
-    const out = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: start, encoding: "utf8" }).trim();
-    if (out) return resolve(out);
-  } catch {
-    /* not a git repo */
-  }
-  return start;
-}
-
 /**
- * The main checkout of the repo `cwd` is in — a linked worktree's is its parent
- * repo. The code graph keys every row by repo root, and only the main checkout
- * is a registered project: querying from a worker worktree must use the main
- * checkout's index (a worktree was re-indexed from scratch there, > 120 s per
- * explore call), never a second copy. `--path-format=absolute` needs git ≥ 2.31;
- * on older git we resolve the relative answer against cwd ourselves. Not a git
- * repo: cwd itself.
+ * The path the graph keys everything by for `cwd`'s repo: the plain resolved
+ * toplevel — NOT realpath'd. macOS hands out /var → /private/var and /tmp →
+ * /private/tmp, and a key that moves with symlink resolution leaves rows no
+ * query can find again (the worktree slowness was exactly this: every call
+ * re-indexed from scratch because the lookup key never matched the stored one).
+ * For a linked worktree this is its main checkout. `--path-format=relative`
+ * (git ≥ 2.31) keeps --git-common-dir symlink-free; on older git we resolve the
+ * printed path against cwd, which does not resolve symlinks either.
  */
-export function mainCheckoutOf(cwd?: string): string {
-  const start = resolve(cwd ?? process.cwd());
+function toplevelOf(start: string): string {
   let common = "";
   try {
-    common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: start, encoding: "utf8" }).trim();
+    common = execFileSync("git", ["rev-parse", "--path-format=relative", "--git-common-dir"], { cwd: start, encoding: "utf8" }).trim();
   } catch {
     try {
       common = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd: start, encoding: "utf8" }).trim();
@@ -93,27 +81,40 @@ export function mainCheckoutOf(cwd?: string): string {
       return start; // not a git repo
     }
   }
-  if (!common) return start;
+  if (!common) return start; // bare repo: no checkout of its own
   const abs = isAbsolute(common) ? common : resolve(start, common);
   return basename(abs) === ".git" ? dirname(abs) : abs;
 }
 
-/** Index root for queries: the main checkout when `root` is a linked worktree of it. */
-export function graphRoot(root?: string): string {
-  const r = resolve(root ?? process.cwd());
-  // a *linked* worktree moves to its parent repo (git identity: --git-common-dir,
-  // which never resolves path symlinks); a plain repo stays at its own path —
-  // git's --show-toplevel would resolve symlinks and move a /tmp repo off its rows
-  let common = "";
-  try {
-    common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: r, encoding: "utf8" }).trim();
-  } catch { /* not a git repo */ }
-  if (!common) return r;
-  const abs = isAbsolute(common) ? common : resolve(r, common);
-  const main = basename(abs) === ".git" ? dirname(abs) : abs;
-  return main !== r && existsSync(main) ? main : r;
+/** index root of cwd (default process.cwd()): the repo's toplevel, else cwd itself */
+export function resolveRoot(cwd?: string): string {
+  return graphRoot(cwd);
 }
 
+/**
+ * The main checkout of the repo `cwd` is in — a linked worktree's is its parent
+ * repo. The code graph keys every row by repo root, and only the main checkout
+ * is a registered project: querying from a worker worktree must use the main
+ * checkout's index (a worktree was re-indexed from scratch there, > 120 s per
+ * explore call), never a second copy. Not a git repo: cwd itself.
+ */
+export function mainCheckoutOf(cwd?: string): string {
+  return toplevelOf(resolve(cwd ?? process.cwd()));
+}
+
+/**
+ * Index root for queries: the main checkout when `root` is a linked worktree of
+ * it, else the repo's git toplevel (the row key everywhere), else the path itself.
+ * A plain repo resolves to its toplevel so a query from a subdirectory finds the
+ * same rows as one from the root; a *linked* worktree moves to its parent repo
+ * (git identity: --git-common-dir, which never resolves path symlinks) — that is
+ * the worker-worktree fix. A non-repo stays at its plain resolved path.
+ */
+export function graphRoot(root?: string): string {
+  const r = resolve(root ?? process.cwd());
+  const main = toplevelOf(r); // the common dir's checkout: the parent repo for a linked worktree
+  return main !== r && existsSync(main) ? main : r;
+}
 
 /**
  * Where a symbol's source is read from: the worktree when the query started in
@@ -126,28 +127,15 @@ function readRoot(indexRootAbs: string, cwd?: string): string {
   return mainCheckoutOf(start) === indexRootAbs && start !== indexRootAbs ? start : indexRootAbs;
 }
 
-/** The commit a worker worktree started from: the first entry of its branch reflog. */
-function firstCommitOfBranch(dir: string): string | null {
-  try {
-    const head = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
-    if (!head || head === "HEAD") return null; // detached: no branch reflog
-    // --date=unix keeps the output one line per entry (%(timestamp) would pad it)
-    const out = execFileSync("git", ["reflog", "show", "--format=%H", "--date=unix", `refs/heads/${head}`], { cwd: dir, encoding: "utf8" });
-    const lines = out.trim().split("\n").filter(Boolean);
-    return lines[lines.length - 1] || null; // oldest entry: the worktree's start point
-  } catch {
-    return null;
-  }
-}
-
 /** Full (incremental) index of a repo. A linked worktree indexes into its main checkout's rows. */
 export async function indexRepo(backend: StorageBackend, root: string, opts?: { force?: boolean }): Promise<IndexStats> {
   const t0 = Date.now();
   const store = backend.codeGraph();
-  // key rows by the plain resolved path (indexRoot does the same) — callers pass a
-  // toplevel; realpath would move a /tmp repo. A linked worktree moves to its parent.
+  // rows live under the index root (a linked worktree moves to its parent repo);
+  // files are read from `root` itself, so indexing a worktree indexes that tree.
   const rootAbs = graphRoot(resolve(root));
-  const counts = await indexRoot(store, rootAbs, opts);
+  const readFrom = resolve(root);
+  const counts = await indexRoot(store, rootAbs, opts, readFrom === rootAbs ? undefined : readFrom);
   const stats = await store.stats(rootAbs);
   return {
     root: rootAbs,
@@ -170,53 +158,23 @@ export async function indexRepo(backend: StorageBackend, root: string, opts?: { 
  */
 export async function ensureFresh(backend: StorageBackend, root?: string): Promise<IndexStats | null> {
   const store = backend.codeGraph();
-  // the caller's own tree path (worktree identity kept: readDirty/indexFiles use it);
-  // rows live under the toplevel as git sees it, or its parent repo for a linked worktree
-  // the caller's path keeps its identity (worktrees included); rows are keyed by
-  // the plain resolved path, or by the parent repo for a linked worktree
+  // rows live under the index root (a linked worktree moves to its parent repo);
+  // changed files are re-read from the caller's own tree — for a worker that is
+  // the worktree, whose edits are fresher than the main checkout's.
   const start = resolve(root ?? process.cwd());
   const rootAbs = graphRoot(start);
-  // a linked worktree of this repo (git identity, not path text): its own tree is fresh
-  const worktree = start !== rootAbs && mainCheckoutOf(start) === rootAbs ? start : undefined;
+  const readFrom = readRoot(rootAbs, start);
   const t0 = Date.now();
   const existing = await store.stats(rootAbs);
   if (existing.files === 0) {
-    return indexRepo(backend, rootAbs);
+    return indexRepo(backend, start); // the caller's tree: a worktree indexes its own files into the parent's rows
   }
   // files the Edit/Write hook marked dirty are re-read first (no parse happened in the hook)
-  const worktreeRoot = worktree ?? rootAbs;
-  const dirty = [...consumeDirty(rootAbs), ...(worktree ? consumeDirty(worktree) : [])];
-  let changed = dirty.length ? (await indexFiles(store, worktreeRoot, dirty)).changed : 0;
-  // a worktree's own files are brought in from the worktree — vs the branch it
-  // started from (cheap: git status + those files), never a second full index.
-  if (worktree) {
-    const edited = new Set<string>();
-    try {
-      for (const l of execFileSync("git", ["status", "--porcelain", "-z"], { cwd: worktree, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\0")) {
-        if (!l.trim()) continue;
-        const p = l.slice(3).split(" -> ").pop()!; // renames: the new path
-        if (p) edited.add(p);
-      }
-    } catch { /* no git status: rely on the reconcile below */ }
-    changed += (await indexFiles(store, worktree, [...edited])).changed;
-    const base = firstCommitOfBranch(worktree);
-    if (base) {
-      const committed = new Set<string>();
-      try {
-        for (const p of execFileSync("git", ["diff", "--name-only", "-z", `${base}..HEAD`], { cwd: worktree, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\0")) {
-          if (p) committed.add(p);
-        }
-      } catch { /* base unreachable: skip */ }
-      changed += (await indexFiles(store, worktree, [...committed])).changed;
-    }
-    if (!dirty.length && !edited.size && !base) {
-      // nothing the worker touched is visible to git here: fall back to the plain reconcile
-      const r = await reconcile(store, rootAbs);
-      if (r) return finishStats(backend, store, rootAbs, r, t0);
-    }
-    return null;
-  }
-  const rec = await reconcile(store, rootAbs);
+  const dirty = consumeDirty(rootAbs);
+  let changed = dirty.length ? (await indexFiles(store, readFrom, dirty)).changed : 0;
+  // reconcile against the caller's tree: a worktree's changed files (git status +
+  // mtime walk of its own checkout) land in the parent's rows — never a second index.
+  const rec = await reconcile(store, rootAbs, readFrom === rootAbs ? undefined : readFrom);
   const counts = rec ? { changed: rec.changed + changed, deleted: rec.deleted } : changed ? { changed, deleted: 0 } : null;
   if (!counts) return null;
   return finishStats(backend, store, rootAbs, counts, t0);
@@ -245,7 +203,6 @@ export async function status(backend: StorageBackend, root: string): Promise<{
 }> {
   const store = backend.codeGraph();
   const rootAbs = graphRoot(root);
-  const start = resolve(root);
   const s = await store.stats(rootAbs);
   return {
     root: rootAbs,
@@ -257,7 +214,7 @@ export async function status(backend: StorageBackend, root: string): Promise<{
     resolvedRefs: s.resolvedRefs,
     byLanguage: s.byLanguage,
     lastIndexedAt: s.lastIndexedAt != null ? new Date(s.lastIndexedAt).toISOString() : null,
-    dirty: readDirty(rootAbs).length + (start === rootAbs ? 0 : readDirty(start).length),
+    dirty: readDirty(rootAbs).length,
     indexing: ((l) => (l ? { pid: l.pid, root: l.root, startedAt: new Date(l.startedAt).toISOString() } : null))(runningIndex()),
   };
 }
@@ -272,6 +229,7 @@ export async function callers(backend: StorageBackend, root: string, name: strin
   await ensureFresh(backend, root);
   const store = backend.codeGraph();
   const rootAbs = graphRoot(root);
+  const readFrom = readRoot(rootAbs, resolve(root));
   // refs pointing at the symbol(s) with this name — resolved ones by id, bare-name ones too
   const targets = await store.symbolsByName(rootAbs, name, 20);
   const seen = new Set<string>();
@@ -302,6 +260,7 @@ export async function callees(backend: StorageBackend, root: string, name: strin
   await ensureFresh(backend, root);
   const store = backend.codeGraph();
   const rootAbs = graphRoot(root);
+  const readFrom = readRoot(rootAbs, resolve(root));
   const targets = await store.symbolsByName(rootAbs, name, 20);
   const seen = new Set<string>();
   const out: RefHit[] = [];
@@ -311,7 +270,7 @@ export async function callees(backend: StorageBackend, root: string, name: strin
     // (unchanged files are never re-read), so filter here too: drop any ref
     // whose name is bound inside this symbol's source range and that did not
     // resolve to a repo symbol (a same-named real symbol stays listed).
-    const locals = await localNamesOf(rootAbs, t);
+    const locals = await localNamesOf(readFrom, t);
     for (const r of await store.callees(t.id)) {
       if (!r.target && locals.has(r.toName)) continue;
       const key = `${r.fromFile}:${r.line}:${r.toName}`;
@@ -411,7 +370,7 @@ export async function explore(
   const rootAbs = graphRoot(root);
   // when the query runs from a linked worktree of this repo, read source there:
   // the worker's own edits are fresher than the main checkout
-  const srcRoot = readRoot(rootAbs, root);
+  const srcRoot = readRoot(rootAbs, resolve(root));
   const budgetChars = (opts?.budgetTokens ?? 4000) * 4;
   const depth = opts?.depth ?? 1;
 
@@ -485,7 +444,7 @@ export async function explore(
     }
     push(`\n## Callees\n`);
     for (const s of symbols.slice(0, 6)) {
-      const hits = await calleesNoFresh(backend, rootAbs, s.qualifiedName, 8);
+      const hits = await calleesNoFresh(backend, rootAbs, srcRoot, s.qualifiedName, 8);
       for (const h of hits) if (!push(`- ${s.qualifiedName} → ${h.name} (${h.kind}) at ${h.file}:${h.line}\n`)) break;
     }
     // deeper hops: dependents beyond the first ring
@@ -521,7 +480,7 @@ export async function explore(
 async function callersNoFresh(backend: StorageBackend, rootAbs: string, name: string, limit: number): Promise<RefHit[]> {
   return callersFromStore(backend.codeGraph(), rootAbs, name, limit);
 }
-async function calleesNoFresh(backend: StorageBackend, rootAbs: string, qualifiedName: string, limit: number): Promise<RefHit[]> {
+async function calleesNoFresh(backend: StorageBackend, rootAbs: string, readFrom: string, qualifiedName: string, limit: number): Promise<RefHit[]> {
   const store = backend.codeGraph();
   // same own-parameters/locals filter as callees() (stored rows may predate
   // the extractor fix); a ref's enclosing symbol is matched by name+file
@@ -534,7 +493,7 @@ async function calleesNoFresh(backend: StorageBackend, rootAbs: string, qualifie
       let ls = localsOf.get(key);
       if (!ls) {
         const seed = seeds.find((s) => s.file === r.fromFile && s.qualifiedName === r.fromSymbol);
-        ls = seed ? await localNamesOf(rootAbs, seed) : new Set<string>();
+        ls = seed ? await localNamesOf(readFrom, seed) : new Set<string>();
         localsOf.set(key, ls);
       }
       if (ls.has(r.toName)) continue;

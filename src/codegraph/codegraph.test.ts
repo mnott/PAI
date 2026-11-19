@@ -251,8 +251,9 @@ describe("worker worktrees share the main checkout's index", () => {
     git(root, "add", "-A"); git(root, "commit", "-qm", "init");
     return root;
   };
-  // rows are keyed by the git toplevel, which resolves symlinks (/tmp → /private/tmp)
-  const rp = (p: string): string => execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: p, encoding: "utf8" }).trim();
+  // rows are keyed by the plain resolved toplevel — --show-toplevel would realpath
+  // (/tmp → /private/tmp) and is exactly what used to move a repo off its own rows
+  const rp = (p: string): string => resolve(p);
 
   it("queries a linked worktree through the parent repo's rows, with fresh local source", async () => {
     process.env.PAI_HOME = tmp();
