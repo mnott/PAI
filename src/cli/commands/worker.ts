@@ -555,6 +555,8 @@ const psCommand: CommandDef = {
         const d = new Date(w.until);
         out(`urgent: ${w.key} now${w.where === "local" ? ", local" : ""} until ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
       }
+      const lo = (await import("../../workers/local-only.js")).localOnlyBanner();
+      if (lo) out(lo);
       out(psOutput(dir, flag(ctx, "all"), process.env, undefined, str(ctx.opts.topic)));
     }),
 };

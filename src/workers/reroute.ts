@@ -27,7 +27,7 @@ import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
 import { loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
-import { localOnlyRerouteCheck, readLocalOnly } from "./local-only.js";
+import { readLocalOnly } from "./local-only-state.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { markHandover } from "./run/follow-reroute.js";
 import { escalationOff, getProfile } from "./session-profile-store.js";
@@ -470,7 +470,7 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   // the local-only window blocks automatic cloud moves (escalations, pane commands); an operator's own
   // reroute — the CLI, the cockpit — always passes (local-only.ts).
   {
-    const why = await localOnlyRerouteCheck(where, { logDir: d.logDir, by: d.by });
+    const why = await (await import("./local-only.js")).localOnlyRerouteCheck(where, { logDir: d.logDir, by: d.by });
     if (why) throw new Error(why);
   }
   const target = await (d.resolve ?? defaultResolve)(where);

@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { contentToText } from "./transcript-text.js";
 import { dropHeredocBodies } from "./heredoc.js";
 import { paiHomePath } from "../../../config/pai-home.js";
-import { localOnlyMessage, readLocalOnly } from "../../../workers/local-only.js";
+import { localOnlyMessage, readLocalOnly } from "../../../workers/local-only-state.js";
 
 export interface DelegationDecision { decision: "allow" | "deny"; reason?: string }
 

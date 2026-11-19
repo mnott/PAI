@@ -32,9 +32,9 @@ import { isLoopbackProvider } from "./run-env.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { detectSessionName } from "./session-name.js";
+import { localOnlyMessage, localOnlyPath, readLocalOnly, stampLabel, type LocalOnlyState } from "./local-only-state.js";
 
-/** The window state file. PAI_LOCAL_ONLY_FILE moves it (isolated proofs and tests never touch the real one). */
-export const localOnlyPath = (): string => process.env.PAI_LOCAL_ONLY_FILE ?? paiHomePath("state", "local-only.json");
+export { localOnlyMessage, localOnlyPath, readLocalOnly, type LocalOnlyState };
 
 /** The approval-token file beside it: written by `pai budget approve`, consumed by the next matching cloud start. */
 export const approvalsPath = (): string => process.env.PAI_LOCAL_ONLY_FILE ? `${process.env.PAI_LOCAL_ONLY_FILE}.approvals` : paiHomePath("state", "local-only-approvals.json");
@@ -42,10 +42,6 @@ export const approvalsPath = (): string => process.env.PAI_LOCAL_ONLY_FILE ? `${
 /** The config key naming the session allowed to approve cloud runs. */
 export const GATEKEEPER_KEY = "budget.gatekeeper";
 export const DEFAULT_GATEKEEPER = "PAI";
-
-/** The refusal every entry point shows, with the window's own clock. */
-export const localOnlyMessage = (label: string): string =>
-  `local-only window until ${label} (budget): ask the PAI session to approve a cloud run`;
 
 /** "YYYY-MM-DD HH:MM" as machine-local wall time; null when it does not parse. */
 export function parseLocalStamp(s: string): number | null {
@@ -62,33 +58,8 @@ export function parseWindowDuration(s: string): number {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 }
 
-export interface LocalOnlyState {
-  untilMs: number;
-  /** The window's clock label: "YYYY-MM-DD HH:MM". */
-  label: string;
-  by?: string;
-}
-
-/** The active window, or null when none is set or it has expired. */
-export function readLocalOnly(now: number = Date.now()): LocalOnlyState | null {
-  const path = localOnlyPath();
-  if (!existsSync(path)) return null;
-  try {
-    const j = JSON.parse(readFileSync(path, "utf8")) as { untilMs?: unknown };
-    const untilMs = typeof j.untilMs === "number" ? j.untilMs : NaN;
-    if (!Number.isFinite(untilMs) || untilMs <= now) return null;
-    const d = new Date(untilMs);
-    const p = (n: number) => String(n).padStart(2, "0");
-    return { untilMs, label: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`, ...(typeof (j as { by?: unknown }).by === "string" ? { by: (j as { by: string }).by } : {}) };
-  } catch {
-    return null;
-  }
-}
-
 export function setLocalOnly(untilMs: number, by?: string): LocalOnlyState {
-  const d = new Date(untilMs);
-  const p = (n: number) => String(n).padStart(2, "0");
-  writeJsonAtomic(localOnlyPath(), { untilMs, label: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`, ...(by ? { by } : {}) }, { label: "local-only.json" });
+  writeJsonAtomic(localOnlyPath(), { untilMs, label: stampLabel(untilMs), ...(by ? { by } : {}) }, { label: "local-only.json" });
   return readLocalOnly(untilMs - 1)!;
 }
 
