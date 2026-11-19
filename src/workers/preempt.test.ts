@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { saveStatus, loadStatus, type WorkerStatus } from "./status.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, resumeWorker, admitResumedWaiters, PREEMPT_ABORT_MS } from "./preempt.js";
@@ -309,9 +309,14 @@ describe("admitResumedWaiters", () => {
 });
 
 describe("admitResumedWaiters tick cost (2026-11-18 daemon hang)", () => {
-  it("12 queued tickets, 5 running, 3000 old statuses: terminates, stays under 1 s, scans statuses once", () => {
-    const s = setup();
+  let s: ReturnType<typeof setup>;
+  // The 3000-file fixture is slow to write on a busy machine; build it once, outside the timed test.
+  beforeAll(() => {
+    s = setup();
     for (let i = 0; i < 3000; i++) saveStatus(s.logDir, s.mk(`old${String(i).padStart(4, "0")}`, 2147483646, { state: "done", rc: 0 }));
+  }, 60_000);
+
+  it("12 queued tickets, 5 running, 3000 old statuses: terminates, stays under 1 s, scans statuses once", () => {
     for (let i = 0; i < 5; i++) saveStatus(s.logDir, s.mk(`run${i}`, s.live()));
     for (let i = 0; i < 12; i++) {
       const id = `w${String(i).padStart(2, "0")}`;
@@ -325,5 +330,5 @@ describe("admitResumedWaiters tick cost (2026-11-18 daemon hang)", () => {
     const ms = Date.now() - t0;
     expect(out.length).toBe(12);
     expect(ms).toBeLessThan(1000);
-  });
+  }, 30_000);
 });
