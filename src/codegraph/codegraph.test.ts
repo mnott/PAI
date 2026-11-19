@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractFile } from "./extract/index.js";
+import { loadConfig } from "../daemon/config.js";
 import { openFederation } from "../storage/sqlite/federation-db.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
 import { summarizeRepo, findSummary, MAX_PROMPT_CHARS } from "./summaries.js";
@@ -237,4 +238,47 @@ describe("explore ranking and callees", () => {
     expect(c.map((h) => h.name)).toContain("moveTo");
     for (const p of ["logDir", "id"]) expect(c.map((h) => h.name)).not.toContain(p);
   }, 30000);
+});
+
+describe("NUL bytes in indexed files", () => {
+  const nul = String.fromCharCode(0);
+  function nulRepo(): string {
+    const root = tmp();
+    mkdirSync(join(root, "src"));
+    // NUL late in a text file: symbols are extracted, the NUL must not reach storage
+    writeFileSync(join(root, "src/key.ts"), `// ${"x".repeat(9000)}\nexport function joinKey(a: string) { return a + "${nul}" + a; }\n`);
+    // NUL in the first 8 KB: binary, file row only
+    writeFileSync(join(root, "src/blob.ts"), `export function hidden() {}\n${nul}${nul}\n`);
+    return root;
+  }
+
+  it("SQLite: indexes, binary file gets no symbols, explore with NUL in query works", async () => {
+    const root = nulRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    const res = await indexRepo(backend, root);
+    expect(res.files).toBe(2);
+    expect((await searchSymbols(backend, root, "joinKey")).length).toBe(1);
+    expect((await searchSymbols(backend, root, "hidden")).length).toBe(0);
+    const out = await explore(backend, root, `joinKey${nul}`);
+    expect(out.text).toContain("joinKey");
+  }, 30000);
+
+  it("Postgres: same fixture on a scratch database", async () => {
+    const conn = loadConfig().postgres?.connectionString;
+    if (!conn) return;
+    const { createScratchDatabase } = await import("../storage/test-db.js");
+    const { PostgresCodeGraphStore } = await import("./store-postgres.js");
+    const db = await createScratchDatabase("cgnul");
+    try {
+      const store = new PostgresCodeGraphStore(db.pool);
+      const backend = { codeGraph: () => store } as unknown as import("../storage/interface.js").StorageBackend;
+      const root = nulRepo();
+      const res = await indexRepo(backend, root);
+      expect(res.files).toBe(2);
+      expect((await searchSymbols(backend, root, "joinKey")).length).toBe(1);
+      expect((await searchSymbols(backend, root, `hidden${nul}`)).length).toBe(0);
+      const out = await explore(backend, root, `joinKey${nul}`);
+      expect(out.text).toContain("joinKey");
+    } finally { await db.cleanup(); }
+  }, 60000);
 });
