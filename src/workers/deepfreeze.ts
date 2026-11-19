@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
+import { queueDir } from "./capacity.js";
 import { readFreeze, realFreezeDeps, thawAll } from "./freeze.js";
 import { appendLedger as ledgerLine } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
@@ -52,6 +53,8 @@ export interface DeepWorker {
   wip?: string;
   /** Why the WIP commit could not be made; the worktree is left untouched then, nothing is lost. */
   wipNote?: string;
+  /** Why a resume attempt did not take (a refused spawn); set by deepResume, cleared when one finally does. */
+  resumeNote?: string;
 }
 
 export interface DeepRecord {
@@ -290,7 +293,11 @@ export async function deepFreeze(logDir: string, by: string, d: DeepFreezeDeps, 
 
 export interface DeepResumeDeps {
   statuses: (logDir: string) => WorkerStatus[];
-  /** Start the continuation; returns its new worker id. */
+  /**
+   * Start the continuation; resolves once its process announced its worker id — which gateStart writes
+   * BEFORE the capacity gate waits for a slot. The announced run may still be waiting at the provider's
+   * cap: deepResume checks the status and counts it "queued", not "started". A refused spawn throws.
+   */
   start: (logDir: string, w: DeepWorker, text: string) => Promise<string>;
   setPriority: (logDir: string, id: string, w: DeepWorker) => void;
   /** Resolves true once the router answers and the autostart models are up. */
@@ -324,10 +331,28 @@ export function resumeText(w: DeepWorker): string {
   return `The machine was stopped and restarted (pai stop / pai resume); nothing failed. Your branch ${w.branch ?? "(none)"} holds your work${w.wip ? ` (uncommitted files were saved as a "wip: deepfreeze" commit ${w.wip.slice(0, 8)})` : ""}.${worktree} Continue where you left off on: ${w.label}.${goals}`;
 }
 
+/**
+ * True when the announced run holds its queue ticket at the slot gate: capacityGate writes the ticket
+ * `<logDir>/queue/<provider>/<id>` (plain file, "<pid> …") while it waits for a slot and removes it at
+ * the grant. A status that already says "queued" passes without touching the files.
+ */
+export function runIsQueued(logDir: string, id: string, provider: string, state?: string): boolean {
+  if (state === "queued") return true;
+  try {
+    return existsSync(join(queueDir(logDir, provider), id));
+  } catch {
+    return false;
+  }
+}
+
 /** The `pai worker run|resume` argv of one recorded worker is built by the starter; this is the replay loop. */
-export async function deepResume(logDir: string, d: DeepResumeDeps, opts: { drop?: boolean; wait?: boolean; waitMs?: number; only?: DeepSelect } = {}): Promise<{ lines: string[]; resumed: string[]; skipped: string[]; failed: string[] }> {
+export async function deepResume(
+  logDir: string,
+  d: DeepResumeDeps,
+  opts: { drop?: boolean; wait?: boolean; waitMs?: number; only?: DeepSelect } = {}
+): Promise<{ lines: string[]; resumed: string[]; started: string[]; queued: string[]; skipped: string[]; failed: string[] }> {
   const rec = readDeepfreeze();
-  const none = { resumed: [], skipped: [], failed: [] };
+  const none = { started: [], queued: [], resumed: [], skipped: [], failed: [] };
   if (!rec) return { lines: ["nothing recorded (no deep freeze)"], ...none };
   if (opts.drop) {
     rmSync(deepfreezePath(), { force: true });
@@ -338,43 +363,67 @@ export async function deepResume(logDir: string, d: DeepResumeDeps, opts: { drop
     const end = d.now() + (opts.waitMs ?? 300_000);
     while (!(await d.ready().catch(() => false)) && d.now() < end) await d.sleep(5_000);
   }
-  const all = d.statuses(logDir);
+  // statuses are re-read per entry: the earlier entries' runs are on disk by now, so a later one's skip check sees them
   const lines: string[] = [];
-  const resumed: string[] = [];
+  const started: string[] = [];
+  const queued: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
   const sel = opts.only;
   const left: DeepWorker[] = sel ? rec.workers.filter((w) => !inSelect(w, sel)) : [];
   if (sel && left.length === rec.workers.length) return { lines: [`nothing recorded matches ${sel.session ? `session ${sel.session}` : (sel.ids ?? []).join(",")}`], ...none };
   for (const w of [...rec.workers].filter((w) => !sel || inSelect(w, sel)).sort((a, b) => a.order - b.order)) {
-    const why = resumeSkip(w, all);
+    const why = resumeSkip(w, d.statuses(logDir));
     if (why) {
       skipped.push(w.id);
       lines.push(`skipped ${w.id}: ${why}`);
       continue;
     }
     try {
+      // the run goes through the normal start path — one queue ticket each, ordered by the slot gate.
+      // The announce (start's resolve) is NOT proof it started: gateStart announces before the gates wait
+      // for a slot, so an announced id whose status never left "deepfrozen" (or vanished) never started.
       const id = await d.start(logDir, w, resumeText(w));
       try {
         d.setPriority(logDir, id, w);
       } catch {
         /* the continuation keeps its default priority */
       }
-      resumed.push(`${w.id}->${id}`);
-      lines.push(`resumed ${w.id} as ${id} (${w.state}, ${w.priority}) ${w.label}`);
+      // a worker counts as resumed only once its run actually started (status running) or waits with its
+      // ticket at the gate ("queued"). Anything else — a status still deepfrozen, gone, an unknown state —
+      // is not started: it stays in the record with the reason, never counted as resumed.
+      const st = d.statuses(logDir).find((s) => s.id === id);
+      if (st?.state === "running") {
+        started.push(`${w.id}->${id}`);
+        w.resumeNote = undefined;
+        lines.push(`resumed ${w.id} as ${id} — started (${w.state}, ${w.priority}) ${w.label}`);
+      } else if (runIsQueued(logDir, id, st?.provider ?? w.provider, st?.state)) {
+        queued.push(`${w.id}->${id}`);
+        w.resumeNote = undefined;
+        lines.push(`resumed ${w.id} as ${id} — queued at the slot gate (${w.state}, ${w.priority}) ${w.label}`);
+      } else {
+        failed.push(w.id);
+        left.push(w);
+        w.resumeNote = `announced ${id} but its status says ${st?.state ?? "no status"}: not started`;
+        lines.push(`resume ${w.id}: announced ${id} but it never started (status ${st?.state ?? "missing"}) — kept in the record`);
+      }
     } catch (e) {
       failed.push(w.id);
       left.push(w);
-      lines.push(`resume ${w.id} failed: ${e instanceof Error ? e.message : String(e)}`);
+      w.resumeNote = e instanceof Error ? e.message : String(e);
+      lines.push(`resume ${w.id} failed: ${w.resumeNote}`);
     }
   }
+  // the record is removed only when every selected entry started or queued (or was skipped as already
+  // continued); a single entry that did not take keeps the whole record, with its reason on it.
   if (left.length) writeRecord({ ...rec, workers: left });
   else rmSync(deepfreezePath(), { force: true });
-  d.ledger(ledgerPath(logDir), "WORKERS-DEEPRESUME", { resumed: resumed.length, skipped: skipped.length, failed: failed.length });
-  const summary = `PAI resume after the stop: resumed ${resumed.length} workers${skipped.length ? `, skipped ${skipped.length} (already continued)` : ""}${failed.length ? `, ${failed.length} failed (record kept: pai resume)` : ""}${resumed.length ? `: ${rec.workers.filter((w) => resumed.some((r) => r.startsWith(`${w.id}->`))).map((w) => w.label.slice(0, 40)).join("; ")}` : ""}`;
+  d.ledger(ledgerPath(logDir), "WORKERS-DEEPRESUME", { started: started.length, queued: queued.length, skipped: skipped.length, failed: failed.length });
+  const names = (ids: string[]): string => rec.workers.filter((w) => ids.some((r) => r.startsWith(`${w.id}->`))).map((w) => w.label.slice(0, 40)).join("; ");
+  const summary = `PAI resume after the stop: started ${started.length}, queued ${queued.length}${skipped.length ? `, skipped ${skipped.length} (already continued)` : ""}${failed.length ? `, ${failed.length} failed (record kept: pai resume — ${left.filter((w) => failed.includes(w.id)).map((w) => `${w.id}: ${w.resumeNote ?? "not started"}`).join("; ")})` : ""}${started.length + queued.length ? `: ${names([...started, ...queued])}` : ""}`;
   lines.push(summary);
   await d.notify(summary).catch(() => undefined);
-  return { lines, resumed, skipped, failed };
+  return { lines, resumed: [...started, ...queued], started, queued, skipped, failed };
 }
 
 /** The recorded repo of a status: the git common dir's parent of its worktree. */
@@ -436,34 +485,64 @@ export async function realDeepFreezeDeps(): Promise<DeepFreezeDeps> {
   };
 }
 
+/**
+ * One recorded worker's restart on the normal start path (`pai worker resume|run`, detached): the run gets
+ * its queue ticket at the slot gate like any other start. `startDetachedWorker` resolves at the announce —
+ * written before the gates wait for a slot — so a status still "starting" is re-read briefly: by the end of
+ * the grace the announced run is either running, parked at the gate with its ticket ("queued"), or dead.
+ */
+async function startOne(dir: string, w: DeepWorker, text: string, detached: typeof import("./reroute.js")["startDetachedWorker"]): Promise<string> {
+  const resumable = w.state === "running" && !!w.claudeSession;
+  const args = resumable
+    // a queued worker restarted with `run` gets no worktree prompt of its own: name the tree it runs in
+    ? ["resume", w.id, text, "--label", `↩ ${w.label}`]
+    : [
+        "run",
+        "--provider",
+        w.provider,
+        ...(w.model ? ["--model", w.model] : []),
+        "--label",
+        w.label,
+        ...(w.className ? ["--class", w.className] : []),
+        ...(w.cwd ? ["--cwd", w.cwd] : []),
+        // the task goes in as -p; when a worktree still stands, prepend the notice naming it
+        // (a `run` restart builds no worktree prompt of its own)
+        ...(w.worktreeDir && existsSync(w.worktreeDir)
+          ? ["-p", `(Your worktree: ${w.worktreeDir} — the tree your run continues in; edit files there. It is not a directory named after your own worker id.)\n\n${text}`]
+          : ["-p", text]),
+      ];
+  if (!resumable && !(w.spec && existsSync(w.spec))) throw new Error("no spec file kept for this worker");
+  const id = await detached(dir, args, { cwd: existsSync(w.cwd) ? w.cwd : process.cwd(), timeoutMs: 60_000 });
+  // the announce precedes the gates; give the run a bounded moment to record its real state (running or queued)
+  const graceMs = 5_000;
+  const until = Date.now() + graceMs;
+  for (;;) {
+    const st = loadStatus(dir, id);
+    if (!st || st.last !== "starting") return id; // running / queued / an end state: deepResume judges it
+    if (Date.now() >= until) return id;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 /** Real resume deps: continuation via the detached `pai worker resume|run` (same path as the operator's). */
 export async function realDeepResumeDeps(): Promise<DeepResumeDeps> {
   const { startDetachedWorker } = await import("./reroute.js");
   const { setWorkerPriority } = await import("./engine-control.js");
+  // one spawn at a time (deepResume replays sequentially, awaiting each start): all nine fired at once
+  // on 2026-11-19 and only the first survived the boot's admission; a refused spawn leaves the record intact.
+  let last: Promise<void> = Promise.resolve();
   return {
     statuses: (dir) => loadStatuses(dir),
     start: async (dir, w, text) => {
-      const resumable = w.state === "running" && !!w.claudeSession;
-      const args = resumable
-        // a queued worker restarted with `run` gets no worktree prompt of its own: name the tree it runs in
-        ? ["resume", w.id, text, "--label", `↩ ${w.label}`]
-        : [
-            "run",
-            "--provider",
-            w.provider,
-            ...(w.model ? ["--model", w.model] : []),
-            "--label",
-            w.label,
-            ...(w.className ? ["--class", w.className] : []),
-            ...(w.cwd ? ["--cwd", w.cwd] : []),
-            // the task goes in as -p; when a worktree still stands, prepend the notice naming it
-            // (a `run` restart builds no worktree prompt of its own)
-            ...(w.worktreeDir && existsSync(w.worktreeDir)
-              ? ["-p", `(Your worktree: ${w.worktreeDir} — the tree your run continues in; edit files there. It is not a directory named after your own worker id.)\n\n${text}`]
-              : ["-p", text]),
-          ];
-      if (!resumable && !(w.spec && existsSync(w.spec))) throw new Error("no spec file kept for this worker");
-      return startDetachedWorker(dir, args, { cwd: existsSync(w.cwd) ? w.cwd : process.cwd(), timeoutMs: 60_000 });
+      const prev = last;
+      let settle!: () => void;
+      last = new Promise<void>((r) => (settle = r));
+      await prev.catch(() => undefined); // the previous entry is fully handled before this one spawns
+      try {
+        return await startOne(dir, w, text, startDetachedWorker);
+      } finally {
+        settle();
+      }
     },
     setPriority: (dir, id, w) => {
       if (w.priority !== "normal") setWorkerPriority(dir, id, w.priority, "deepresume");
