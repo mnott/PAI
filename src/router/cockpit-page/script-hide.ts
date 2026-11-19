@@ -47,15 +47,17 @@ function hidePost(rules,done){
 }
 /** Header control of a card: "N hidden" (toggles showing them dimmed) and "rules" (opens the editor). */
 function hideHeadAction(list){
- return{id:"hide-"+list,label:"hidden",title:"hidden rows",make:function(){
-  var w=document.createElement("span");w.className="wsearch";
-  var a=document.createElement("button");a.type="button";a.className="cbtn";a.setAttribute("data-act","hideshow");a.setAttribute("data-hl",list);
+ // a.el: the widget this make() built (the narrow-mode control move reads it off the spec)
+ var act={id:"hide-"+list,label:"hidden",title:"hidden rows",make:function(){
+  var w=document.createElement("span");w.className="wsearch";act.el=w;
+  var hideshow=document.createElement("button");hideshow.type="button";hideshow.className="cbtn";hideshow.setAttribute("data-act","hideshow");hideshow.setAttribute("data-hl",list);
   var b=document.createElement("button");b.type="button";b.className="cbtn";b.setAttribute("data-act","hideedit");b.setAttribute("data-hl",list);b.textContent="rules";b.title="edit the hide rules";b.setAttribute("aria-label","edit the hide rules");
-  a.addEventListener("click",function(){var s=hideShown();if(s[list])delete s[list];else s[list]=1;try{localStorage.setItem(HIDE_SHOW_KEY,JSON.stringify(s))}catch(e){}hideRedraw()});
+  hideshow.addEventListener("click",function(){var s=hideShown();if(s[list])delete s[list];else s[list]=1;try{localStorage.setItem(HIDE_SHOW_KEY,JSON.stringify(s))}catch(e){}hideRedraw()});
   b.addEventListener("click",function(){HIDE_ED=HIDE_ED===list?null:list;HIDE_P=null;HIDE_ERR="";hideRedraw()});
-  w.appendChild(a);w.appendChild(b);HIDE_HEADS.push({list:list,el:w,a:a});hidePaintHeads();
+  w.appendChild(hideshow);w.appendChild(b);HIDE_HEADS.push({list:list,el:w,a:hideshow});hidePaintHeads();
   return w;
  }};
+ return act;
 }
 function hidePaintHeads(){
  HIDE_HEADS=HIDE_HEADS.filter(function(h){if(document.contains(h.el))h.seen=true;return!h.seen||document.contains(h.el)});
