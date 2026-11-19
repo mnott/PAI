@@ -508,6 +508,9 @@ const resumeCommand: CommandDef = {
         systemWaiver: isUhpOrigin() ? "uhp" : undefined,
         label: str(ctx.opts.label) || `↩ ${old.label}`,
         claudeArgs,
+        // a fresh-thread local resume carries its own prompt (spec + summary):
+        // the old run's --spec path must not be recorded for this thread
+        ...(plan.freshPrompt ? { specOverride: parseRunnerArgs(claudeArgs).prompt ?? undefined } : {}),
         resumeOf: id,
         approvedBy: str(ctx.opts["approved-by"]),
         // the gatekeeper's approval follows the job: a worker whose start ran

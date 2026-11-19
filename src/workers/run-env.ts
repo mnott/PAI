@@ -16,7 +16,7 @@ import { delimiter, join } from "node:path";
 
 import { loadConfig } from "../daemon/config.js";
 import { routerPort } from "../router/router.js";
-import { resolveModelCapability, providerKeyPath, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "./config.js";
+import { readWorkersCached, resolveModelCapability, providerKeyPath, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "./config.js";
 import { workersYamlPath } from "./workers-config.js";
 import { writePinFile } from "./settings-file.js";
 import { loopbackUrl } from "../utils/loopback.js";
@@ -251,7 +251,19 @@ export function buildRunEnv(
     delete env.PAI_WORKER_LOCAL;
     if (isLoopbackProvider(provider)) env.PAI_WORKER_LOCAL = "1";
   }
+  // Local runs compact early — see the block after the provider env merge,
+  // where the cap is applied (a provider's own env for the key wins).
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
+  // provider env is the operator's explicit per-provider call and wins over the
+  // local autocompact cap above (the apple-fm default ships its own window)
+  if (headless && isLoopbackProvider(provider) && provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === undefined) {
+    try {
+      const cap = readWorkersCached().localContextTokens;
+      if (cap > 0) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(cap);
+    } catch {
+      /* unreadable config: Claude Code keeps its own default */
+    }
+  }
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   // The billing header Claude Code puts first in the system prompt changes on
   // every request (cch=<body hash>); a prefix cache then reuses only the tool

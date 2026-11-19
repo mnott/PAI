@@ -885,7 +885,9 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     ...(a.className ? { className: a.className } : {}),
     ...(a.topic ? { topic: a.topic } : {}),
     ...(a.cloudApproved ? { cloudApproved: true } : {}),
-    ...promptCopy(a.logDir, wid, a.parsed.prompt),
+    // a PAI-written resume prompt (local fresh-thread resume) is the run's task
+    // text, whatever -p carried; a --spec path would point at the old spec only
+    ...promptCopy(a.logDir, wid, a.specOverride ?? a.parsed.prompt),
   };
   saveStatus(a.logDir, status);
   // the id exists and its status is on disk: tell the caller now, before the gates wait for a slot.
