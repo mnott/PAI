@@ -364,6 +364,20 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     stopBudget?.();
   };
 
+  // The tool fold exists BEFORE the budget block below: snapBudget reads
+  // toolFold.bashRuns and armBudget() runs at start, so a fold declared after
+  // them is a temporal-dead-zone throw on every worker start (2026-11-19).
+  const toolFold = createToolFold({
+    logDir,
+    worker: wid,
+    provider: target.providerName,
+    label,
+    cwd: worktree?.dir ?? cwd,
+    granted: headless ? grantedToolNames(toolsFlag.slice(1), parsed.allowedTools) : undefined,
+    inject: injectHarnessHint,
+  });
+  state.bashRuns = toolFold.bashRuns;
+
   const readOnly = isReadOnlyJob(parsed.allowedTools);
   if (readOnly) status.readOnly = true;
   // --- the progress-based time budget (time-budget.ts): at the end of each
@@ -448,16 +462,6 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     };
   }
 
-  const toolFold = createToolFold({
-    logDir,
-    worker: wid,
-    provider: target.providerName,
-    label,
-    cwd: worktree?.dir ?? cwd,
-    granted: headless ? grantedToolNames(toolsFlag.slice(1), parsed.allowedTools) : undefined,
-    inject: injectHarnessHint,
-  });
-  state.bashRuns = toolFold.bashRuns;
   const untrackedAtStart = new Set(headless ? untrackedPaths(worktree?.dir ?? cwd) : []);
 
   // setup ends when the worker process holds its first turn; the first answer is timed from there
