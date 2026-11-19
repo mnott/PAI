@@ -40,7 +40,8 @@ import {
   type Usage,
   type UsageRow,
 } from "./usage.js";
-import { workersLogDir } from "../workers/paths.js";
+import { ledgerPath, workersLogDir } from "../workers/paths.js";
+import { appendLedger } from "../workers/ledger.js";
 import { recordToolError } from "../workers/tool-errors.js";
 import { declaredToolNames, fixJsonReply, ToolCaseSse } from "./tool-case.js";
 import { declaredToolSchemas } from "./tool-args.js";
@@ -254,6 +255,8 @@ export interface RouterOptions {
    */
   /** Retry a local answer that carries an unparsed tool-call block once; default router.localToolCallRetry (true). */
   localToolCallRetry?: boolean;
+  /** Receives every ENGINE-SLOT-RELEASED event (client-gone / stale); default: a ledger line. */
+  onSlotReleased?: (info: { reason: "client-gone" | "stale"; worker: string; engine: string; idleSec?: number }) => void;
   /** Guard on replies; default router.guard.mode (off). monitor records only; enforce rewrites a tool call the rules deny. `deps` replaces evaluate/rules (tests). */
   guard?: { mode?: "off" | "monitor" | "enforce"; deps?: ProxyGuardDeps };
   remoteAllowed?: (remoteAddress: string | undefined) => boolean;
@@ -489,6 +492,15 @@ function defaultToolArgsFix(log: (line: string) => void): NonNullable<RouterOpti
   };
 }
 
+/** ENGINE-SLOT-RELEASED ledger line: a scheduler slot freed because its client left or its upstream went quiet. */
+function ledgerSlotReleased(info: { reason: string; worker: string; engine: string; idleSec?: number }): void {
+  try {
+    appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ENGINE-SLOT-RELEASED", info);
+  } catch {
+    /* the ledger is best effort */
+  }
+}
+
 /** Log line plus a [model] tool-errors record, so `pai worker errors` keeps the data. */
 function defaultToolCaseFix(log: (line: string) => void): NonNullable<RouterOptions["onToolCaseFix"]> {
   return (i) => {
@@ -575,6 +587,7 @@ export function routerHandler(
   extra?: (req: http.IncomingMessage, res: http.ServerResponse) => boolean,
   options?: RouterOptions
 ): (req: http.IncomingMessage, res: http.ServerResponse) => void {
+  const slotReleased = options?.onSlotReleased ?? ledgerSlotReleased;
   const busts = new BustDetector();
   const tokens = options?.runTokens ?? sharedRunTokens;
   // runs that died without revoking: their tokens go with the next sweep
@@ -775,10 +788,12 @@ export function routerHandler(
       const mod = up.url.protocol === "https:" ? https : http;
       // Preemption (scheduled local requests only): `yielded` polls whether a --now run paused this worker;
       // `onYield` frees the engine and parks the same request again (see the abort below).
+      let touchHold: () => void = () => {};
       const forward = (release0: (u?: Usage, opts?: { gate?: boolean }) => void, preempt?: { yielded: () => boolean; onYield: () => void }): void => {
         // a local engine takes a bounded number of requests at once; the rest wait here, whichever path they came by
+        if (res.destroyed) return release0();
         if (target.kind !== "provider" || isCount || !isLocal(up.url)) return forwardRaw(release0, preempt);
-        let gone0 = false;
+        let gone0: boolean = res.destroyed;
         res.on("close", () => (gone0 = true));
         void acquireEngine(up.url.origin).then((done) => {
           res.on("close", done);
@@ -1063,6 +1078,8 @@ export function routerHandler(
       let resets = 0;
       const send = (): void => {
       ureq = mod.request(up.url, { method: "POST", headers: up.headers, ...(localEngine ? { agent: engineAgent(up.url.origin) } : {}) }, (ures0) => {
+        touchHold();
+        ures0.on("data", touchHold);
         if (resets) log(`${new Date().toISOString()} ${target.model} ${prov} upstream reset, retried ${resets}x, ok`);
         gate(ures0);
       });
@@ -1149,6 +1166,7 @@ export function routerHandler(
             gone = true;
           });
           scheduled = true;
+          sched.onStale = (e, w, _s, idle) => slotReleased({ reason: "stale", worker: w, engine: e, idleSec: Math.round(idle / 1000) });
           const queue = (): void => {
             startPings();
             sched
@@ -1156,8 +1174,16 @@ export function routerHandler(
               .then(
                 (ticket) => {
                   stopPings();
+                  touchHold = () => ticket.touch();
+                  // the client may leave at any moment from here on: free the engine slot and stop the upstream request
+                  const onGone = (): void => {
+                    if (!res.writableEnded) slotReleased({ reason: "client-gone", worker, engine });
+                    ticket.release();
+                  };
+                  if (gone || res.destroyed) return onGone();
+                  res.on("close", onGone);
                   const go = () =>
-                    forward(
+                    gone ? undefined : forward(
                       (u, opts) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined, opts),
                       {
                         yielded: () => sched.preemptedBy(worker) !== undefined,
