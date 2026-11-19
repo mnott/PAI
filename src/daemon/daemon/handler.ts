@@ -26,7 +26,7 @@ import {
   notificationConfig,
   setNotificationConfig,
 } from "./state.js";
-import { runIndex, runVaultIndex } from "./scheduler.js";
+import { runEmbed, runIndex, runVaultIndex } from "./scheduler.js";
 import { dispatchTool } from "./dispatcher.js";
 import { triggerRegistryScan } from "../registry-scan-trigger.js";
 import { enqueue, getStats as getQueueStats } from "../../daemon/work-queue.js";
@@ -141,10 +141,23 @@ export async function handleRequest(
     return;
   }
 
-  // Special: index_now — trigger immediate index (non-blocking response)
+  // Special: index_now — trigger immediate index (non-blocking response).
+  // An operator press: the pass runs regardless of a running local worker (the yield rule is
+  // an embed rule, not an index one), and any refusal lands in the last-index record so the
+  // cockpit shows WHY instead of a silent "started".
   if (method === "index_now") {
-    runIndex().catch((e) => {
+    runIndex({ triggered: true }).catch((e) => {
       process.stderr.write(`[pai-daemon] index_now error: ${e}\n`);
+    });
+    sendResponse(socket, { id, ok: true, result: { triggered: true } });
+    socket.end();
+    return;
+  }
+
+  // Special: embed_now — trigger immediate embed pass (non-blocking response), same operator rules.
+  if (method === "embed_now") {
+    runEmbed({ triggered: true }).catch((e) => {
+      process.stderr.write(`[pai-daemon] embed_now error: ${e}\n`);
     });
     sendResponse(socket, { id, ok: true, result: { triggered: true } });
     socket.end();

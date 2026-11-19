@@ -32,10 +32,14 @@ export interface DaemonMemory {
   indexIntervalSecs: number;
   embedIntervalSecs: number;
   embedMaxMinutes: number | null;
-  lastIndexPass: { at: number; durationMs: number; projects: number; files: number; chunks: number } | null;
+  /** A refusal record (an operator press the daemon held back) carries outcome "refused" and zero counts. */
+  lastIndexPass: { at: number; durationMs: number; projects: number; files: number; chunks: number; outcome?: string; reason?: string } | null;
   lastEmbedPass: { at: number; durationMs?: number; outcome: string; embedded: number; reason?: string } | null;
   /** Set when more than 1 % of the chunks belong to no project (daemon/orphan-check.ts). */
   orphans?: { orphaned: number; total: number; message: string } | null;
+  /** True while the daemon's own index/embed pass runs (status IPC): a refusal reason is then live. */
+  indexInProgress?: boolean;
+  embedInProgress?: boolean;
   /** p50/p99/max event-loop delay over the last minute (ms), with the epoch ms it was sampled. */
   loopLag?: { p50: number; p99: number; max: number; at: number } | null;
 }
@@ -432,7 +436,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     // the newest of: the daemon's scheduled pass, the embed pass log, a run started from the cockpit or CLI
     let last: LastPass | null = p.lastEnd ? { at: p.lastEnd, chunks: null, result: "ok", by: "nightly" } : null;
     const dp = kind === "embed" ? d?.lastEmbedPass : kind === "index" ? d?.lastIndexPass : null;
-    if (dp && (!last || dp.at >= last.at)) last = { at: dp.at, chunks: kind === "embed" ? (dp as { embedded: number }).embedded : (dp as { chunks: number }).chunks, result: "outcome" in dp ? dp.outcome : "done", by: "nightly" };
+    if (dp && (!last || dp.at >= last.at)) last = { at: dp.at, chunks: kind === "embed" ? (dp as { embedded: number }).embedded : (dp as { chunks: number }).chunks, result: ("outcome" in dp && dp.outcome) || "done", by: "nightly" };
     if (kind === "embed" && lastLogged && (!last || lastLogged.end >= last.at)) last = { at: lastLogged.end, chunks: lastLogged.embedded, result: lastLogged.stopReason, by: "nightly" };
     const f = fins.find((x) => x.kind === kind);
     const fe = f ? Date.parse(f.endedAt) : NaN;
@@ -484,7 +488,12 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     daemonInfo: s ? s.daemon : null,
     jobs,
     passes,
-    lastIndex: d?.lastIndexPass ? { at: d.lastIndexPass.at, durationSec: Math.round(d.lastIndexPass.durationMs / 1000), files: d.lastIndexPass.files, chunks: d.lastIndexPass.chunks } : null,
+    // why the daemon's pass did not run (an operator press must never read as a silent "started"):
+    // the refusal record is outcome "refused" with zero counts; it stays shown until a pass or a
+    // newer refusal replaces it, and only while no index/embed run is live.
+    lastIndex: d?.lastIndexPass
+      ? { at: d.lastIndexPass.at, durationSec: Math.round(d.lastIndexPass.durationMs / 1000), files: d.lastIndexPass.files, chunks: d.lastIndexPass.chunks, ...(d.lastIndexPass.outcome === "refused" && !run && !starting ? { refused: d.lastIndexPass.reason ?? "refused" } : {}) }
+      : null,
     lastEmbed: d?.lastEmbedPass
       ? { at: d.lastEmbedPass.at, durationSec: d.lastEmbedPass.durationMs === undefined ? null : Math.round(d.lastEmbedPass.durationMs / 1000), chunks: d.lastEmbedPass.embedded, outcome: d.lastEmbedPass.outcome, reason: d.lastEmbedPass.reason ?? null }
       : null,

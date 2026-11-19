@@ -24,8 +24,10 @@ export let startTime = Date.now();
 /** True while a project index pass is running. */
 export let indexInProgress = false;
 export let lastIndexTime = 0;
-/** Latest index pass: when it ended, how long it took, what it saw; null before the first. */
-export let lastIndexPass: { at: number; durationMs: number; projects: number; files: number; chunks: number } | null = null;
+/** Latest index pass: when it ended, how long it took, what it saw; null before the first.
+ *  A held operator trigger records outcome "refused" with zero counts and its reason, so the
+ *  cockpit can show WHY a pressed "index now" did not run instead of a silent "started". */
+export let lastIndexPass: { at: number; durationMs: number; projects: number; files: number; chunks: number; outcome?: string; reason?: string } | null = null;
 export let indexSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 
 /** True while an embedding pass is running. */
