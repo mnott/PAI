@@ -978,10 +978,11 @@ const helpCommand: CommandDef = {
 /** The merged files are now on disk: an incremental background-priority index when the repo has a graph. Never fails the merge. */
 async function reindexAfterMerge(dir: string): Promise<void> {
   try {
-    const [{ getStorageBackend }, { resolveRoot }, { incrementalIndexIfIndexed }] = await Promise.all([
+    const [{ getStorageBackend }, { graphRoot }, { incrementalIndexIfIndexed }] = await Promise.all([
       import("../../storage/factory.js"), import("../../codegraph/api.js"), import("../../codegraph/session.js"),
     ]);
-    await incrementalIndexIfIndexed(await getStorageBackend(), resolveRoot(dir));
+    // the merge lands in the main checkout: index there, not a worktree path
+    await incrementalIndexIfIndexed(await getStorageBackend(), graphRoot(dir));
   } catch { /* best effort */ }
 }
 

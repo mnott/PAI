@@ -10,7 +10,7 @@
  */
 
 import { getStorageBackend } from "../../../storage/factory.js";
-import { resolveRoot } from "../../../codegraph/api.js";
+import { graphRoot } from "../../../codegraph/api.js";
 import { sessionGraphLine } from "../../../codegraph/session.js";
 import { readHookInput } from "../lib/read-stdin.js";
 import { isWorkerSession } from "../lib/worker-session.js";
@@ -18,7 +18,8 @@ import { isWorkerSession } from "../lib/worker-session.js";
 async function main() {
   if (isWorkerSession()) return; // workers get the line in their system prompt
   const input = await readHookInput<{ cwd?: string }>();
-  const line = await sessionGraphLine(await getStorageBackend(), resolveRoot(input?.cwd ?? process.cwd()));
+  // a worker worktree resolves to the parent repo's index (never its own)
+  const line = await sessionGraphLine(await getStorageBackend(), graphRoot(input?.cwd ?? process.cwd()));
   if (line) console.log(line);
 }
 

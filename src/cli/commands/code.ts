@@ -7,7 +7,7 @@ import { findSummary, localSummaryModel, summarizeRepo } from "../../codegraph/s
 import { getRegistryBackend } from "../../storage/factory.js";
 import { reexecBackground } from "../../daemon/pass-priority.js";
 import { existsSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { relate } from "../../codegraph/relate.js";
 import { registeredProjects } from "../../codegraph/projects.js";
 import { loadConfig } from "../../daemon/config.js";
@@ -17,7 +17,9 @@ const json: OptDef = { ...OPT.json, summary: "Output raw JSON" };
 const limit: OptDef = { name: "limit", type: "number", value: "N", default: 20, summary: "Maximum results" };
 
 function rootOf(ctx: RunContext): string {
-  return cg.resolveRoot((ctx.opts.root as string | undefined) ?? process.cwd());
+  // cwd (not its git toplevel) so a worker worktree keeps its identity: the
+  // graph resolves it to the parent repo's index, source is read from here
+  return resolve((ctx.opts.root as string | undefined) ?? process.cwd());
 }
 
 function words(ctx: RunContext, key: string): string {
@@ -62,7 +64,7 @@ export const codeCommand: CommandDef = {
       examples: ["pai code index", "pai code index ~/dev/my-repo --force"],
       seeAlso: ["pai code status"],
       run: async (ctx) => {
-        const r = cg.resolveRoot((ctx.args.ROOT as string | undefined) ?? (ctx.opts.root as string | undefined) ?? process.cwd());
+        const r = resolve((ctx.args.ROOT as string | undefined) ?? (ctx.opts.root as string | undefined) ?? process.cwd());
         const s = await cg.indexRepo(await getStorageBackend(), r, { force: ctx.opts.force === true });
         print(ctx, s, [
           `root      ${s.root}`,
@@ -271,7 +273,7 @@ export const codeCommand: CommandDef = {
       examples: ["pai code status", "pai code status ~/dev/my-repo --json"],
       seeAlso: ["pai code index"],
       run: async (ctx) => {
-        const s = await cg.status(await getStorageBackend(), cg.resolveRoot((ctx.args.ROOT as string | undefined) ?? (ctx.opts.root as string | undefined) ?? process.cwd()));
+        const s = await cg.status(await getStorageBackend(), resolve((ctx.args.ROOT as string | undefined) ?? (ctx.opts.root as string | undefined) ?? process.cwd()));
         print(ctx, s, [
           `root      ${s.root}`,
           `backend   ${s.backend}`,
