@@ -21,7 +21,7 @@ import { requeueStaleWaiters } from "../../workers/stale-requeue.js";
 import { admitResumedWaiters, abortStuckPreemptions, endExpiredWindowNow, resumeOrphaned } from "../../workers/preempt.js";
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
-import { localIdleTick, startGpuSampler } from "../../workers/local-idle.js";
+import { localIdleTick, startGpuSampler, startSocTempSampler } from "../../workers/local-idle.js";
 import { freshLoadWatchState, liveLoadWatchDeps, loadWatchConfig, loadWatchTick, type LoadWatchState } from "../load-watch.js";
 import { batteryGuardTick, batteryGuardConfig, batteryPassRefusal, type BatteryGuardConfig } from "../battery-guard.js";
 import { buildsDir, listBuildsSync } from "../../builds/queue.js";
@@ -721,6 +721,10 @@ export function startWorkerSupervisor(): void {
   // (the instant read jumps 0↔97 within seconds, so the tile shows the avg + peak of this window);
   // the 30 s idle tick below persists the window's 1-min summary for the router to read.
   startGpuSampler();
+
+  // SoC die temperature behind the cockpit tile: one tools/pai-sensors run every 30 s (a one-shot
+  // IOKit HID read, no sudo, exits in ~80 ms); the idle tick below persists it beside the GPU summary.
+  startSocTempSampler();
 
   // the local model must not idle while its workers build: sampled every 30 s, one nudge per backoff
   const localIdle = setInterval(() => {

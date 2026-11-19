@@ -47,7 +47,7 @@ var SYSM={
  "cpu-load":["CPU load","cpu",sysPct,"%",function(){return"all clusters"},"cpu"],
  "gpu-load":["GPU load","gpu",sysPct,"%",function(c,d){var p=c.gpuPeak;return"avg of ~5 s samples"+(p!=null?" · peak "+Math.round(p)+"%":"")+sysTag(d)},"gpu"],
  "ane-load":["ANE load","ane",sysPct,"%",function(c,d){return"neural engine"+sysTag(d)},"ane",1],
- "soc-temp":["SoC temp","socTemp",sysW1,"°C",function(c,d){var h=sysHint(d,"soc-temp");return h||("IOReport"+sysTag(d))},"socTemp"],
+ "soc-temp":["SoC temp","socTemp",sysW1,"°C",function(c,d){var a=c.socTempAvg,h=sysHint(d,"soc-temp");return h||(a!=null?"avg "+sysW1(a)+" °C · max of die sensors":"max of die sensors")},"socTemp"],
  "cpu-w":["CPU W","cpuW",sysW1,"W",function(c,d){return"CPU rail"+sysTag(d)},"cpuW",1],
  "gpu-w":["GPU W","gpuW",sysW1,"W",function(c,d){return"GPU rail"+sysTag(d)},"gpuW",1],
  "ane-w":["ANE W","aneW",sysW1,"W",function(c,d){return"neural engine"+sysTag(d)},"aneW",1],
@@ -98,9 +98,9 @@ function sysMetricView(d,ctx){
  if(!SYSM[name]){for(var xi=0;xi<SYS_EXTRA.length;xi++)if(SYS_EXTRA[xi][0]===name)return sysExtraView(d,name);return null}
  var m=SYSM[name];
  var tip=(d.unavailable&&d.unavailable.all)?d.unavailable.all:((c.notes||[]).join("; ")||("source: "+(c.source||"none")));
- if(r.v==null){var h=sysHint(d,name);if(h)tip=h}
  if(m[6]&&sysUnused(d,m[5]))return sysMetric("0",m[3],"0 in this window",sysSeries(d,m[1],m[5],0));
  var r=sysRead(c,m[1]);
+ if(r.v==null){var h=sysHint(d,name);if(h)tip=h}
  if(name==="gpu-load"&&r.v!=null&&c.gpuPeak!=null)return sysMetric(m[2](r.v),m[3],"peak "+Math.round(c.gpuPeak)+"% · avg of ~5 s samples",sysSeries(d,m[1],m[5],r.v));
  return sysMetric(r.v==null?"–":m[2](r.v),m[3],(r.age?"~"+r.age+" old · ":"")+(r.v==null?tip:m[4](c,d)),sysSeries(d,m[1],m[5],r.v));
 }

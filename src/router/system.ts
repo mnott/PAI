@@ -66,6 +66,8 @@ export interface SystemSample {
   pressureLevel?: number;
   /** peak GPU % of the last minute's ~5 s instants (daemon sampler), beside the avg `gpu` */
   gpuPeak?: number;
+  /** SoC die temperature avg °C, beside the max `socTemp` (the pai-sensors helper) */
+  socTempAvg?: number;
   source: "direct" | "mactop" | "vmstat";
   /** why metrics are missing or stale, shown as tooltip */
   notes?: string[];
@@ -152,6 +154,8 @@ export interface SystemBucket {
   drainW?: number;
   /** peak GPU % in the bucket, beside its avg `gpu` (the tile shows both; the sparkline stays the averages) */
   gpuPeak?: number;
+  /** SoC die temperature avg °C in the bucket, beside its max `socTemp` */
+  socTempAvg?: number;
 }
 
 export interface SystemSeries {
@@ -175,7 +179,7 @@ function withoutImplausiblePower(s: SystemSample): SystemSample {
   return c;
 }
 
-const AVG_KEYS = ["cpu", "gpu", "ane", "socTemp", "totalW", "systemW", "gpuW", "cpuW", "aneW"] as const;
+const AVG_KEYS = ["cpu", "gpu", "ane", "socTemp", "socTempAvg", "totalW", "systemW", "gpuW", "cpuW", "aneW"] as const;
 
 /**
  * Bucket 1-min samples into the cockpit windows' buckets — the same from/bucket
@@ -276,12 +280,12 @@ export interface SystemSnapshot {
   battery: string;
   /** Latest battery guard telemetry line; absent with no telemetry file (desktop Mac, guard never ran). */
   power?: PowerReading;
-  /** Why a metric can never be shown here (tooltip); e.g. the SoC temperature needs sudo. */
+  /** Why a metric cannot be shown right now (tooltip); e.g. the SoC temperature helper is not built. */
   hints?: Record<string, string>;
 }
 
-/** Shown while no source gives a SoC temperature without sudo (powermetrics is root-only; AppleSmartBattery has no temp key). */
-export const SOC_TEMP_HINT = "SoC temperature needs sudo (powermetrics); no non-sudo source on this Mac";
+/** Shown while the one-shot helper gives no SoC temperature (it reads the PMU sensors through IOKit HID without sudo; powermetrics stays root-only). */
+export const SOC_TEMP_HINT = "SoC temperature unavailable: the pai-sensors helper is not built or failed (cd tools/pai-sensors && swift build -c release)";
 
 export interface PowerReading {
   adapterW: number | null;
@@ -358,6 +362,8 @@ export class SystemMonitor {
   /** CPU load and when top last reported it */
   private topCpu: number | undefined;
   private prevTicks = cpuTicks();
+  /** Why the SoC temperature is missing at the last poll ("" when a fresh reading came in) */
+  private socWhy = "";
 
   constructor(deps: SystemDeps = {}) {
     this.file = deps.file ?? systemRingFile();
@@ -370,20 +376,33 @@ export class SystemMonitor {
     this.now = deps.now ?? Date.now;
   }
 
-  /** The daemon's local-idle GPU summary (the ~5 s sampler's 1-min avg/peak), null with no fresh sample. */
-  private gpuSample(now: number): { avg: number; peak?: number; at: number } | undefined {
-    let f: LocalIdleFile | null = null;
+  /** The daemon's local-idle state file (GPU summary + SoC temperature), null when it never wrote. */
+  private idleFile(): LocalIdleFile | null {
     try {
-      f = readLocalIdle(this.idleDir());
+      return readLocalIdle(this.idleDir());
     } catch {
-      /* the daemon has not written yet */
+      return null; // the daemon has not written yet
     }
+  }
+
+  /** The daemon's local-idle GPU summary (the ~5 s sampler's 1-min avg/peak), null with no fresh sample. */
+  private gpuSample(f: LocalIdleFile | null, now: number): { avg: number; peak?: number; at: number } | undefined {
     if (!f) return undefined;
     const at = Date.parse(f.at);
     if (!Number.isFinite(at) || now - at > 120_000) return undefined; // stale: the sampler stopped
     const avg = f.gpuAvgPct ?? (f.gpuPct === null ? undefined : Math.round(f.gpuPct));
     if (typeof avg !== "number") return undefined;
     return { avg, ...(f.gpuPeakPct != null ? { peak: f.gpuPeakPct } : {}), at };
+  }
+
+  /** Why the SoC temperature cannot be shown (helper not built/failed, or no fresh reading); "" when a reading is in. */
+  private socTempWhy(f: LocalIdleFile | null, now: number): string {
+    if (!f) return SOC_TEMP_HINT + " — the daemon's local-idle state file never wrote";
+    if (f.socTempError) return f.socTempError;
+    const at = typeof f.socTempAt === "number" ? f.socTempAt : NaN;
+    if (!Number.isFinite(at)) return SOC_TEMP_HINT;
+    if (now - at > 120_000) return `temperature reading is ${Math.round((now - at) / 1000)}s old (the helper's sampler stopped)`;
+    return "";
   }
 
   /** System watts from the battery guard's latest telemetry line (its own tick reads ioreg; none here). */
@@ -435,15 +454,20 @@ export class SystemMonitor {
     const swap = swOut === undefined ? undefined : parseSwapUsage(swOut);
     const notes: string[] = ["ANE and the SoC power rails are not sampled (mactop is never spawned; powermetrics needs sudo)"];
     const cpuFresh = this.topCpu !== undefined;
-    // the daemon's own readings, merged in without any subprocess here: GPU from the local-idle
-    // fast sampler's persisted summary, watts from the battery guard's telemetry line
-    const gpu = this.gpuSample(now);
+    // the daemon's own readings, merged in without any subprocess here: GPU and SoC temperature from
+    // the local-idle state file (its samplers), watts from the battery guard's telemetry line
+    const idle = this.idleFile();
+    const gpu = this.gpuSample(idle, now);
     if (gpu) {
       notes.push(`GPU avg ${Math.round(gpu.avg)}% of ~5 s samples (${Math.round((now - gpu.at) / 1000)}s ago)`);
       if (gpu.peak !== undefined) notes.push(`GPU peak ${Math.round(gpu.peak)}%`);
     } else {
       notes.push("GPU unavailable: the daemon's sampler has no fresh sample (local-idle off?)");
     }
+    const socWhy = this.socTempWhy(idle, now);
+    this.socWhy = socWhy;
+    const socFresh = socWhy === "" && typeof idle?.socTempC === "number";
+    if (socFresh) notes.push(`SoC temp from tools/pai-sensors (${Math.round((now - (idle?.socTempAt ?? 0)) / 1000)}s ago, ${idle?.socSensors ?? 0} die sensors)`);
     const pw = this.powerWatts(now);
     if (pw?.w !== undefined) notes.push(`system watts from the battery guard's ioreg telemetry (${Math.round((now - pw.at) / 1000)}s ago)`);
     else if (!pw) notes.push("power unavailable: no battery guard telemetry line");
@@ -452,6 +476,7 @@ export class SystemMonitor {
       ...(cpuFresh ? { cpu: this.topCpu } : {}),
       ...(gpu ? { gpu: gpu.avg } : {}),
       ...(gpu?.peak !== undefined ? { gpuPeak: gpu.peak } : {}),
+      ...(socFresh ? { socTemp: idle!.socTempC!, ...(typeof idle!.socTempAvgC === "number" ? { socTempAvg: idle!.socTempAvgC } : {}) } : {}),
       ...(pw?.w !== undefined ? { systemW: pw.w, totalW: pw.w } : {}),
       ...(memTotal ? { memTotal } : {}),
       ...(vm?.used ? { memUsed: vm.used } : {}),
@@ -521,6 +546,8 @@ export class SystemMonitor {
     if (!hasMetric) unavailable.all = why || sample?.notes?.join("; ") || "no system source available";
     const tfile = this.telemetryPath;
     const power = powerReading(now, tfile);
+    // the hint rides with the cached sample: a fresh reading clears it, a missing helper keeps its reason
+    const socWhy = this.socWhy;
     return {
       now,
       window: win,
@@ -530,7 +557,7 @@ export class SystemMonitor {
       series: buildSystemSeries(this.samples(), win, now, readTelemetryLines(tfile) ?? []),
       battery: batteryCockpitLine(now),
       ...(power ? { power } : {}),
-      hints: { "soc-temp": SOC_TEMP_HINT },
+      ...(socWhy ? { hints: { "soc-temp": socWhy } } : {}),
     };
   }
 }
