@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { shortText } from "../args.js";
 import { buildRunEnv } from "../run-env.js";
 import { appendLedger } from "../ledger.js";
-import { appendStopEvent, decideEndReason, endFields, type EndInfo } from "../endreason.js";
+import { appendStopEvent, decideEndReason, endFields, requestKill, type EndInfo } from "../endreason.js";
 import { takeLoopStop } from "../loop-stop.js";
 import { readFileSync } from "node:fs";
 import { eventsPath } from "../paths.js";
@@ -17,6 +17,9 @@ import { type WorkerStatus, saveStatus, UNLABELED } from "../status.js";
 import { committedFallThrough, invalidCloudReport } from "../policy.js";
 import { checkOrphanedChildren, isWorkerId } from "../tree.js";
 import { deliverHandoff } from "../handoff.js";
+import { aibrokerMessenger } from "../run-events.js";
+import { ownerOf } from "../local-idle.js";
+import { reviewNote } from "../time-budget.js";
 import {
   salvageOnExit,
   archiveEmptyResult,
@@ -56,6 +59,18 @@ import { recordRunOutcomes } from "../../hooks/ts/lib/antipattern-log.js";
  */
 /** Per-git-call bound for the salvage a kill signal runs before exiting. */
 export const SIGNAL_SALVAGE_MS = 5_000;
+
+/**
+ * A budget checkpoint found no progress: stop the run like a deadline (SIGTERM,
+ * then SIGKILL after the grace), with a PAI-kill marker so the end reads as
+ * PAI's own stop. The salvage, the "review" state and the mailbox line happen on
+ * the normal close path once the fold sees the child die (status.needsReview).
+ */
+export function fireBudgetStop(logDir: string, status: WorkerStatus, ledger: string, why: string): void {
+  requestKill(logDir, ledger, status.id, "time-budget", false, `budget checkpoint: ${why}`);
+  appendStopEvent(logDir, status.id, { killed_by: "time-budget", forced: false, reason: `budget checkpoint: ${why} (timer: workers.timeBudget)` });
+  void killTree(logDir, status.id, { skipRoot: true, by: "time-budget", reason: `budget checkpoint: ${why}` }).catch(() => undefined);
+}
 
 /** The deadline fired: record it on the status and in the ledger (the caller then stops the child). */
 export function fireDeadline(logDir: string, status: WorkerStatus, ledger: string, limit: RunLimit): void {
@@ -211,8 +226,16 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const loopStop = takeLoopStop(logDir, wid);
   if (loopStop) report = applyLoopStop(status, loopStop, report, f.fallbackText, f.worktree);
   const orphanReason = checkOrphanedChildren(logDir, wid);
+  // a budget checkpoint stopped this run with no progress: the work above is on
+  // the branch; the state says needs review, and nothing falls through to the
+  // cloud from here — the owning session decides (resume / extend / cloud).
+  const forReview = !!status.needsReview && !loopStop;
+  if (forReview) {
+    const reason = status.last || "stopped at a budget checkpoint";
+    report = { ...(report ?? {}), result: "~", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
+  }
   const succeeded = ok && !orphanReason && !f.timedOut && !loopStop;
-  status.state = succeeded ? "done" : "failed";
+  status.state = forReview ? "review" : succeeded ? "done" : "failed";
   status.rc = rc;
   status.secs = f.secs;
   // one outcome line per anti-pattern firing of this run
@@ -233,7 +256,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     report = { ...(report ?? {}), result: report?.result ?? "-", why: end.killReason, notes: [end.killReason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
   }
   // r=~ (partial) means the work continues: saveStatus then keeps the issue claims
-  status.claimsContinue = report?.result === "~";
+  status.claimsContinue = report?.result === "~" || forReview;
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end), ...(status.endReason === MALFORMED_TOOL_CALL ? { instrument: MALFORMED_TOOL_CALL } : {}) });
 
@@ -243,7 +266,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   // the status for ps/replay. Best effort: a scan never fails the run.
   await scanWithinBudget(logDir, status, ledger);
 
-  const reviewed = f.worktree && !status.handoffMin ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
+  const reviewed = f.worktree && !status.handoffMin && !forReview ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
   if (reviewed) {
     process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);
     appendLedger(ledger, "WORKER-FALLTHROUGH-REVIEW", { id: wid, reason: reviewed.why });
@@ -252,17 +275,30 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     saveStatus(logDir, status);
     f.onReviewed?.();
   }
-  const cloudInvalid = f.cloudRun?.(status) ? invalidCloudReport(status, report) : null;
+  const cloudInvalid = !forReview && f.cloudRun?.(status) ? invalidCloudReport(status, report) : null;
   if (cloudInvalid) {
     appendLedger(ledger, "WORKER-REPORT-INVALID", { id: wid, reason: cloudInvalid.why });
     report = { ...(report ?? {}), ...cloudInvalid };
     status.claimsContinue = true;
     saveStatus(logDir, status);
   }
-  const early = await f.beforeHandoff?.(status, report);
+  // a review stop skips the handoff hooks entirely: no escalation, no rerun.
+  const early = forReview ? undefined : await f.beforeHandoff?.(status, report);
   if (typeof early === "number") return early;
 
   const finalRc = rc !== 0 ? rc : succeeded ? 0 : 1;
+  // a budget checkpoint stopped the run for review: one mailbox line to the
+  // owning session with what it did and the three ways on (never a cloud
+  // fall-through from this path).
+  if (status.needsReview) {
+    const why = status.last || "stopped at a budget checkpoint";
+    const did = f.worktree ? commitLines(f.worktree.dir, f.worktree.base) : [];
+    try {
+      await aibrokerMessenger(logDir).toSession(ownerOf(status), reviewNote(wid, status.label || UNLABELED, why, did, status.last)).catch(() => false);
+    } catch {
+      // the mailbox line is best effort; the review state and ledger already stand
+    }
+  }
   if (status.parent && isWorkerId(logDir, status.parent)) {
     try {
       await deliverHandoff(logDir, {
@@ -283,7 +319,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   }
   // nothing to merge: the worktree goes now instead of piling up until gc
   if (f.worktree && status.worktreeDir) archiveEmptyResult(logDir, status);
-  return finalRc;
+  // a review stop exits 0: PAI stopped it on purpose, rc 1 would read as a model failure
+  return forReview ? 0 : finalRc;
 }
 
 /** Own-identity fields of the final json: this run's id, every run's id in order, the provider, the instrument fault (or null). */
