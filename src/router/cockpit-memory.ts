@@ -489,11 +489,11 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     jobs,
     passes,
     // why the daemon's pass did not run (an operator press must never read as a silent "started"):
-  // the refusal record is outcome "refused" with zero counts; it stays shown until a pass or a
-  // newer refusal replaces it, and only while no index/embed run is live.
-  lastIndex: d?.lastIndexPass
-    ? { at: d.lastIndexPass.at, durationSec: Math.round(d.lastIndexPass.durationMs / 1000), files: d.lastIndexPass.files, chunks: d.lastIndexPass.chunks, ...(d.lastIndexPass.outcome === "refused" && !run && !starting ? { refused: d.lastIndexPass.reason ?? "refused" } : {}) }
-    : null,
+    // the refusal record is outcome "refused" with zero counts; it stays shown until a pass or a
+    // newer refusal replaces it, and only while no index/embed run is live.
+    lastIndex: d?.lastIndexPass
+      ? { at: d.lastIndexPass.at, durationSec: Math.round(d.lastIndexPass.durationMs / 1000), files: d.lastIndexPass.files, chunks: d.lastIndexPass.chunks, ...(d.lastIndexPass.outcome === "refused" && !run && !starting ? { refused: d.lastIndexPass.reason ?? "refused" } : {}) }
+      : null,
     lastEmbed: d?.lastEmbedPass
       ? { at: d.lastEmbedPass.at, durationSec: d.lastEmbedPass.durationMs === undefined ? null : Math.round(d.lastEmbedPass.durationMs / 1000), chunks: d.lastEmbedPass.embedded, outcome: d.lastEmbedPass.outcome, reason: d.lastEmbedPass.reason ?? null }
       : null,
