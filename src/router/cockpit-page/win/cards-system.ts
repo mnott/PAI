@@ -35,6 +35,8 @@ function sysUnused(d,key){
 function sysPct(v){return String(Math.round(v))}
 function sysW1(v){return v.toFixed(1)}
 function sysTag(d){var s=d.slowAgeS;return s==null?"":" · "+(s<90?"probe "+s+"s":"cached "+(s<3600?Math.round(s/60)+" min":Math.round(s/3600)+" h"))}
+/** Why a metric can never be shown (the feed's hints). */
+function sysHint(d,key){var h=d&&d.hints;return(h&&h[key])||""}
 function sysOf(v){return"of "+(v!=null?gb(v,0)+" GB":"n/a")}
 /** name -> [title, key, fmt, unit, sub(c,d), server series key, zero-hideable]. */
 var SYSM={
@@ -43,13 +45,13 @@ var SYSM={
  "wired":["wired","wired",gb,"GB",function(){return"vm_stat"}],
  "compressed":["compressed","compressed",gb,"GB",function(){return"vm_stat"}],
  "cpu-load":["CPU load","cpu",sysPct,"%",function(){return"all clusters"},"cpu"],
- "gpu-load":["GPU load","gpu",sysPct,"%",function(c,d){var f=c.gpuFreqMhz;return(f?(f/1000).toFixed(1)+" GHz":"IOReport")+sysTag(d)},"gpu"],
+ "gpu-load":["GPU load","gpu",sysPct,"%",function(c,d){var p=c.gpuPeak;return"avg of ~5 s samples"+(p!=null?" · peak "+Math.round(p)+"%":"")+sysTag(d)},"gpu"],
  "ane-load":["ANE load","ane",sysPct,"%",function(c,d){return"neural engine"+sysTag(d)},"ane",1],
- "soc-temp":["SoC temp","socTemp",sysW1,"°C",function(c,d){return"IOReport"+sysTag(d)},"socTemp"],
+ "soc-temp":["SoC temp","socTemp",sysW1,"°C",function(c,d){var h=sysHint(d,"soc-temp");return h||("IOReport"+sysTag(d))},"socTemp"],
  "cpu-w":["CPU W","cpuW",sysW1,"W",function(c,d){return"CPU rail"+sysTag(d)},"cpuW",1],
  "gpu-w":["GPU W","gpuW",sysW1,"W",function(c,d){return"GPU rail"+sysTag(d)},"gpuW",1],
  "ane-w":["ANE W","aneW",sysW1,"W",function(c,d){return"neural engine"+sysTag(d)},"aneW",1],
- "system-w":["system W","systemW",sysW1,"W",function(c,d){return"system rail"+sysTag(d)},"systemW"],
+ "system-w":["system W","systemW",sysW1,"W",function(c,d){return"machine draw, ioreg SystemLoad"+sysTag(d)},"systemW"],
  "power":["power","totalW",sysW1,"W",function(c,d){return"SoC total"+sysTag(d)},"totalW"]
 };
 var SYS_NAMES=["memory","swap","wired","compressed","cpu-load","gpu-load","ane-load","soc-temp","cpu-w","gpu-w","ane-w","system-w","power","energy"];
@@ -96,8 +98,10 @@ function sysMetricView(d,ctx){
  if(!SYSM[name]){for(var xi=0;xi<SYS_EXTRA.length;xi++)if(SYS_EXTRA[xi][0]===name)return sysExtraView(d,name);return null}
  var m=SYSM[name];
  var tip=(d.unavailable&&d.unavailable.all)?d.unavailable.all:((c.notes||[]).join("; ")||("source: "+(c.source||"none")));
+ if(r.v==null){var h=sysHint(d,name);if(h)tip=h}
  if(m[6]&&sysUnused(d,m[5]))return sysMetric("0",m[3],"0 in this window",sysSeries(d,m[1],m[5],0));
  var r=sysRead(c,m[1]);
+ if(name==="gpu-load"&&r.v!=null&&c.gpuPeak!=null)return sysMetric(m[2](r.v),m[3],"peak "+Math.round(c.gpuPeak)+"% · avg of ~5 s samples",sysSeries(d,m[1],m[5],r.v));
  return sysMetric(r.v==null?"–":m[2](r.v),m[3],(r.age?"~"+r.age+" old · ":"")+(r.v==null?tip:m[4](c,d)),sysSeries(d,m[1],m[5],r.v));
 }
 /** A system.srv:<provider>/<what> card; reads the page's sys/data/lim, the payload is only the trigger. */
