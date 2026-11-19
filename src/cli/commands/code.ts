@@ -93,11 +93,17 @@ export const codeCommand: CommandDef = {
       run: async (ctx) => {
         const backend = await getStorageBackend();
         const r = rootOf(ctx);
-        await cg.ensureFresh(backend, r);
-        const res = await cg.explore(backend, r, words(ctx, "QUERY"), {
-          budgetTokens: num(ctx.opts.budget), depth: num(ctx.opts.depth), projects: await registeredProjects().catch(() => []),
-        });
-        console.log(ctx.opts.json === true ? JSON.stringify(res, null, 2) : res.text);
+        const query = words(ctx, "QUERY");
+        try {
+          await cg.ensureFresh(backend, r);
+          const res = await cg.explore(backend, r, query, {
+            budgetTokens: num(ctx.opts.budget), depth: num(ctx.opts.depth), projects: await registeredProjects().catch(() => []),
+          });
+          console.log(ctx.opts.json === true ? JSON.stringify(res, null, 2) : res.text);
+        } catch (e) {
+          if (e instanceof CliError) throw e;
+          throw new CliError(`code graph storage error: ${e instanceof Error ? e.message : String(e)}`, "Run: pai code index --force");
+        }
       },
     },
     {

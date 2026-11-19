@@ -16,6 +16,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import type { CodeGraphStore } from "./store.js";
 import { extractFile } from "./extract/index.js";
+import { looksBinary } from "./sanitize.js";
 import { resolveAffected } from "./resolve.js";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", "vendor", ".git"]);
@@ -86,6 +87,11 @@ function hashOf(content: Buffer): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
+/** Extract symbols unless the file looks binary (NUL in the first 8 KB): those are indexed as a file row only. */
+function extractSource(buf: Buffer, input: Parameters<typeof extractFile>[0]): ReturnType<typeof extractFile> {
+  return looksBinary(buf) ? Promise.resolve(null) : extractFile(input);
+}
+
 /**
  * Index `root` into the store. Incremental: only files whose mtime differs and
  * whose sha256 then differs are re-extracted; files gone from disk are deleted
@@ -134,7 +140,7 @@ export async function indexRoot(store: CodeGraphStore, root: string, opts: { for
     }
 
     const text = content.toString("utf8");
-    const extracted = await extractFile({ path, content: text, mtime: Math.round(st.mtimeMs), size: st.size });
+    const extracted = await extractSource(content, { path, content: text, mtime: Math.round(st.mtimeMs), size: st.size });
     if (!extracted) {
       // unknown language: file row only
       await store.upsertFile(rootAbs, {
@@ -196,8 +202,9 @@ export async function reconcile(store: CodeGraphStore, root: string): Promise<In
     touched = true;
     changed++;
     changedPaths.push(path);
-    const text = readFileSync(abs).toString("utf8");
-    const extracted = await extractFile({ path, content: text, mtime: Math.round(st.mtimeMs), size: st.size });
+    const content = readFileSync(abs);
+    const text = content.toString("utf8");
+    const extracted = await extractSource(content, { path, content: text, mtime: Math.round(st.mtimeMs), size: st.size });
     if (!extracted) {
       await store.upsertFile(rootAbs, { path, language: "unknown", contentHash: hash, mtime: Math.round(st.mtimeMs), size: st.size, symbols: [], refs: [] });
       continue;
@@ -239,7 +246,7 @@ export async function indexFiles(store: CodeGraphStore, root: string, paths: str
     const content = readFileSync(abs);
     const hash = hashOf(content);
     if (prev && prev.contentHash === hash) { await store.touchFileMtime(rootAbs, path, Math.round(st.mtimeMs), st.size); continue; }
-    const extracted = await extractFile({ path, content: content.toString("utf8"), mtime: Math.round(st.mtimeMs), size: st.size });
+    const extracted = await extractSource(content, { path, content: content.toString("utf8"), mtime: Math.round(st.mtimeMs), size: st.size });
     const res = await store.upsertFile(rootAbs, extracted
       ? { path, language: extracted.language, contentHash: hash, mtime: Math.round(st.mtimeMs), size: st.size, symbols: extracted.symbols, refs: extracted.refs }
       : { path, language: "unknown", contentHash: hash, mtime: Math.round(st.mtimeMs), size: st.size, symbols: [], refs: [] });

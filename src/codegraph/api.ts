@@ -18,6 +18,7 @@ import { extractFile } from "./extract/index.js";
 import { exactNameTokens, pathWords, questionTerms, rankCandidates } from "./rank.js";
 import type { RelateProject } from "./relate.js";
 import { relatedElsewhere } from "./graph.js";
+import { sanitize } from "./sanitize.js";
 
 export interface IndexStats {
   root: string;
@@ -284,7 +285,7 @@ function sourceOf(rootAbs: string, s: SymbolHit): string {
 export async function explore(
   backend: StorageBackend,
   root: string,
-  query: string,
+  rawQuery: string,
   opts?: { budgetTokens?: number; depth?: number; projects?: RelateProject[] },
 ): Promise<ExploreResult> {
   await ensureFresh(backend, root);
@@ -294,6 +295,7 @@ export async function explore(
   const depth = opts?.depth ?? 1;
 
   // question terms (stopwords dropped), candidates from name, FTS and path, then ranked
+  const query = sanitize(rawQuery);
   const terms = questionTerms(query);
   const exactTokens = exactNameTokens(query);
   const exactNames = new Set(exactTokens);
