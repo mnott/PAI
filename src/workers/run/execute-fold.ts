@@ -483,7 +483,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       state.resultReport = report;
       resultGrace.onResult();
     },
-  });
+  }, { resume: Boolean(a.resumeOf) });
   // one stream event into status and the tool fold: the main run and the unparsed-call continuation share it
   const foldEvent = (e: StreamEvent): void => {
     if (e.type === "system" && e.subtype === "init") {

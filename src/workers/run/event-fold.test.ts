@@ -14,16 +14,19 @@ const EV = {
 } satisfies Record<string, StreamEventLike>;
 
 /** The fold wired like execute-fold's: a final result stands for armStdinClose + resultGrace.onResult + record. */
-const runFold = (events: StreamEventLike[]) => {
+const runFold = (events: StreamEventLike[], resume = false) => {
   const finals: StreamEventLike[] = [];
   let arms = 0;
-  const f = createResultFold({
-    onTurn: () => undefined,
-    onFinalResult: (e) => {
-      arms += 1; // armStdinClose() + resultGrace.onResult(), exactly as foldEvent wires them
-      finals.push(e);
+  const f = createResultFold(
+    {
+      onTurn: () => undefined,
+      onFinalResult: (e) => {
+        arms += 1; // armStdinClose() + resultGrace.onResult(), exactly as foldEvent wires them
+        finals.push(e);
+      },
     },
-  });
+    { resume }
+  );
   for (const e of events) {
     if (e.type === "assistant") f.onAssistant();
     else if (e.type === "result") f.onResult(e);
@@ -33,10 +36,10 @@ const runFold = (events: StreamEventLike[]) => {
 
 describe("createResultFold", () => {
   it("the resumed stream: only the last result is final — armed once, after the real turn", () => {
-    const { finals, arms } = runFold([
-      EV.taskNotification, EV.init, EV.replayedResult, EV.init,
-      EV.assistantTool, EV.toolResult, EV.finalResult,
-    ]);
+    const { finals, arms } = runFold(
+      [EV.taskNotification, EV.init, EV.replayedResult, EV.init, EV.assistantTool, EV.toolResult, EV.finalResult],
+      true
+    );
     expect(finals).toEqual([EV.finalResult]); // the second result is THE final one
     expect(arms).toBe(1); // stdin close + result grace armed exactly once
   });
@@ -52,6 +55,12 @@ describe("createResultFold", () => {
     const { finals, arms } = runFold([EV.init, EV.assistantTool, EV.finalResult]);
     expect(finals).toEqual([EV.finalResult]);
     expect(arms).toBe(1);
+  });
+
+  it("a fresh (non-resume) run's empty num_turns-0 result ends the run as before — nothing is swallowed", () => {
+    const { finals, arms } = runFold([EV.init, EV.replayedResult]); // never resumes: this IS its outcome
+    expect(finals).toEqual([EV.replayedResult]);
+    expect(arms).toBe(1); // stdin closes; no hang to the deadline
   });
 });
 

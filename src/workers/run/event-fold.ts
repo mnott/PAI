@@ -68,18 +68,31 @@ export interface ResultFoldDeps {
   onFinalResult(e: StreamEvent): void;
 }
 
+export interface ResultFoldOptions {
+  /**
+   * This run resumes a previous session (claude args carry --resume): only such a run replays an empty
+   * num_turns-0 result. A fresh run that really ends on one keeps today's behaviour — it ends the run, so
+   * stdin closes and the empty-response path fires instead of hanging to the deadline.
+   */
+  resume?: boolean;
+}
+
 /**
- * The fold's result-event state machine: a `result` is the run's end only once an assistant event proves this run
- * answered a turn (a resumed worker's replayed num_turns-0 result answers none); a later real result still counts.
+ * The fold's result-event state machine: a `result` is the run's end once an assistant event proves this run
+ * answered a turn; on a resume, an earlier empty num_turns-0 result is the replayed one and answers nothing.
+ * A later real result still counts; a fresh run swallows nothing.
  */
-export function createResultFold(d: ResultFoldDeps): { onAssistant(): void; onResult(e: StreamEvent): void } {
+export function createResultFold(
+  d: ResultFoldDeps,
+  opts: ResultFoldOptions = {}
+): { onAssistant(): void; onResult(e: StreamEvent): void } {
   let turnSeen = false;
   return {
     onAssistant() {
       turnSeen = true;
     },
     onResult(e) {
-      if (!turnSeen && isReplayedEmptyResult(e)) return;
+      if (opts.resume === true && !turnSeen && isReplayedEmptyResult(e)) return;
       d.onFinalResult(e);
     },
   };
