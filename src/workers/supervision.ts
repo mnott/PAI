@@ -78,7 +78,8 @@ import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
 import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { endContinuedOrigins, escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
-import { activeMsOf, frozenSince } from "./freeze.js";
+import { activeMsOf, frozenSince, inLineMs, ownMsOf } from "./freeze.js";
+import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 
 // ---------------------------------------------------------------------------
 // Events
@@ -145,6 +146,18 @@ function stampMs(ts: string, now: Date): number {
 /** The worker's quiet spell on the active clock: wall ms since `ts` minus every frozen and paused span it covers (closed spells too), so after a thaw or resume a quiet worker only stalls again from its end. */
 function activeAgeMs(s: WorkerStatus, ts: string, now: Date): number {
   return activeMsOf(s.id, stampMs(ts, now), now.getTime(), { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs });
+}
+
+/** The worker's cumulative in-line time at the engine (the router's accounting), the wait in progress included; 0 without a scheduler entry. */
+function lineMsOf(sched: SchedSnapshot | null, id: string, now: number): number {
+  const a = sched?.workers[id];
+  return a ? a.waitMsTotal + (a.waitingSince ? Math.max(0, now - a.waitingSince) : 0) : 0;
+}
+
+/** The worker's quiet spell on the ONE own-time clock: active ms (frozen and paused never count) minus the in-line time at the engine inside the spell — a worker in line is starved, not stuck, and never reads as stalled. */
+function ownAgeMs(s: WorkerStatus, ts: string, now: Date, sched: SchedSnapshot | null): number {
+  const at = stampMs(ts, now);
+  return ownMsOf(s.id, at, now.getTime(), lineMsOf(sched, s.id, now.getTime()), lineMsOf(sched, s.id, at), { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs });
 }
 
 /**
@@ -219,6 +232,12 @@ export interface DetectOptions {
    * than as a status write racing the tick.
    */
   deadGraceMs?: number;
+  /**
+   * The router's local-scheduler snapshot behind the stall clock's in-line
+   * discount (a worker waiting at the engine is starved, not stuck). Injected so
+   * tests need no scheduler file.
+   */
+  sched?: SchedSnapshot | null;
 }
 
 /** One event's one-liner — the exact line the orchestrator reads. */
@@ -253,6 +272,8 @@ export function detectSupervisionEvents(
 ): SupervisionEvent[] {
   const isAlive = opts.isAlive ?? alive;
   const deadGraceMs = opts.deadGraceMs ?? 15_000;
+  // the in-line discount of the stall clock: injected (tests), else none — runSupervisionTick passes the router's own snapshot
+  const sched = opts.sched ?? null;
   const out: SupervisionEvent[] = [];
   const present = new Set(statuses.map((s) => s.id));
   for (const s of statuses) {
@@ -296,11 +317,13 @@ export function detectSupervisionEvents(
       // --now preemption, `pai worker pause`) — healthy by definition: no
       // stall or sleeping verdict while it stands, and those minutes never count
       continue;
-    } else if (activeAgeMs(s, s.updated, opts.now) > opts.stallMs) {
-      // the stall clock is the active clock: frozen and paused spans never
-      // count, so after a thaw or resume a quiet worker only stalls again from its end
+    } else if (ownAgeMs(s, s.updated, opts.now, sched) > opts.stallMs) {
+      // the stall clock is the one own-time clock: frozen and paused spans never
+      // count, so after a thaw or resume a quiet worker only stalls again from its
+      // end, and time in line at the engine never counts either — a worker that
+      // waits 10+ min for its model slot is starved, not stuck (the wait alarm's)
       kind = "stalled";
-      stalledMin = Math.floor(activeAgeMs(s, s.updated, opts.now) / 60_000);
+      stalledMin = Math.floor(ownAgeMs(s, s.updated, opts.now, sched) / 60_000);
     } else if ((s.consecFails ?? 0) >= (opts.thrashFails ?? DEFAULT_THRASH_FAILS)) {
       kind = "thrashing";
     } else if (s.sleepSec != null) {
@@ -590,11 +613,14 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
 
   const policy = opts.pushPolicy ?? pushPolicyFromConfig();
   const harnessOnly = policy === "harness";
+  // the stall clock's in-line discount reads the router's snapshot of this log dir
+  const sched = readSchedFile(logDir, now.getTime());
   const pending = filterUndelivered(
     detectSupervisionEvents(statuses, {
       stallMs: opts.stallMs ?? stallMinutesFromConfig() * 60_000,
       thrashFails: opts.thrashFails ?? thrashFailsFromEnv(),
       now,
+      sched,
       ...(opts.isAlive ? { isAlive: opts.isAlive } : {}),
     }),
     state

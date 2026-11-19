@@ -199,6 +199,8 @@ export interface WorkerStatus {
   progressAt?: string;
   /** Cumulative ms this worker's requests waited in the router's local scheduler queue, as of progressAt (reroute.ts: that wait is not stall time). */
   lineAtProgressMs?: number;
+  /** epoch ms the budget's own-time spell began (the last checkpoint or a hand extend); absent = the run's start. The budget timer stretches its wall limit by the in-line time accrued since (active-time routerWaitMs, rerouted through the one own-time clock). */
+  budgetOwnSince?: number;
   /** A read-only job (no Edit/Write grant, or a spec saying so): any successful tool call counts as progress for the stall escalation. */
   readOnly?: boolean;
   /** --no-escalate (or a run that asked for local): the stall/queue escalation never moves this run; its continuations keep it. */
