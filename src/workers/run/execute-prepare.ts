@@ -157,11 +157,11 @@ export function createRunWorktree(
 /** True when the worker's repo already has a code graph; never throws, never indexes. */
 async function workerRepoIndexed(dir: string): Promise<boolean> {
   try {
-    const [{ getStorageBackend }, { resolveRoot }, { isIndexed }] = await Promise.all([
+    const [{ getStorageBackend }, { graphRoot }, { isIndexed }] = await Promise.all([
       import("../../storage/factory.js"), import("../../codegraph/api.js"), import("../../codegraph/session.js"),
     ]);
     return await Promise.race([
-      getStorageBackend().then((b) => isIndexed(b, resolveRoot(dir))),
+      getStorageBackend().then((b) => isIndexed(b, graphRoot(dir))),
       new Promise<boolean>((r) => setTimeout(() => r(false), 3000)),
     ]);
   } catch {

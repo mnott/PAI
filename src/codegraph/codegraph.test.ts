@@ -1,13 +1,13 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { extractFile } from "./extract/index.js";
 import { loadConfig } from "../daemon/config.js";
 import { openFederation } from "../storage/sqlite/federation-db.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
 import { summarizeRepo, findSummary, MAX_PROMPT_CHARS } from "./summaries.js";
-import { indexRepo, callers, searchSymbols, explore, callees } from "./api.js";
+import { indexRepo, callers, searchSymbols, explore, callees, mainCheckoutOf } from "./api.js";
 import { execFileSync } from "node:child_process";
 import { GRAPH_INDEXING_LINE, incrementalIndexIfIndexed, lockPath, markDirty, readDirty, runningIndex, sessionGraphLine, startBackgroundIndex, type BgDeps } from "./session.js";
 
@@ -237,6 +237,52 @@ describe("explore ranking and callees", () => {
     const c = await callees(backend, root, "setFront");
     expect(c.map((h) => h.name)).toContain("moveTo");
     for (const p of ["logDir", "id"]) expect(c.map((h) => h.name)).not.toContain(p);
+  }, 30000);
+});
+
+describe("worker worktrees share the main checkout's index", () => {
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const mkTmpRepo = (): string => {
+    const root = tmp();
+    git(root, "init", "-q");
+    git(root, "config", "user.email", "t@t"); git(root, "config", "user.name", "t");
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/a.ts"), "export function main(){ helper(); }\nexport function helper(){}\n");
+    git(root, "add", "-A"); git(root, "commit", "-qm", "init");
+    return root;
+  };
+  // rows are keyed by the git toplevel, which resolves symlinks (/tmp → /private/tmp)
+  const rp = (p: string): string => execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: p, encoding: "utf8" }).trim();
+
+  it("queries a linked worktree through the parent repo's rows, with fresh local source", async () => {
+    process.env.PAI_HOME = tmp();
+    const root = mkTmpRepo();
+    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
+    await indexRepo(backend, root);
+
+    const wt = join(root, "wt");
+    git(root, "worktree", "add", "-q", "-b", "wb", wt, "HEAD");
+    // the worker's edit: helper() is gone, fresh() is new — only in the worktree
+    writeFileSync(join(wt, "src/a.ts"), "export function main(){ fresh(); }\nexport function fresh(){}\n");
+
+    expect((await explore(backend, wt, "fresh")).text).toContain("fresh"); // worktree source is visible
+    const s = await backend.codeGraph().stats(root);
+    expect(s.files).toBe(1); // no second index under the worktree path
+    expect((await backend.codeGraph().stats(wt)).files).toBe(0);
+    const r = await explore(backend, wt, "fresh");
+    expect(r.symbols.some((x) => x.name === "helper")).toBe(false);
+    expect(r.text).toContain("export function fresh(){}"); // read from the worktree, not main
+  }, 30000);
+
+  it("mainCheckoutOf: worktree → parent repo, plain repo → itself, non-repo → cwd", () => {
+    const root = mkTmpRepo();
+    const wt = join(root, "wt");
+    git(root, "worktree", "add", "-q", "-b", "wb2", wt);
+    expect(mainCheckoutOf(wt)).toBe(rp(root));
+    expect(mainCheckoutOf(root)).toBe(rp(root));
+    // not a git repo: the plain path, no toplevel to resolve to
+    const plain = tmp();
+    expect(mainCheckoutOf(plain)).toBe(resolve(plain));
   }, 30000);
 });
 

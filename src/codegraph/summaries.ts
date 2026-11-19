@@ -16,6 +16,7 @@
 import { readFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
+import { graphRoot, resolveRoot } from "./api.js";
 import { sha256 } from "../utils/hash.js";
 import type { CodeGraphStore, CodeFileRow, SummaryRow, SymbolRow } from "./store.js";
 
@@ -277,7 +278,8 @@ export async function summarizeRepo(backend: StorageBackend, root: string, o: Su
  * module's, falling back up the tree to the repo's. Null when none stored.
  */
 export async function findSummary(store: CodeGraphStore, root: string, keyOrPath: string): Promise<SummaryRow | null> {
-  const rows = await store.listSummaries(resolve(root));
+  // keyed by the git toplevel (as everywhere); a linked worktree reads the parent repo's
+  const rows = await store.listSummaries(graphRoot(root));
   if (!rows.length) return null;
   const byPath = new Map(rows.map((r) => [r.path, r]));
   let p = pathOfKey(keyOrPath).replace(/^\.\//, "").replace(/\/+$/, "") || ".";
