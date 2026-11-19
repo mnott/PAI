@@ -875,9 +875,9 @@ const rerouteCommand: CommandDef = {
     guard("pai worker reroute <id> --where cloud|local|<provider>", async () => {
       const where = str(ctx.opts.where);
       if (!where) throw new Error("--where is required: cloud, local or a provider name");
-      const { rerouteWorker } = await import("../../workers/reroute.js");
+      const { rerouteMessage, rerouteWorker } = await import("../../workers/reroute.js");
       const r = await rerouteWorker(ctx.args.ID as string, where, { logDir: logDir(), by: "cli" });
-      out(`${r.id}: ${r.was} -> started again on ${r.provider}${r.branch ? ` (continues branch ${r.branch})` : ""}`);
+      out(rerouteMessage(r));
     }),
 };
 

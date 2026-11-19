@@ -12,7 +12,8 @@ import { parseRunnerArgs, shortText } from "../args.js";
 import { ANTHROPIC_NATIVE, assertProviderRunnable, getProviderOrNative, isLocalProvider, pinProviderForModel, readWorkersSection } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
 import { LOCAL_MECHANISM_LINE, NoLocalServerError, isLocalCandidate, resolveLocalProvider, tierProviderNames } from "../local-provider.js";
-import { workersLogDir } from "../paths.js";
+import { ledgerPath, workersLogDir } from "../paths.js";
+import { appendLedger } from "../ledger.js";
 import { UNLABELED } from "../status.js";
 import { returnControlsIfHeld } from "../controls.js";
 import { routeRun } from "../policy.js";
@@ -95,9 +96,10 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   opts = { ...opts, claudeArgs: carryGoals(logDir, opts.claudeArgs, opts._priorIds) };
   try {
     const gc = gcWorktreesThrottled(logDir, 60, Date.now(), { olderThanHours: config.gcOlderThanHours, maxGb: config.worktreesMaxGb })?.filter((r) => r.archive);
-    if (gc?.length) process.stderr.write(`pai worker: archived ${gc.length} leftover worktree(s) (pai worker gc)\n`);
+    // the gc pass lands in the ledger, never on this start's stdout/stderr: a waiting reroute reads that output as the start's own (2026-11-18: "archived 3 leftover worktree(s)" was shown as the reason a restart "did not start").
+    if (gc?.length) appendLedger(ledgerPath(logDir), "WORKTREE-GC", { kind: "at-start", archived: gc.length });
   } catch {
-    // best effort
+    // best effort: a gc pass never fails or delays a start
   }
 
   // the local-only window (local-only.ts): a cloud start is refused while it is
