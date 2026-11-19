@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { decide } from "./security-decision.js";
 
-// The entry does its own stdin read and calls main() unconditionally at
-// module scope, and it must exercise the real exit-code/stderr contract —
-// run it as a real subprocess, exactly like route-edits-to-worker.test.ts.
+// The decision runs in-process (spawning bun per case stalled under load);
+// one async end-to-end case keeps the real stdin/exit-code contract covered.
 describe("security-validator", () => {
   const ENTRYPOINT = "src/hooks/ts/pre-tool-use/security-validator.ts";
 
@@ -11,23 +11,13 @@ describe("security-validator", () => {
     command: string,
     env: NodeJS.ProcessEnv = {}
   ): { status: number | null; stdout: string; stderr: string } {
-    const { PAI_WORKER: _drop, ...baseEnv } = process.env;
+    const saved = process.env.PAI_WORKER;
+    delete process.env.PAI_WORKER;
+    Object.assign(process.env, env);
     try {
-      const stdout = execFileSync("bun", [ENTRYPOINT], {
-        input: JSON.stringify({
-          session_id: "test",
-          tool_name: "Bash",
-          tool_input: { command },
-          cwd: process.cwd(),
-        }),
-        encoding: "utf8",
-        timeout: 15_000,
-        env: { ...baseEnv, ...env },
-      });
-      return { status: 0, stdout, stderr: "" };
-    } catch (err) {
-      const e = err as { status: number | null; stdout: string; stderr: string };
-      return { status: e.status, stdout: e.stdout, stderr: e.stderr };
+      return decide({ session_id: "test", tool_name: "Bash", tool_input: { command }, cwd: process.cwd() });
+    } finally {
+      if (saved === undefined) delete process.env.PAI_WORKER; else process.env.PAI_WORKER = saved;
     }
   }
 
@@ -178,14 +168,14 @@ describe("security-validator", () => {
     expect(runHook("git push origin main").status).toBe(0);
   });
 
-  it("fails closed when the payload cannot be parsed", () => {
-    try {
-      execFileSync("bun", [ENTRYPOINT], { input: "{not json", encoding: "utf8", timeout: 15_000 });
-      throw new Error("expected exit 2");
-    } catch (err) {
-      const e = err as { status: number | null; stderr: string };
-      expect(e.status).toBe(2);
-      expect(e.stderr).toContain("could not be parsed");
-    }
-  });
+  it("fails closed when the payload cannot be parsed", async () => {
+    const r = await new Promise<{ status: number | null; stderr: string }>((res) => {
+      const child = execFile("bun", [ENTRYPOINT], { encoding: "utf8", timeout: 30_000 }, (err, _o, stderr) => {
+        res({ status: err ? ((err as { code?: number }).code ?? null) : 0, stderr });
+      });
+      child.stdin!.end("{not json");
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("could not be parsed");
+  }, 40_000);
 });

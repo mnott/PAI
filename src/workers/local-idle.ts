@@ -59,8 +59,10 @@ export interface LocalProviderSample {
   queued: number;
   /** Running but parked by pause (slot not held): shown apart from the slot count. */
   paused?: number;
-  /** Started jobs without a slot: waiting on a long tool run, or on getting their slot back. holders + lent = the running rows. */
+  /** Started jobs without a slot: waiting on a long tool run, or in line for a slot back. holders + lent = the running rows. */
   lent?: number;
+  /** Tickets of started jobs (they hold a ticket to get a slot back): counted apart from `queued`, which counts not-started jobs only (the table's waiting rows). */
+  startedHoldingTicket?: number;
 }
 
 export interface LocalSample {
@@ -134,7 +136,10 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
     const mine = onProv.filter((s) => holdsSlot(s, now));
     const paused = onProv.filter((s) => !!s.paused).length;
     const lent = onProv.filter((s) => !holdsSlot(s, now) && !pausedFree(s)).length;
-    const queued = queue.filter((q) => q.provider === name).length;
+    // the line counts what the table's rows show: "N waiting" = not-started jobs only; a started job that holds a ticket (to get its slot back) is a running row and counts in the `startedHoldingTicket` part instead.
+    const ticketed = new Set(statuses.filter((s) => s.provider === name && s.state === "running" && !s.paused).map((s) => s.id));
+    const queued = queue.filter((q) => q.provider === name && !ticketed.has(q.id)).length;
+    const startedHoldingTicket = queue.filter((q) => q.provider === name && ticketed.has(q.id)).length;
     // only a provider that is a local candidate (enabled or tier-launched) and served (the daemon's local-status names it) or has work is worth a line
     const served = (status?.running ?? []).some((r) => r.provider === name);
     if (!(isLocalCandidate(p, name, tiers) && served) && !onProv.length && !queued) continue;
@@ -145,6 +150,7 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
       queued,
       paused,
       lent,
+      startedHoldingTicket,
     });
   }
   return { at: now, gpuPct: await gpu(), providers };
@@ -198,7 +204,7 @@ export interface LocalIdleFile {
   gpuPct: number | null;
   idleSince: number | null;
   lastNudge: Record<string, number>;
-  providers: Array<{ provider: string; cap: number; running: number; free: number; queued: number; paused?: number; lent?: number; activity: Record<string, number> }>;
+  providers: Array<{ provider: string; cap: number; running: number; free: number; queued: number; paused?: number; lent?: number; startedHoldingTicket?: number; activity: Record<string, number> }>;
 }
 
 const stateFile = (logDir: string): string => join(logDir, "local-idle.json");
@@ -235,8 +241,8 @@ export function setMuted(logDir: string, session: string, muted: boolean): strin
 export function localIdleLine(f: LocalIdleFile | null, now = Date.now()): string {
   if (!f || now - Date.parse(f.at) > 120_000) return "";
   const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}%`;
-  // same accounting as the slot gate: busy = slot holders; lent (started, no slot) and paused and waiting are counted apart. busy + lent = the running rows of the queue table
-  const provs = f.providers.map((p) => [`${p.provider}: ${p.running} of ${p.cap} slots busy`, p.running > p.cap ? `engine idle: admitted ${p.running - p.cap} extra` : "", p.lent ? `${p.lent} lent (waiting on a tool or for their slot back)` : "", p.paused ? `${p.paused} paused` : "", p.queued ? `${p.queued} waiting` : ""].filter(Boolean).join(" · "));
+  // same accounting as the slot gate: busy = slot holders; paused and waiting are counted apart, and "N waiting" counts not-started jobs only (what the table's waiting rows show); started jobs that hold a ticket to get a slot back appear in their own part. busy + lent = the running rows of the queue table
+  const provs = f.providers.map((p) => [`${p.provider}: ${p.running} of ${p.cap} slots busy`, p.running > p.cap ? `engine idle: admitted ${p.running - p.cap} extra` : "", p.lent ? `${p.lent} lent (waiting on a tool)` : "", p.startedHoldingTicket ? `${p.startedHoldingTicket} waiting for their slot back` : "", p.paused ? `${p.paused} paused` : "", p.queued ? `${p.queued} waiting` : ""].filter(Boolean).join(" · "));
   return [...provs, gpu].join(" · ");
 }
 
@@ -263,7 +269,7 @@ export async function localIdleTick(logDir: string, workers: WorkersConfig, msg:
     providers: sample.providers.map((p) => {
       const activity: Record<string, number> = {};
       for (const w of p.workers) activity[w.activity] = (activity[w.activity] ?? 0) + 1;
-      return { provider: p.provider, cap: p.cap, running: p.workers.length, free: Math.max(0, p.cap - p.workers.length), queued: p.queued, paused: p.paused ?? 0, lent: p.lent ?? 0, activity };
+      return { provider: p.provider, cap: p.cap, running: p.workers.length, free: Math.max(0, p.cap - p.workers.length), queued: p.queued, paused: p.paused ?? 0, lent: p.lent ?? 0, startedHoldingTicket: p.startedHoldingTicket ?? 0, activity };
     }),
   };
   try {

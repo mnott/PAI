@@ -34,6 +34,7 @@ import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTes
 import { lowPriorityWrap } from "../builds/gate.js";
 import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
 import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-log.js";
+import { summarizeGateFailure } from "./helper-uses.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -1685,6 +1686,7 @@ function mergeWorkerInner(
       result: related.line.replace(/\s+/g, " ").slice(0, 300),
       ...(related.failing.length ? { failingTests: related.failing.join(",").slice(0, 400) } : {}),
       ...(related.logPath ? { gateLog: related.logPath } : {}),
+      ...(related.summary ? { summary: related.summary.replace(/\n/g, " / ").slice(0, 400) } : {}),
       ...(related.flakyLogs?.length ? { flakyLog: related.flakyLogs.join(",") } : {}),
     });
     if (related.output) void growthAlarm(logDir, st.cwd, related.output);
@@ -1692,7 +1694,7 @@ function mergeWorkerInner(
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
       const log = related.logPath ? `: full gate output: ${related.logPath}` : "";
-      const why = [...(related.assert ? [`assertion: ${related.assert}`] : []), ...(related.hints ?? [])].join("; ");
+      const why = [...(related.assert ? [`assertion: ${related.assert}`] : []), ...(related.summary ? [`summary: ${related.summary.replace(/\n/g, " / ")}`] : []), ...(related.hints ?? [])].join("; ");
       throw new Error(
         `related tests failed: ${files}${log}${why ? ` (${why})` : ""}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
       );
@@ -2076,11 +2078,13 @@ function gateLines(
         const f = parseGateFailure(out, cwd);
         const logPath = saveMergeGateLog(keep.logDir, keep.id, out);
         if (logPath) appendLedger(ledgerPath(keep.logDir), "WORKER-MERGE-VERIFY", { id: keep.id, status: "failed", gateLog: logPath, ...(f.names.length ? { failingTests: f.names.join(",").slice(0, 400) } : {}) });
+        const gateSummary = summarizeGateFailure(out);
         const named = latestMergeGateLog(keep.logDir, keep.id);
         detail = [
           `  full gate output: ${named ?? "(log could not be written)"}`,
           ...f.names.map((n) => `  failing: ${n}`),
           ...(f.assert ? [`  assertion: ${f.assert}`] : []),
+          ...(gateSummary ? gateSummary.split("\n").map((l) => `  summary: ${l}`) : []),
           ...f.hints.map((h) => `  hint: ${h}`),
         ].join("\n");
       }

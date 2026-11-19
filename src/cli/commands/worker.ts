@@ -261,7 +261,10 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   if (where && ctx.opts.local) throw new Error("--where and --local both name where to run; use one");
   const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
-  if (t.provider) target.providerFlag = t.provider;
+  // --where local / --force-local: the run itself resolves the running local provider (--local path), so routeWhy reads "<provider> (local)", never "(flag: --provider)"
+  const asLocal = plan.kind === "run" && (where === "local" || (forceLocal && !where));
+  if (asLocal && plan.kind === "run") plan.run.localFlag = true;
+  else if (t.provider) target.providerFlag = t.provider;
   // a run that asked for local (--where local, --force-local) is pinned: the stall rule never moves it to the cloud
   if (plan.kind === "run" && (where === "local" || forceLocal)) plan.run.noEscalate = true;
   // --where a provider name is the operator's own words for where to run: it

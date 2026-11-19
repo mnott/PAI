@@ -19,6 +19,7 @@ import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { weightsBytes } from "./cockpit-weights.js";
 import { setProviderCap } from "../workers/providers.js";
+import { helperStats } from "../workers/helper.js";
 import { HideRuleError, hideMatcher, parseHideRules, readHideRules, writeHideRules } from "./cockpit-hide.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
@@ -806,6 +807,8 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     // the configured start/stop commands per runtime (models.runtimes) and what PAI itself uses
     runtimeCommands: runtimeCommandsFor(),
     consumers: consumersFor(),
+    // small-task helper requests per model in the last hour (src/workers/helper.ts)
+    helper: helperStats(),
     // running start/stop jobs per runtime: a reloaded page shows the card busy and resumes watching
     runtimeJobs: runtimeJobsFor(),
   };

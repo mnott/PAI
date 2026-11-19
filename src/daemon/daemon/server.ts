@@ -42,6 +42,9 @@ import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { startLoopLag } from "../event-loop-lag.js";
+import { startLoopWatchdog } from "../loop-watchdog.js";
+import { readWorkersSection } from "../../workers/config.js";
+import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
@@ -165,6 +168,8 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // tells a blocked loop (IPC times out, "daemon down") apart from a merely
   // busy one, and slow-task.ts attributes per-task blocks to it.
   startLoopLag();
+  // a loop blocked for minutes (2026-11-18: 18 min at 95% CPU, IPC dead) is restarted by launchd KeepAlive: a worker thread notices, writes the ledger line and kills the process
+  startLoopWatchdog({ ledgerFile: ledgerPath(workersLogDir(readWorkersSection().workers)) });
 
   // Lower scheduling priority so the daemon yields CPU to interactive sessions
   try { setPriority(process.pid, 10); } catch { /* non-fatal */ }

@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { parseGateFailure, saveMergeGateLog } from "./gate-log.js";
+import { summarizeGateFailure } from "./helper-uses.js";
 
 export const DEFAULT_VERIFY_TIMEOUT_SEC = 600;
 
@@ -30,6 +31,8 @@ export interface RelatedResult {
   hints?: string[];
   /** Path of the full gate output kept on disk (<logDir>/<id>.merge-gate-<ts>.log). */
   logPath?: string;
+  /** 3-line summary of the failing part from a small local model (which test, file:line, error); absent when it was off or unavailable. */
+  summary?: string;
   /** Tail of the gate output, for the test-growth alarm. */
   output?: string;
 }
@@ -194,6 +197,8 @@ export function runRelatedTests(
   // summary once left a session three blind fix rounds with no test name and no assertion.
   const f = parseGateFailure(r.output, cwd);
   const logPath = logDir && id ? saveMergeGateLog(logDir, id, r.output) : null;
+  // 3 lines from a small local model (null: rules only)
+  const summary = summarizeGateFailure(r.output);
   return {
     status: "failed",
     line: `failed (runner: ${resolved.runner}; ${resolved.cmd}) (${exit}): ${tail}`,
@@ -201,6 +206,7 @@ export function runRelatedTests(
     ...(f.assert ? { assert: f.assert } : {}),
     ...(f.hints.length ? { hints: f.hints } : {}),
     ...(logPath ? { logPath } : {}),
+    ...(summary ? { summary } : {}),
     output: r.output.slice(-20_000),
   };
 }
@@ -214,6 +220,7 @@ export function failureHints(r: RelatedResult, mergeCommit: string): string[] {
     ...(r.logPath ? [`  full gate output: ${r.logPath}`] : []),
     ...r.failing.map((f) => `  failing: ${f}`),
     ...(r.assert ? [`  assertion: ${r.assert}`] : []),
+    ...(r.summary ? r.summary.split("\n").map((l) => `  summary: ${l}`) : []),
     ...(r.hints ?? []).map((h) => `  hint: ${h}`),
     `  revert with: git revert -m 1 ${mergeCommit}`,
   ];

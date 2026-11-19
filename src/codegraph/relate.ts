@@ -12,7 +12,8 @@
  *
  * Predicates (closed set, RELATE_PREDICATES):
  *   depends-on       package/import dependency of one repo on a sibling repo (manifest)
- *   calls-api        a file uses an HTTP route or MCP tool another project defines
+ *   calls-api        a file uses an HTTP route or MCP tool another project registers
+ *   calls-cli        a file invokes the other project's CLI binary (`pai <verb>`, `aibroker <verb>`)
  *   shares-protocol  same message/schema type name in protocol-like files of two projects
  *   duplicates       near-identical function bodies (normalized-token hash) in two projects
  *   mentions         a note links or names a code key or symbol
@@ -26,7 +27,7 @@ import { basename, join, resolve } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
 import type { CodeGraphStore, SymbolRow, TripleSpec } from "./store.js";
 
-export const RELATE_PREDICATES = ["depends-on", "calls-api", "shares-protocol", "duplicates", "mentions", "cites"] as const;
+export const RELATE_PREDICATES = ["depends-on", "calls-api", "calls-cli", "shares-protocol", "duplicates", "mentions", "cites"] as const;
 export type RelatePredicate = (typeof RELATE_PREDICATES)[number];
 
 export interface RelateProject {
@@ -51,6 +52,8 @@ export interface RelateReport {
   kept: number;
   byPredicate: Record<string, number>;
   samples: Array<{ subject: string; predicate: string; object: string }>;
+  /** per predicate: the most frequent objects (top 5), with how often each is cited */
+  topObjects?: Record<string, Array<{ object: string; count: number }>>;
 }
 
 const SRC_EXT = /\.(?:[cm]?[jt]sx?|py|swift)$/;
@@ -60,6 +63,15 @@ const KEYWORDS = new Set(("function return const let var if else for while switc
   "struct enum protocol init nil true false null undefined public private static override let where do default").split(/\s+/));
 const GENERIC_ROUTES = new Set(["/health", "/status", "/api", "/metrics", "/ping", "/version", "/login", "/logout", "/events", "/stream"]);
 const GENERIC_TYPE = /(?:Props|Options|Params|Result|State|Context|Handler|Provider|Config|Error|Request|Response)$/;
+/** protocol/transport words that appear as plain strings everywhere: never an API name on their own */
+const STOP_NAMES = new Set([
+  "tool_use", "tool_result", "tool_result", "content_block", "stop_reason", "text_delta",
+  "text", "content", "type", "id", "name", "role", "model", "index", "delta", "message", "messages",
+  "system", "user", "assistant", "function", "input", "output", "error", "result", "params", "method",
+  "jsonrpc", "prompt", "completion", "stream", "data", "event", "events", "status", "state", "action",
+  "session", "sessions", "project", "projects", "config", "settings", "version", "health", "healthz",
+  "install", "tasks", "task", "done", "list", "get", "post", "delete", "update", "create",
+]);
 
 // ---------------------------------------------------------------------------
 // per-project facts
@@ -69,11 +81,13 @@ interface FileFacts {
   path: string;
   routes: string[];
   tools: string[];
+  /** CLI verbs invoked on the other project's binary (first word after `pai`/`aibroker` in a string or exec call) */
+  cliVerbs: Map<string, Set<string>>;
   /** path-like chunks and snake_case names found inside string literals */
   literals: Set<string>;
 }
 
-interface Loaded {
+export interface Loaded {
   p: RelateProject;
   files: string[];
   symbols: SymbolRow[];
@@ -93,23 +107,40 @@ const ROUTE_RES = [
   /\.(?:get|post|put|patch|delete|all)\(\s*["'`](\/[A-Za-z0-9_\-/:.{}]*)["'`]/g,
   /@\w+\.(?:get|post|put|patch|delete|route)\(\s*["'](\/[^"']*)["']/g,
 ];
-const TOOL_RES = [/(?:server\.tool|registerTool)\(\s*["']([a-z][a-z0-9_]{4,})["']/g, /case\s+["']([a-z]+(?:_[a-z0-9]+)+)["']\s*:/g];
+// MCP tool registrations only: the call form with the name as first argument (same line or the next).
+const TOOL_RES = [/(?:server\.tool|registerTool)\(\s*(?:async\s+)?["']([a-z][a-z0-9_]{4,})["']/g];
 const LITERAL_RE = /(["'`])((?:\\.|(?!\1)[^\\\n]){3,200}?)\1/g;
 const PATHISH_RE = /\/[A-Za-z0-9_-]{2,}(?:\/[A-Za-z0-9_.:{}-]+)*/g;
 const SNAKE_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
+// binaries of the projects relate can link (their registered slugs); `pai <verb>`, `aibroker <verb>`
+const CLI_BIN_RE = /\b(pai|aibroker)\s+([a-z][a-z0-9_-]{2,})\b/g;
+const CLI_STOP_VERBS = new Set(["the", "this", "is", "are", "was", "and", "or", "to", "of", "do", "does", "not", "returns", "run", "runs"]);
 
 export function extractFacts(path: string, text: string): FileFacts {
   const routes = new Set<string>();
   const tools = new Set<string>();
   const literals = new Set<string>();
+  const cliVerbs = new Map<string, Set<string>>();
   for (const re of ROUTE_RES) for (const m of text.matchAll(re)) routes.add(m[1]);
   for (const re of TOOL_RES) for (const m of text.matchAll(re)) tools.add(m[1]);
   for (const m of text.matchAll(LITERAL_RE)) {
     const lit = m[2];
     if (lit.includes("/")) for (const c of lit.match(PATHISH_RE) ?? []) literals.add(c.replace(/\/+$/, ""));
     else if (SNAKE_RE.test(lit) && lit.length >= 8) literals.add(lit);
+    for (const cm of lit.matchAll(CLI_BIN_RE)) {
+      if (CLI_STOP_VERBS.has(cm[2])) continue;
+      const s = cliVerbs.get(cm[1]) ?? new Set();
+      s.add(cm[2]);
+      cliVerbs.set(cm[1], s);
+    }
   }
-  return { path, routes: [...routes], tools: [...tools], literals };
+  // exec/spawn calls: execFile("pai", ["project", ...]) / spawnSync("aibroker", ["sessions", ...])
+  for (const m of text.matchAll(/(?:execFile|execFileSync|spawn|spawnSync|execFileAsync)\w*\(\s*["'](pai|aibroker)["']\s*,\s*\[?\s*["']([a-z][a-z0-9_-]{2,})["']/g)) {
+    const s = cliVerbs.get(m[1]) ?? new Set();
+    s.add(m[2]);
+    cliVerbs.set(m[1], s);
+  }
+  return { path, routes: [...routes], tools: [...tools], cliVerbs, literals };
 }
 
 async function loadProject(store: CodeGraphStore, p: RelateProject): Promise<Loaded | null> {
@@ -203,6 +234,11 @@ function routeMatches(provider: string, consumer: string): boolean {
   return cs.length === ps.length;
 }
 
+/** A name is an API only if it is specific enough: length >= 4 and not a protocol word. */
+function isSpecificName(name: string): boolean {
+  return name.length >= 4 && !STOP_NAMES.has(name);
+}
+
 export function deriveCallsApi(all: Loaded[]): TripleSpec[] {
   const out: TripleSpec[] = [];
   type Def = { slug: string; file: string; name: string; tool: boolean };
@@ -210,7 +246,7 @@ export function deriveCallsApi(all: Loaded[]): TripleSpec[] {
   for (const l of all) {
     for (const f of l.facts) {
       for (const r of f.routes) if (r.length >= 6 && !GENERIC_ROUTES.has(r) && r.split("/").filter(Boolean).length >= 1) defs.push({ slug: l.p.slug, file: f.path, name: r, tool: false });
-      for (const t of f.tools) defs.push({ slug: l.p.slug, file: f.path, name: t, tool: true });
+      for (const t of f.tools) if (isSpecificName(t)) defs.push({ slug: l.p.slug, file: f.path, name: t, tool: true });
     }
   }
   const toolCount = new Map<string, Set<string>>();
@@ -225,10 +261,44 @@ export function deriveCallsApi(all: Loaded[]): TripleSpec[] {
         if (!hit) continue;
         const subject = `code:${l.p.slug}:${f.path}`;
         const object = `code:${d.slug}:${d.file}#${d.name}`;
-        const k = `${subject}|${object}`;
+        const k = `${subject}|calls-api|${object}`;
         if (seen.has(k)) continue;
         seen.add(k);
         out.push({ subject, predicate: "calls-api", object, confidence: d.tool ? "EXTRACTED" : "INFERRED", projectId: l.p.id });
+      }
+    }
+  }
+  return out;
+}
+
+/** calls-cli: a file invokes the other project's binary (`pai <verb>`, `aibroker <verb>`). The target is
+ *  the provider repo itself — verb strings are documentation-ish and point at no specific file. */
+export function deriveCallsCli(all: Loaded[]): TripleSpec[] {
+  const out: TripleSpec[] = [];
+  const byBin = new Map<string, Array<Loaded>>();
+  for (const l of all) {
+    const bin = basename(resolve(l.p.root)).toLowerCase();
+    if (bin !== "pai" && bin !== "aibroker") continue;
+    const list = byBin.get(bin) ?? [];
+    list.push(l);
+    byBin.set(bin, list);
+  }
+  const seen = new Set<string>();
+  for (const l of all) {
+    for (const f of l.facts) {
+      for (const [bin, verbs] of f.cliVerbs) {
+        const targets = (byBin.get(bin) ?? []).filter((t) => t.p.slug !== l.p.slug);
+        if (targets.length === 0) continue;
+        const subject = `code:${l.p.slug}:${f.path}`;
+        for (const verb of [...verbs].sort()) {
+          for (const t of targets) {
+            const object = `code:${t.p.slug}#${verb}`;
+            const k = `${subject}|calls-cli|${object}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            out.push({ subject, predicate: "calls-cli", object, confidence: "EXTRACTED", projectId: l.p.id });
+          }
+        }
       }
     }
   }
@@ -373,7 +443,9 @@ export function deriveFromNote(
   }
   for (const m of text.matchAll(/caseleaf:\/\/(doc|mark|card|turn)\/([A-Za-z0-9-]+)/g)) add("cites", `caseleaf:${m[1]}:${m[2]}`, "EXTRACTED");
   for (const m of text.matchAll(/caseleaf:\/\/passage\/([A-Za-z0-9-]+)\/([0-9a-f]{64})/g)) add("cites", `caseleaf:passage:${m[1]}:${m[2]}`, "EXTRACTED");
-  for (const m of text.matchAll(/\[(?:[^\]]*?;\s*)?@([A-Za-z][\w:.-]*[A-Za-z0-9])[^\]]*\]/g)) add("cites", `cite:${m[1]}`, "EXTRACTED");
+  // bibliography citekeys only: the Zettelkasten form [[@key]…] / [; @key], never a bare [@handle …] mention
+  for (const m of text.matchAll(/\[\[\s*(?:[^\]]*?;\s*)?@([A-Za-z][\w:.-]*[A-Za-z0-9])\s*\]\]/g)) add("cites", `cite:${m[1]}`, "EXTRACTED");
+  for (const m of text.matchAll(/\[[^\[\]]*?;\s*@([A-Za-z][\w:.-]*[A-Za-z0-9])[^\]]*\]/g)) add("cites", `cite:${m[1]}`, "EXTRACTED");
   return out;
 }
 
@@ -393,6 +465,19 @@ function symbolIndex(all: Loaded[]) {
   return { slugs: new Set(all.map((l) => l.p.slug)), paths, symbols };
 }
 
+/** Drop triples repeating the same (subject, predicate, object). */
+export function dedupeTriples(specs: TripleSpec[]): TripleSpec[] {
+  const seen = new Set<string>();
+  const out: TripleSpec[] = [];
+  for (const t of specs) {
+    const k = `${t.subject} ${t.predicate} ${t.object}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // entry point
 // ---------------------------------------------------------------------------
@@ -405,9 +490,9 @@ export async function relate(backend: StorageBackend, projects: RelateProject[],
     const l = await loadProject(store, { ...p, root: resolve(p.root) });
     if (l) all.push(l);
   }
-  const triples: TripleSpec[] = [
-    ...deriveDependsOn(all), ...deriveCallsApi(all), ...deriveSharesProtocol(all), ...deriveDuplicates(all),
-  ];
+  const triples: TripleSpec[] = dedupeTriples([
+    ...deriveDependsOn(all), ...deriveCallsApi(all), ...deriveCallsCli(all), ...deriveSharesProtocol(all), ...deriveDuplicates(all),
+  ]);
   const slugOfKey = (k: string) => k.split(":")[1];
   const scopes = new Map<string, TripleSpec[]>();
   for (const l of all) scopes.set(`relate:${l.p.slug}`, []);
@@ -424,7 +509,7 @@ export async function relate(backend: StorageBackend, projects: RelateProject[],
       const rel = f.slice(vault.length + 1);
       noteTriples.push(...deriveFromNote(`note:${basename(vault)}:${rel}`, text, idx));
     }
-    scopes.set("relate:notes", noteTriples);
+    scopes.set("relate:notes", dedupeTriples(noteTriples));
   }
 
   const report: RelateReport = { projects: all.length, triples: 0, added: 0, closed: 0, kept: 0, byPredicate: {}, samples: [] };
@@ -435,13 +520,21 @@ export async function relate(backend: StorageBackend, projects: RelateProject[],
     report.triples += specs.length;
     for (const t of specs) report.byPredicate[t.predicate] = (report.byPredicate[t.predicate] ?? 0) + 1;
   }
-  const seenPred = new Set<string>();
+  const perPred = new Map<string, Array<{ subject: string; predicate: string; object: string }>>();
   for (const specs of scopes.values()) for (const t of specs) {
-    if (t.predicate === "mentions" || t.predicate === "cites") continue;
-    const key = `${t.predicate}`;
-    if (seenPred.has(key)) continue;
-    seenPred.add(key);
-    report.samples.push({ subject: t.subject, predicate: t.predicate, object: t.object });
+    const list = perPred.get(t.predicate) ?? [];
+    if (list.length < 5) list.push({ subject: t.subject, predicate: t.predicate, object: t.object });
+    perPred.set(t.predicate, list);
   }
+  report.samples = [...perPred.values()].flat();
+  const objCounts = new Map<string, Map<string, number>>();
+  for (const specs of scopes.values()) for (const t of specs) {
+    const m = objCounts.get(t.predicate) ?? new Map();
+    m.set(t.object, (m.get(t.object) ?? 0) + 1);
+    objCounts.set(t.predicate, m);
+  }
+  report.topObjects = Object.fromEntries([...objCounts].map(([p, m]) => [
+    p, [...m].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([object, count]) => ({ object, count })),
+  ]));
   return report;
 }

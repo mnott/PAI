@@ -21,7 +21,7 @@ import { readUrgencyFor } from "./urgency.js";
 import { setWorkerPaused, setWorkerPriority } from "./engine-control.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { isLive, ownsPidCached, loadStatuses, loadLiveStatusesCached, loadStatus, saveStatus, slotLent, type WorkerStatus } from "./status.js";
+import { isLive, ownsPidCached, loadStatuses, loadStatusesCached, loadLiveStatusesCached, loadStatus, saveStatus, slotLent, type WorkerStatus } from "./status.js";
 
 /** Slots free on `provider` for an urgent (preempting) run: its cap minus every live running worker that holds one — a paused victim of a live preemptor frees its slot and is not counted; one whose preemptor is gone counts again until the sweep releases it. A released preemption goes back through the capacity gate's queue like any other run, never over the cap (a slot its victim held during the pause may already have gone to another run). Unlimited when uncapped. */
 function roomOn(statuses: WorkerStatus[], provider: string): number {
@@ -96,6 +96,9 @@ export function resumeWorker(logDir: string, id: string, who = "cli", now = Date
  * Supervision (daemon, 30 s): a resumed worker waiting in its provider's queue (paused, ticket present) is released when it is the
  * head and a slot is FREE. Never takes a held slot. Returns the ids released.
  */
+export const ADMIT_MAX_RELEASES = 50;
+export const ADMIT_BUDGET_MS = 1_000;
+
 export function admitResumedWaiters(logDir: string, now = Date.now(), roomFn: RoomFn = roomOn): string[] {
   const out: string[] = [];
   let provs: string[];
@@ -104,14 +107,30 @@ export function admitResumedWaiters(logDir: string, now = Date.now(), roomFn: Ro
   } catch {
     return out;
   }
+  // ONE scan of the status files per tick, shared by every queue and every ticket (2026-11-18: a re-scan of 7000 files per ticket held the daemon loop for seconds)
+  const all = loadStatusesCached(logDir, now);
+  const byId = new Map(all.map((s) => [s.id, s]));
+  const deadline = performance.now() + ADMIT_BUDGET_MS;
+  let steps = 0;
   for (const prov of provs) {
     // in queue order while a slot is free; a head that is not a resumed waiter (a new job) keeps its place and stops the walk
-    for (const id of liveQueue(logDir, prov)) {
-      const s = loadStatus(logDir, id);
+    for (const id of liveQueue(logDir, prov, undefined, all, now)) {
+      // hard cap: releases and time per tick; the rest waits for the next sweep
+      if (++steps > ADMIT_MAX_RELEASES || performance.now() > deadline) return out;
+      const s = byId.get(id);
       if (!s?.paused || s.pausedBy || s.state !== "running") break;
-      if (roomFn(loadStatuses(logDir), s.provider) <= 0) break;
+      if (roomFn(all, s.provider) <= 0) break;
       rmSync(join(queueDir(logDir, s.provider), id), { force: true });
-      if (setWorkerPaused(logDir, id, false, "queue", undefined, now)) out.push(id);
+      if (setWorkerPaused(logDir, id, false, "queue", undefined, now)) {
+        out.push(id);
+        // the released worker holds a slot now: the next ticket's room check must see it
+        const fresh = loadStatus(logDir, id);
+        if (fresh) {
+          byId.set(id, fresh);
+          const i = all.findIndex((x) => x.id === id);
+          if (i >= 0) all[i] = fresh;
+        }
+      }
     }
   }
   return out;

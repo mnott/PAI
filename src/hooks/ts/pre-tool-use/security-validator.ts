@@ -17,122 +17,7 @@
  * based on your threat model and environment.
  */
 
-import { currentWorkerId } from "../../../workers/worker-id.js";
-import { appendFileSync, mkdirSync, existsSync, chmodSync } from 'fs';
-import { dirname, resolve } from 'path';
-import { securityEventsPath } from '../lib/pai-paths.js';
-import { isSharedCheckout } from '../lib/shared-checkout.js';
-import { maskSecrets } from '../lib/loop-guard.js';
-import { loadRules, projectRuleDirs, allRuleDirs } from '../lib/rules/load.js';
-import { renderDecision } from '../lib/render-decision.js';
-import { evaluate } from '../../../guard/evaluate.js';
-import { readWorkersSection } from '../../../workers/config.js';
-import { expandHome } from '../../../daemon/config.js';
-import { workersLogDir } from '../../../workers/paths.js';
-import { worktreesDir } from '../../../workers/worktree.js';
-
-// ============================================================================
-// ATTACK RULES
-// ============================================================================
-// Patterns live in *.rule.yaml files: built-ins under antipatterns/shell/
-// (embedded at build time), user rules under PAI_HOME/rules and .pai/rules.
-// Loaded once per hook process; a broken rule file is skipped, never fatal.
-
-let RULES: ReturnType<typeof loadRules>['rules'] = [];
-
-// ============================================================================
-// TYPES
-// ============================================================================
-
-interface HookInput {
-  session_id: string;
-  tool_name: string;
-  tool_input: Record<string, unknown> | string;
-  cwd?: string;
-}
-
-/**
- * The worker git guard's worktrees root, resolved once per process from the
- * same workers config every other worker code path reads. Null when the
- * config cannot be read (e.g. no workers.yaml yet); the guard then blocks
- * every tree-rewriting git command for a worker, since it cannot prove the
- * worker's cwd is a worktree.
- */
-function privateClone(cwd: string): boolean {
-  let logDir: string | null = null;
-  let benchTreesDir: string | null = null;
-  try {
-    const w = readWorkersSection().workers;
-    logDir = workersLogDir(w);
-    benchTreesDir = expandHome(w.benchTreesDir);
-  } catch {
-    // unresolvable: isSharedCheckout fails closed
-  }
-  return !isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir, benchTreesDir });
-}
-
-function resolveWorktreesRoot(): string | null {
-  try {
-    return resolve(worktreesDir(workersLogDir(readWorkersSection().workers)));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Claude Code reads the deny reason from stderr on exit code 2, not from the
- * stdout JSON — a deny that only writes stdout is invisible to the model,
- * which then retries blindly. Nothing else consumes this stdout JSON, so
- * the reason goes to stderr only.
- */
-function deny(reason: string): never {
-  process.stderr.write(`Blocked by PAI security validator: ${reason}\n`);
-  process.exit(2);
-}
-
-// ============================================================================
-// DETECTION LOGIC
-// ============================================================================
-
-interface DetectionResult {
-  blocked: boolean;
-  requiresConfirmation?: boolean;
-  warned?: boolean;
-  category?: string;
-  pattern?: string;
-}
-
-/** Shell-rule verdict for a command, decided by evaluate(); the hook only maps it to its block/confirm/warn outcomes. */
-function detectAttack(content: string, ctx: { cwd?: string; sessionId?: string } = {}): DetectionResult {
-  const d = evaluate({ kind: 'tool_call', tool: 'Bash', input: { command: content }, cwd: ctx.cwd ?? process.cwd(), sessionId: ctx.sessionId }, { env: process.env, shellRules: RULES });
-  if (d.mode !== 'enforce' || !d.rule) return { blocked: false };
-  if (d.rule.timedOut) logSecurityEvent({ type: 'project_rule_timeout', note: `${d.patternId}: regex over the time guard, counted as a hit` });
-  const hit = { category: d.rule.category, pattern: d.rule.pattern };
-  if (d.rule.severity === 'block') return { blocked: true, ...hit };
-  if (d.rule.severity === 'confirm') return { blocked: false, requiresConfirmation: true, ...hit };
-  return { blocked: false, warned: true, ...hit };
-}
-
-// ============================================================================
-// ASYNC LOGGING (fire-and-forget on block only)
-// ============================================================================
-
-function logSecurityEvent(event: Record<string, unknown>): void {
-  const logPath = securityEventsPath();
-  if (typeof event.command === 'string') event = { ...event, command: maskSecrets(event.command) };
-  const entry = JSON.stringify({ timestamp: new Date().toISOString(), ...event }) + '\n';
-
-  try {
-    const dir = dirname(logPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    appendFileSync(logPath, entry, { mode: 0o600 });
-    chmodSync(logPath, 0o600);
-  } catch {
-    // Silently fail - logging should never break the hook
-  }
-}
+import { decide, denyDecision, type HookInput } from './security-decision.js';
 
 // ============================================================================
 // MAIN HOOK LOGIC
@@ -161,7 +46,8 @@ async function main(): Promise<void> {
       text = Buffer.concat(result).toString('utf-8');
     } catch {
       // Without the payload the delete and git guards cannot run: fail closed.
-      deny('The hook input could not be read in time, so the command cannot be checked. Retry the command.');
+      emit(denyDecision('The hook input could not be read in time, so the command cannot be checked. Retry the command.'));
+      return;
     } finally {
       clearTimeout(timer);
     }
@@ -174,107 +60,18 @@ async function main(): Promise<void> {
     input = JSON.parse(text);
   } catch {
     // Unparseable payload: the command is unknown, so the guards cannot run.
-    deny('The hook input could not be parsed, so the command cannot be checked. Retry the command.');
-  }
-
-  // Rules load against the hook input's cwd (the session's project), not the
-  // hook process's; a project file that tried to disable a rule is logged.
-  const loaded = loadRules(allRuleDirs(input.cwd || process.cwd()), { projectDirs: projectRuleDirs(input.cwd || process.cwd()) });
-  RULES = loaded.rules;
-  for (const note of loaded.ignored) {
-    logSecurityEvent({ type: 'project_rule_ignored', note, session_id: input.session_id });
-  }
-
-  // Only validate Bash commands
-  if (input.tool_name !== 'Bash') {
-    console.log(JSON.stringify({ permissionDecision: 'allow' }));
+    emit(denyDecision('The hook input could not be parsed, so the command cannot be checked. Retry the command.'));
     return;
   }
 
-  // Extract command string
-  const command = typeof input.tool_input === 'string'
-    ? input.tool_input
-    : (input.tool_input?.command as string) || '';
-
-  if (!command) {
-    console.log(JSON.stringify({ permissionDecision: 'allow' }));
-    return;
-  }
-
-  // plutil in-place rewrite guard and, for workers, the in-place git guard: decided by evaluate().
-  const gate = evaluate(
-    { kind: 'tool_call', tool: 'Bash', input: { command }, cwd: input.cwd || process.cwd(), sessionId: input.session_id },
-    { env: process.env, gates: { plutil: true, testGovernance: true, workerGit: { worktreesRoot: process.env.PAI_WORKER === '1' ? resolveWorktreesRoot() : null, privateClone } } },
-  );
-  if (gate.action === 'deny' && gate.guard) {
-    logSecurityEvent({
-      type: 'attack_blocked',
-      category: gate.guard.category,
-      pattern: gate.guard.pattern,
-      command: command.slice(0, 200),
-      session_id: input.session_id,
-    });
-
-    deny(gate.message!);
-  }
-
-  // Check all patterns
-  const result = detectAttack(command, { cwd: input.cwd, sessionId: input.session_id });
-
-  if (result.blocked) {
-    // Log and block
-    logSecurityEvent({
-      type: 'attack_blocked',
-      category: result.category,
-      pattern: result.pattern,
-      command: command.slice(0, 200), // Truncate for log
-      session_id: input.session_id,
-    });
-
-    deny(`This command matched a security pattern (${result.category}). If this is legitimate, please rephrase the command.`);
-  }
-
-  if (result.requiresConfirmation) {
-    // Log warning and require confirmation
-    logSecurityEvent({
-      type: 'confirmation_required',
-      category: result.category,
-      pattern: result.pattern,
-      command: command.slice(0, 200),
-      session_id: input.session_id,
-    });
-
-    // A confirm rule must be confirmable: emit "ask" so Claude Code shows its
-    // native approval prompt. A worker has no operator at the prompt, so it
-    // keeps the deny.
-    if (process.env.PAI_WORKER === '1') {
-      deny(`This is a dangerous operation (${command.slice(0, 50)}...). This can cause data loss. If you're sure, explicitly confirm this command.`);
-    }
-    process.stdout.write(renderDecision({
-      decision: 'ask',
-      reason: `Dangerous operation (${command.slice(0, 50)}...): this can cause data loss, approve to run it.`,
-    }) + '\n');
-    process.exit(0);
-  }
-
-  if (result.warned) {
-    // Log the security event but allow the command.
-    logSecurityEvent({
-      type: 'security_warning',
-      category: result.category,
-      pattern: result.pattern,
-      command: command.slice(0, 200),
-      session_id: input.session_id,
-    });
-  }
-
-  // Allow - no further logging, immediate exit
-  console.log(JSON.stringify({ permissionDecision: 'allow' }));
+  emit(decide(input));
 }
 
-// ============================================================================
-// RUN
-// ============================================================================
+function emit(d: { status: number; stdout: string; stderr: string }): void {
+  if (d.stderr) process.stderr.write(d.stderr);
+  if (d.stdout) process.stdout.write(d.stdout);
+  if (d.status !== 0) process.exit(d.status);
+}
 
 main().catch(() => {
   // On any error, fail open
