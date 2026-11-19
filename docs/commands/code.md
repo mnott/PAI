@@ -244,7 +244,7 @@ Derive relations between projects and notes
 pai code relate [options]
 ```
 
-Reads the code graphs of the indexed registered projects and writes relations to the knowledge graph (kg_triples): depends-on (manifests), calls-api (routes and MCP tools), shares-protocol (same message types), duplicates (near-identical functions) and, from the vault notes, mentions and cites. A relation that disappears gets an end date, never deleted. Index the projects first (pai code index).
+Reads the code graphs of the indexed registered projects and writes relations to the knowledge graph (kg_triples): depends-on (manifests), calls-api (routes and MCP tools another project registers), calls-cli (`pai <verb>` / `aibroker <verb>` invocations), shares-protocol (same message types), duplicates (near-identical functions) and, from the vault notes, mentions and cites. A relation that disappears gets an end date, never deleted. Index the projects first (pai code index).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
