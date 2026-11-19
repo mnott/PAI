@@ -100,6 +100,8 @@ export interface RunOptions {
   localName?: string;
   /** --approved-by <session>: during a local-only window, the named gatekeeper's standing approval lets this cloud start through (a one-time token from `pai budget approve` is consumed beside it). */
   approvedBy?: string;
+  /** The gatekeeper's cloud approval this run carries (local-only.ts): true when it started under --approved-by <gatekeeper>, or inherited it from the worker it resumes. Recorded on the status as `cloudApproved`, and a resume of such a worker passes the window without a second approval — the approval follows the job. */
+  cloudApproved?: boolean;
   /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
   _route?: RouteInfo;
   _fallThroughOf?: string;
@@ -197,6 +199,8 @@ export interface ImageExecuteArgs {
   quiet?: boolean;
   onWorkerStart?: (wid: string) => void;
   id?: string;
+  /** The gatekeeper's cloud approval this run carries (local-only.ts); recorded on the status as `cloudApproved`. */
+  cloudApproved?: boolean;
 }
 
 export interface FinaliseArgs {
@@ -291,6 +295,8 @@ export interface ExecuteArgs {
   allowDbWrites?: boolean;
   /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */
   opts: RunOptions;
+  /** The gatekeeper's cloud approval this run carries (local-only.ts); recorded on the status as `cloudApproved`. */
+  cloudApproved?: boolean;
   /** Set once the follow pane was handled (tryPoolRun); executeRun then neither opens nor verifies a second one. */
   panePrepared?: { verified: boolean };
   /** The follow pane opening beside admission and the claim (gateStart); settles once panePrepared is set. Never rejects. */

@@ -95,6 +95,7 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
     ...(a.specPath ? { spec: a.specPath } : {}),
     ...(a.limit ? { deadlineAt: a.limit.deadlineAt, maxMinutes: a.limit.minutes } : {}),
     ...(a.queueWaitedMs ? { queueWaitedMs: a.queueWaitedMs } : {}),
+    ...(a.cloudApproved ? { cloudApproved: true } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);

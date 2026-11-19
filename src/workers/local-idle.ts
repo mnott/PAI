@@ -9,7 +9,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listBuildsSync, ticketKind, buildsDir, type BuildTicket } from "../builds/queue.js";
 import { providerCap, queueRows } from "./capacity.js";
@@ -102,6 +102,77 @@ export function readGpuUtilization(): Promise<number | null> {
   return new Promise((resolve) => {
     execFile("ioreg", ["-r", "-d", "1", "-c", "IOAccelerator"], { timeout: 5000 }, (err, stdout) => resolve(err ? null : parseGpuUtilization(stdout)));
   });
+}
+
+// ---------------------------------------------------------------------------
+// the fast GPU sampler: one ioreg every ~5 s, kept in a window of instants
+// ---------------------------------------------------------------------------
+
+/** One instant read with its timestamp. */
+export interface GpuInstant {
+  t: number;
+  pct: number;
+}
+
+/** Keep at most this many instants (~2 min at the 5 s cadence). */
+const GPU_WINDOW_MAX = 30;
+let gpuWindow: GpuInstant[] = [];
+let gpuSamplerTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Record one instant read (a failed read records nothing); returns the window size. */
+export function recordGpuInstant(t: number, pct: number | null): number {
+  if (pct !== null) {
+    gpuWindow.push({ t, pct });
+    if (gpuWindow.length > GPU_WINDOW_MAX) gpuWindow = gpuWindow.slice(-GPU_WINDOW_MAX);
+  }
+  return gpuWindow.length;
+}
+
+/** The recorded instants, oldest first. */
+export function gpuInstants(): GpuInstant[] {
+  return [...gpuWindow];
+}
+
+/** Avg and peak percent over the instants in [now-windowMs, now]; null values with no sample in the window. */
+export function gpuStats(now: number, windowMs: number): { avg: number | null; peak: number | null } {
+  const inWin = gpuWindow.filter((x) => x.t >= now - windowMs);
+  if (!inWin.length) return { avg: null, peak: null };
+  let s = 0;
+  let p = 0;
+  for (const x of inWin) {
+    s += x.pct;
+    if (x.pct > p) p = x.pct;
+  }
+  return { avg: Math.round((s / inWin.length) * 10) / 10, peak: p };
+}
+
+/** Drop instants older than ~2 min; the window is empty when the sampler stopped. */
+export function resetGpuWindow(): void {
+  gpuWindow = [];
+}
+
+/**
+ * The daemon's fast GPU sampler: one `ioreg -r -d 1 -c IOAccelerator` every
+ * intervalMs (default 5 s) into the window above. A single subprocess for the
+ * whole daemon — the cockpit and the local-model line read the window, never ioreg.
+ * Returns the stop function.
+ */
+export function startGpuSampler(intervalMs = 5_000, read: () => Promise<number | null> = readGpuUtilization, now: () => number = Date.now): () => void {
+  if (gpuSamplerTimer) clearInterval(gpuSamplerTimer);
+  const tick = async () => {
+    try {
+      recordGpuInstant(now(), await read());
+    } catch {
+      /* a failed read just thins the window */
+    }
+  };
+  void tick();
+  gpuSamplerTimer = setInterval(() => void tick(), intervalMs);
+  gpuSamplerTimer.unref();
+  return () => {
+    if (gpuSamplerTimer) clearInterval(gpuSamplerTimer);
+    gpuSamplerTimer = null;
+  };
 }
 
 const BUILD_LAST = /\b(build\.sh|install\.sh|xcodebuild|gradlew?|cargo build|npm run build|make)\b/;
@@ -201,7 +272,12 @@ export const nudgeText = (n: Nudge, ids: string[], minutes: number): string =>
 
 export interface LocalIdleFile {
   at: string;
+  /** The instant read this tick saw (the idle rule's input). */
   gpuPct: number | null;
+  /** Avg GPU % over the last minute of ~5 s instants (fast sampler); null while it has no samples. */
+  gpuAvgPct?: number | null;
+  /** Peak GPU % over the same window. */
+  gpuPeakPct?: number | null;
   idleSince: number | null;
   lastNudge: Record<string, number>;
   providers: Array<{ provider: string; cap: number; running: number; free: number; queued: number; paused?: number; lent?: number; startedHoldingTicket?: number; activity: Record<string, number> }>;
@@ -240,7 +316,8 @@ export function setMuted(logDir: string, session: string, muted: boolean): strin
 /** The `ps` / cockpit line: "local model: GPU 63% busy · gyro-m 2/4 running, 2 free"; "" with no reading. */
 export function localIdleLine(f: LocalIdleFile | null, now = Date.now()): string {
   if (!f || now - Date.parse(f.at) > 120_000) return "";
-  const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}%`;
+  // the minute average of the ~5 s instants, not one instant: the AGX read jumps between 0 and ~97 within seconds
+  const gpu = f.gpuAvgPct == null ? (f.gpuPct === null ? "GPU –" : `GPU ${Math.round(f.gpuPct)}%`) : `GPU ${Math.round(f.gpuAvgPct)}%`;
   // same accounting as the slot gate: busy = slot holders; paused and waiting are counted apart, and "N waiting" counts not-started jobs only (what the table's waiting rows show); started jobs that hold a ticket to get a slot back appear in their own part. busy + lent = the running rows of the queue table
   const provs = f.providers.map((p) => [`${p.provider}: ${p.running} of ${p.cap} slots busy`, p.running > p.cap ? `engine idle: admitted ${p.running - p.cap} extra` : "", p.lent ? `${p.lent} lent (waiting on a tool)` : "", p.startedHoldingTicket ? `${p.startedHoldingTicket} waiting for their slot back` : "", p.paused ? `${p.paused} paused` : "", p.queued ? `${p.queued} waiting` : ""].filter(Boolean).join(" · "));
   return [...provs, gpu].join(" · ");
@@ -261,9 +338,12 @@ export async function localIdleTick(logDir: string, workers: WorkersConfig, msg:
   const sample = await (deps.sample ?? (() => takeSample(logDir, workers, now)))();
   const { state: next, nudges } = evaluate(state.current, sample, cfg, new Set(readMuted(logDir)));
   state.current = next;
+  const win = gpuStats(sample.at, 60_000);
   const file: LocalIdleFile = {
     at: new Date(sample.at).toISOString(),
     gpuPct: sample.gpuPct,
+    gpuAvgPct: win.avg,
+    gpuPeakPct: win.peak,
     idleSince: next.idleSince,
     lastNudge: next.lastNudge,
     providers: sample.providers.map((p) => {
