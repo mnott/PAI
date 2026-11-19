@@ -37,6 +37,7 @@ import { assertChildAllowed, launchParent } from "../tree.js";
 import { gcWorktreesThrottled } from "../worktree.js";
 import { taskForProvider } from "../local-contract.js";
 import { resolveLimit } from "../deadline.js";
+import { initialBudgetMinutes } from "../time-budget.js";
 import { stripBrowserArgs } from "../browser-tools.js";
 import { type RunOptions, type ExecuteArgs } from "./types.js";
 import {
@@ -276,6 +277,12 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // The config default is a headless-run guard; an interactive launch is the operator's own session and is
   // limited only by an explicit --max-minutes / --deadline.
   const limit = resolveLimit(opts, parsed.headless ? config.defaultMaxMinutes : 0);
+  // the progress-based budget: a headless run opens with its allowance and
+  // checkpoints double it while it progresses (time-budget.ts)
+  const budgetMin =
+    parsed.headless && !opts.deadline
+      ? initialBudgetMinutes(opts.budgetMin !== undefined ? { ...config.timeBudget, start: opts.budgetMin } : config.timeBudget, limit?.minutes ?? null)
+      : null;
   const label =
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
@@ -465,6 +472,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         noReportRetry: opts.noReportRetry ?? false,
         orchestrate: opts.orchestrate,
         limit,
+        budgetMin,
         noBrowser,
         allowTests: opts.allowTests,
         allowDbWrites: opts.allowDbWrites,

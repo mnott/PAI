@@ -21,6 +21,7 @@ import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { specPathsWarning } from "../../workers/spec-paths.js";
 import { longInlinePromptHint,parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
+import { parseBudget } from "../../workers/deadline.js";
 import { LOCAL_MECHANISM_LINE } from "../../workers/local-provider.js";
 import { runChain } from "../../workers/chain.js";
 import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../../workers/wait-on.js";
@@ -208,6 +209,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       worktreeFlag: o["no-worktree"] === true ? false : o.worktree === true ? true : undefined,
       maxMinutes: num(o["max-minutes"]),
       deadline: str(o.deadline),
+      budgetMin: o.budget === undefined ? undefined : parseBudget(String(o.budget)),
       noPool: o["no-pool"] === true ? true : undefined,
       noEscalate: o["no-escalate"] === true ? true : undefined,
       browser: o["no-browser"] === true ? false : o.browser === true ? true : undefined,
@@ -351,6 +353,7 @@ const runCommand: CommandDef = {
     { name: "no-worktree", type: "boolean", summary: "Work in place, no worktree" },
     { name: "max-minutes", type: "number", value: "N", summary: "Stop after N minutes and keep the work (0 = no limit; default from the config, 60)" },
     { name: "deadline", type: "string", value: "HH:MM", summary: "Stop at this local time (tomorrow if already past); not with --max-minutes" },
+    { name: "budget", type: "string", value: "DUR", summary: "Opening time allowance of the progress-based budget (20m, 1h; default workers.timeBudget.start, 20): at each checkpoint new edits/commits or test runs double it up to the cap, no progress stops the run needs-review with its work on the branch — never an automatic cloud fall-through" },
     { name: "no-pool", type: "boolean", summary: "Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) runs unpooled anyway and says so on stderr" },
     { name: "browser", type: "boolean", summary: "Allow browser tools" },
     { name: "no-browser", type: "boolean", summary: "Remove every browser tool from this worker" },

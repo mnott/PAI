@@ -11,6 +11,7 @@
 import { deadlineLabel } from "./deadline.js";
 import { lowPowerFactor, lowPowerStretchActive } from "../daemon/low-power.js";
 import { activeText } from "./active-time.js";
+import { budgetText } from "./time-budget.js";
 import { sessionOf } from "./capacity.js";
 import { ellipsize, queuedBarRow, queuedText, waitingForSlotText, waitsForSlotBack, type QueuedFile } from "./capacity.js";
 import { relative, basename } from "node:path";
@@ -252,7 +253,7 @@ export function chatStatusRow(c: Paint, s: StatusRow): string {
   }
   parts.push(`turns ${s.turns}`, `tools ${s.tools}`, fmtElapsed(s.elapsed));
   if (s.state && s.state !== "running" && s.state !== "queued") {
-    parts.push(s.state === "done" ? c("green", "✓ done") : c("red", "✗ failed"));
+    parts.push(s.state === "done" ? c("green", "✓ done") : s.state === "review" ? c("yellow", "? needs review") : c("red", "✗ failed"));
   } else if (s.capacity) {
     parts.push(c("yellow", capacityText(s.capacity)));
   } else if (s.warmup) {
@@ -590,7 +591,11 @@ export function renderTable(
   const timeMark = (s: WorkerStatus): string => {
     const l = deadlineLabel(s, now.getTime());
     const a = s.state === "running" ? activeText(s, now.getTime()) : null;
-    return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l + (a ? ` (${a})` : "") + (l === "timed out" ? "" : lowPowerMark)) : "";
+    // the budget tooltip: which allowance is armed and how often it was extended
+    const b = budgetText(s);
+    return l || b
+      ? "  " + c(l === "timed out" || l?.startsWith("OVERDUE") ? "red" : "dim", (l ?? "") + (a ? ` (${a})` : "") + (b ? `${l ? " · " : ""}${b}` : "") + (l && l !== "timed out" ? lowPowerMark : ""))
+      : "";
   };
 
   // engine controls: "paused" or a non-normal priority, only while set
@@ -708,7 +713,7 @@ export function renderTable(
     const depth = workerDepth(statuses, s.id);
     const subLast =
       !chain && (i + 1 >= doneSlice.length || doneSlice[i + 1].parent !== s.parent);
-    const col = s.state === "done" ? "green" : s.state === "lost" ? "yellow" : "red";
+    const col = s.state === "done" ? "green" : s.state === "lost" || s.state === "review" ? "yellow" : "red";
     const tag = sessionTag(s);
     lines.push(
       treeLine(

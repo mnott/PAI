@@ -1,145 +1,228 @@
 /**
- * budget.ts — the progress-based time budget of a run. A worker starts with a
- * short allowance (workers.timeBudget.start, 20 min of own time — active time
- * minus time in line at the model, as the stall clock computes it). At the end
- * of each allowance an automatic checkpoint runs without a model call: progress
- * is new edits or commits since the last checkpoint, new successful test runs,
- * or (read-only jobs) new successful tool calls. With progress the allowance
- * doubles (20 → 40 → 80), capped at workers.timeBudget.cap and the run's own
- * max-minutes, and the job keeps running untouched; the extension is logged.
- * Without progress the run is stopped with its work saved on its branch (the
- * existing salvage), marked "needs review", and one mailbox line goes to the
- * owning session — never an automatic fall-through to the cloud from here.
+ * budget.ts — live budget probes for budget-aware routing (policy "budget").
+ *
+ * One reading per provider: {percent, resetAt} of its most-constrained usage
+ * window, from the same endpoints the cockpit limits card polls — anthropic
+ * via the OAuth usage endpoint (keychain token), every other provider via its
+ * workers.yaml `usage` block. Readings are cached for BUDGET_TTL_MS so a
+ * burst of spawns costs one poll, and a failed probe reads as "unknown",
+ * never as "full": routing must not break because an endpoint did.
+ *
+ * The routing decision itself lives in routing.ts (wall skip, cooldown until
+ * reset); this module only fetches and caches. Keys never leave this process
+ * and never appear in a reading or an error.
  */
 
-import { appendLedger } from "./ledger.js";
-import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
-import type { RunLimit } from "./deadline.js";
-import { parseDuration } from "./policy.js";
+import {
+  anthropicShared,
+  getJson,
+  windowsFromJson,
+  type LimitWindow,
+} from "../router/limits.js";
+import {
+  type WorkerProvider,
+  type WorkersConfig,
+  type WorkersRoutingConfig,
+  nativeAnthropicProvider,
+  resolveProviderKey,
+} from "./config.js";
 
-/** workers.timeBudget: the opening allowance, the doubling factor, the ceiling. */
-export interface TimeBudgetConfig {
-  start: number;
-  factor: number;
-  cap: number;
+/** One provider's budget reading: most-constrained window, or "unknown". */
+export interface BudgetReading {
+  /** Used percent 0–100; null when no window could be read (never wall a provider on null). */
+  percent: number | null;
+  /** Epoch ms the window resets; null when the endpoint did not say. */
+  resetAt: number | null;
+  /** Epoch ms the reading was fetched. */
+  fetchedAt: number;
+  /** Every window the endpoint reported, for per-window walls; absent on a bare reading. */
+  windows?: Array<{ name: string; percent: number; resetAt?: number }>;
 }
 
-export const DEFAULT_TIME_BUDGET: TimeBudgetConfig = { start: 20, factor: 2, cap: 120 };
+export type BudgetMap = Record<string, BudgetReading>;
 
-/** What a checkpoint measures: the run's own counters and branch commit count. */
-export interface BudgetSnapshot {
-  /** Successful edit/write/commit tool calls (status.progressAt set by them). */
-  progressAtMs: number;
-  /** Successful test runs since the last checkpoint. */
-  testsPassed: number;
-  /** Successful tool calls since the last checkpoint (a read-only job's progress). */
-  toolsOk: number;
-  /** Commits on the run's branch. */
-  commits: number;
+/** How long a reading is trusted before the next spawn re-probes. */
+export const BUDGET_TTL_MS = 5 * 60_000;
+
+/**
+ * The most-constrained window of a usage response: highest percent, with its
+ * reset. A provider is as full as its fullest window (a 96% 5h window is the
+ * wall even when the 7d window reads 20%).
+ */
+export function pickBudgetWindow(windows: LimitWindow[], now: number): BudgetReading {
+  let best: LimitWindow | null = null;
+  for (const w of windows) if (!best || w.percent > best.percent) best = w;
+  if (!best) return { percent: null, resetAt: null, fetchedAt: now };
+  return { percent: best.percent, resetAt: best.resetAt ?? null, fetchedAt: now };
 }
 
-export const emptySnapshot = (): BudgetSnapshot => ({ progressAtMs: 0, testsPassed: 0, toolsOk: 0, commits: 0 });
-
-/** What changed between two snapshots, in words; null when nothing did. */
-export function budgetProgress(prev: BudgetSnapshot, cur: BudgetSnapshot, readOnly = false): string | null {
-  const parts: string[] = [];
-  if (cur.commits > prev.commits) parts.push(`${cur.commits - prev.commits} commit${cur.commits - prev.commits === 1 ? "" : "s"}`);
-  else if (cur.progressAtMs > prev.progressAtMs) parts.push("new edits");
-  if (cur.testsPassed > prev.testsPassed) parts.push("tests ran");
-  if (readOnly && cur.toolsOk > prev.toolsOk) parts.push(`${cur.toolsOk - prev.toolsOk} successful tool call${cur.toolsOk - prev.toolsOk === 1 ? "" : "s"}`);
-  return parts.length ? parts.join(", ") : null;
+function withWindows(r: BudgetReading, windows: LimitWindow[]): BudgetReading {
+  return { ...r, windows: windows.map((w) => ({ name: w.name, percent: w.percent, ...(w.resetAt ? { resetAt: w.resetAt } : {}) })) };
 }
 
-/** The opening allowance in minutes: the config start, never past the run's own limit or the cap. */
-export function initialBudgetMinutes(cfg: TimeBudgetConfig, maxMinutes?: number | null): number {
-  const cap = Math.min(cfg.cap, DEFAULT_TIME_BUDGET.cap);
-  let m = Math.min(Math.max(1, cfg.start), cap);
-  if (maxMinutes && maxMinutes > 0) m = Math.min(m, maxMinutes);
-  return m;
-}
-
-/** The allowance after one checkpoint: doubled toward the cap, or null when it cannot grow further. */
-export function nextBudgetMinutes(cur: number, cfg: TimeBudgetConfig, maxMinutes?: number | null): number | null {
-  const cap = Math.min(cfg.cap, DEFAULT_TIME_BUDGET.cap);
-  const ceiling = maxMinutes && maxMinutes > 0 ? Math.min(cap, maxMinutes) : cap;
-  if (cur >= ceiling) return null;
-  const grown = cur * Math.max(1.001, cfg.factor);
-  return Math.max(cur + 1, Math.min(Math.round(grown), ceiling));
-}
-
-/** The budget limit as a RunLimit starting at `t0`: armDeadline counts active time and stretches it in Low Power like any minutes-based limit. */
-export function budgetLimit(minutes: number, t0: number = Date.now()): RunLimit {
-  return { deadlineAt: t0 + minutes * 60_000, minutes };
-}
-
-/** One checkpoint's decision for the timer: extend with the doubled allowance, or stop for review. */
-export function budgetCheck(
-  prev: BudgetSnapshot,
-  cur: BudgetSnapshot,
-  o: { readOnly?: boolean; minutes: number; cfg: TimeBudgetConfig; maxMinutes?: number | null }
-): { action: "extend"; minutes: number; why: string } | { action: "review"; why: string } {
-  const progress = budgetProgress(prev, cur, o.readOnly === true);
-  if (progress) {
-    const next = nextBudgetMinutes(o.minutes, o.cfg, o.maxMinutes);
-    if (next !== null) return { action: "extend", minutes: next, why: `extended to ${next} min: ${progress}` };
-  }
-  return { action: "review", why: progress ? `out of time at the ${o.minutes}-min cap: ${progress}` : `no progress in its ${o.minutes}-min allowance` };
-}
-
-/** The ps/cockpit time-column tooltip: "budget 40m (extended 1x)". */
-export function budgetText(s: Pick<WorkerStatus, "budgetMin" | "budgetExtensions">): string | null {
-  if (!s.budgetMin) return null;
-  const x = s.budgetExtensions ?? 0;
-  return `budget ${s.budgetMin}m${x > 0 ? ` (extended ${x}x)` : ""}`;
-}
-
-/** The mailbox line of a needs-review stop: id, what it did, the last error, and the three ways on. */
-export function reviewNote(id: string, label: string, why: string, did: string[], lastError?: string | null): string {
-  const lines = [`[pai worker] ${id} (${label}) stopped for review: ${why}.`];
-  if (did.length) lines.push(`Did: ${did.join("; ")}`);
-  if (lastError) lines.push(`Last error: ${lastError}`);
-  lines.push(
-    `Work is saved on its branch. The session decides: resume locally with a note (\`pai worker resume ${id} '<note>'\`), give more time (\`pai worker extend ${id} 30m\`), or ask the gatekeeper for the cloud.`
-  );
-  return lines.join("\n");
-}
-
-/** `pai worker extend <id> 30m`: the new ceiling in minutes past the run's start; null when the duration is malformed. */
-export function parseExtendMinutes(s: string): number | null {
+/**
+ * Fetch one provider's budget reading. anthropic (native) reads the OAuth
+ * usage endpoint with the keychain token; every other provider its
+ * workers.yaml `usage` block. Any failure — no key, no network, bad JSON —
+ * is "unknown", and unknown never walls a provider.
+ */
+export async function fetchBudgetReading(name: string, p: WorkerProvider): Promise<BudgetReading> {
+  const now = Date.now();
   try {
-    const ms = parseDuration(s.trim());
-    return Math.max(1, Math.round(ms / 60_000));
+    if (p.native) {
+      // the shared door: a reading the router or another probe took within the
+      // poll interval is reused, and a 429 backoff is honoured, not retried
+      const r = await anthropicShared(now);
+      return withWindows(pickBudgetWindow(r.windows, r.fetchedAt), r.windows);
+    }
+    if (!p.usage) return { percent: null, resetAt: null, fetchedAt: now };
+    const key = resolveProviderKey(p);
+    const [hn, ...pre] = (p.usage.authHeader ?? "Authorization: Bearer").split(/:\s*/);
+    const prefix = pre.join(": ");
+    const body = await getJson(new URL(p.usage.url), {
+      [hn!.toLowerCase()]: prefix ? `${prefix} ${key}` : String(key),
+    });
+    const windows = windowsFromJson(body, p.usage);
+    return withWindows(pickBudgetWindow(windows, now), windows);
   } catch {
-    return null;
+    return { percent: null, resetAt: null, fetchedAt: now };
   }
 }
 
 /**
- * The budget timer fired at the end of an allowance: record the checkpoint's
- * outcome on the status and in the ledger (the caller re-arms or stops).
+ * Budget readings for spawn-time routing, at most one poll per TTL;
+ * concurrent warmers share the inflight poll. `seed` lets tests (and a
+ * caller with fresh readings of its own) put values in without a poll.
  */
-export function fireBudget(
-  logDir: string,
-  status: WorkerStatus,
-  ledger: string,
-  o: { action: "extend" | "review"; minutes: number; why: string }
-): void {
-  if (o.action === "extend") {
-    status.budgetMin = o.minutes;
-    status.budgetExtensions = (status.budgetExtensions ?? 0) + 1;
-    saveBudgetDeadline(logDir, status);
-    appendLedger(ledger, "WORKER-BUDGET-EXTEND", { id: status.id, minutes: o.minutes, why: o.why });
-    return;
+export class BudgetCache {
+  private value: BudgetMap = {};
+  private at = 0;
+  private inflight: Promise<BudgetMap> | undefined;
+
+  constructor(
+    private readonly ttlMs: number = BUDGET_TTL_MS,
+    private readonly fetch: (name: string, p: WorkerProvider) => Promise<BudgetReading> = fetchBudgetReading
+  ) {}
+
+  /** Refresh every stale provider of `config`; resolves to the full map. */
+  async warm(config: WorkersConfig, now: number = Date.now()): Promise<BudgetMap> {
+    if (this.at && now - this.at < this.ttlMs) return this.value;
+    this.inflight ??= this.poll(config).then((v) => {
+      this.value = v;
+      this.at = now;
+      this.inflight = undefined;
+      return v;
+    });
+    return this.inflight;
   }
-  status.needsReview = true;
-  status.last = o.why;
-  saveBudgetDeadline(logDir, status);
-  appendLedger(ledger, "WORKER-BUDGET-REVIEW", { id: status.id, minutes: o.minutes, why: o.why });
+
+  private async poll(config: WorkersConfig): Promise<BudgetMap> {
+    const out: BudgetMap = { ...this.value };
+    const jobs: Array<Promise<void>> = [
+      // native anthropic has no config entry: probe it as the synthetic provider
+      this.fetch("anthropic", nativeAnthropicProvider(config.nativeModels)).then((r) => {
+        out.anthropic = r;
+      }),
+    ];
+    for (const [name, p] of Object.entries(config.providers)) {
+      jobs.push(
+        this.fetch(name, p).then((r) => {
+          out[name] = r;
+        })
+      );
+    }
+    await Promise.all(jobs);
+    return out;
+  }
+
+  /** Synchronous read for routing (possibly absent — absence is "unknown"). */
+  get(name: string): BudgetReading | undefined {
+    return this.value[name];
+  }
+
+  snapshot(): BudgetMap {
+    return { ...this.value };
+  }
+
+  seed(map: BudgetMap, at: number = Date.now()): void {
+    this.value = { ...map };
+    this.at = at;
+  }
+
+  clear(): void {
+    this.value = {};
+    this.at = 0;
+    this.inflight = undefined;
+  }
 }
 
-/** Keep the status' deadlineAt in step with the current budget allowance, so ps shows the real time left. */
-function saveBudgetDeadline(logDir: string, status: WorkerStatus): void {
-  const started = Date.parse(status.started.replace(" ", "T"));
-  if (status.budgetMin && Number.isFinite(started)) status.deadlineAt = started + status.budgetMin * 60_000;
-  status.updated = nowStamp();
+/** The process-wide cache routing reads; run.ts warms it before resolving. */
+export const budgetCache = new BudgetCache();
+
+/**
+ * A provider's wall for one window: routing.budgetWalls[name] as a map entry
+ * for that window, else its plain number, else the shipped
+ * routing.budgetPercent, else the shipped routing.budgetWall.
+ */
+export function budgetWall(routing: WorkersRoutingConfig, name: string, window?: string): number {
+  const w = routing.budgetWalls[name];
+  if (typeof w === "number") return w;
+  if (w && window !== undefined && w[window] !== undefined) return w[window]!;
+  return routing.budgetPercent[name] ?? routing.budgetWall;
+}
+
+/** At or above its wall? Unknown (absent/null percent) is never full. */
+export function budgetExceeded(r: BudgetReading | undefined, wall: number): boolean {
+  return !!r && r.percent !== null && r.percent >= wall;
+}
+
+/** The window that makes a provider full, with its wall. */
+export interface BudgetHit {
+  window: string | null;
+  percent: number;
+  wall: number;
+  resetAt: number | null;
+}
+
+/**
+ * Is the provider full? True when ANY window it reports is at or above that
+ * window's wall (a bare reading without windows is judged on its one percent).
+ * Returns the first window over its wall, null when there is room or the
+ * reading is unknown.
+ */
+export function budgetFull(
+  routing: WorkersRoutingConfig,
+  name: string,
+  r: BudgetReading | undefined
+): BudgetHit | null {
+  if (!r || r.percent === null) return null;
+  if (r.windows?.length) {
+    for (const w of r.windows) {
+      const wall = budgetWall(routing, name, w.name);
+      if (w.percent >= wall) return { window: w.name, percent: w.percent, wall, resetAt: w.resetAt ?? null };
+    }
+    return null;
+  }
+  const wall = budgetWall(routing, name);
+  return r.percent >= wall ? { window: null, percent: r.percent, wall, resetAt: r.resetAt } : null;
+}
+
+/** Is this reading fresh enough to act on (wall cooldowns) at `now`? */
+export function budgetFresh(r: BudgetReading, now: number, ttlMs: number = BUDGET_TTL_MS): boolean {
+  return now - r.fetchedAt < ttlMs;
+}
+
+/** "08:02" for a reading's reset, else now + 10 min — the reason line's clock. */
+export function budgetUntilLabel(r: BudgetReading, now: Date = new Date()): string {
+  const t = r.resetAt && r.resetAt > now.getTime() ? r.resetAt : now.getTime() + 10 * 60_000;
+  const d = new Date(t);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Why `chosen` is not the walled provider skipped ahead of it:
+ * "anthropic 96% until 08:02" — the one-line switch reason.
+ */
+export function budgetSkipReason(name: string, r: BudgetReading, now: Date = new Date(), percent: number | null = r.percent): string {
+  return `${name} ${percent}% until ${budgetUntilLabel(r, now)}`;
 }
