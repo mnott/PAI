@@ -94,12 +94,18 @@ workers:
   cacheKeepaliveSecs: 0
   # Default time limit of every run in minutes; 0 = none.
   defaultMaxMinutes: 60
-  # Active minutes after which a local worker still running hands its branch to
-  # a cloud worker that continues from it, instead of running into
-  # defaultMaxMinutes and dying (measured 2026-10-26, 40 local coding runs: all
-  # 16 failures ran past 12 min and 48 turns, 13 of 14 successes finished within
-  # 44 min). Low Power Mode stretches it like the deadline. 0 = off.
-  localHandoffMinutes: 45
+  # Legacy fixed handoff threshold; superseded by timeBudget below (the
+  # progress-based budget replaces the automatic cloud fall-through). 0 = off.
+  localHandoffMinutes: 0
+  # Progress-based time budget (src/workers/time-budget.ts): a run opens with
+  # `start` minutes of own time; at each checkpoint, new edits/commits, test
+  # runs, or (read-only jobs) successful tool calls double the allowance up to
+  # `cap`; no progress stops the run "needs review" with its work on the branch
+  # — never an automatic fall-through to the cloud. Per run: --budget 20m.
+  timeBudget:
+    start: 20
+    factor: 2
+    cap: 120
   # Minutes a run may queue for a slot before the owner is told.
   waitAlarmMinutes: 120
   # Milliseconds the end-of-run security scan may take before it is skipped.
