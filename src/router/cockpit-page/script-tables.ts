@@ -92,13 +92,15 @@ function findingsCell(f){
  if(!keys.length)return"";
  return'<span class="'+(f.block>0?"bad":"warn")+'" title="end-of-run security scan findings: '+keys.map(function(k){return f[k]+" "+k}).join(" · ")+'">'+keys.map(function(k){return f[k]+AB[k]}).join(" ")+'</span>';
 }
-function runHead(timeLab){
+// the runs/sessions table header: fl (the "!" column: cache busts / errors) is drawn only when a row of the view carries one — an all-empty column is dropped, never left blank
+function runHead(timeLab,fl){
  function h(full,ab,cls,tip){return'<span class="wr-h '+cls+'" title="'+esc(tip||full)+'"><span class="wr-hf">'+esc(full)+'</span><span class="wr-ha">'+ab+'</span></span>'}
- return'<div class="wr-hd"><i></i>'+h("session/run","S","","session / run")+h("model","M","","model")+'<span></span>'+h("tokens","T","wr-r","tokens (weighted)")+h(timeLab,"A","wr-r",timeLab==="age"?"age since last request":"run duration")+h("hit","H","wr-r","cache hit")+h("!","!","wr-c","cache busts / errors")+'</div>'
+ return'<div class="wr-hd"><i></i>'+h("session/run","S","","session / run")+h("model","M","","model")+'<span></span>'+h("tokens","T","wr-r","tokens (weighted)")+h(timeLab,"A","wr-r",timeLab==="age"?"age since last request":"run duration")+h("hit","H","wr-r","cache hit")+(fl?h("!","!","wr-c","cache busts / errors"):"")+'</div>'
 }
+// one row: headless (the "!" column was dropped) rides its marker inline after the label instead of in a column
 function runRow(o){
  var pc=o.w>0?Math.max(2,Math.round(o.w/o.max*100)):0;
- return'<div class="wr-row'+(o.hidden?' wr-hid':'')+'"'+(o.sid?' data-sess="'+esc(o.sid)+'"':'')+' title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.extra||"")+(o.hide?hideBtn(o.hide,o.lab,hideSuggest(o.hide,o.lab)):"")+'</span></div>'
+ return'<div class="wr-row'+(o.hidden?' wr-hid':'')+'"'+(o.sid?' data-sess="'+esc(o.sid)+'"':'')+' title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span>'+(o.extra&&o.headless?'<span class="wr-fi">'+o.extra+'</span>':"")+'<span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.headless?"":(o.extra||""))+(o.hide?hideBtn(o.hide,o.lab,hideSuggest(o.hide,o.lab)):"")+'</span></div>'
 }
 /** Sessions by tokens: one runRow per session (dot: error red, worker verdict colour, active in the last 5 min blue, else dim), rows past the top N folded into one expandable row (state in localStorage like folds).
  *  The opened session's detail panel is an expanded row directly under its row (kept visible when the row is behind "+N more"); the header search filters the rows by name / id / model, or in prompts mode lists the sessions whose prompts match. */
@@ -129,13 +131,15 @@ function sessionsHtml(d){
  hf.forEach(function(x){hmap[x.it.session]=x.hidden});
  var all=hf.map(function(x){return x.it}).sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore(),max=all.length?tot(all[0]):0,q=sessQ();
  if(q&&SESS_MODE==="sessions"){open=true;all=all.filter(function(s){return((s.name||"")+" "+s.session+" "+(s.models||[]).join(" ")).toLowerCase().indexOf(q)>=0})}
+ // the "!" column exists only while a shown row carries busts or errors (an all-empty column is dropped, not left blank)
+ var fl=all.some(function(s){return !!(s.busts||s.errors)});
  function row(s){
   var ms=s.models||[],t=tot(s),recent=s.lastTs&&Date.now()-new Date(s.lastTs).getTime()<300000;
   var st=s.errors?"bad":s.worker?vcls(s.verdict):recent?"run":"dim";
   var lab=s.name||s.session.slice(0,8);
   var full=lab+" · "+s.session+(s.worker?" · worker "+s.worker+" · "+(s.verdict||"worker"):"")+"\n"+s.requests+" req · fresh in "+fmt(s.input+s.cacheWrite)+" · out "+fmt(s.output)+" · hit "+pct(s.hitRatio)+" · busts "+(s.busts||0)+" · errors "+(s.errors||0)+" · last "+ago(s.lastTs);
   var ex=(s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'')+(s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'');
-  return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex,hide:"sessions",hidden:hmap[s.session]})+(s.session===SESS_OPEN?'<div class="wr-row wr-span">'+sessDetailHtml()+'</div>':"");
+  return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex,headless:!fl,hide:"sessions",hidden:hmap[s.session]})+(s.session===SESS_OPEN?'<div class="wr-row wr-span">'+sessDetailHtml()+'</div>':"");
  }
  var shown=all.filter(function(s,i){return open||i<top||s.session===SESS_OPEN}),rest=all.slice(top),h=shown.map(row).join("");
  if(SESS_OPEN&&!all.some(function(s){return s.session===SESS_OPEN}))h+='<div class="wr-row wr-span">'+sessDetailHtml()+'</div>';
@@ -144,7 +148,9 @@ function sessionsHtml(d){
   h+='<div class="wr-row wr-span"><button type="button" class="lnk dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</button></div>';
  }
  if(q&&SESS_MODE==="sessions"&&!all.length)h+='<div class="wr-row wr-span"><span class="dim sh-n">no session matches “'+esc(SESS_Q.trim())+'”</span></div>';
- return hidePanelHtml("sessions")+sessHitsHtml()+'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>';
+ // the header's controls (search, hidden, rules) in one compact row under the card header: narrow mode moves them here (never wrapping mid-word); wide mode hides this row and keeps them in the header (CSS)
+ var hc=hidePanelHtml("sessions")+sessHitsHtml()+'<div class="shc" data-hc="1"></div>';
+ return hc+'<div class="wr-cq"><div class="wr-tbl">'+runHead("age",fl)+'<div class="wr-group">'+h+'</div></div></div>';
 }
 /** Session drill-down state: the opened id, its tab, the fetched detail, the open turn view and whether that turn's steps are expanded (survives the poll redraw; the panel is part of the sessions html). */
 var SESS_OPEN=null,SESS_TAB="timeline",SESS_DET=null,SESS_TURN=-1,SESS_TDET=null,SESS_STEPS_OPEN=false;
@@ -249,17 +255,19 @@ var WR_FOLD_KEY="pai.cockpit.wrfold";
 function wrFolded(){try{return JSON.parse(localStorage.getItem(WR_FOLD_KEY)||"{}")||{}}catch(e){return{}}}
 /** Worker runs: one row per run (status dot, label with the full text in the tooltip, model chip, token bar + number, duration, cache hit%), grouped per spawning session with a fold header. */
 function workersHtml(d){
- if(!d.workers.length)return hidePanelHtml("runs")+'<span class="dim">no worker sessions in this window</span>';
+ if(!d.workers.length)return '<div class="shc" data-hc="1"></div>'+hidePanelHtml("runs")+'<span class="dim">no worker sessions in this window</span>';
  var hf=hideFilter("runs",d.workers.slice(0,WORKER_ROWS),function(s){return s.name||s.worker}),hmap={};
  hf.forEach(function(x){hmap[x.it.worker]=x.hidden});
  var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},g=workerGroups(hf.map(function(x){return x.it}),W),fold=wrFolded(),now=Date.now();
- return hidePanelHtml("runs")+(g.groups.length?"":'<span class="dim">every worker run in this window is hidden</span>')+'<div class="wr-cq"><div class="wr-tbl">'+g.groups.map(function(grp,gi){
-  var shut=!!fold[grp.name],head='<a href="#" class="wr-head" data-wrfold="'+esc(grp.name)+'" title="'+esc(grp.name+" · "+grp.runs.length+(grp.runs.length===1?" run":" runs")+" · "+fmt(grp.total)+" weighted tokens")+'"><span class="wr-car">'+(shut?"▸":"▾")+'</span><b>'+esc(grp.name)+'</b><span class="dim">'+grp.runs.length+(grp.runs.length===1?" run · ":" runs · ")+fmt(grp.total)+'</span></a>'+(gi?"":runHead("time"));
+ // the "!" column exists only while a run of the view carries scan findings (an all-empty column is dropped, not left blank)
+ var fl=g.groups.some(function(grp){return grp.runs.some(function(r){var f=r.s.workerFindings;return !!(f&&(f.block>0||f.confirm>0||f.warn>0))})});
+ return '<div class="shc" data-hc="1"></div>'+hidePanelHtml("runs")+(g.groups.length?"":'<span class="dim">every worker run in this window is hidden</span>')+'<div class="wr-cq"><div class="wr-tbl">'+g.groups.map(function(grp,gi){
+  var shut=!!fold[grp.name],head='<a href="#" class="wr-head" data-wrfold="'+esc(grp.name)+'" title="'+esc(grp.name+" · "+grp.runs.length+(grp.runs.length===1?" run":" runs")+" · "+fmt(grp.total)+" weighted tokens")+'"><span class="wr-car">'+(shut?"▸":"▾")+'</span><b>'+esc(grp.name)+'</b><span class="dim">'+grp.runs.length+(grp.runs.length===1?" run · ":" runs · ")+fmt(grp.total)+'</span></a>'+(gi?"":runHead("time",fl));
   if(shut)return'<div class="wr-group">'+head+'</div>';
   return'<div class="wr-group">'+head+grp.runs.map(function(r){var s=r.s,st=String(s.verdict).indexOf("running")===0?"run":vcls(s.verdict);
    var lab=s.name||s.worker,full=lab+" · run "+s.worker+" · "+(s.workerProvider||"-")+" · "+(s.verdict||"worker");
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
-   return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null,extra:findingsCell(s.workerFindings),hide:"runs",hidden:hmap[s.worker]});
+   return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null,extra:findingsCell(s.workerFindings),headless:!fl,hide:"runs",hidden:hmap[s.worker]});
   }).join("")+'</div>'}).join("")+'</div></div>';
 }
 /** Cache verdict by pause: one matrix, a row per model with data, a column per pause bucket, cell "hit% (n)" coloured by hitCls, an empty bucket a dim dot.

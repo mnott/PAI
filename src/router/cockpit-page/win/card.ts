@@ -6,6 +6,9 @@
 export type WinCtx = {
   id: string;
   body: HTMLElement;
+  /** The card's header row and its minimize button (the narrow-mode control move, cards-tables). */
+  head?: HTMLElement;
+  min?: HTMLElement;
   text(k: string, s: string): void;
   attr(k: string, name: string, value: string | null): void;
   cls(k: string, name: string, on: boolean): void;
@@ -52,6 +55,13 @@ var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:nu
 function registerType(name,def){TYPES[name]=def||{}}
 /** winLocked() is the one owner of "is the layout locked": the html.locked class, set from pai.cockpit.lock by the page. */
 function winLocked(){return typeof document!=="undefined"&&!!document.documentElement&&document.documentElement.classList.contains("locked")}
+/** The narrow window (the cockpit's 900 px break): html.narrow below it; the CSS moves the card header controls into a body row (.shc) there. */
+function winNarrowWire(main){
+ if(main.__winNarrow)return;main.__winNarrow=1;
+ var f=function(){var n=typeof window!=="undefined"&&window.innerWidth&&window.innerWidth<=900;if(!!n!==!!document.documentElement.classList.contains("narrow")){document.documentElement.classList.toggle("narrow",!!n);if(api)api.updateNarrow();if(typeof hidePaintHeads==="function")hidePaintHeads()}};
+ if(typeof ResizeObserver!=="undefined"){var ro=new ResizeObserver(f);ro.observe(main)}
+ window.addEventListener("resize",f);f();
+}
 function el(tag,cls){var e=document.createElement(tag);if(cls)e.className=cls;return e}
 function mkCtx(c){
  var slots={};
@@ -60,7 +70,7 @@ function mkCtx(c){
   if(!s||!c.body.contains(s)){s=c.body.querySelector('[data-k="'+k+'"]');slots[k]=s}
   return s;
  }
- var ctx={id:c.id,body:c.body,spec:c.spec};
+ var ctx={id:c.id,body:c.body,head:c.head,min:c.min,spec:c.spec};
  ctx.text=function(k,s){var e=slot(k);s=String(s==null?"":s);if(e&&e.textContent!==s)e.textContent=s};
  ctx.attr=function(k,name,v){var e=slot(k);if(!e)return;if(v===null||v===undefined){if(e.hasAttribute(name))e.removeAttribute(name)}else if(e.getAttribute(name)!==String(v))e.setAttribute(name,String(v))};
  ctx.cls=function(k,name,on){var e=slot(k);if(e&&e.classList.contains(name)!==!!on)e.classList.toggle(name,!!on)};
@@ -384,6 +394,13 @@ function toggleMin(id){
  relayout();save();
  announce(c.titleText+(isMin(id)?" minimized":" restored"));
 }
+/** The narrow/wide crossing: every mounted card gets one redraw with its last feed payload (the queue rows and the header controls follow the break). */
+function updateNarrow(){
+ var i,c,f;
+ for(i=0;i<W.order.length;i++){c=W.cards[W.order[i]];if(!c||!c.mounted)continue;f=c.spec.feeds||[];for(var j=0;j<f.length;j++)if(W.fed[f[j]]!==undefined){feedCard(c,W.fed[f[j]]);break}}
+ // a card without feeds (or one skipped above): its after() still re-places the header controls for the new mode
+ for(i=0;i<W.order.length;i++){c=W.cards[W.order[i]];if(!c||!c.mounted||!c.spec.after)continue;c.spec.after(c.ctx)}
+}
 function update(feed,payload){
  W.fed[feed]=payload;
  var n=0;
@@ -412,6 +429,7 @@ function init(main,defaults,opts){
   document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")api.flush()});
  }
  if(!main.__winTabs){main.__winTabs=1;crossTabWire()}
+ winNarrowWire(main);
  if(typeof winInfoWire==="function"&&!main.__winInfo){main.__winInfo=1;winInfoWire(document,window)}
  // the cards present in the loaded tree, in reading order; the rest are not drawn
  var all={};
@@ -477,7 +495,7 @@ function tryMove(dragId,targetId,zone){
  r.sizes=sizes;
  return r;
 }
-var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:syncBodies,layouts:function(){return W.n},toggleMin:toggleMin,
+var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerType:registerType,update:update,updateNarrow:updateNarrow,relayout:relayout,sync:syncBodies,layouts:function(){return W.n},toggleMin:toggleMin,
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
  main:function(){return W.main},isGroup:kidsOf,
