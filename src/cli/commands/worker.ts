@@ -475,6 +475,7 @@ const resumeCommand: CommandDef = {
     { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
     { name: "model", type: "string", value: "MODEL", summary: "Model for the continued turn on the same provider (default: the old worker's)" },
+    { name: "approved-by", type: "string", value: "SESSION", summary: "During a local-only window (`pai budget local-only`): this cloud continuation carries the named session's standing approval — only the configured gatekeeper session (budget.gatekeeper, default PAI) lets it through; a one-time token from `pai budget approve` is consumed beside it. Resuming a worker whose own start the gatekeeper approved needs no flag: the approval follows the job." },
   ],
   examples: ["pai worker resume w-20260101-abc","pai worker resume w-20260101-abc 'Also cover the edge case'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
   seeAlso: ["pai worker ps", "pai worker run"],
@@ -508,6 +509,11 @@ const resumeCommand: CommandDef = {
         label: str(ctx.opts.label) || `↩ ${old.label}`,
         claudeArgs,
         resumeOf: id,
+        approvedBy: str(ctx.opts["approved-by"]),
+        // the gatekeeper's approval follows the job: a worker whose start ran
+        // under --approved-by is recorded cloudApproved, and its resume passes
+        // the window without a second approval
+        ...(old.cloudApproved ? { cloudApproved: true } : {}),
         ...(plan.cwd ? { cwd: plan.cwd } : {}),
         onWorkerStart: (wid) => {
           newId = wid;

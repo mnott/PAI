@@ -291,6 +291,13 @@ export interface WorkerStatus {
    * process — killing it kills the whole slot, not just this task.
    */
   pool?: { spare?: boolean; task: number; slotSession: string | null; hostPid: number; clientPid?: number; slot?: string; warm?: "warm" | "cold"; firstShare?: number };
+  /**
+   * This run carries the gatekeeper's cloud approval (local-only.ts): its start
+   * passed a local-only window on `--approved-by <gatekeeper>`, or it inherited
+   * the flag from the worker it resumes. A resume of such a worker passes the
+   * window without a second approval — the approval follows the job.
+   */
+  cloudApproved?: boolean;
 }
 
 /** Label a worker gets when launched with neither --label nor a prompt. */

@@ -195,6 +195,8 @@ export interface LocalOnlyCheck {
   label?: string;
   /** --approved-by <session>: the gatekeeper's standing approval, valid only when it names the configured gatekeeper. */
   approvedBy?: string;
+  /** The job already carries the gatekeeper's cloud approval (a resume of a worker whose start ran under --approved-by): passes like the flag. */
+  cloudApproved?: boolean;
   /** An operator action (reroute from the CLI or the cockpit): always allowed through. */
   byOperator?: boolean;
   logDir?: string;
@@ -218,6 +220,12 @@ export async function localOnlyStartCheck(o: LocalOnlyCheck): Promise<string | n
   // --approved-by names the gatekeeper session: a standing pass for this start
   if (o.approvedBy && o.approvedBy === gatekeeperSession()) {
     if (o.logDir) appendLedger(ledgerPath(o.logDir), "LOCAL-ONLY-APPROVED", { kind: "flag", target: "cloud", worker: o.id ?? "-", label: o.label ?? "-", by: o.approvedBy });
+    return null;
+  }
+  // the approval follows the job: a continuation (resume) of a run that itself
+  // started under the gatekeeper's --approved-by passes without a second one
+  if (o.cloudApproved) {
+    if (o.logDir) appendLedger(ledgerPath(o.logDir), "LOCAL-ONLY-APPROVED", { kind: "carried", target: "cloud", worker: o.id ?? "-", label: o.label ?? "-" });
     return null;
   }
   let config = o.config;

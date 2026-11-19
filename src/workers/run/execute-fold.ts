@@ -164,6 +164,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     ...(a.specPath ? { spec: a.specPath } : {}),
     ...(limit ? { deadlineAt: limit.deadlineAt, maxMinutes: limit.minutes } : {}),
     ...(a.queueWaitedMs ? { queueWaitedMs: a.queueWaitedMs } : {}),
+    ...(a.cloudApproved ? { cloudApproved: true } : {}),
   };
   saveStatus(logDir, status);
   if (adopted && a.resumeOf) markResumed(logDir, a.resumeOf, wid);

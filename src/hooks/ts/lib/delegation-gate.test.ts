@@ -2,7 +2,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
-import { decideDelegationGate, latestOperatorPromptFromJsonl, L0_ROUTE_REASON, MODEL_OVERRIDE_REASON, PANE_REASON, SEARCH_ROOT_REASON, DELEGATION_BLOCK } from "./delegation-gate.js";
+import { decideDelegationGate, latestOperatorPromptFromJsonl, localOnlyRefusal, L0_ROUTE_REASON, MODEL_OVERRIDE_REASON, PANE_REASON, SEARCH_ROOT_REASON, DELEGATION_BLOCK } from "./delegation-gate.js";
+import { setLocalOnly, clearLocalOnly, localOnlyMessage } from "../../../workers/local-only.js";
 
 const L0 = {} as NodeJS.ProcessEnv;
 const W = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
@@ -88,6 +89,41 @@ describe("model override rule", () => {
     expect(d("pai worker run --class implement --model sonnet -p x", L0, "fix the bug")).toEqual({ decision: "deny", reason: MODEL_OVERRIDE_REASON });
   });
   it(`allows --provider glm with prompt naming a glm model ("use glm-5.3-flash")`, () => expect(d("pai worker run --class implement --provider glm -p x", L0, "use glm-5.3-flash").decision).toBe("allow"));
+});
+
+describe("local-only window (guard side)", () => {
+  const win = join(homedir(), ".pai", "test-local-only.json");
+  beforeAll(() => {
+    process.env.PAI_LOCAL_ONLY_FILE = win;
+    setLocalOnly(Date.now() + 3_600_000, "test");
+  });
+  afterAll(() => {
+    clearLocalOnly();
+    delete process.env.PAI_LOCAL_ONLY_FILE;
+  });
+
+  it("refuses a cloud run with no approval", () => {
+    expect(localOnlyRefusal("pai worker run --class implement -p x --cloud")).toBe(localOnlyMessage("test"));
+    expect(d("pai worker run --class implement -p x --cloud").decision).toBe("deny");
+  });
+  it("lets a run through on --approved-by PAI", () => {
+    expect(localOnlyRefusal("pai worker run --class implement -p x --cloud --approved-by PAI")).toBeNull();
+    expect(d("pai worker run --class implement -p x --cloud --approved-by PAI").decision).toBe("allow");
+  });
+  it("lets a resume through on --approved-by PAI", () => {
+    // the delegation rule needs the operator to name --provider, so prove the
+    // window check itself: the guard's full decision allows the approved resume
+    expect(localOnlyRefusal("pai worker resume w-1 'go on' --cloud --approved-by PAI")).toBeNull();
+    expect(d("pai worker resume w-1 'go on' --cloud --approved-by PAI").decision).toBe("allow");
+  });
+  it("lets a plain resume through: its provider is the old worker's, runWorker's gate judges it (the carried approval follows the job)", () => {
+    expect(localOnlyRefusal("pai worker resume w-1 'go on'")).toBeNull();
+    expect(d("pai worker resume w-1 'go on'").decision).toBe("allow");
+  });
+  it("still refuses a resume that asks for the cloud without the approval", () => {
+    expect(localOnlyRefusal("pai worker resume w-1 'go on' --cloud")).not.toBeNull();
+    expect(d("pai worker resume w-1 'go on' --cloud").decision).toBe("deny");
+  });
 });
 
 describe("transcript tail extractor", () => {
