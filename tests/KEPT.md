@@ -6,7 +6,6 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | --- | --- | --- |
 | src/hooks/ts/lib/worker-git-guard.test.ts | b | worker git safety: blocks in-place tree rewrites (4ab5a68c, d68822af) |
 | src/hooks/ts/lib/worker-bash-rules.test.ts | b | worker Bash block rules (rm and friends) |
-| src/hooks/ts/lib/test-governance.test.ts | b | the test-file guard's own scope: governed repos only, existing files are not new, scratch exempt (false denial of 2026-11-19, worker 20261119-061858-44984) |
 | src/hooks/ts/pre-tool-use/security-validator.test.ts | b | force-push / destructive command blocks; 7b2782a8 fixed --force-with-lease |
 | src/utils/no-token-literals.test.ts | b | credential literals must not be committed (64ed9ffa, 6d4ba5e3) |
 | src/storage/foreign-config-guard.test.ts | a,b | foreign config on the live DB cannot run destructive ops (b96fdb78) |
