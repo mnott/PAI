@@ -321,52 +321,47 @@ describe("smoke start after a merge build", () => {
     makeWorker(x.repo, x.logDir, "sm", { file: "sm.txt" });
     return x;
   };
-  const opts = {
-    verifyTests: false,
-    build: () => ({ ok: true, ms: 1, tail: "" }),
-    restartVerify: () => ({ restarted: true, forced: false, detail: "t" }),
-    restartGate: async () => ({ ok: true, line: "restart health: ok" }),
+  // every step logs its name: the smoke start must run after the build and BEFORE anything restarts the daemon
+  const rig = (smoke: () => Promise<{ ok: boolean; ms: number; error?: string }>) => {
+    const events: string[] = [];
+    return {
+      events,
+      opts: {
+        verifyTests: false,
+        build: () => (events.push("build"), { ok: true, ms: 1, tail: "" }),
+        restartVerify: () => (events.push("restartVerify"), { restarted: true, forced: false, detail: "t" }),
+        restartGate: async () => (events.push("restartGate"), { ok: true, line: "restart health: ok" }),
+        smoke: async () => (events.push("smoke"), smoke()),
+        revertMergeCommits: () => (events.push("revert"), "reverted"),
+      },
+    };
   };
 
-  it("a smoke start that throws reverts the merge: smoke start failed: <first line>", async () => {
+  it("a smoke start that throws reverts and rebuilds BEFORE the daemon restart check", async () => {
     const { repo, logDir } = f();
-    const reverted: string[] = [];
-    const out = await mergeWorker(logDir, "sm", {
-      ...opts,
-      cliRoot: repo,
-      smoke: async () => {
-        throw new Error("Cannot access 'toolFold' before initialization\n    at foo");
-      },
-      revertMergeCommits: (_c: string, oldHead: string) => (reverted.push(oldHead), "reverted"),
+    const r = rig(async () => {
+      throw new Error("Cannot access 'toolFold' before initialization\n    at foo");
     });
+    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
     expect(out).toContain("smoke start failed: Cannot access 'toolFold' before initialization");
     expect(out).not.toContain("at foo");
-    expect(reverted).toHaveLength(1);
+    expect(r.events).toEqual(["build", "smoke", "revert", "build", "restartVerify", "restartGate"]);
   });
 
   it("a smoke start that exits non-zero reverts the merge", async () => {
     const { repo, logDir } = f();
-    let reverted = 0;
-    const out = await mergeWorker(logDir, "sm", {
-      ...opts,
-      cliRoot: repo,
-      smoke: async () => ({ ok: false, ms: 5, error: "worker run exited 1" }),
-      revertMergeCommits: () => ((reverted += 1), "reverted"),
-    });
+    const r = rig(async () => ({ ok: false, ms: 5, error: "worker run exited 1" }));
+    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
     expect(out).toContain("smoke start failed: worker run exited 1");
-    expect(reverted).toBe(1);
+    expect(r.events.indexOf("revert")).toBeGreaterThan(r.events.indexOf("smoke"));
+    expect(r.events.indexOf("revert")).toBeLessThan(r.events.indexOf("restartVerify"));
   });
 
-  it("an ok smoke start keeps the merge", async () => {
+  it("an ok smoke start keeps the merge and the restart follows it", async () => {
     const { repo, logDir } = f();
-    let reverted = 0;
-    const out = await mergeWorker(logDir, "sm", {
-      ...opts,
-      cliRoot: repo,
-      smoke: async () => ({ ok: true, ms: 1200 }),
-      revertMergeCommits: () => ((reverted += 1), "reverted"),
-    });
+    const r = rig(async () => ({ ok: true, ms: 1200 }));
+    const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
     expect(out).toContain("smoke start: ok (1.2 s)");
-    expect(reverted).toBe(0);
+    expect(r.events).toEqual(["build", "smoke", "restartVerify", "restartGate"]);
   });
 });

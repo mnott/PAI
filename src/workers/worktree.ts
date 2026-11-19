@@ -1870,6 +1870,27 @@ async function rebuildDist(
   }
   appendLedger(ledgerPath(logDir), "WORKER-MERGE-BUILD", { id, ok: String(res.ok), ms: res.ms, tail: res.tail.replace(/\s+/g, " ").slice(-300) });
   if (res.ok) {
+    // smoke start BEFORE the daemon restarts on the new build: a build that cannot start a worker (2026-11-19, toolFold)
+    // is reverted and dist rebuilt from the old tree first, so the restart below only ever sees working code
+    let smokeNote = "";
+    const smoke = opts.smoke ?? (opts.build === undefined ? async (cwd: string) => (await import("./smoke-start.js")).smokeStart({ cwd }) : null);
+    if (smoke) {
+      const sm = await smoke(target).catch((e: unknown): SmokeStartResult => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
+      if (sm.ok) smokeNote = `smoke start: ok (${(sm.ms / 1000).toFixed(1)} s)\n`;
+      else {
+        const err = (sm.error ?? "unknown error").split("\n")[0];
+        let tail = "";
+        try {
+          (opts.revertMergeCommits ?? revertMerge)(target, oldHead);
+          const rb = (opts.build ?? defaultBuild)(target);
+          tail = rb.ok ? "; merge reverted, dist rebuilt from the old tree" : "; merge reverted, dist rebuild FAILED: run `npm run build`";
+        } catch (e) {
+          tail = `; WARNING: the revert failed: ${(e as Error).message}`;
+        }
+        appendLedger(ledgerPath(logDir), "WORKER-MERGE-SMOKE-FAIL", { id, reason: err.slice(0, 300) });
+        smokeNote = `smoke start failed: ${err}${tail}\n`;
+      }
+    }
     let line = "build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)";
     try {
       const v = (opts.restartVerify ?? defaultRestartVerify)();
@@ -1879,29 +1900,13 @@ async function rebuildDist(
     } catch (e) {
       line = `build: ok (dist rebuilt; daemon restart not verified: ${(e as Error).message} — run \`pai daemon restart\`)`;
     }
+    line = smokeNote + line;
     // the full gate: health-check the restarted daemons, roll dist back and revert this merge on a failure
     // (night 2026-11-17/18: restarts left the daemons unable to come up and the night was lost)
     try {
       const g = opts.restartGate !== undefined ? await opts.restartGate(logDir, distDir) : await gatePrepared(logDir, distDir, prepared ?? { prevKept: false, runtimesUpBefore: [] });
       if (g === null || g.ok) {
-        const ok = g === null ? line : `${line}\n${g.line}`;
-        // a smoke start of the new build: every worker start crashing got through the gate once (2026-11-19, toolFold)
-        const smoke = opts.smoke ?? (opts.build === undefined ? async (cwd: string) => (await import("./smoke-start.js")).smokeStart({ cwd }) : null);
-        if (!smoke) return ok;
-        const sm = await smoke(target).catch((e: unknown): SmokeStartResult => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
-        if (sm.ok) return `${ok}\nsmoke start: ok (${(sm.ms / 1000).toFixed(1)} s)`;
-        const err = (sm.error ?? "unknown error").split("\n")[0];
-        let tail = "";
-        try {
-          (opts.revertMergeCommits ?? revertMerge)(target, oldHead);
-          // dist still holds the build that cannot start a worker: rebuild it from the reverted tree
-          const rb = (opts.build ?? defaultBuild)(target);
-          tail = rb.ok ? "; merge reverted, dist rebuilt" : "; merge reverted, dist rebuild FAILED: run `npm run build`";
-        } catch (e) {
-          tail = `; WARNING: the revert failed: ${(e as Error).message}`;
-        }
-        appendLedger(ledgerPath(logDir), "WORKER-MERGE-SMOKE-FAIL", { id, reason: err.slice(0, 300) });
-        return `${ok}\nsmoke start failed: ${err}${tail}`;
+        return g === null ? line : `${line}\n${g.line}`;
       }
       if (g.rolledBack) {
         // the old build is back on disk: mark this merge reverted in git too, so main matches what runs
