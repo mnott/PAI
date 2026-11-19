@@ -28,7 +28,8 @@ export interface TimeBudgetConfig {
   cap: number;
 }
 
-export const DEFAULT_TIME_BUDGET: TimeBudgetConfig = { start: 20, factor: 2, cap: 120 };
+import { DEFAULT_TIME_BUDGET } from "./config.js";
+export { DEFAULT_TIME_BUDGET };
 
 /** What a checkpoint measures: the run's own counters and its branch commit count. */
 export interface BudgetSnapshot {

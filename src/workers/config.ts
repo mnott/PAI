@@ -19,7 +19,10 @@
  */
 
 import { DEFAULT_ESCALATE, parseEscalate, type CloudTarget, type EscalateConfig } from "./escalation.js";
-import { DEFAULT_TIME_BUDGET, type TimeBudgetConfig } from "./time-budget.js";
+import type { TimeBudgetConfig } from "./time-budget.js";
+
+/** workers.timeBudget defaults (time-budget.ts re-exports it); defined here so config.ts never imports time-budget at run time. */
+export const DEFAULT_TIME_BUDGET: TimeBudgetConfig = { start: 20, factor: 2, cap: 120 };
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
