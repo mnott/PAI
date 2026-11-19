@@ -10,9 +10,11 @@
 export const WIN_MEMORY_JS = String.raw`var MEM_INFO="Memory index: how much of the store is embedded, the backend, running jobs, scheduled passes and the daemon.";
 var WMEM=null,WMEM_JOBS={};
 function memBusy(m){return!!(m&&(m.run||m.starting))}
+/** Why a pressed "index now"/"embed backlog" did not run (the daemon's refusal record); "" when none. */
+function memRefusedText(m){return m&&m.lastIndex&&m.lastIndex.refused?"last index now refused: "+m.lastIndex.refused:""}
 /** The group's three actions: [id, label, verb, enabled(m) -> true | reason]. */
 var MEM_ACTS=[
- ["index","index now","memory.index",function(m){return!m||!m.daemon?"daemon not answering":memBusy(m)?"a run is in progress":true}],
+ ["index","index now","memory.index",function(m){return!m||!m.daemon?"daemon not answering":memBusy(m)?"a run is in progress":memRefusedText(m)?memRefusedText(m):true}],
  ["embed","embed backlog","memory.embed",function(m){return!m||!m.daemon?"daemon not answering":memBusy(m)?"a run is in progress":m.counts&&m.counts.backlog===0?"nothing to embed (backlog 0)":true}],
  ["stop","stop","memory.stop",function(m){return m&&m.run&&m.run.stoppable?true:"nothing to stop"}]
 ];
@@ -41,7 +43,8 @@ function memHeldText(m){return m&&m.daemonBusy?"daemon busy (event loop held "+(
 function memKvView(m){
  if(!m)return null;
  var pill=!m.daemon?(memHeldText(m)||"daemon down"):m.level==="green"?"healthy":m.level==="amber"?"attention":"problem";
- var run=memRunStatus(m),d={v:'<span class="'+memLvl(m.level)+'">'+esc(pill)+'</span>',s:esc(m.reason||"")+(run?'<span data-part="run" style="display:block">'+esc(run)+'</span>':""),status:["",""]};
+ var refused=memRefusedText(m);
+ var run=memRunStatus(m),d={v:'<span class="'+memLvl(m.level)+'">'+esc(pill)+'</span>',s:esc(m.reason||"")+(run?'<span data-part="run" style="display:block">'+esc(run)+'</span>':"")+(refused&&!run?'<span data-part="refused" style="display:block">'+esc(refused)+'</span>':""),status:["",""]};
  if(m.run)d.t=memRunLine(m.run);
  return d;
 }

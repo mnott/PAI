@@ -5,6 +5,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { loadavg } from "node:os";
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
@@ -59,9 +60,12 @@ import {
   type EmbedStopReason,
   DEFAULT_EMBED_CYCLE_MAX_MINUTES,
   DEFAULT_EMBED_RESUME_MINUTES,
+  localWorkerBusy,
+  passYieldReason,
   recordEmbedPass,
   runEmbedCycle,
 } from "../../memory/embed-pass.js";
+import { acquireRun } from "../../memory/run-state.js";
 import { indexTick, jobProgressFromEnv } from "../../memory/job-progress.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
@@ -166,25 +170,70 @@ export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "
   };
 }
 
+/** Why a scheduled index pass must not start now, else null. The local-model yield is NOT here:
+ *  an index pass is mostly I/O and never yields to a running local worker — that rule belongs to
+ *  the embed pass alone, and applying it to index made every daemon-triggered "index now" die in
+ *  silence while any local worker ran (2026-11-19). The load guard stays: an index pass on a
+ *  saturated machine competes with everything else. */
+export function indexPassRefusal(load = loadavg()[0], maxLoad = DEFAULT_EMBED_MAX_LOAD): string | null {
+  const held = batteryPassRefusal();
+  if (held) return `battery guard: ${held}`;
+  if (embedInProgress) return "an embed pass is running";
+  const why = passYieldReason("index", { load, maxLoad, localBusy: false });
+  return why ? `load: ${why}` : null;
+}
+
+/** Why a scheduled embed pass must not start now, else null. */
+export function embedPassRefusal(): string | null {
+  const held = batteryPassRefusal();
+  if (held) return `battery guard: ${held}`;
+  if (indexInProgress) return "an index pass is running";
+  let logDir = "";
+  let providers: Record<string, { baseUrl: string }> = {};
+  try {
+    const { workers } = readWorkersSection();
+    logDir = workersLogDir(workers);
+    providers = workers.providers ?? {};
+  } catch {
+    /* no workers config: nothing local to yield to */
+  }
+  return passYieldReason("embed", {
+    load: loadavg()[0],
+    maxLoad: daemonConfig.embedMaxLoad ?? DEFAULT_EMBED_MAX_LOAD,
+    localBusy: logDir ? localWorkerBusy(logDir, providers) : false,
+  });
+}
+
 /**
  * Run a full index pass. Guards against overlapping runs with indexInProgress.
  * Called both by the scheduler and by the index_now IPC method.
+ * `opts.triggered` marks an operator trigger (the cockpit's "index now" → index_now IPC):
+ * a refusal then goes to the daemon log AND the last-index line of `pai daemon status` / the
+ * cockpit Memory card, so a press never reads as a silent "started". A scheduled pass keeps
+ * the old defer behaviour. The local-model yield never applies to either (index is I/O).
  */
-export async function runIndex(): Promise<void> {
+export async function runIndex(opts: { triggered?: boolean } = {}): Promise<void> {
   if (indexInProgress) {
     process.stderr.write("[pai-daemon] Index already in progress, skipping.\n");
     return;
   }
 
-  // battery guard: the scheduled memory passes do not start while local work is paused
-  const held = batteryPassRefusal();
+  const held = indexPassRefusal();
   if (held) {
     process.stderr.write(`[pai-daemon] Index run held: ${held}.\n`);
+    // the refusal must not overwrite a pass that did run: keep the newest record, and let
+    // status/card readers tell a refusal from a pass by its zero counts.
+    if (opts.triggered) setLastIndexPass({ at: Date.now(), durationMs: 0, projects: 0, files: 0, chunks: 0, outcome: "refused", reason: held });
     return;
   }
 
-  if (embedInProgress) {
-    process.stderr.write("[pai-daemon] Embed in progress, deferring index run.\n");
+  // the shared run marker: a daemon pass becomes visible to the cockpit exactly like a
+  // cockpit- or CLI-started run (progress card, duplicate guard); null when another live
+  // run holds the marker — that run is the truth, this trigger has nothing to start.
+  const handle = acquireRun("index", { by: "daemon" });
+  if (!handle) {
+    process.stderr.write("[pai-daemon] Index run held: another index/embed run holds the marker.\n");
+    if (opts.triggered) setLastIndexPass({ at: Date.now(), durationMs: 0, projects: 0, files: 0, chunks: 0, outcome: "refused", reason: "another index/embed run is active" });
     return;
   }
 
@@ -192,7 +241,7 @@ export async function runIndex(): Promise<void> {
   const t0 = Date.now();
 
   try {
-    process.stderr.write("[pai-daemon] Starting scheduled index run...\n");
+    process.stderr.write(`[pai-daemon] Starting ${opts.triggered ? "operator-triggered" : "scheduled"} index run...\n`);
 
     const pw = jobProgressFromEnv("index");
     const { projects, result } = await runPassPrioritised("index", () =>
@@ -202,6 +251,7 @@ export async function runIndex(): Promise<void> {
     setLastIndexTime(Date.now());
     setLastIndexPass({ at: Date.now(), durationMs: elapsed, projects, files: result.filesProcessed, chunks: result.chunksCreated });
     passFailures.delete("index");
+    handle.release({ outcome: "done" });
     process.stderr.write(
       `[pai-daemon] Index complete: ${projects} projects, ` +
         `${result.filesProcessed} files, ${result.chunksCreated} chunks ` +
@@ -210,7 +260,8 @@ export async function runIndex(): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Index error: ${msg}\n`);
-    failPass("index", e, runIndex);
+    handle.release({ outcome: "failed", reason: msg });
+    failPass("index", e, () => runIndex(opts));
   } finally {
     setIndexInProgress(false);
   }
@@ -392,25 +443,28 @@ export function msUntilNextAnchor(hour: number | undefined, intervalMs: number):
 /**
  * Run an embedding pass for all unembedded chunks (Postgres backend only).
  */
-export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
+export async function runEmbed(opts: { triggered?: boolean } = {}): Promise<EmbedPassLogEntry | null> {
   if (embedInProgress) {
     process.stderr.write("[pai-daemon] Embed already in progress, skipping.\n");
     return null;
   }
 
-  // battery guard: the embed pass does not start while local work is paused
-  const held = batteryPassRefusal();
+  const held = embedPassRefusal();
   if (held) {
     process.stderr.write(`[pai-daemon] Embed pass held: ${held}.\n`);
-    return null;
-  }
-
-  if (indexInProgress) {
-    process.stderr.write("[pai-daemon] Index in progress, deferring embed pass.\n");
+    if (opts.triggered) setLastEmbedPass({ at: Date.now(), durationMs: 0, outcome: "failed", embedded: 0, reason: `refused: ${held}` });
     return null;
   }
 
   if (!storageBackend.supportsPostgresFeatures) {
+    return null;
+  }
+
+  // the shared run marker (same as the index pass): visible to the cockpit, duplicate-guarded.
+  const handle = acquireRun("embed", { by: "daemon" });
+  if (!handle) {
+    process.stderr.write("[pai-daemon] Embed pass held: another index/embed run holds the marker.\n");
+    if (opts.triggered) setLastEmbedPass({ at: Date.now(), durationMs: 0, outcome: "failed", embedded: 0, reason: "refused: another index/embed run is active" });
     return null;
   }
 
@@ -419,7 +473,7 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
   let ended: { outcome: EmbedPassOutcome; reason?: string } = { outcome: "done" };
 
   try {
-    process.stderr.write("[pai-daemon] Starting scheduled embed pass...\n");
+    process.stderr.write(`[pai-daemon] Starting ${opts.triggered ? "operator-triggered" : "scheduled"} embed pass...\n`);
 
     // Not runPassPrioritised: the child needs the budget/load arguments.
     const { count } = await (async () => {
@@ -483,9 +537,11 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
     setLastEmbedTime(Date.now());
     if (ended.outcome === "failed") {
       process.stderr.write(`[pai-daemon] Embed pass FAILED (${elapsed}ms): ${ended.reason ?? "backend unavailable"}\n`);
+      handle.release({ outcome: "failed", reason: ended.reason ?? "backend unavailable" });
       return await recordPass(t0, count, "error", ended.reason);
     }
     passFailures.delete("embed");
+    handle.release({ outcome: ended.outcome === "budget" ? "stopped" : ended.outcome, ...(ended.reason ? { reason: ended.reason } : {}) });
     process.stderr.write(
       `[pai-daemon] Embed pass complete: ${count} chunks embedded (${elapsed}ms)\n`
     );
@@ -493,7 +549,8 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Embed error: ${msg}\n`);
-    failPass("embed", e, () => runEmbed().then(() => undefined));
+    handle.release({ outcome: "failed", reason: msg });
+    failPass("embed", e, () => runEmbed(opts).then(() => undefined));
     return await recordPass(t0, 0, "error", msg);
   } finally {
     setEmbedInProgress(false);

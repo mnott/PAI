@@ -47,15 +47,27 @@ export function localWorkerBusy(
   }
 }
 
-/** Reason to hold the pass back right now, or null to go ahead. */
+/** Why a scheduled index/embed pass must step aside right now, or null to go ahead.
+ *  The local-model yield is an embed rule only: an index pass is mostly I/O and holds the GPU
+ *  for nothing, so it runs while local workers do (2026-11-19: a cockpit "index now" died in
+ *  silence because the daemon's pass treated a running local worker as its own stop reason). */
+export function passYieldReason(kind: "index" | "embed", o: {
+  load: number;
+  maxLoad: number;
+  localBusy: boolean;
+}): string | null {
+  if (kind === "embed" && o.localBusy) return "local-model worker running";
+  if (o.load > o.maxLoad) return `load average ${o.load.toFixed(1)} above ${o.maxLoad}`;
+  return null;
+}
+
+/** Reason to hold the embed pass back right now, or null to go ahead. */
 export function embedYieldReason(o: {
   load: number;
   maxLoad: number;
   localBusy: boolean;
 }): string | null {
-  if (o.localBusy) return "local-model worker running";
-  if (o.load > o.maxLoad) return `load average ${o.load.toFixed(1)} above ${o.maxLoad}`;
-  return null;
+  return passYieldReason("embed", o);
 }
 
 /** The live yield check for a pass: reads the load average and the worker statuses. */

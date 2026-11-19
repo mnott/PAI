@@ -97,6 +97,8 @@ export interface ActionDeps {
   daemonMemoryBusy?: () => Promise<string | null>;
   /** Chunks without vectors (null = unknown); default asks the daemon. memory.embed answers at once when it is 0. */
   embedBacklog?: () => Promise<number | null>;
+  /** Ask the running daemon to start its own index/embed pass now (an operator press); resolves "triggered" or with the refusal reason. Default: IPC `index_now` / `embed_now`. */
+  daemonTriggerPass?: (kind: RunKind) => Promise<string>;
   /** Signal a run's process (stop); default process.kill. */
   killRun?: (pid: number) => void;
 }
@@ -512,6 +514,9 @@ export async function runCockpitAction(
   }
   if (action === "memory.embed" || action === "memory.index") {
     const kind: RunKind = action === "memory.embed" ? "embed" : "index";
+    // an operator press is not subject to the local-worker yield: the default job runner asks
+    // the daemon for its own pass (it knows battery/load/embed state and records a refusal it
+    // can name); the daemon's pass takes the shared run marker, so the card shows progress.
     if (!claimAction("memory")) return fail("a memory run is already being set up");
     let id: string;
     try {
@@ -785,9 +790,12 @@ function failureLine(log: string): string {
   }
 }
 
-/** Runs the memory job (hook or the detached CLI), records its outcome in the job file. */
+/** Runs the memory job (hook or the daemon's own pass), records its outcome in the job file.
+ *  Without a hook an operator press triggers the daemon's pass over IPC — never a detached CLI
+ *  child of the router: the old path spawned `pai memory index --direct` blindly, which raced
+ *  the daemon's own state and left a pressed "index now" with nothing running and no reason. */
 async function finishMemoryJob(deps: ActionDeps, hooks: ActionHooks, id: string, kind: RunKind): Promise<void> {
-  const run = hooks.runMemoryJob ?? ((k, j) => spawnMemoryRun(k, j, deps.home));
+  const run = hooks.runMemoryJob ?? ((k: RunKind) => (deps.daemonTriggerPass ?? daemonTriggerPass)(k).then((message) => ({ ok: true, message })));
   let r: { ok: boolean; message: string; tail?: string };
   try {
     r = await run(kind, id);
@@ -796,6 +804,17 @@ async function finishMemoryJob(deps: ActionDeps, hooks: ActionHooks, id: string,
   }
   writeCockpitJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: r.ok ? "done" : "failed", message: r.message, ...(r.tail ? { tail: r.tail } : {}), at: new Date().toISOString() });
   writeLedgerLine(deps, kind === "embed" ? "memory.embed" : "memory.index", kind, `job ${id}: ${r.ok ? "done" : "failed: " + r.message}`);
+}
+
+/** Ask the daemon for its own index/embed pass now. Resolves with what it says; rejects when the
+ *  daemon does not answer or refuses (the refusal reason lands in the job and the ledger). */
+async function daemonTriggerPass(kind: RunKind): Promise<string> {
+  const { PaiClient } = await import("../daemon/ipc-client.js");
+  const { loadConfig } = await import("../daemon/config.js");
+  const client = new PaiClient(loadConfig().socketPath);
+  const r = (await client.call(kind === "embed" ? "embed_now" : "index_now", {}, 5000)) as { triggered?: boolean } | null;
+  if (!r || r.triggered !== true) throw new Error("the daemon did not accept the pass");
+  return `${kind} pass started by the daemon`;
 }
 
 /** Runs the runtime job (hook or configured commands), records its outcome in the job file;
