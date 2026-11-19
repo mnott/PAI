@@ -1,7 +1,7 @@
 import { mkdtempSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isFrozen, activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, workerAncestryBlocked, freezeWorkerGuard, freezeLogDir, freezeTestMode, parseFreezeServers, realFreezeDeps, type FreezeDeps, type ProcRow } from "./freeze.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
@@ -506,7 +506,7 @@ describe("helpers", () => {
 
 // ---- deep freeze (`pai stop` / `pai resume`) ----
 import { readFileSync } from "node:fs";
-import { deepFreeze, deepResume, readDeepfreeze, deepfrozenIds, gitNoInput, gitNoInputSafe, type DeepFreezeDeps, type DeepResumeDeps } from "./deepfreeze.js";
+import { deepFreeze, deepResume, readDeepfreeze, deepfrozenIds, gitNoInput, gitNoInputSafe, resumeText, realDeepResumeDeps, type DeepFreezeDeps, type DeepResumeDeps } from "./deepfreeze.js";
 import { loadStatus, saveStatus } from "./status.js";
 
 describe("deep freeze", () => {
@@ -650,6 +650,50 @@ describe("deep freeze", () => {
     await deepResume(logDir, resumeDeps(started, { ready: async () => ++polls >= 3, now: () => t, sleep: async (ms) => void (t += ms) }), { wait: true });
     expect(polls).toBe(3);
     expect(started.length).toBe(2);
+  });
+
+  // live 2026-11-19: a resumed worker runs in the ORIGIN's worktree but carries a NEW
+  // worker id, and built its edit paths from that id — a directory that does not exist.
+  it("the resume continuation names the worktree it runs in, never one named after its own id", async () => {
+    const w = {
+      id: "w1", label: "task", project: "p", cwd: dir, branch: "worker/w1", worktreeDir: join(dir, "wt-origin"),
+      provider: "anthropic", priority: "normal" as const, state: "running" as const, claudeSession: "s", goals: [], order: 0, children: [],
+    };
+    const text = resumeText(w);
+    expect(text).toContain(`Your worktree: ${join(dir, "wt-origin")}`);
+    expect(text).toContain("not a directory named after your (new) worker id");
+    // the recorded tree is absent (the merge already removed it): no path is stated, still no id-derived path
+    expect(resumeText({ ...w, worktreeDir: null })).not.toContain("Your worktree:");
+  });
+
+  it("a deep-resumed run restart names the origin worktree in its prompt", async () => {
+    const spec = join(dir, "q.spec");
+    writeFileSync(spec, "the task");
+    const wt = join(dir, "wt-origin");
+    mkdirSync(wt);
+    const spawned: string[][] = [];
+    vi.doMock("./reroute.js", () => ({
+      startDetachedWorker: async (_d: string, args: string[]) => {
+        spawned.push(args);
+        return "new-id";
+      },
+    }));
+    try {
+      const d = await realDeepResumeDeps();
+      const w = {
+        id: "q", label: "task q", project: "p", cwd: dir, branch: null, worktreeDir: wt, spec,
+        provider: "anthropic", priority: "normal" as const, state: "queued" as const, claudeSession: null, goals: [], order: 0, children: [],
+      };
+      await d.start(logDir, w, "continue the task");
+      const args = spawned[0];
+      expect(args[0]).toBe("run");
+      const prompt = args[args.indexOf("-p") + 1];
+      expect(prompt).toContain(`Your worktree: ${wt}`);
+      expect(prompt).toContain("not a directory named after your own worker id");
+      expect(prompt).toContain("continue the task");
+    } finally {
+      vi.doUnmock("./reroute.js");
+    }
   });
 
   it("thaw --drop (drop) resumes nothing and discards the record", async () => {
