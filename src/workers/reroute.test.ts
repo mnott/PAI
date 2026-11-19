@@ -12,9 +12,6 @@ import { parseLedger } from "./ledger.js";
 import { stopOriginFirst } from "./run/escalate.js";
 import { isReadOnlyJob } from "./run/stream.js";
 import { carryGoals } from "./note-delivery.js";
-import { budgetCheck, budgetProgress, budgetText, emptySnapshot, fireBudget, initialBudgetMinutes, nextBudgetMinutes, parseExtendMinutes, reviewNote, DEFAULT_TIME_BUDGET } from "./time-budget.js";
-import { fallThroughReason } from "./policy.js";
-import { parseBudget } from "./deadline.js";
 
 let dir: string;
 let savedHome: string | undefined;
@@ -575,54 +572,5 @@ describe("escalation switch: per session, per run, pinned local", () => {
       expect(escalationReason(stalled({ routeWhy: why }), NOW, pol(0))).toBeNull();
     }
     expect(providerPinned({ routeWhy: "gyro-l/m (class: implement)" })).toBe(false);
-  });
-});
-
-describe("progress-based time budget", () => {
-  const cfg = DEFAULT_TIME_BUDGET;
-  const snap = (o: Partial<ReturnType<typeof emptySnapshot>>) => ({ ...emptySnapshot(), ...o });
-
-  it("progress doubles the allowance and does not stop", () => {
-    const d = budgetCheck(snap({}), snap({ commits: 3, testsPassed: 1 }), { minutes: 20, cfg });
-    expect(d).toEqual({ action: "extend", minutes: 40, why: "extended to 40 min: 3 commits, tests ran" });
-    expect(nextBudgetMinutes(40, cfg)).toBe(80);
-  });
-
-  it("no progress stops for review", () => {
-    expect(budgetCheck(snap({ commits: 2 }), snap({ commits: 2 }), { minutes: 20, cfg }).action).toBe("review");
-  });
-
-  it("read-only jobs progress on successful tool calls only", () => {
-    expect(budgetProgress(snap({}), snap({ toolsOk: 4 }))).toBeNull();
-    expect(budgetProgress(snap({}), snap({ toolsOk: 4 }), true)).toContain("4 successful tool calls");
-  });
-
-  it("respects the cap and the run's own max-minutes", () => {
-    expect(nextBudgetMinutes(80, cfg)).toBe(120);
-    expect(nextBudgetMinutes(120, cfg)).toBeNull();
-    expect(nextBudgetMinutes(40, cfg, 50)).toBe(50);
-    expect(initialBudgetMinutes(cfg, 15)).toBe(15);
-    expect(budgetCheck(snap({}), snap({ commits: 1 }), { minutes: 120, cfg }).action).toBe("review");
-  });
-
-  it("a review stop is flagged and never falls through to the cloud", () => {
-    const st = { id: "w1", state: "running" } as WorkerStatus;
-    fireBudget(st, join(dir, "ledger.log"), { action: "review", minutes: 20, why: "no progress in its 20-min allowance" });
-    expect(st.needsReview).toBe(true);
-    fireBudget(st, join(dir, "ledger.log"), { action: "extend", minutes: 40, why: "x" });
-    expect(budgetText(st)).toBe("budget 40m (extended 1x)");
-    const route = { local: true, policy: "local-first" } as never;
-    const ended = { needsReview: true, timedOut: true, endReason: "timeout", state: "failed" } as never;
-    expect(fallThroughReason(route, ended, null, "task", true)).toBeNull();
-  });
-
-  it("mailbox line names the ways on; extend and --budget parse durations", () => {
-    const n = reviewNote("w1", "task", "no progress", ["abc fix"], "boom");
-    expect(n).toContain("pai worker extend w1 30m");
-    expect(n).toContain("Last error: boom");
-    expect(parseExtendMinutes("30m")).toBe(30);
-    expect(parseExtendMinutes("1h")).toBe(60);
-    expect(parseExtendMinutes("zzz")).toBeNull();
-    expect(parseBudget("20m")).toBe(20);
   });
 });

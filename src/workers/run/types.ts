@@ -70,10 +70,6 @@ export interface RunOptions {
   maxMinutes?: number;
   /** --deadline HH:MM (local): stop the run then; exclusive with maxMinutes. */
   deadline?: string;
-  /** --budget 20m: this run's opening time allowance (time-budget.ts); default workers.timeBudget.start. */
-  budgetMin?: number;
-  /** Internal: `pai worker extend` raised this run's allowance above the config start (carried across relaunches). */
-  _budgetOverride?: boolean;
   /** --no-pool: run fresh, never ask the pool (recorded as WORKER-POOL-SKIP reason=opted-out). */
   noPool?: boolean;
   /** --browser / --no-browser: undefined follows workers.noBrowserByDefault. */
@@ -281,8 +277,6 @@ export interface ExecuteArgs {
   capability?: string;
   /** Time limit of the run; null = none. */
   limit: RunLimit | null;
-  /** The run's opening time allowance in minutes (time-budget.ts); null = no budget checkpoints. */
-  budgetMin?: number | null;
   /** Browser tools are stripped from this run (and denied by the worker guard). */
   noBrowser: boolean;
   /** --allow-tests: PAI_WORKER_ALLOW_TESTS=1 in the env; the guard then allows tests despite `tests: operator`. */

@@ -70,7 +70,7 @@ export interface WorkerStatus {
   term: string;
   provider: string;
   model: string;
-  state: "queued" | "running" | "done" | "failed" | "review" | "killed" | "lost" | "deepfrozen";
+  state: "queued" | "running" | "done" | "failed" | "killed" | "lost" | "deepfrozen";
   started: string;
   updated: string;
   turns: number;
@@ -248,12 +248,6 @@ export interface WorkerStatus {
   timedOut?: boolean;
   /** Active minutes at which this local run was handed to a cloud worker (workers.localHandoffMinutes); timedOut is set with it. */
   handoffMin?: number;
-  /** The progress-based allowance the budget timer currently arms (time-budget.ts); its checkpoints double it. */
-  budgetMin?: number | null;
-  /** How many times the budget checkpoint doubled the allowance ("budget 40m (extended 1x)"). */
-  budgetExtensions?: number;
-  /** Stopped at a budget checkpoint with no progress: work saved on the branch, state "review" — the owning session decides what's next. */
-  needsReview?: boolean;
   /** ps line of a handoff: "handed off to anthropic as <id> at 45 min". */
   handoffNote?: string;
   /** Launching process (the parent of `pai worker run`) at start, and its command name. */

@@ -78,16 +78,6 @@ export function resolveLimit(
   return minutes === 0 ? null : { deadlineAt: now.getTime() + minutes * 60_000, minutes };
 }
 
-/** --budget 20m (and plain numbers as minutes): the run's opening allowance. */
-export function parseBudget(s: string): number {
-  const m = /^(\d+(?:\.\d+)?)(ms|m|h)?$/.exec(s.trim());
-  if (!m) throw new Error(`--budget: expected a duration like 20m, 1h or 30, got "${s}"`);
-  const v = Number(m[1]);
-  const minutes = m[2] === "ms" ? v / 60_000 : m[2] === "h" ? v * 60 : v;
-  if (!(minutes > 0)) throw new Error(`--budget: expected a positive duration, got "${s}"`);
-  return Math.max(1, Math.round(minutes));
-}
-
 const pad = (n: number): string => String(n).padStart(2, "0");
 
 /** The one line injected into the worker's system prompt. */

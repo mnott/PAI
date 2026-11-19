@@ -382,8 +382,6 @@ export interface EndedRun {
   reportValid?: boolean;
   timedOut?: boolean;
   handoffMin?: number;
-  /** Stopped at a budget checkpoint with no progress: the session decides, never an automatic cloud continuation. */
-  needsReview?: boolean;
   rc?: number | null;
   state?: string;
   endReason?: string;
@@ -408,8 +406,6 @@ export function fallThroughReason(
   // the provider that actually ran decides, not the route: a cloud run never repeats on the cloud
   if (ranLocal === false) return null;
   if (isBenchmarkLabel(label)) return null;
-  // a budget-checkpoint stop is the owning session's call (resume / extend / cloud), never an automatic fall-through
-  if (status.needsReview) return null;
   if (status.endReason === "malformed-tool-call") return "instrument fault: malformed tool call";
   if (status.endReason === "degenerate-answer") return "instrument fault: degenerate answer";
   if (status.handoffMin) return `handoff after ${status.handoffMin} min`;

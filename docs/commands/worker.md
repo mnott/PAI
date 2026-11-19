@@ -73,7 +73,6 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--no-worktree` | flag | — | Work in place, no worktree |
 | `--max-minutes N` | number | — | Stop after N minutes and keep the work (0 = no limit; default from the config, 60) |
 | `--deadline HH:MM` | string | — | Stop at this local time (tomorrow if already past); not with --max-minutes |
-| `--budget DUR` | string | — | Opening time allowance of the progress-based budget (20m, 1h; default workers.timeBudget.start, 20): at each checkpoint new edits/commits or test runs double it up to the cap, no progress stops the run needs-review with its work on the branch — never an automatic cloud fall-through |
 | `--no-pool` | flag | — | Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) runs unpooled anyway and says so on stderr |
 | `--browser` | flag | — | Allow browser tools |
 | `--no-browser` | flag | — | Remove every browser tool from this worker |
@@ -717,28 +716,6 @@ pai worker keep w-20260101-abc --release
 ```
 
 See also: `pai worker gc`
-
-### pai worker extend
-
-Give a worker more time (its progress-based budget)
-
-```
-pai worker extend ID DUR
-```
-
-DUR is the new total allowance (30m, 1h): a running worker's checkpoint timer reads it from its status; a worker a budget checkpoint stopped as "needs review" restarts detached on its saved task with DUR as its flat allowance (never doubled further), continuing on its branch. The ceiling is workers.timeBudget.cap.
-
-| Argument | Required | Description |
-|---|---|---|
-| `ID` | yes | Worker id (see `pai worker ps`) |
-| `DUR` | yes | New allowance: 30m, 90, 1h |
-
-```sh
-pai worker extend w-20260101-abc 30m
-pai worker ps   (find the id first)
-```
-
-See also: `pai worker ps`, `pai worker resume`, `pai worker run --budget`
 
 ### pai worker kill
 
@@ -2031,7 +2008,6 @@ See also: `pai worker providers`
 | `pai worker discard` | Throw away a worker's branch and worktree |
 | `pai worker gc` | Archive leftover worker worktrees |
 | `pai worker keep` | Protect a worktree from gc |
-| `pai worker extend` | Give a worker more time (its progress-based budget) |
 | `pai worker kill` | Stop a running worker |
 | `pai worker queue` | Show or reorder the workers waiting for a provider slot |
 | `pai worker wait-on` | Wait for a background job to finish |

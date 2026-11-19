@@ -19,10 +19,6 @@
  */
 
 import { DEFAULT_ESCALATE, parseEscalate, type CloudTarget, type EscalateConfig } from "./escalation.js";
-import type { TimeBudgetConfig } from "./time-budget.js";
-
-/** workers.timeBudget defaults (time-budget.ts re-exports it); defined here so config.ts never imports time-budget at run time. */
-export const DEFAULT_TIME_BUDGET: TimeBudgetConfig = { start: 20, factor: 2, cap: 120 };
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -632,10 +628,8 @@ export interface WorkersConfig {
   cacheKeepaliveSecs: number;
   /** Default time limit of every run in minutes (workers.defaultMaxMinutes); 0 = none. */
   defaultMaxMinutes: number;
-  /** Active minutes after which a still-running local worker hands its branch to a cloud worker (workers.localHandoffMinutes); 0 = off. Replaced by the progress-based timeBudget below: kept for --budget-less legacy reads, never armed by default. */
+  /** Active minutes after which a still-running local worker hands its branch to a cloud worker (workers.localHandoffMinutes); 0 = off. */
   localHandoffMinutes: number;
-  /** Progress-based time budget (workers.timeBudget, time-budget.ts): opening allowance, doubling factor, ceiling in minutes. */
-  timeBudget: TimeBudgetConfig;
   /** Minutes a run may queue for a slot before the owner is told (workers.waitAlarmMinutes); default 120. */
   waitAlarmMinutes: number;
   /** Milliseconds the end-of-run rule scan may take before it is skipped (workers.scanBudgetMs); default 5000. */
@@ -767,8 +761,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     },
     cacheKeepaliveSecs: num(w.cacheKeepaliveSecs, 0),
     defaultMaxMinutes: num(w.defaultMaxMinutes, 60),
-    localHandoffMinutes: num(w.localHandoffMinutes, 0),
-    timeBudget: { ...DEFAULT_TIME_BUDGET, ...obj(w.timeBudget) },
+    localHandoffMinutes: num(w.localHandoffMinutes, 45),
     waitAlarmMinutes: num(w.waitAlarmMinutes, 120),
     scanBudgetMs: num(w.scanBudgetMs, 5000),
     stagger: {
@@ -1507,20 +1500,6 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
     localHandoffMinutes = w.localHandoffMinutes;
   }
-  let timeBudget: TimeBudgetConfig = { ...d.timeBudget };
-  if (w.timeBudget !== undefined) {
-    if (typeof w.timeBudget !== "object" || w.timeBudget === null || Array.isArray(w.timeBudget)) {
-      bad(".timeBudget", "must be an object");
-    }
-    const t = w.timeBudget as Record<string, unknown>;
-    for (const k of ["start", "factor", "cap"] as const) {
-      if (t[k] === undefined) continue;
-      if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) < (k === "factor" ? 1 : 1)) {
-        bad(`.timeBudget.${k}`, k === "factor" ? "must be a number at or above 1" : "must be a positive number (minutes)");
-      }
-      timeBudget[k] = t[k] as number;
-    }
-  }
   let waitAlarmMinutes = d.waitAlarmMinutes;
   if (w.waitAlarmMinutes !== undefined) {
     if (typeof w.waitAlarmMinutes !== "number" || !Number.isInteger(w.waitAlarmMinutes) || w.waitAlarmMinutes < 1) {
@@ -1746,7 +1725,6 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     cacheKeepaliveSecs,
     defaultMaxMinutes,
     localHandoffMinutes,
-    timeBudget,
     waitAlarmMinutes,
     scanBudgetMs,
     stagger,
@@ -1965,7 +1943,6 @@ export function writeWorkersSection(
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
         localHandoffMinutes: workers.localHandoffMinutes,
-        timeBudget: workers.timeBudget,
         waitAlarmMinutes: workers.waitAlarmMinutes,
         scanBudgetMs: workers.scanBudgetMs,
         stagger: workers.stagger,
