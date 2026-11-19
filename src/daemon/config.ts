@@ -181,9 +181,9 @@ export interface RouterConfig {
    * Request scheduling for local engines (src/router/scheduler.ts): one request in
    * flight per engine, fair across the workers' owning sessions. Defaults:
    * enabled true, wTokIn 1, wTokOut 2, agingSec 120, sessionWeights {},
-   * warmMs 300000, pingMs 15000, lowAgingSec 900.
+   * warmMs 300000, pingMs 15000, lowAgingSec 900, staleMin 5.
    */
-  scheduling?: { enabled?: boolean; wTokIn?: number; wTokOut?: number; agingSec?: number; sessionWeights?: Record<string, number>; warmMs?: number; pingMs?: number; lowAgingSec?: number };
+  scheduling?: { enabled?: boolean; wTokIn?: number; wTokOut?: number; agingSec?: number; sessionWeights?: Record<string, number>; warmMs?: number; pingMs?: number; lowAgingSec?: number; staleMin?: number };
   /**
    * Park an idle local conversation to disk while its worker waits on a long build gate
    * (src/router/parking.ts). Needs the engine started with `--slot-save-path <PAI home>/state/strata-slots`.

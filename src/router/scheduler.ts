@@ -36,6 +36,8 @@ export interface SchedConfig {
   pingMs: number;
   /** A low-priority request waiting longer than this gets one turn although higher ones wait (seconds). */
   lowAgingSec: number;
+  /** An in-flight request with no upstream bytes for this long is released as stale (minutes). */
+  staleMin: number;
 }
 
 /**
@@ -44,7 +46,7 @@ export interface SchedConfig {
  * (src/config/defaults/config.yaml, `router.scheduling`) and reach the
  * scheduler through `loadConfig().router.scheduling` → `schedConfigFrom`.
  */
-export const DEFAULT_SCHED: SchedConfig = { enabled: true, wTokIn: 1, wTokOut: 2, agingSec: 120, sessionWeights: {}, warmMs: 300_000, pingMs: 15_000, lowAgingSec: 900 };
+export const DEFAULT_SCHED: SchedConfig = { enabled: true, wTokIn: 1, wTokOut: 2, agingSec: 120, sessionWeights: {}, warmMs: 300_000, pingMs: 15_000, lowAgingSec: 900, staleMin: 5 };
 
 export const SCHED_FILE = "router-sched.json";
 
@@ -54,7 +56,7 @@ export function schedConfigFrom(raw: unknown): SchedConfig {
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (typeof r.enabled === "boolean") out.enabled = r.enabled;
-  for (const k of ["wTokIn", "wTokOut", "agingSec", "warmMs", "pingMs", "lowAgingSec"] as const) {
+  for (const k of ["wTokIn", "wTokOut", "agingSec", "warmMs", "pingMs", "lowAgingSec", "staleMin"] as const) {
     const v = r[k];
     if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
   }
@@ -77,6 +79,8 @@ export interface Ticket {
   waitedMs: number;
   /** Free the engine. Idempotent; the first call's `served` is what the session is charged. */
   release(served?: Served, opts?: ReleaseOpts): void;
+  /** Upstream bytes arrived: the holder is alive (resets the stale clock). */
+  touch(): void;
 }
 
 export interface ReleaseOpts {
@@ -107,6 +111,11 @@ interface Flight {
   session: string;
   worker: string;
   since: number;
+  /** epoch ms of the last upstream byte (or the grant) */
+  lastByte: number;
+  /** held on purpose while the conversation is saved: never stale */
+  parking?: boolean;
+  release?: () => void;
 }
 
 interface Engine {
@@ -153,7 +162,10 @@ export class RequestScheduler {
   idleHook?: IdleHook;
   /** per-worker priority and pause; absent = everyone normal, nobody paused */
   control?: ControlSource;
+  /** called when a stale holder was released (the router writes the ledger line) */
+  onStale?: (engine: string, worker: string, session: string, idleMs: number) => void;
   private recheck?: NodeJS.Timeout;
+  private reaper?: NodeJS.Timeout;
 
   constructor(private cfg: () => SchedConfig = () => DEFAULT_SCHED, private now: () => number = Date.now) {}
 
@@ -178,6 +190,38 @@ export class RequestScheduler {
     a.session = session;
     a.engine = engine;
     return a;
+  }
+
+  /** Releases every in-flight holder with no upstream bytes for staleMin minutes; returns how many. */
+  reapStale(): number {
+    const limit = this.cfg().staleMin * 60_000;
+    if (!(limit > 0)) return 0;
+    const now = this.now();
+    let n = 0;
+    for (const [name, e] of this.engines) {
+      const f = e.inflight;
+      if (!f || f.parking || !f.release || now - f.lastByte <= limit) continue;
+      n++;
+      try {
+        this.onStale?.(name, f.worker, f.session, now - f.lastByte);
+      } catch {
+        /* logging is best effort */
+      }
+      f.release();
+    }
+    return n;
+  }
+
+  private armReaper(): void {
+    if (this.reaper) return;
+    this.reaper = setInterval(() => {
+      this.reapStale();
+      if (![...this.engines.values()].some((e) => e.inflight)) {
+        clearInterval(this.reaper);
+        this.reaper = undefined;
+      }
+    }, 15_000);
+    this.reaper.unref();
   }
 
   /** The worker whose conversation the engine's slot holds, if known. */
@@ -297,7 +341,8 @@ export class RequestScheduler {
       const start = this.now();
       if (this.ctl(w).priority === "low") eng.lastLowAt = start;
       const waitedMs = start - w.at;
-      eng.inflight = { session: w.session, worker: w.worker, since: start };
+      eng.inflight = { session: w.session, worker: w.worker, since: start, lastByte: start };
+      this.armReaper();
       const a = this.acct(w.worker, w.session, engineName);
       a.requests++;
       a.waitMsTotal += waitedMs;
@@ -306,8 +351,11 @@ export class RequestScheduler {
       this.refreshWaiting(w.worker);
       let done = false;
       const flight = eng.inflight;
-      w.grant({
+      const ticket: Ticket = {
         waitedMs,
+        touch: () => {
+          if (eng.inflight === flight) flight.lastByte = this.now();
+        },
         release: (served, opts) => {
           if (done) return;
           done = true;
@@ -318,7 +366,7 @@ export class RequestScheduler {
           if (hook && eng.inflight === flight) {
             // keep the engine held while the conversation is saved, then admit the next worker
             parking = hook(engineName, w.worker, eng.waiting.length).catch(() => undefined);
-            eng.inflight = { session: w.session, worker: w.worker, since: end };
+            eng.inflight = { session: w.session, worker: w.worker, since: end, lastByte: end, parking: true };
           } else if (eng.inflight === flight) eng.inflight = null;
           const parkFlight = eng.inflight;
           a.activeSince = 0;
@@ -340,7 +388,9 @@ export class RequestScheduler {
           } else this.dispatch(engineName);
           this.changed();
         },
-      });
+      };
+      flight.release = () => ticket.release();
+      w.grant(ticket);
     }
     // a parked (paused) worker is released by a status-file change, which nothing signals: look again shortly
     if (!this.recheck && eng.waiting.some((w) => this.ctl(w).paused)) {
