@@ -134,7 +134,7 @@ export const DEADLINE_GRACE_MS = 10_000;
 export function armDeadline(
   proc: { kill(sig?: NodeJS.Signals): boolean; exitCode: number | null; signalCode: NodeJS.Signals | null },
   limit: RunLimit,
-  onFire: () => void,
+  onFire: () => void | false,
   graceMs: number = DEADLINE_GRACE_MS,
   /** ms the run spent blocked (build-gate waits) so far; they push the deadline out. Absolute limits ignore it. */
   blocked: () => number = () => 0,
@@ -166,7 +166,8 @@ export function armDeadline(
   const fire = (): void => {
     // a wait or a low-power tick moved the deadline since the timer was set
     if (left() > 0) return arm();
-    onFire();
+    // onFire returning false spares the run (a budget checkpoint that extends): no kill, no SIGKILL timer
+    if (onFire() === false) return;
     try {
       proc.kill("SIGTERM");
     } catch {

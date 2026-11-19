@@ -21,7 +21,7 @@ import { requeueStaleWaiters } from "../../workers/stale-requeue.js";
 import { admitResumedWaiters, abortStuckPreemptions, endExpiredWindowNow, resumeOrphaned } from "../../workers/preempt.js";
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
-import { localIdleTick } from "../../workers/local-idle.js";
+import { localIdleTick, startGpuSampler } from "../../workers/local-idle.js";
 import { freshLoadWatchState, liveLoadWatchDeps, loadWatchConfig, loadWatchTick, type LoadWatchState } from "../load-watch.js";
 import { batteryGuardTick, batteryGuardConfig, batteryPassRefusal, type BatteryGuardConfig } from "../battery-guard.js";
 import { buildsDir, listBuildsSync } from "../../builds/queue.js";
@@ -716,6 +716,11 @@ export function startWorkerSupervisor(): void {
     void timedTask("preempt-sweep", async () => { endExpiredWindowNow(dir); abortStuckPreemptions(dir); resumeOrphaned(dir); for (const id of admitResumedWaiters(dir)) process.stderr.write(`[pai-daemon] Queue: resumed ${id} (slot free)\n`); }).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
+
+  // the GPU instant window behind the cockpit tile and the local-model line: one ioreg every ~5 s
+  // (the instant read jumps 0↔97 within seconds, so the tile shows the avg + peak of this window);
+  // the 30 s idle tick below persists the window's 1-min summary for the router to read.
+  startGpuSampler();
 
   // the local model must not idle while its workers build: sampled every 30 s, one nudge per backoff
   const localIdle = setInterval(() => {

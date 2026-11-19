@@ -178,11 +178,11 @@ describe("queue table", () => {
 
 describe("queue header and order", () => {
   it("counts slots like the gate: paused apart from busy, waiting separate", () => {
-    const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 2, free: 1, queued: 2, paused: 3, activity: {} }] };
+    const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, gpuAvgPct: null, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 2, free: 1, queued: 2, paused: 3, activity: {} }] };
     expect(localIdleLine(f, QNOW)).toBe("gyro-l: 2 of 3 slots busy · 3 paused · 2 waiting · GPU 100%");
   });
   it("an over-cap holder is named as an engine-idle admission", () => {
-    const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 0, paused: 0, activity: {} }] };
+    const f = { at: new Date(QNOW).toISOString(), gpuPct: 100, gpuAvgPct: null, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 0, paused: 0, activity: {} }] };
     expect(localIdleLine(f, QNOW)).toBe("gyro-l: 4 of 3 slots busy · engine idle: admitted 1 extra · GPU 100%");
   });
   it("groups running, waiting, paused/frozen; the CLI has the cockpit columns", () => {
@@ -563,7 +563,7 @@ describe("a started job waiting for its slot back is running everywhere", () => 
   });
   it("slot line: 'N waiting' counts not-started jobs only; started jobs holding a ticket are named apart", () => {
     // the incident: 12 tickets (8 not started, 4 started and holding one) read "12 waiting" while the table showed 8 waiting rows
-    const f = { at: new Date(QNOW).toISOString(), gpuPct: 0, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 8, paused: 0, lent: 2, startedHoldingTicket: 4, activity: {} }] };
+    const f = { at: new Date(QNOW).toISOString(), gpuPct: 0, gpuAvgPct: null, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-l", cap: 3, running: 4, free: 0, queued: 8, paused: 0, lent: 2, startedHoldingTicket: 4, activity: {} }] };
     expect(localIdleLine(f, QNOW)).toBe("gyro-l: 4 of 3 slots busy · engine idle: admitted 1 extra · 2 lent (waiting on a tool) · 4 waiting for their slot back · 8 waiting · GPU 0%");
   });
 });
