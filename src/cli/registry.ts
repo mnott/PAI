@@ -32,6 +32,8 @@ import { antipatternsCommand } from "./commands/antipatterns.js";
 import { releaseCmd } from "./commands/release.js";
 import { testsCommand } from "./commands/tests.js";
 import { powerCommand } from "./commands/power.js";
+import { budgetCommand } from "./commands/budget.js";
+import { whisperCommand } from "./commands/whisper.js";
 import { handoffCommand } from "./commands/handoff.js";
 import { benchCommand } from "./commands/bench.js";
 
@@ -79,6 +81,6 @@ export const GROUPS: GroupDef[] = [
 
 // Memory, knowledge and audit commands (one file per group in ./commands).
 GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, codeCommand, graphCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand, lessonsCommand);
-GROUPS.find((g) => g.id === "workers")!.commands.push(modelsCommand, benchCommand);
+GROUPS.find((g) => g.id === "workers")!.commands.push(modelsCommand, benchCommand, budgetCommand, whisperCommand);
 GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand, harnessCommand, reloadCommand, rulesCommand, antipatternsCommand, releaseCmd, testsCommand, powerCommand);
 GROUPS.find((g) => g.id === "memory")!.commands.push(gitCommand);

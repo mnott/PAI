@@ -85,7 +85,8 @@ import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, runTerm, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
 import { SIGNAL_SALVAGE_MS, printResult, identityExtras } from "./finalise.js";
-import { tryEscalate, rerunOn, ranLocal, stopOriginFirst } from "./escalate.js";
+import { CLOUD, continuedLocally, fallThroughTarget, tryEscalate, rerunOn, ranLocal, stopOriginFirst } from "./escalate.js";
+import { CONTINUED_LOCALLY } from "../local-only.js";
 import { executeRun } from "./execute.js";
 
 /** A named local provider that is disabled or whose server does not answer. */
@@ -387,7 +388,9 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       st.claimsContinue = true;
       saveStatus(a.logDir, st);
     } else if (why && a.route && !st.escalated) {
-      return rerunOn(a, wid, why, st);
+      // the local-only window or the session's escalate-off: the continuation runs on the same local provider again
+      const to = ranLocal(a, st) ? fallThroughTarget(a, st) : CLOUD;
+      return rerunOn(a, wid, to === CLOUD ? why : continuedLocally(why), st, to);
     }
   }
   if (!a.quiet) {
@@ -520,10 +523,35 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
     st.last = line;
     saveStatus(logDir, st);
   };
-  // the tier above, when escalation is on and that tier is not the session
-  // and this task has not already escalated out of `from` (no ping-pong)
   // escalation and the cloud fall-through are a local run's; a cloud run re-runs on its own target
   const localRun = !!a.route?.local || isLoopbackProvider(a.target.provider);
+  // the local-only window or the session's escalate-off: no automatic move to the cloud — the task continues on the same local provider again
+  const stayLocal = localRun && fallThroughTarget(a, st ?? ({} as WorkerStatus)) !== CLOUD;
+  if (stayLocal) {
+    appendLedger(ledger, "WORKER-ESCALATE-SKIPPED", { id: wid, reason: CONTINUED_LOCALLY });
+    if (!(await stopOriginFirst(logDir, wid))) return st?.rc ?? 1;
+    appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: continuedLocally(`pool host ended the run (${why})`), to: a.target.providerName });
+    process.stderr.write(`pai worker: ${wid} on ${a.target.providerName} ended in the pool host (${why}) — continuing locally (local-only)\n`);
+    return (a.runner ?? runWorker)({
+      ...a.opts,
+      id: undefined,
+      providerFlag: a.target.providerName,
+      modelFlag: a.model || undefined,
+      label: `${label} (continued locally)`,
+      _route: { policy: a.route?.policy ?? "auto", reason: `continued locally (pool host: ${why})`, local: true },
+      _fallThroughOf: wid,
+      _priorIds: [...(a.priorIds ?? []), wid],
+      onWorkerStart: (id2) => {
+        if (st) {
+          st.fallThroughTo = id2;
+          saveStatus(logDir, st);
+        }
+        a.onWorkerStart?.(id2);
+      },
+    });
+  }
+  // the tier above, when escalation is on and that tier is not the session
+  // and this task has not already escalated out of `from` (no ping-pong)
   if (localRun && config.escalate.enabled && from && above && !above.session && above.models.length && !already.includes(from)) {
     const out = await runEscalation(
       {

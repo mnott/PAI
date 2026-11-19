@@ -30,6 +30,7 @@ import {
 } from "../lib/whisper-confirm.js";
 import { whisperRulesPath, advisorModePath } from "../../../config/pai-files.js";
 import { loadConfig } from "../../../daemon/config.js";
+import { applyUntil } from "../lib/whisper-expiry.js";
 
 const WHISPER_FILE = whisperRulesPath();
 const ADVISOR_FILE = advisorModePath();
@@ -77,7 +78,8 @@ function getWhisperRules(isWorker: boolean, workerOnly = false, dropConfirmLine 
     const out: string[] = [];
     let tag: "orchestrator" | "worker" | null = null;
     for (const raw of lines) {
-      const line = raw.trim();
+      let line = raw.trim();
+      if (line.startsWith("UNTIL ")) line = applyUntil(line);
       if (line.length === 0) continue;
       if (line.startsWith("#")) {
         if (isSectionHeader(line)) tag = null;

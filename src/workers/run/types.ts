@@ -98,6 +98,8 @@ export interface RunOptions {
   whereFlag?: string;
   /** --local NAME: this running local model instead of the tier-order pick. */
   localName?: string;
+  /** --approved-by <session>: during a local-only window, the named gatekeeper's standing approval lets this cloud start through (a one-time token from `pai budget approve` is consumed beside it). */
+  approvedBy?: string;
   /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
   _route?: RouteInfo;
   _fallThroughOf?: string;

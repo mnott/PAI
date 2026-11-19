@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { contentToText } from "./transcript-text.js";
 import { dropHeredocBodies } from "./heredoc.js";
 import { paiHomePath } from "../../../config/pai-home.js";
+import { localOnlyMessage, readLocalOnly } from "../../../workers/local-only-state.js";
 
 export interface DelegationDecision { decision: "allow" | "deny"; reason?: string }
 
@@ -24,6 +25,30 @@ export const SEARCH_ROOT_REASON = "search a named directory, never ~ or /";
 export const PANE_REASON = "every worker runs behind a visible pane: --no-pane, PAI_WORKER_AUTOPANE, PAI_WORKER= and the headless-ok override are operator-only";
 export const L0_ROUTE_REASON = "L0 starts only these routes (the mode in workers.yaml picks the models: speed, balanced, budget): single small change: --class implement (direct L2); several related changes or one larger multi-file change: --class orchestrate (L1, or plan). The orchestrator cuts the work packages and starts the L2 implementers itself.";
 export const MODEL_OVERRIDE_REASON = "workers follow the mode chain (`pai worker mode` shows it; speed|balanced|budget switches it): --model and --provider from L0 only when the operator names that model or provider in the request";
+
+/**
+ * The local-only window (src/workers/local-only.ts) as the guard sees it: the
+ * cloud flags a command asks for. `--class orchestrate|plan` is deliberately
+ * absent — their route resolves to the cloud only through workers.yaml, and
+ * the hook never reads that config; runWorker's own gate judges those (and the
+ * worker CLI refuses them too).
+ */
+export function localOnlyRefusal(command: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const w = readLocalOnly();
+  if (!w) return null;
+  // --approved-by <gatekeeper> carries the gatekeeper's standing approval through the window
+  const m = /--approved-by(?:=|\s+)["']?([^\s"';|&)]+)/.exec(command);
+  if (m && m[1] === gatekeeperName()) return null;
+  const asksCloud = /--cloud(?:\s|$)/.test(command) || /--where(?:=|\s+)["']?cloud\b/.test(command);
+  if (!asksCloud) return null;
+  return localOnlyMessage(w.label);
+}
+
+/** The gatekeeper session name without pulling the daemon config into a hook: env override, else the default. */
+function gatekeeperName(): string {
+  const g = process.env.PAI_GATEKEEPER_SESSION?.trim();
+  return g || "PAI";
+}
 
 /** Quote-aware word split: keeps `--model X`, `--model=X` and quoted values (`--model "claude opus 5"`). */
 function shellWords(text: string): string[] {
@@ -252,6 +277,11 @@ export function decideDelegationGate(command: string, env: NodeJS.ProcessEnv, op
     const whereValues = [...sc.matchAll(/--where(?:=|\s+)["']?([^\s"';|&)]+)/g)].map((m) => m[1]!);
     if (overrides.some((o) => !operatorNamesValue(operatorPrompt, o.value)) || whereValues.some((v) => !operatorNamesValue(operatorPrompt, v))) {
       return { decision: "deny", reason: MODEL_OVERRIDE_REASON };
+    }
+    // --cloud / --where cloud is a cloud start the window refuses; --approved-by <gatekeeper> passes
+    if (whereValues.includes("cloud") || /--cloud(?:\s|$)/.test(sc)) {
+      const lo = localOnlyRefusal(sc, env);
+      if (lo) return { decision: "deny", reason: lo };
     }
   }
   if (run && !/--class[ \t=]+(?:orchestrate|plan|implement|simple)(?:\s|$)/m.test(sc)) {

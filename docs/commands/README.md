@@ -12,6 +12,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai audit`](audit.md) | Find out where tokens are being spent |
 | [`pai backup`](backup.md) | Back up the registry, config and Postgres database |
 | [`pai bench`](bench.md) | Local-model quality check: run the eval sets and real tasks, print the comparison table |
+| [`pai budget`](budget.md) | The local-only budget window: local-only, status, approve |
 | [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, release, doctor, npm-auth, mirror-sync |
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
 | [`pai clean`](clean.md) | Clean up what PAI leaves on disk (dry run unless --apply) |
@@ -82,6 +83,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai topic`](topic.md) | Detect when a conversation moved to another project |
 | [`pai uhp`](uhp.md) | Serve PAI workers over the Unified Harness Protocol |
 | [`pai update`](update.md) | Update PAI (or another package) to the latest GitHub Release |
+| [`pai whisper`](whisper.md) | Whisper rule maintenance: prune |
 | [`pai worker`](worker.md) | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | [`pai zettel`](zettel.md) | Explore the links between your notes |
 
@@ -120,6 +122,10 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai bench` | Local-model quality check: run the eval sets and real tasks, print the comparison table |
 | `pai bench run` | Run the sets for one provider under a watchdog |
 | `pai bench table` | Print the comparison table (markdown) from the results |
+| `pai budget` | The local-only budget window: local-only, status, approve |
+| `pai budget approve` | One-time cloud pass for one worker, from the gatekeeper session only |
+| `pai budget local-only` | The machine-wide local-only window: no cloud starts until --until (off closes it) |
+| `pai budget status` | The local-only window and the gatekeeper session, as they stand now |
 | `pai build` | One machine-wide build queue: run, lock, queue, next, release, doctor, npm-auth, mirror-sync |
 | `pai build doctor` | Check the project's registered build doors and hook events |
 | `pai build lock` | Same lock as `run`, for a project's door script to call |
@@ -472,6 +478,8 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai uhp token list` | List tokens (ids and hash prefixes, never the secret) |
 | `pai uhp token revoke` | Revoke a token (takes effect on the next request) |
 | `pai update` | Update PAI (or another package) to the latest GitHub Release |
+| `pai whisper` | Whisper rule maintenance: prune |
+| `pai whisper prune` | Remove expired UNTIL rule lines from whisper-rules.md |
 | `pai worker` | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | `pai worker bench` | Compare providers on a set of real tasks |
 | `pai worker capability` | Choose which provider serves a capability (e.g. image) |
