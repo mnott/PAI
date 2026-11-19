@@ -123,7 +123,7 @@ export interface TableInput {
   statuses: WorkerStatus[];
   queue: QueueRow[];
   /** Running pane commands: never rows (they are not jobs); one whose command waits on a worker id becomes an eye on that job's row. */
-  panes: Array<Pick<PaneRunStatus, "id" | "label" | "state" | "startedMs" | "command"> & { session?: string }>;
+  panes: Array<Pick<PaneRunStatus, "id" | "label" | "state" | "startedMs" | "command"> & { pid?: number; session?: string }>;
   now: number;
   /** Provider name -> true when it runs on this machine (a local model). */
   isLocal: (provider: string) => boolean;
@@ -398,7 +398,8 @@ export function buildQueueTable(i: TableInput): TableRow[] {
   for (const s of live.filter((x) => deepIds.has(x.id))) out.push({ slot: "saved", ...row(s, false, stMs(s)) });
   // pane runs are not rows (no model, no slot); one whose command waits on a job shows as an eye on that job's row
   const waiterIds = new Set(i.statuses.map((s) => s.id));
-  for (const p of i.panes.filter((x) => x.state === "running")) {
+  // the pane list may come from the cockpit's cached window: a dead runner reads lost through isAlive here too (the pid/start identity check needs the start stamp, which this slice does not carry)
+  for (const p of i.panes.filter((x) => x.state === "running" && (x.pid === undefined || !i.isAlive || i.isAlive(x.pid)))) {
     const target = paneWaitsOn(p.command);
     if (!target || !waiterIds.has(target)) continue;
     const r = out.find((x) => x.id === target);

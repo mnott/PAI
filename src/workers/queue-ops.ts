@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { loadStatus, loadStatusesCached, ownsPidCached, saveStatus, isLive, pausedFree, type WorkerStatus } from "./status.js";
 import { isLocalProvider, type WorkersConfig } from "./config.js";
 import { capacityOf, providerCap, queueDir, queueRows, reorderQueue, reorderQueueTo, liveQueue, writeTicket } from "./capacity.js";
-import { loadPaneRunStatuses } from "./pane-run.js";
+import { loadPaneRunStatuses, loadPaneRunStatusesRawCached } from "./pane-run.js";
 import { ownerSessionName } from "./scope.js";
 import { frozenSince, freezeAll, thawSome, realFreezeDeps } from "./freeze.js";
 import { setWorkerPaused } from "./engine-control.js";
@@ -34,7 +34,8 @@ export function readQueueTable(logDir: string, workers: WorkersConfig, now = Dat
   return buildQueueTable({
     statuses: live,
     queue: queueRows(logDir, caps, undefined, statuses),
-    panes: loadPaneRunStatuses(logDir, now),
+    // the cached pane-run list (the cockpit's window): the table marks a dead runner "lost" itself below
+    panes: loadPaneRunStatusesRawCached(logDir, now),
     now,
     isLocal: local,
     sessionOf: (s) => {
