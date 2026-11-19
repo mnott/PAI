@@ -126,3 +126,59 @@ describe("stale holder", () => {
     t2.release();
   });
 });
+
+describe("stale reaper counts prompt reading as progress", () => {
+  const mk = (): { s: RequestScheduler; adv: (ms: number) => void } => {
+    let now = 1_000_000;
+    return { s: new RequestScheduler(() => ({ ...DEFAULT_SCHED, staleMin: 5 }), () => now), adv: (ms) => void (now += ms) };
+  };
+  it("a big prompt gets max(staleMin, tokens/50*1.5) before the first byte", async () => {
+    const { s, adv } = mk();
+    const t = await s.acquire("e", "s", "w");
+    t.setPromptTokens(130_000); // 3900 s = 65 min
+    adv(60 * 60_000);
+    expect(s.reapStale()).toBe(0);
+    adv(6 * 60_000);
+    expect(s.reapStale()).toBe(1);
+  });
+  it("after the first byte it is plain staleMin again", async () => {
+    const { s, adv } = mk();
+    const t = await s.acquire("e", "s", "w");
+    t.setPromptTokens(130_000);
+    adv(30 * 60_000);
+    t.touch();
+    adv(4 * 60_000);
+    expect(s.reapStale()).toBe(0);
+    adv(2 * 60_000);
+    expect(s.reapStale()).toBe(1);
+  });
+  it("a small prompt keeps staleMin", async () => {
+    const { s, adv } = mk();
+    const t = await s.acquire("e", "s", "w");
+    t.setPromptTokens(2000);
+    adv(6 * 60_000);
+    expect(s.reapStale()).toBe(1);
+  });
+});
+
+describe("router body for local engines does not grow", () => {
+  it("strip/fold only shrink the client's body; tools and system stay once", async () => {
+    const { foldSystemMessages, stripBillingHeader, stripThinking } = await import("./router.js");
+    const body: Record<string, unknown> = {
+      system: [{ type: "text", text: "x-anthropic-billing-header: cch=abc;" }, { type: "text", text: "SYSPROMPT" }],
+      tools: [{ name: "tool_a", description: "d", input_schema: { type: "object" } }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "go" }] },
+        { role: "assistant", content: [{ type: "thinking", thinking: "t".repeat(4000) }, { type: "tool_use", id: "t1", name: "tool_a", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "r".repeat(500) }] },
+        { role: "system", content: "env" },
+      ],
+    };
+    const before = JSON.stringify(body).length;
+    const after = JSON.stringify(foldSystemMessages(stripBillingHeader(stripThinking(body))));
+    expect(after.length).toBeLessThan(before);
+    expect(after.split("SYSPROMPT").length - 1).toBe(1);
+    expect(after.split('"name":"tool_a"').length - 1).toBe(2); // tools[] + the one tool_use
+    expect(after).not.toContain("thinking");
+  });
+});

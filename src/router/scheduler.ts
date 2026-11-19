@@ -81,6 +81,8 @@ export interface Ticket {
   release(served?: Served, opts?: ReleaseOpts): void;
   /** Upstream bytes arrived: the holder is alive (resets the stale clock). */
   touch(): void;
+  /** Estimated prompt tokens of the request in flight: the engine reads them before the first byte, which is progress. */
+  setPromptTokens(n: number): void;
   /** Set by the router: ends the client's response with a retryable error and aborts the upstream request (engine-idle release). */
   onReap?: () => void;
 }
@@ -115,6 +117,10 @@ interface Flight {
   since: number;
   /** epoch ms of the last upstream byte (or the grant) */
   lastByte: number;
+  /** estimated prompt tokens; reading them delays the first byte */
+  promptTokens?: number;
+  /** true once the first upstream byte arrived */
+  gotByte?: boolean;
   /** held on purpose while the conversation is saved: never stale */
   parking?: boolean;
   release?: () => void;
@@ -153,6 +159,16 @@ export interface SchedSnapshot {
   at: number;
   engines: Record<string, { inflight: { session: string; worker: string; sinceMs: number } | null; queued: Record<string, number>; counters: Record<string, number> }>;
   workers: Record<string, WorkerAcct>;
+}
+
+/** Local prompt-reading speed assumed by the stale reaper (tokens/s), and the slack on it. */
+export const PROMPT_READ_TOK_S = 50;
+export const PROMPT_READ_SLACK = 1.5;
+
+/** Silence allowed before the stale reaper acts: while the prompt is still being read, max(staleMin, tokens/50*1.5). */
+function staleLimitMs(staleMs: number, f: { promptTokens?: number; gotByte?: boolean }): number {
+  if (f.gotByte || !f.promptTokens) return staleMs;
+  return Math.max(staleMs, (f.promptTokens / PROMPT_READ_TOK_S) * PROMPT_READ_SLACK * 1000);
 }
 
 export class RequestScheduler {
@@ -207,12 +223,13 @@ export class RequestScheduler {
 
   /** Releases every in-flight holder with no upstream bytes for staleMin minutes; returns how many. */
   reapStale(): number {
-    const limit = this.cfg().staleMin * 60_000;
-    if (!(limit > 0)) return 0;
+    const staleMs = this.cfg().staleMin * 60_000;
+    if (!(staleMs > 0)) return 0;
     const now = this.now();
     let n = 0;
     for (const [name, e] of this.engines) {
       const f = e.inflight;
+      const limit = f ? staleLimitMs(staleMs, f) : staleMs;
       if (!f || f.parking || !f.release || now - f.lastByte <= limit) continue;
       n++;
       try {
@@ -418,7 +435,13 @@ export class RequestScheduler {
       const ticket: Ticket = {
         waitedMs,
         touch: () => {
-          if (eng.inflight === flight) flight.lastByte = this.now();
+          if (eng.inflight === flight) {
+            flight.lastByte = this.now();
+            flight.gotByte = true;
+          }
+        },
+        setPromptTokens: (n) => {
+          if (eng.inflight === flight) flight.promptTokens = n;
         },
         release: (served, opts) => {
           if (done) return;

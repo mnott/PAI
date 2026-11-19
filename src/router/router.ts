@@ -1199,6 +1199,7 @@ export function routerHandler(
                 (ticket) => {
                   stopPings();
                   touchHold = () => ticket.touch();
+                  ticket.setPromptTokens(Math.ceil(up.body.length / 4));
                   ticket.onReap = () => endRetryable(res, "engine idle, retry the request");
                   // the client may leave at any moment from here on: free the engine slot and stop the upstream request
                   const onGone = (): void => {
