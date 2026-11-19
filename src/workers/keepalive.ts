@@ -20,6 +20,7 @@
 
 import { readFileSync } from "node:fs";
 import { runWorker, type StreamEvent } from "./run.js";
+import { finalResultEvent } from "./run/event-fold.js";
 import { readWorkersSection } from "./config.js";
 import { appendLedger } from "./ledger.js";
 import { eventsPath, ledgerPath, workersLogDir } from "./paths.js";
@@ -49,9 +50,9 @@ export function keepaliveSecs(workers: { enabled: boolean; cacheKeepaliveSecs: n
 // ---------------------------------------------------------------------------
 
 /**
- * The LAST `type:"result"` event of a worker transcript, or null when the
- * file is missing, unreadable, or carries no result line (a failed run can
- * end without one).
+ * The final `type:"result"` event of a worker transcript — the run's real answer, never a resumed session's
+ * replayed num_turns-0 result (see run/event-fold.ts) — or null when the file is missing, unreadable, or carries
+ * no result line (a failed run can end without one).
  */
 export function parseLastResultEvent(path: string): StreamEvent | null {
   let text: string;
@@ -60,18 +61,7 @@ export function parseLastResultEvent(path: string): StreamEvent | null {
   } catch {
     return null;
   }
-  let found: StreamEvent | null = null;
-  for (const line of text.split("\n")) {
-    if (!line.startsWith("{")) continue;
-    let e: StreamEvent;
-    try {
-      e = JSON.parse(line) as StreamEvent;
-    } catch {
-      continue;
-    }
-    if (e.type === "result") found = e;
-  }
-  return found;
+  return finalResultEvent(text.split("\n"));
 }
 
 /** One worker's cache metrics, as reported by its final result event. */

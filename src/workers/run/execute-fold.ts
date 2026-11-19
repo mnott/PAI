@@ -47,6 +47,7 @@ import { parseDenialText, recordDenial } from "../denials.js";
 import { repairAndValidateAg2, validateAg2 } from "../agentish.js";
 import { preambleLine } from "../preamble.js";
 import { armResultGrace, leftoverNote } from "../result-grace.js";
+import { createResultFold } from "./event-fold.js";
 import { armDeadline } from "../deadline.js";
 import { fireHandoff, handoffLimit } from "./handoff.js";
 import { budgetCheck, budgetLimit, fireBudget, type BudgetSnapshot } from "../time-budget.js";
@@ -467,6 +468,22 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // setup ends when the worker process holds its first turn; the first answer is timed from there
   const timing: { readyAt: number; firstAt: number | null } = { readyAt: Date.now(), firstAt: null };
   const toolUses = toolFold.uses;
+  // A result ends the run only once this run answered a turn (see event-fold.ts): a resumed worker's replayed
+  // num_turns-0 result answers none, and must not arm the stdin close or the leftover grace mid-turn.
+  const resultFold = createResultFold({
+    onTurn: () => {},
+    onFinalResult: (e) => {
+      const report = parseWorkerReport(e.result ?? "");
+      if (report?.notes) status.last = shortText(report.notes, 90);
+      else if (e.result) status.last = shortText(e.result, 90);
+      saveStatus(logDir, status);
+      state.operatorInFlight = 0;
+      armStdinClose();
+      state.resultEvent = e;
+      state.resultReport = report;
+      resultGrace.onResult();
+    },
+  });
   // one stream event into status and the tool fold: the main run and the unparsed-call continuation share it
   const foldEvent = (e: StreamEvent): void => {
     if (e.type === "system" && e.subtype === "init") {
@@ -481,6 +498,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       state.lastFill = usageContextUsed(e.usage) ?? null;
       saveStatus(logDir, status);
     } else if (e.type === "assistant") {
+      resultFold.onAssistant();
       status.turns += 1;
       timing.firstAt ??= Date.now();
       if (status.turns === 1) recordWarmup(logDir, status.provider, (Date.now() - t0) / 1000);
@@ -537,15 +555,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       // drops to the last per-turn fill the assistant events recorded (the
       // post-compact context), never to the result's cumulative usage.
       if (e.is_compact) status.contextTokens = state.lastFill ?? status.contextTokens;
-      const report = parseWorkerReport(e.result ?? "");
-      if (report?.notes) status.last = shortText(report.notes, 90);
-      else if (e.result) status.last = shortText(e.result, 90);
-      saveStatus(logDir, status);
-      state.operatorInFlight = 0;
-      armStdinClose();
-      state.resultEvent = e;
-      state.resultReport = report;
-      resultGrace.onResult();
+      // everything else the result means — status.last, the final event, the stdin close, the leftover grace —
+      // belongs to createResultFold: a replayed empty result records nothing and arms nothing.
+      resultFold.onResult(e);
     }
   };
 
