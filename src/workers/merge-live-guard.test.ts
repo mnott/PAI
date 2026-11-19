@@ -278,3 +278,39 @@ describe("merge of an escalated continuation", () => {
     expect(git(repo, ["log", "--format=%s", "-1"])).toContain("merge worker gone");
   });
 });
+
+describe("restart health gate after a merge", () => {
+  const base = (): { repo: string; logDir: string } => {
+    const f = fixture();
+    makeWorker(f.repo, f.logDir, "hc", { file: "hc.txt" });
+    return f;
+  };
+  const opts = { verifyTests: false, build: () => ({ ok: true, ms: 1, tail: "" }), restartVerify: () => ({ restarted: true, forced: false, detail: "t" }) };
+
+  it("a failing health check reverts the merge and writes the rollback ledger line", async () => {
+    const { repo, logDir } = base();
+    const reverted: string[] = [];
+    const out = await mergeWorker(logDir, "hc", {
+      ...opts,
+      cliRoot: repo,
+      restartGate: async () => ({ ok: false, rolledBack: true, failures: ["router down"], line: "restart failed health check: router down; rolled back to 1.0.0" }),
+      revertMergeCommits: (_cwd: string, oldHead: string) => (reverted.push(oldHead), "reverted"),
+    });
+    expect(out).toContain("restart failed health check: router down; rolled back to 1.0.0");
+    expect(reverted).toHaveLength(1);
+    expect(readFileSync(join(logDir, "ledger.log"), "utf8")).toContain("WORKER-MERGE-RESTART-ROLLBACK");
+  });
+
+  it("a passing health check does not roll back or revert", async () => {
+    const { repo, logDir } = base();
+    let reverted = 0;
+    const out = await mergeWorker(logDir, "hc", {
+      ...opts,
+      cliRoot: repo,
+      restartGate: async () => ({ ok: true, line: "restart health: ok" }),
+      revertMergeCommits: () => ((reverted += 1), "reverted"),
+    });
+    expect(out).toContain("restart health: ok");
+    expect(reverted).toBe(0);
+  });
+});
