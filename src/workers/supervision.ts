@@ -78,7 +78,7 @@ import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
 import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { endContinuedOrigins, escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
-import { activeMsOf, frozenSince, inLineMs, ownMsOf } from "./freeze.js";
+import { activeMsOf, frozenSince, ownMsOf } from "./freeze.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 
 // ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ function lineMsOf(sched: SchedSnapshot | null, id: string, now: number): number 
 /** The worker's quiet spell on the ONE own-time clock: active ms (frozen and paused never count) minus the in-line time at the engine inside the spell — a worker in line is starved, not stuck, and never reads as stalled. */
 function ownAgeMs(s: WorkerStatus, ts: string, now: Date, sched: SchedSnapshot | null): number {
   const at = stampMs(ts, now);
-  return ownMsOf(s.id, at, now.getTime(), lineMsOf(sched, s.id, now.getTime()), lineMsOf(sched, s.id, at), { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs });
+  return ownMsOf(s.id, at, now.getTime(), lineMsOf(sched, s.id, now.getTime()), s.lineAtProgressMs ?? 0, { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs });
 }
 
 /**

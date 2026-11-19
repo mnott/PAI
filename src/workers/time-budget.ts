@@ -77,11 +77,6 @@ export function budgetLimit(minutes: number, t0: number = Date.now()): RunLimit 
   return { deadlineAt: t0 + minutes * 60_000, minutes };
 }
 
-/** The wall instant the current allowance fires at on the run's own-time clock: the in-line time accrued since `ownSince` (the last checkpoint or a hand extend) is not the run's own, so it extends the wall deadline — the one own-time clock behind the budget timer's blocked(). */
-export function budgetOwnDeadlineAt(allowanceAt: number, ownSince: number, lineMsNow: number, lineAtOwnSince: number, now: number = Date.now()): number {
-  return allowanceAt + Math.max(0, (Number(lineMsNow) || 0) - (Number(lineAtOwnSince) || 0));
-}
-
 /** One checkpoint's decision for the timer: extend with the doubled allowance, or stop for review. */
 export function budgetCheck(
   prev: BudgetSnapshot,
