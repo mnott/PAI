@@ -10,10 +10,20 @@
 import type { Pool } from "pg";
 import { ensureCodeGraphSchemaPostgres } from "./schema-postgres.js";
 import { symbolFtsText, splitIdentifierWords } from "./fts.js";
+import { sanitize } from "./sanitize.js";
 import type {
   CodeGraphStore, CodeFileRow, CodeGraphStats, FileRecord, RefRow,
   ResolvedRefRow, SymbolRow, TripleSpec, TripleRow, SummaryRow,
 } from "./store.js";
+
+/** Sanitize one query parameter: strings lose NUL/lone surrogates, the rest pass through. */
+function sv(v: unknown): unknown {
+  return typeof v === "string" ? sanitize(v) : v;
+}
+/** Sanitize every string in a batched-array parameter (paths, triple columns). */
+function av(arr: string[]): string[] {
+  return arr.map(sanitize);
+}
 
 interface SymDbRow {
   id: number; name: string; qualified_name: string; kind: string;
@@ -101,7 +111,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
       await client.query("BEGIN");
       const existing = await client.query<{ id: number }>(
         "SELECT id FROM code_files WHERE repo_root = $1 AND path = $2",
-        [repoRoot, file.path],
+        [s(repoRoot), s(file.path)],
       );
       let brokenRefIds: number[] = [];
       if (existing.rowCount) {
@@ -117,7 +127,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
       const ins = await client.query<{ id: number }>(
         `INSERT INTO code_files (repo_root, path, language, content_hash, mtime, size, indexed_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [repoRoot, file.path, file.language, file.contentHash, file.mtime, file.size, Date.now()],
+        [s(repoRoot), s(file.path), s(file.language), s(file.contentHash), file.mtime, file.size, Date.now()],
       );
       const fileId = ins.rows[0].id;
 
@@ -128,8 +138,8 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
         const params: unknown[] = [];
         const rows = chunk.map((s, j) => {
           const o = j * 11;
-          params.push(repoRoot, fileId, s.name, s.qualifiedName, s.kind, s.startLine, s.endLine, s.signature, s.exported,
-            symbolFtsText(s.name, s.qualifiedName, s.signature), s.doc ?? "");
+          params.push(s(repoRoot), fileId, s(s.name), s(s.qualifiedName), s(s.kind), s.startLine, s.endLine, s(s.signature), s.exported,
+            s(symbolFtsText(s.name, s.qualifiedName, s.signature)), s(s.doc ?? ""));
           return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7},$${o + 8},$${o + 9},$${o + 10},$${o + 11})`;
         });
         const r = await client.query<{ id: number }>(
@@ -147,7 +157,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
         const rows = chunk.map((ref, j) => {
           const o = j * 6;
           const fromSymbolId = ref.fromSymbolIndex != null ? symbolIds[ref.fromSymbolIndex] ?? null : null;
-          params.push(repoRoot, fileId, fromSymbolId, ref.toName, ref.kind, ref.line);
+          params.push(s(repoRoot), fileId, fromSymbolId, s(ref.toName), s(ref.kind), ref.line);
           return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6})`;
         });
         await client.query(
@@ -186,10 +196,10 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
           `SELECT cr.id FROM code_refs cr
            JOIN code_symbols s ON s.id = cr.to_symbol_id
            WHERE s.file_id IN (SELECT id FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[]))`,
-          [repoRoot, batch],
+          [s(repoRoot), sa(batch)],
         );
         for (const r of broken.rows) brokenRefIds.push(r.id);
-        await client.query("DELETE FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[])", [repoRoot, batch]);
+        await client.query("DELETE FROM code_files WHERE repo_root = $1 AND path = ANY($2::text[])", [s(repoRoot), sa(batch)]);
       }
       await client.query("COMMIT");
       return { brokenRefIds };
@@ -208,9 +218,9 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("DELETE FROM code_refs WHERE repo_root = $1", [repoRoot]);
-      await client.query("DELETE FROM code_symbols WHERE repo_root = $1", [repoRoot]);
-      await client.query("DELETE FROM code_files WHERE repo_root = $1", [repoRoot]);
+      await client.query("DELETE FROM code_refs WHERE repo_root = $1", [s(repoRoot)]);
+      await client.query("DELETE FROM code_symbols WHERE repo_root = $1", [s(repoRoot)]);
+      await client.query("DELETE FROM code_files WHERE repo_root = $1", [s(repoRoot)]);
       await client.query("COMMIT");
     } catch (e) {
       try { await client.query("ROLLBACK"); } catch { /* dead connection */ }
@@ -224,7 +234,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     await this.pool.query(
       "UPDATE code_files SET mtime = $1, size = $2, indexed_at = $3 WHERE repo_root = $4 AND path = $5",
-      [mtime, size, Date.now(), repoRoot, path],
+      [mtime, size, Date.now(), s(repoRoot), s(path)],
     );
   }
 
@@ -232,7 +242,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
     await this.ensure();
     const r = await this.pool.query(
       "SELECT id, path, language, content_hash, mtime, size, indexed_at FROM code_files WHERE repo_root = $1 ORDER BY path",
-      [repoRoot],
+      [s(repoRoot)],
     );
     return r.rows.map((x) => ({
       id: x.id, path: x.path, language: x.language, contentHash: x.content_hash,
@@ -243,16 +253,16 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
   async resolveRefs(repoRoot: string, paths: string[]): Promise<ResolvedRefRow[]> {
     await this.ensure();
     if (paths.length === 0) return [];
-    const r = await this.pool.query(`${REF_SELECT} WHERE cf.repo_root = $1 AND cf.path = ANY($2::text[]) ORDER BY cr.id`, [repoRoot, paths]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cf.repo_root = $1 AND cf.path = ANY($2::text[]) ORDER BY cr.id`, [s(repoRoot), sa(paths)]);
     return r.rows.map(mapRef);
   }
 
   async unresolvedRefsInFiles(repoRoot: string, paths: string[]): Promise<ResolvedRefRow[]> {
     await this.ensure();
-    const params: Array<string | string[]> = [repoRoot];
+    const params: Array<string | string[]> = [s(repoRoot)];
     let sql = `${REF_SELECT} WHERE cr.repo_root = $1 AND cr.to_symbol_id IS NULL`;
     if (paths.length > 0) {
-      params.push(paths);
+      params.push(sa(paths));
       sql += ` AND cf.path = ANY($${params.length}::text[])`;
     }
     const r = await this.pool.query(`${sql} ORDER BY cr.id`, params);
@@ -261,7 +271,8 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
 
   async searchSymbols(repoRoot: string, query: string, limit = 20): Promise<SymbolRow[]> {
     await this.ensure();
-    const tsQuery = buildSymbolTsQuery(query);
+    // the explore query terms reach to_tsquery here; strip NUL/lone surrogates first
+    const tsQuery = buildSymbolTsQuery(sanitize(query));
     if (!tsQuery) return [];
     const r = await this.pool.query(
       `SELECT s.id, s.name, s.qualified_name, s.kind, cf.path AS file, s.file_id,
@@ -271,7 +282,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
        WHERE s.repo_root = $1 AND s.fts_vector @@ to_tsquery('simple', $2)
        ORDER BY ts_rank(s.fts_vector, to_tsquery('simple', $2)) DESC, s.name
        LIMIT $3`,
-      [repoRoot, tsQuery, limit],
+      [s(repoRoot), s(tsQuery), limit],
     );
     return r.rows.map(mapSymbol);
   }
@@ -285,7 +296,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND (s.name = $2 OR s.qualified_name = $2)
        ORDER BY s.exported DESC, s.start_line LIMIT $3`,
-      [repoRoot, name, limit],
+      [s(repoRoot), s(name), limit],
     );
     return r.rows.map(mapSymbol);
   }
@@ -298,32 +309,32 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 AND cf.path = $2 ORDER BY s.start_line`,
-      [repoRoot, path],
+      [s(repoRoot), s(path)],
     );
     return r.rows.map(mapSymbol);
   }
 
   async callers(symbolId: number): Promise<RefRow[]> {
     await this.ensure();
-    const r = await this.pool.query(`${REF_SELECT} WHERE cr.to_symbol_id = $1 ORDER BY cf.path, cr.line`, [symbolId]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cr.to_symbol_id = $1 ORDER BY cf.path, cr.line`, [s(symbolId)]);
     return r.rows.map(mapRef);
   }
 
   async callersByName(repoRoot: string, name: string, limit = 50): Promise<ResolvedRefRow[]> {
     await this.ensure();
-    const r = await this.pool.query(`${REF_SELECT} WHERE cr.repo_root = $1 AND cr.to_name = $2 ORDER BY cf.path, cr.line LIMIT $3`, [repoRoot, name, limit]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cr.repo_root = $1 AND cr.to_name = $2 ORDER BY cf.path, cr.line LIMIT $3`, [s(repoRoot), s(name), limit]);
     return r.rows.map(mapRef);
   }
 
   async callees(symbolId: number): Promise<ResolvedRefRow[]> {
     await this.ensure();
-    const r = await this.pool.query(`${REF_SELECT} WHERE cr.from_symbol_id = $1 ORDER BY cr.line`, [symbolId]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cr.from_symbol_id = $1 ORDER BY cr.line`, [s(symbolId)]);
     return r.rows.map(mapRef);
   }
 
   async calleesByName(repoRoot: string, name: string, limit = 50): Promise<ResolvedRefRow[]> {
     await this.ensure();
-    const r = await this.pool.query(`${REF_SELECT} WHERE cr.repo_root = $1 AND fs.qualified_name = $2 ORDER BY cr.line LIMIT $3`, [repoRoot, name, limit]);
+    const r = await this.pool.query(`${REF_SELECT} WHERE cr.repo_root = $1 AND fs.qualified_name = $2 ORDER BY cr.line LIMIT $3`, [s(repoRoot), s(name), limit]);
     return r.rows.map(mapRef);
   }
 
@@ -337,14 +348,14 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
        JOIN code_files tf ON tf.id = ts.file_id
        JOIN code_files cf ON cf.id = cr.from_file_id
        WHERE cr.repo_root = $1 AND tf.path = ANY($2::text[]) AND cf.path != tf.path`,
-      [repoRoot, paths],
+      [s(repoRoot), sa(paths)],
     );
     return r.rows;
   }
 
   async setRefTarget(refId: number, symbolId: number | null): Promise<void> {
     await this.ensure();
-    await this.pool.query("UPDATE code_refs SET to_symbol_id = $1 WHERE id = $2", [symbolId, refId]);
+    await this.pool.query("UPDATE code_refs SET to_symbol_id = $1 WHERE id = $2", [s(symbolId), s(refId)]);
   }
 
   async setRefTargets(pairs: Array<{ refId: number; symbolId: number }>): Promise<void> {
@@ -361,7 +372,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
 
   async unresolvedRefIds(repoRoot: string): Promise<number[]> {
     await this.ensure();
-    const r = await this.pool.query<{ id: number }>("SELECT id FROM code_refs WHERE repo_root = $1 AND to_symbol_id IS NULL", [repoRoot]);
+    const r = await this.pool.query<{ id: number }>("SELECT id FROM code_refs WHERE repo_root = $1 AND to_symbol_id IS NULL", [s(repoRoot)]);
     return r.rows.map((x) => x.id);
   }
 
@@ -373,20 +384,21 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
        FROM code_symbols s
        JOIN code_files cf ON cf.id = s.file_id
        WHERE s.repo_root = $1 ORDER BY cf.path, s.start_line`,
-      [repoRoot],
+      [s(repoRoot)],
     );
     return r.rows.map(mapSymbol);
   }
 
   async stats(repoRoot: string): Promise<CodeGraphStats> {
     await this.ensure();
+    const root = s(repoRoot);
     const [files, symbols, refs, resolved, byLang, last] = await Promise.all([
-      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_files WHERE repo_root = $1", [repoRoot]),
-      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_symbols WHERE repo_root = $1", [repoRoot]),
-      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_refs WHERE repo_root = $1", [repoRoot]),
-      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_refs WHERE repo_root = $1 AND to_symbol_id IS NOT NULL", [repoRoot]),
-      this.pool.query<{ language: string; n: string }>("SELECT language, COUNT(*)::text AS n FROM code_files WHERE repo_root = $1 GROUP BY language", [repoRoot]),
-      this.pool.query<{ n: string | null }>("SELECT MAX(indexed_at)::text AS n FROM code_files WHERE repo_root = $1", [repoRoot]),
+      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_files WHERE repo_root = $1", [root]),
+      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_symbols WHERE repo_root = $1", [root]),
+      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_refs WHERE repo_root = $1", [root]),
+      this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM code_refs WHERE repo_root = $1 AND to_symbol_id IS NOT NULL", [root]),
+      this.pool.query<{ language: string; n: string }>("SELECT language, COUNT(*)::text AS n FROM code_files WHERE repo_root = $1 GROUP BY language", [root]),
+      this.pool.query<{ n: string | null }>("SELECT MAX(indexed_at)::text AS n FROM code_files WHERE repo_root = $1", [root]),
     ]);
     return {
       files: Number(files.rows[0]?.n ?? 0),
@@ -400,7 +412,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
 
   async getSummary(repoRoot: string, key: string): Promise<SummaryRow | null> {
     await this.ensure();
-    const r = await this.pool.query<SumDbRow>("SELECT * FROM code_summaries WHERE repo_root = $1 AND key = $2", [repoRoot, key]);
+    const r = await this.pool.query<SumDbRow>("SELECT * FROM code_summaries WHERE repo_root = $1 AND key = $2", [s(repoRoot), s(key)]);
     return r.rows[0] ? mapSummary(r.rows[0]) : null;
   }
 
@@ -411,7 +423,7 @@ export class PostgresCodeGraphStore implements CodeGraphStore {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (repo_root, key) DO UPDATE SET kind = EXCLUDED.kind, path = EXCLUDED.path, summary = EXCLUDED.summary,
          model = EXCLUDED.model, source_hash = EXCLUDED.source_hash, generated_at = EXCLUDED.generated_at`,
-      [repoRoot, s.key, s.kind, s.path, s.summary, s.model, s.sourceHash, s.generatedAt],
+      [sv(repoRoot), sv(s.key), sv(s.kind), sv(s.path), sv(s.summary), sv(s.model), sv(s.sourceHash), s.generatedAt],
     );
   }
 
