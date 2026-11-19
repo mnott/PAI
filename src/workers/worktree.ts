@@ -1548,11 +1548,11 @@ function configuredMergeVerify(): string | undefined {
 
 const MERGE_KEEP = "merge in progress:";
 
-function mergeWorkerInner(
+async function mergeWorkerInner(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; cliRoot?: string | null; targetToplevel?: string | null; install?: DepInstaller } = {}
-): string {
+  opts: { noCommit?: boolean; verify?: string; force?: boolean; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string; cliRoot?: string | null; targetToplevel?: string | null; install?: DepInstaller } = {}
+): Promise<string> {
   const live = opts.force ? liveWorker(logDir, id) : assertWorkerEnded(logDir, id);
   // --force on a live worker: still run the configured verify gate unless the caller opted out
   const verify = opts.verify ?? (live ? configuredMergeVerify() : undefined);
@@ -1759,22 +1759,25 @@ function mergeWorkerInner(
   if (autoNote) notes.unshift(`auto-resolved conflicts: ${autoNote}`);
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
   const text = withGate(verifyLine, merged);
-  if (!related) return withBuild(text, rebuildDist(logDir, id, st.cwd, opts));
-  if (related.status === "failed") throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
-  return withBuild(`${text}\n${related.line}`, rebuildDist(logDir, id, st.cwd, opts));
+  if (related?.status === "failed") throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
+  // the build + restart gate is async: a failed health check rolls dist back and reverts the merge commit too
+  return withBuild(`${text}${related ? `\n${related.line}` : ""}`, await rebuildDist(logDir, id, st.cwd, oldHead, opts));
 }
+
+/** The merge stands but its related tests failed; the CLI exits 3 with the message (merge summary, result, hints). */
+export class RelatedTestsFailedError extends Error {}
 
 /**
  * Merge a worker branch. The run's own worktree carries a .pai-keep marker while the merge,
  * its tests, build and restart run, so no gc (daemon or chain sibling) reclaims it once the
  * merge commit makes its branch look landed. The marker goes before the worktree is removed.
  */
-export function mergeWorker(logDir: string, id: string, opts: Parameters<typeof mergeWorkerInner>[2] = {}): string {
+export async function mergeWorker(logDir: string, id: string, opts: Parameters<typeof mergeWorkerInner>[2] = {}): Promise<string> {
   const st0 = loadStatus(logDir, id);
   const dir = st0?.worktreeDir;
   const mark = !!dir && !opts.noCommit && !opts.force && !isSlotWorktree(dir);
   try {
-    return mergeWorkerInner(logDir, id, opts);
+    return await mergeWorkerInner(logDir, id, opts);
   } finally {
     if (mark && existsSync(dir!) && keepMarker(dir!)?.startsWith(MERGE_KEEP)) rmSync(join(dir!, KEEP_FILE), { force: true });
   }
@@ -1788,6 +1791,15 @@ export type BuildRunner = (cwd: string) => BuildResult;
 /** Waits for the daemon to come up on the new build and forces a restart when the watcher misses it; injectable for tests. */
 export type RestartVerifier = () => { restarted: boolean; forced: boolean; detail: string };
 const defaultRestartVerify: RestartVerifier = () => waitForDaemonRestart();
+
+/** The full restart gate (health check + rollback); injectable for tests. Returns the line to print, or null when no gate applies. */
+export type RestartGate = (logDir: string, distDir: string) => Promise<{ ok: boolean; line: string; rolledBack?: boolean; failures?: string[] } | null>;
+
+/** The live gate AFTER the build, with dist.prev and the up-runtimes already recorded by prepareRestartGate. */
+const gatePrepared: (logDir: string, distDir: string, prepared: { prevKept: boolean; runtimesUpBefore: string[] }) => ReturnType<RestartGate> = async (logDir, distDir, prepared) => {
+  const { gateRestartAfterBuild, liveRestartGateDeps } = await import("./restart-health.js");
+  return gateRestartAfterBuild(distDir, liveRestartGateDeps(logDir), prepared);
+};
 
 /** Environment keys a build needs; everything else (tokens, API keys) stays out. */
 const BUILD_ENV_KEYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "NODE_ENV", "NODE_OPTIONS", "TERM"];
@@ -1818,12 +1830,13 @@ function runningCliRoot(): string | null {
  * daemon's pid/start time must change within the window (its own watcher), or this command restarts it itself —
  * tonight (2026-11-16) the watcher missed a build and the line still claimed a self-restart.
  */
-function rebuildDist(
+async function rebuildDist(
   logDir: string,
   id: string,
   target: string,
-  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; restartVerify?: RestartVerifier }
-): string | null {
+  oldHead: string,
+  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null; restartVerify?: RestartVerifier; restartGate?: RestartGate; revertMergeCommits?: (cwd: string, oldHead: string) => string }
+): Promise<string | null> {
   if (opts.rebuild === false || loadConfig().workers?.merge?.rebuild === false) return null;
   let same = false;
   try {
@@ -1833,6 +1846,18 @@ function rebuildDist(
     same = false;
   }
   if (!same) return null;
+  // keep one generation of dist back BEFORE the build replaces it, so a failed
+  // health check afterwards has something to roll back to (night 2026-11-17/18)
+  const distDir = join(target, "dist");
+  let prepared: { prevKept: boolean; runtimesUpBefore: string[] } | null = null; // null: an injected gate prepares inside itself
+  if (opts.restartGate === undefined) {
+    try {
+      const { prepareRestartGate, liveRestartGateDeps } = await import("./restart-health.js");
+      prepared = await prepareRestartGate(distDir, liveRestartGateDeps(logDir));
+    } catch {
+      prepared = { prevKept: false, runtimesUpBefore: [] };
+    }
+  }
   let res: BuildResult;
   try {
     res = (opts.build ?? defaultBuild)(target);
@@ -1850,14 +1875,30 @@ function rebuildDist(
     } catch (e) {
       line = `build: ok (dist rebuilt; daemon restart not verified: ${(e as Error).message} — run \`pai daemon restart\`)`;
     }
-    return line;
+    // the full gate: health-check the restarted daemons, roll dist back and revert this merge on a failure
+    // (night 2026-11-17/18: restarts left the daemons unable to come up and the night was lost)
+    try {
+      const g = opts.restartGate !== undefined ? await opts.restartGate(logDir, distDir) : await gatePrepared(logDir, distDir, prepared ?? { prevKept: false, runtimesUpBefore: [] });
+      if (g === null) return line;
+      if (g.ok) return `${line}\n${g.line}`;
+      if (g.rolledBack) {
+        // the old build is back on disk: mark this merge reverted in git too, so main matches what runs
+        const revertFn = opts.revertMergeCommits ?? revertMerge;
+        try {
+          revertFn(target, oldHead);
+        } catch (e) {
+          return `${line}\n${g.line}\nWARNING: the rollback's git revert failed: ${(e as Error).message} — main still has this merge while dist runs the old build`;
+        }
+        appendLedger(ledgerPath(logDir), "WORKER-MERGE-RESTART-ROLLBACK", { id, reason: (g.failures ?? []).join("; ").slice(0, 300) });
+      }
+      return `${line}\n${g.line}`;
+    } catch (e) {
+      return `${line}\nrestart health gate not run: ${(e as Error).message} — run \`pai daemon status\` and \`pai router status\``;
+    }
   }
   const last = res.tail.split(/\s*\|\s*|\n/).filter(Boolean).pop() ?? "no output";
   return `build: FAILED — dist unchanged: ${last}`;
 }
-
-/** The merge stands but its related tests failed; the CLI exits 3 with the message (merge summary, result, hints). */
-export class RelatedTestsFailedError extends Error {}
 
 /** Stub and test-loss scans over `from..to`; throws before any merge exists, so the advised re-run works. */
 export function assertStaticScans(cwd: string, from: string, to: string): void {

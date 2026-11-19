@@ -211,9 +211,9 @@ export async function workerMerge(args: WorkerMergeArgs): Promise<WorkerToolResu
     const { mergeWorker, RelatedTestsFailedError, WorkerRunningError } = await import("../../workers/worktree.js");
     const { readMergeVerify } = await import("../../workers/workers-config.js");
     const verify = args.verify ?? (args.no_verify ? undefined : readMergeVerify());
-    const r = await captured(() => {
+    const r = await captured(async () => {
       try {
-        console.log(mergeWorker(logDir(), args.id, { noCommit: args.no_commit === true, verify, force: args.force === true, verifyTests: args.no_verify_tests !== true, rebuild: args.no_build !== true }));
+        console.log(await mergeWorker(logDir(), args.id, { noCommit: args.no_commit === true, verify, force: args.force === true, verifyTests: args.no_verify_tests !== true, rebuild: args.no_build !== true }));
         return 0;
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) {
