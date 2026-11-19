@@ -153,13 +153,14 @@ describe("relate (SQLite)", () => {
     const projects = [{ slug: "pai-1", root }, { slug: "consumer", root: consumerRoot }];
     const r1 = await relate(backend, projects, {});
     expect(r1.byPredicate["calls-api"]).toBe(1);
-    // a whole-repo seed lists only triples hung off the repo key; file-level ones are found via the file key
-    const keys1 = (await backend.codeGraph().triplesTouching([`code:pai-1:src/a.ts`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
+    // the triple hangs off the CONSUMER file as subject and the provider file#route as object;
+    // querying the provider key proves the registered slug (pai-1), not a basename guess, is in it
+    const keys1 = (await backend.codeGraph().triplesTouching([`code:pai-1:src/a.ts#/api/widgets/:id`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
     expect(keys1.some((k) => k.includes("code:pai-1:src/a.ts"))).toBe(true);
     const r2 = await relate(backend, projects, {});
     expect(r2.kept).toBe(r1.triples);
     expect(r2.added).toBe(0);
-    const keys2 = (await backend.codeGraph().triplesTouching([`code:pai-1:src/a.ts`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
+    const keys2 = (await backend.codeGraph().triplesTouching([`code:pai-1:src/a.ts#/api/widgets/:id`], { limit: 50 })).map((t) => `${t.subject}|${t.object}`);
     expect(keys2.sort()).toEqual(keys1.sort());
   }, 60000);
 
