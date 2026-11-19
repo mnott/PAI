@@ -104,6 +104,7 @@ export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType
     reportFormat: "json",
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
+    ...(a.cloudApproved ? { cloudApproved: true } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -291,6 +292,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     ...(a.specPath ? { spec: a.specPath } : {}),
     ...(a.limit ? { deadlineAt: a.limit.deadlineAt, maxMinutes: a.limit.minutes } : {}),
     ...(a.queueWaitedMs ? { queueWaitedMs: a.queueWaitedMs } : {}),
+    ...(a.cloudApproved ? { cloudApproved: true } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);

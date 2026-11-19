@@ -64,7 +64,7 @@ import { executeImageRun, executeRun, executeCodexRun, executeOpencodeRun } from
 import { executeUhpRun } from "./execute-uhp.js";
 import { carryGoals } from "../note-delivery.js";
 import { applyModeToConfig } from "../mode.js";
-import { localOnlyStartCheck } from "../local-only.js";
+import { gatekeeperSession, localOnlyStartCheck } from "../local-only.js";
 import { parseHarnessFlag, resolveHarnessProvider } from "../uhp.js";
 
 /**
@@ -263,9 +263,13 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // on the class's possible chain, and never before resolution (2026-11-19:
   // that refused every start of a cloud-chain class, local ones included).
   {
-    const why = await localOnlyStartCheck({ config, cloud: opts.cloud, whereFlag: opts.whereFlag, providerFlag: opts.providerFlag, resolvedProvider: target.providerName, label: opts.label, approvedBy: opts.approvedBy, logDir });
+    const why = await localOnlyStartCheck({ config, cloud: opts.cloud, whereFlag: opts.whereFlag, providerFlag: opts.providerFlag, resolvedProvider: target.providerName, label: opts.label, approvedBy: opts.approvedBy, cloudApproved: opts.cloudApproved, logDir });
     if (why) throw new LocalProviderRefusedError(why);
   }
+  // the gatekeeper's approval follows the job: a run that passed the window on
+  // --approved-by (or carried it from its own start) is recorded cloudApproved,
+  // so `pai worker resume` of it needs no second approval
+  const cloudApproved = opts.cloudApproved || (!!opts.approvedBy && opts.approvedBy === gatekeeperSession());
   // A named provider that is a local (loopback) one gets the same guard
   // --local has: never wait for a server that is down, never run on a
   // disabled one. The probe is resolveLocalProvider's (httpModelsCheck,
@@ -372,6 +376,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         quiet: opts.quiet,
         onWorkerStart: engineSkip,
         id: opts.id,
+        ...(cloudApproved ? { cloudApproved: true } : {}),
       });
     } else if (target.provider.engine === "uhp") {
       rc = await executeUhpRun({
@@ -398,6 +403,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         limit,
         noBrowser,
         harnessId: opts.harnessId,
+        ...(cloudApproved ? { cloudApproved: true } : {}),
       });
     } else if (target.provider.engine === "codex") {
       rc = await executeCodexRun({
@@ -423,6 +429,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         capability: capability ?? undefined,
         limit,
         noBrowser,
+        ...(cloudApproved ? { cloudApproved: true } : {}),
       });
     } else if (target.provider.engine === "opencode") {
       rc = await executeOpencodeRun({
@@ -448,6 +455,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         capability: capability ?? undefined,
         limit,
         noBrowser,
+        ...(cloudApproved ? { cloudApproved: true } : {}),
       });
     } else {
       const execArgs: ExecuteArgs = {
@@ -495,6 +503,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         allowTests: opts.allowTests,
         allowDbWrites: opts.allowDbWrites,
         opts,
+        ...(cloudApproved ? { cloudApproved: true } : {}),
         runT0,
       };
       // the session pool (workers.pool) gets first crack: an eligible task

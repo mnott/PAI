@@ -120,6 +120,7 @@ Without TEXT: releases a worker paused with `pai worker pause`; its parked engin
 | `--output-format FORMAT` | string | — | text (default), json or stream-json, as for `run` |
 | `--label TEXT` | string | — | Short task label (default: the old label with a return arrow) |
 | `--model MODEL` | string | — | Model for the continued turn on the same provider (default: the old worker's) |
+| `--approved-by SESSION` | string | — | During a local-only window (`pai budget local-only`): this cloud continuation carries the named session's standing approval — only the configured gatekeeper session (budget.gatekeeper, default PAI) lets it through; a one-time token from `pai budget approve` is consumed beside it. Resuming a worker whose own start the gatekeeper approved needs no flag: the approval follows the job. |
 
 ```sh
 pai worker resume w-20260101-abc
