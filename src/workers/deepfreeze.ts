@@ -316,7 +316,12 @@ export function resumeSkip(w: DeepWorker, all: WorkerStatus[]): string | undefin
 
 export function resumeText(w: DeepWorker): string {
   const goals = w.goals.length ? `\n\nGoals given to you so far:\n${w.goals.map((g) => `- ${g}`).join("\n")}` : "";
-  return `The machine was stopped and restarted (pai stop / pai resume); nothing failed. Your branch ${w.branch ?? "(none)"} holds your work${w.wip ? ` (uncommitted files were saved as a "wip: deepfreeze" commit ${w.wip.slice(0, 8)})` : ""}. Continue where you left off on: ${w.label}.${goals}`;
+  // the continuation runs under a NEW worker id in THIS worktree (the origin's
+  // tree — see resume-args.ts): name it, so the model never derives a path from its own id
+  const worktree = w.worktreeDir
+    ? ` Your worktree: ${w.worktreeDir} — this is where you edit files; it is not a directory named after your (new) worker id.`
+    : "";
+  return `The machine was stopped and restarted (pai stop / pai resume); nothing failed. Your branch ${w.branch ?? "(none)"} holds your work${w.wip ? ` (uncommitted files were saved as a "wip: deepfreeze" commit ${w.wip.slice(0, 8)})` : ""}.${worktree} Continue where you left off on: ${w.label}.${goals}`;
 }
 
 /** The `pai worker run|resume` argv of one recorded worker is built by the starter; this is the replay loop. */
@@ -440,8 +445,23 @@ export async function realDeepResumeDeps(): Promise<DeepResumeDeps> {
     start: async (dir, w, text) => {
       const resumable = w.state === "running" && !!w.claudeSession;
       const args = resumable
+        // a queued worker restarted with `run` gets no worktree prompt of its own: name the tree it runs in
         ? ["resume", w.id, text, "--label", `↩ ${w.label}`]
-        : ["run", "--provider", w.provider, ...(w.model ? ["--model", w.model] : []), "--label", w.label, ...(w.spec ? ["--spec", w.spec] : []), ...(w.className ? ["--class", w.className] : []), ...(w.cwd ? ["--cwd", w.cwd] : [])];
+        : [
+            "run",
+            "--provider",
+            w.provider,
+            ...(w.model ? ["--model", w.model] : []),
+            "--label",
+            w.label,
+            ...(w.className ? ["--class", w.className] : []),
+            ...(w.cwd ? ["--cwd", w.cwd] : []),
+            // the task goes in as -p; when a worktree still stands, prepend the notice naming it
+            // (a `run` restart builds no worktree prompt of its own)
+            ...(w.worktreeDir && existsSync(w.worktreeDir)
+              ? ["-p", `(Your worktree: ${w.worktreeDir} — the tree your run continues in; edit files there. It is not a directory named after your own worker id.)\n\n${text}`]
+              : ["-p", text]),
+          ];
       if (!resumable && !(w.spec && existsSync(w.spec))) throw new Error("no spec file kept for this worker");
       return startDetachedWorker(dir, args, { cwd: existsSync(w.cwd) ? w.cwd : process.cwd(), timeoutMs: 60_000 });
     },
