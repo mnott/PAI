@@ -440,10 +440,10 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           saveStatus(logDir, status);
           process.stderr.write(`pai worker: ${wid} ${d.why}\n`);
           armBudget();
-        } else {
-          // no progress at the checkpoint: stop like a deadline so the salvage runs; finaliseRun ends it "review"
-          fireBudgetStop(logDir, status, ledger, d.why);
+          return false; // extended: the run keeps going, only the next checkpoint is armed
         }
+        // no progress at the checkpoint: stop like a deadline so the salvage runs; finaliseRun ends it "review"
+        fireBudgetStop(logDir, status, ledger, d.why);
       },
       undefined,
       () => blockedMsOf(logDir, wid),
