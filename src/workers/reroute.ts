@@ -27,7 +27,7 @@ import { withCallerPath } from "./caller-env.js";
 import { ledgerPath } from "./paths.js";
 import type { RunOptions } from "./run/types.js";
 import { loadStatus, loadStatuses, saveStatus, type WorkerStatus } from "./status.js";
-import { localOnlyRerouteCheck } from "./local-only.js";
+import { localOnlyRerouteCheck, readLocalOnly } from "./local-only.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { markHandover } from "./run/follow-reroute.js";
 import { escalationOff, getProfile } from "./session-profile-store.js";
@@ -599,6 +599,8 @@ export async function escalateOverdue(
   const done: Escalation[] = [];
   const sched = readSchedFile(d.logDir, nowMs);
   for (const s of statuses) {
+    // the local-only window blocks automatic cloud moves: an overdue job stays where it is until the window ends (rerouteWorker would refuse it anyway — this keeps its marker clean and the retry honest)
+    if (readLocalOnly(nowMs)) continue;
     const reason = escalationReason(s, nowMs, policy, sched);
     if (!reason) {
       // a stall the session switch holds back stays visible in ps / the cockpit

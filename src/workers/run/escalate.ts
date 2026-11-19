@@ -19,6 +19,8 @@ import { type ExecuteArgs } from "./types.js";
 import { relaunchOptions } from "./finalise.js";
 import { runWorker } from "./worker-ref.js";
 import { branchCommits, handoffSpec } from "./handoff.js";
+import { CONTINUED_LOCALLY, continuationTarget } from "../local-only.js";
+import { escalationOff, getProfile } from "../session-profile-store.js";
 
 /**
  * A continuation never starts while its origin lives: a status still live under another, running process is stopped first
@@ -66,6 +68,12 @@ export async function tryEscalate(
 ): Promise<number | null> {
   const { logDir, config } = a;
   if (!a.parsed.headless || !config.tiers?.length) return null;
+  // the local-only window or the session's escalate-off: no automatic tier escalation to the cloud — the
+  // caller's fall-through path (rerunOn) continues the run on the same local provider instead.
+  if (ranLocal(a, st) && fallThroughTarget(a, st) !== CLOUD) {
+    appendLedger(ledgerPath(logDir), "WORKER-ESCALATE-SKIPPED", { id: wid, reason: CONTINUED_LOCALLY });
+    return null;
+  }
   const label = a.label ?? st.label ?? UNLABELED;
   const failed = st.state === "failed" || !!failureWhy;
   const plan = planEscalation({
@@ -169,6 +177,28 @@ export interface RerunTarget {
 }
 
 export const CLOUD: RerunTarget = { provider: ANTHROPIC_NATIVE };
+
+/** True when the run's session has `escalate off` (its own --no-escalate is carried by the re-run itself). */
+export function sessionEscalationOff(st: Pick<WorkerStatus, "sessionKey" | "session">, nowMs: number = Date.now()): boolean {
+  for (const name of new Set([st.sessionKey, st.session?.name])) if (name && escalationOff(getProfile(name), nowMs)) return true;
+  return false;
+}
+
+/**
+ * Where a local run's automatic continuation goes: the cloud as always, except
+ * during a local-only window or when the run's session has `escalate off` —
+ * then it runs on the same local provider again (fresh context), with the
+ * reason "continued locally (local-only)". Pure bar the window file.
+ */
+export function fallThroughTarget(a: ExecuteArgs, st: WorkerStatus, nowMs: number = Date.now()): RerunTarget {
+  if (continuationTarget({ escalationOff: sessionEscalationOff(st, nowMs) }) === "local") {
+    return { provider: a.target.providerName, ...(a.model ? { model: a.model } : {}) };
+  }
+  return CLOUD;
+}
+
+/** The fall-through's ledger/console reason once the continuation stays local. */
+export const continuedLocally = (why: string): string => `${CONTINUED_LOCALLY}: ${why}`;
 
 /** The run a restart repeats: an ExecuteArgs, or what a status keeps of one (reroute.ts builds it for a run in another process). */
 export type RerunSource = Pick<ExecuteArgs, "logDir" | "cwd" | "claudeArgs" | "label"> &
