@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { saveStatus, loadStatus, type WorkerStatus } from "./status.js";
 import { setWorkerPaused } from "./engine-control.js";
-import { abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, resumeWorker, admitResumedWaiters, PREEMPT_ABORT_MS } from "./preempt.js";
+import { FREEZE_CAUSE, releaseFreezePauses, releaseOrphanPause, abortStuckPreemptions, makeUrgent, resumeOrphaned, resumePreempted, resumeWorker, admitResumedWaiters, PREEMPT_ABORT_MS } from "./preempt.js";
 import { capacityGate, liveQueue, queueDir, waitingForSlotText, writeTicket } from "./capacity.js";
 import { inheritUrgency } from "./run/gate.js";
 import { waitWhilePreempted } from "../hooks/ts/lib/worker-guard.js";
@@ -325,5 +325,47 @@ describe("admitResumedWaiters tick cost (2026-11-18 daemon hang)", () => {
     const ms = Date.now() - t0;
     expect(out.length).toBe(12);
     expect(ms).toBeLessThan(1000);
+  });
+});
+
+describe("pauses end with their cause (2026-11-19 idle engine)", () => {
+  it("urgent ends -> every victim, running or queued, resumes", () => {
+    const { logDir, mk, live } = setup();
+    saveStatus(logDir, mk("A", live()));
+    saveStatus(logDir, mk("Q", live(), { state: "queued" }));
+    saveStatus(logDir, mk("B", live(), { now: true }));
+    setWorkerPaused(logDir, "A", true, "preempt", "B");
+    setWorkerPaused(logDir, "Q", true, "preempt", "B");
+    saveStatus(logDir, { ...loadStatus(logDir, "B")!, state: "done" });
+    expect(resumePreempted(logDir, "B").sort()).toEqual(["A", "Q"]);
+    expect(loadStatus(logDir, "Q")?.paused).toBeFalsy();
+  });
+
+  it("thaw clears the pauses the freeze caused and leaves operator pauses", () => {
+    const { logDir, mk, live } = setup();
+    saveStatus(logDir, mk("A", live()));
+    saveStatus(logDir, mk("C", live()));
+    setWorkerPaused(logDir, "A", true, "freeze", FREEZE_CAUSE);
+    setWorkerPaused(logDir, "C", true, "cli");
+    expect(releaseFreezePauses(logDir)).toEqual(["A"]);
+    expect(loadStatus(logDir, "A")?.paused).toBeFalsy();
+    expect(loadStatus(logDir, "C")?.paused).toBe(true);
+  });
+
+  it("orphan safety net lifts a caused pause with no urgent worker alive, never an operator pause or a live cause", () => {
+    const { logDir, mk, live } = setup();
+    saveStatus(logDir, mk("A", live()));
+    saveStatus(logDir, mk("C", live()));
+    saveStatus(logDir, mk("F", live()));
+    setWorkerPaused(logDir, "A", true, "preempt", "GONE");
+    setWorkerPaused(logDir, "C", true, "cli");
+    setWorkerPaused(logDir, "F", true, "freeze", FREEZE_CAUSE);
+    expect(releaseOrphanPause(logDir, "C", false)).toBe(false);
+    expect(releaseOrphanPause(logDir, "F", true)).toBe(false);
+    expect(releaseOrphanPause(logDir, "A", false)).toBe(true);
+    expect(loadStatus(logDir, "A")?.paused).toBeFalsy();
+    saveStatus(logDir, mk("U", live(), { now: true }));
+    setWorkerPaused(logDir, "A", true, "preempt", "U");
+    expect(releaseOrphanPause(logDir, "A", false)).toBe(false);
   });
 });
