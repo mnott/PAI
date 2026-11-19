@@ -81,6 +81,8 @@ export interface Ticket {
   release(served?: Served, opts?: ReleaseOpts): void;
   /** Upstream bytes arrived: the holder is alive (resets the stale clock). */
   touch(): void;
+  /** Set by the router: ends the client's response with a retryable error and aborts the upstream request (engine-idle release). */
+  onReap?: () => void;
 }
 
 export interface ReleaseOpts {
@@ -116,6 +118,8 @@ interface Flight {
   /** held on purpose while the conversation is saved: never stale */
   parking?: boolean;
   release?: () => void;
+  /** ends the client's request so it retries (engine-idle watchdog) */
+  reap?: () => void;
 }
 
 interface Engine {
@@ -164,6 +168,13 @@ export class RequestScheduler {
   control?: ControlSource;
   /** called when a stale holder was released (the router writes the ledger line) */
   onStale?: (engine: string, worker: string, session: string, idleMs: number) => void;
+  /** engine-idle watchdog: true when the engine shows no activity right now (router wires the GPU summary); absent = watchdog off */
+  engineIdle?: (engine: string) => boolean;
+  /** seconds a request may be in flight while the engine is idle before it is released; 0 = off */
+  engineIdleSecs: () => number = () => 0;
+  /** called when the idle watchdog released a request */
+  onEngineIdle?: (engine: string, worker: string, session: string, inflightMs: number) => void;
+  private idleSince = new Map<string, number>();
   private recheck?: NodeJS.Timeout;
   private reaper?: NodeJS.Timeout;
 
@@ -212,10 +223,51 @@ export class RequestScheduler {
     return n;
   }
 
+  /**
+   * Engine-idle watchdog: a request in flight (and silent) for `engineIdleSecs` while the engine has shown no activity
+   * for that long is released and its client told to retry. Never releases while the engine shows activity. Returns how many.
+   */
+  reapEngineIdle(): number {
+    const limit = this.engineIdleSecs() * 1000;
+    if (!(limit > 0) || !this.engineIdle) return 0;
+    const now = this.now();
+    let n = 0;
+    for (const [name, e] of this.engines) {
+      let idle = false;
+      try {
+        idle = this.engineIdle(name);
+      } catch {
+        idle = false;
+      }
+      if (!idle) {
+        this.idleSince.delete(name);
+        continue;
+      }
+      if (!this.idleSince.has(name)) this.idleSince.set(name, now);
+      const f = e.inflight;
+      if (!f || f.parking || !f.release) continue;
+      if (now - this.idleSince.get(name)! < limit || now - f.since < limit || now - f.lastByte < limit) continue;
+      n++;
+      try {
+        this.onEngineIdle?.(name, f.worker, f.session, now - f.since);
+      } catch {
+        /* logging is best effort */
+      }
+      try {
+        f.reap?.();
+      } catch {
+        /* the slot is freed below regardless */
+      }
+      f.release();
+    }
+    return n;
+  }
+
   private armReaper(): void {
     if (this.reaper) return;
     this.reaper = setInterval(() => {
       this.reapStale();
+      this.reapEngineIdle();
       if (![...this.engines.values()].some((e) => e.inflight)) {
         clearInterval(this.reaper);
         this.reaper = undefined;
@@ -390,6 +442,7 @@ export class RequestScheduler {
         },
       };
       flight.release = () => ticket.release();
+      flight.reap = () => ticket.onReap?.();
       w.grant(ticket);
     }
     // a parked (paused) worker is released by a status-file change, which nothing signals: look again shortly

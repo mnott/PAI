@@ -265,9 +265,12 @@ router:
   drainMs: 120000
   # Zero-downtime handover: the new router takes every new connection at once; the old
   # one finishes its in-flight requests (long local-engine streams) for at most this
-  # many seconds, then ends them with a retryable error and exits.
+  # many seconds, then ends them with a retryable error and exits (never lingers).
   handover:
-    drainMaxSecs: 1800
+    drainMaxSecs: 120
+  # Idle-engine watchdog: a local request in flight this many seconds while the GPU reads idle
+  # is released (ENGINE-SLOT-RELEASED reason=engine-idle) so its client retries. 0 = off.
+  engineIdleSecs: 90
   # Daemon watchdog: after this many consecutive cloud requests failed with a network error
   # (ENOTFOUND, ECONNREFUSED, ETIMEDOUT) within 60 s while the daemon itself reaches the upstream,
   # the daemon restarts the router.
