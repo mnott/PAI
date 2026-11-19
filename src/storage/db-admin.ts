@@ -124,22 +124,34 @@ export const TEST_DB_MIN_AGE_MS = 60 * 60 * 1000;
  * used by a running test) is never touched; a database with no relations yet
  * reports NULL age and is skipped. Nothing outside the pattern is dropped, and
  * createPgPool's live-database guard still applies underneath.
+ *
+ * `onlyNames` narrows the sweep to an explicit list — a test that wants to
+ * prove its own drop must pass exactly the databases it created. An exclusion
+ * list is not enough: ownership is per-process (test-db.ts), so a sweep in one
+ * vitest worker can still drop another worker's in-flight scratch database,
+ * and the age heuristic does not protect it either — a freshly CREATEd
+ * database's file timestamp is copied from its template and can read hours
+ * old. That was the merge-gate flaky "database pai_test_… does not exist"
+ * (codegraph NUL test), fixed 2026-11-19. The default (no filter, minAgeMs 1h)
+ * stays the leak sweep for real use.
  */
 export async function cleanupTestDatabases(
   adminConnectionString: string,
-  opts: { minAgeMs?: number; dryRun?: boolean } = {},
+  opts: { minAgeMs?: number; dryRun?: boolean; onlyNames?: readonly string[] } = {},
 ): Promise<string[]> {
   const minAgeMs = opts.minAgeMs ?? TEST_DB_MIN_AGE_MS;
+  const only = opts.onlyNames ? [...opts.onlyNames] : null;
   const admin = createPgPool({ connectionString: adminConnectionString, max: 1, connectionTimeoutMillis: 5000 });
   try {
     const found = await admin.query<{ datname: string }>(
       `SELECT d.datname FROM pg_database d
        WHERE d.datistemplate = false
          AND d.datname ~ $1
+         AND ($3::text[] IS NULL OR d.datname = ANY($3))
          AND age(now(), (pg_stat_file(format('%s/base/%s', current_setting('data_directory'), d.oid), true)).modification)
              > make_interval(secs => $2::double precision / 1000)
        ORDER BY d.datname`,
-      [TEST_DB_PATTERN, minAgeMs],
+      [TEST_DB_PATTERN, minAgeMs, only],
     );
     const dropped: string[] = [];
     for (const { datname } of found.rows) {

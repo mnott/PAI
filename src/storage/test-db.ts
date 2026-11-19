@@ -89,9 +89,11 @@ export async function createScratchDatabase(purpose: string): Promise<ScratchDb>
   const cleanup = async (): Promise<void> => {
     if (cleaned) return;
     cleaned = true;
-    openScratch.delete(dbName);
     try { await pool.end(); } catch { /* already ended */ }
     await dropDatabase(dbName);
+    // only now removed from the ownership set: the exit hook must not fire a
+    // second drop while this one is still landing.
+    openScratch.delete(dbName);
   };
   const scratchDb: ScratchDb = { dbName, url, pool, cleanup };
   openScratch.set(dbName, scratchDb);

@@ -16,12 +16,25 @@ describe.skipIf(!conn)("cleanupTestDatabases (real Postgres SQL)", () => {
     for (const d of [a, b]) await d.pool.query("CREATE TABLE t (v int)");
     await a.pool.end(); await b.pool.end();
     const admin = pgAdminUrl(conn!);
-    const listed = await cleanupTestDatabases(admin, { minAgeMs: 0, dryRun: true });
+    // onlyNames scopes the sweep to the databases this test created: with
+    // minAgeMs 0 an unscoped sweep would drop scratch dbs other vitest
+    // workers are mid-use (the merge-gate "database does not exist" flaky).
+    const mine = () => ({ minAgeMs: 0, onlyNames: [a.dbName, b.dbName] });
+    const listed = await cleanupTestDatabases(admin, { ...mine(), dryRun: true });
     expect(listed).toContain(a.dbName);
     expect(listed).toContain(b.dbName);
-    const dropped = await cleanupTestDatabases(admin, { minAgeMs: 0 });
+    // a scratch db not on the list is never dropped, even at age 0 — that is
+    // another worker's in-flight database in a real parallel run.
+    const foreign = await createScratchDatabase("cleanupkeep");
+    made.push(foreign);
+    await foreign.pool.query("CREATE TABLE t (v int)");
+    await foreign.pool.end();
+    const dropped = await cleanupTestDatabases(admin, mine());
     expect(dropped).toContain(a.dbName);
     expect(dropped).toContain(b.dbName);
-    expect(await cleanupTestDatabases(admin, { minAgeMs: 0, dryRun: true })).not.toContain(a.dbName);
+    expect(dropped).not.toContain(foreign.dbName);
+    expect(await cleanupTestDatabases(admin, { ...mine(), dryRun: true })).not.toContain(a.dbName);
+    // the foreign db survived the sweep and is still there for its own cleanup.
+    expect(await cleanupTestDatabases(admin, { minAgeMs: 0, onlyNames: [foreign.dbName], dryRun: true })).toContain(foreign.dbName);
   }, 60000);
 });
