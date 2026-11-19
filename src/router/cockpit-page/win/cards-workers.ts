@@ -17,21 +17,15 @@ var WK_PTIP={low:"others go first",normal:"default",high:"ahead of normal","now"
 var WK_GROUPS=["running","waiting","paused"];
 var WK_BADGE={"running":"wq-run","waiting":"wq-wait","paused":"wq-pause","frozen":"wq-frozen","deep-frozen":"wq-deep"};
 var WK_FILTERS=[],WK_TF=[],WK_SORT=null,WK_MENU=null,WK_COPY=null;
-/** Filters (session names), sort ({col,dir}) and the rows whose inline detail is open persist in localStorage. */
-function wkLoad(){try{var f=JSON.parse(localStorage.getItem("wqFilter")||"[]"),s=JSON.parse(localStorage.getItem("wqSort")||"null");if(Array.isArray(f))WK_FILTERS=f.filter(function(x){return typeof x==="string"});var tf=JSON.parse(localStorage.getItem("wqTopic")||"[]");if(Array.isArray(tf))WK_TF=tf.filter(function(x){return typeof x==="string"});if(s&&(s.col==="session"||s.col==="state"||s.col==="time"))WK_SORT={col:s.col,dir:s.dir==="desc"?"desc":"asc"};var o=JSON.parse(localStorage.getItem("wqOpen")||"{}");if(o&&typeof o==="object")for(var k in o)if(typeof k==="string")WK_OPEN[k]=1}catch(e){}}
-function wkSave(){try{localStorage.setItem("wqFilter",JSON.stringify(WK_FILTERS));localStorage.setItem("wqTopic",JSON.stringify(WK_TF));if(WK_SORT)localStorage.setItem("wqSort",JSON.stringify(WK_SORT));else localStorage.removeItem("wqSort");localStorage.setItem("wqOpen",JSON.stringify(WK_OPEN))}catch(e){}}
+/** Filters (session names) and sort ({col,dir}) persist in localStorage. */
+function wkLoad(){try{var f=JSON.parse(localStorage.getItem("wqFilter")||"[]"),s=JSON.parse(localStorage.getItem("wqSort")||"null");if(Array.isArray(f))WK_FILTERS=f.filter(function(x){return typeof x==="string"});var tf=JSON.parse(localStorage.getItem("wqTopic")||"[]");if(Array.isArray(tf))WK_TF=tf.filter(function(x){return typeof x==="string"});if(s&&(s.col==="session"||s.col==="state"||s.col==="time"))WK_SORT={col:s.col,dir:s.dir==="desc"?"desc":"asc"}}catch(e){}}
+function wkSave(){try{localStorage.setItem("wqFilter",JSON.stringify(WK_FILTERS));localStorage.setItem("wqTopic",JSON.stringify(WK_TF));if(WK_SORT)localStorage.setItem("wqSort",JSON.stringify(WK_SORT));else localStorage.removeItem("wqSort")}catch(e){}}
 wkLoad();
 /** The one open session (for the session menu): the single active filter, else null. */
 function wkOne(){return WK_FILTERS.length===1?WK_FILTERS[0]:null}
 /** Filtered by the chosen sessions, then sorted (admission order is the tie-break and the default). */
-/** The short id (last dash-part) in grey under the task; computed here so every view has it.
- *  WK_OPEN: the ids of the rows whose inline detail is open (a tap on a row or its ▸ opens it, a tap again closes). */
-var WK_OPEN={};
-/** Narrow mode (the html.narrow class, the 900 px break): the detail rides inside the task cell and shows only there; in wide mode it is never drawn (the columns carry everything). */
-function wkNarrow(){return typeof document!=="undefined"&&!!document.documentElement&&document.documentElement.classList.contains("narrow")}
+/** The short id (last dash-part) in grey under the task; computed here so every view has it. */
 function wkSid(r){r.sid=String(r.id).slice(String(r.id).lastIndexOf("-")+1);return r}
-/** "12m left" / "3m over" from the deadline (seconds to the stop; negative = past it); "" without one. */
-function wkLeft(s){if(typeof s!=="number"||!isFinite(s))return"";var x=Math.round(s);return wkDur(x)+(x<0?" over":" left")}
 function wkView(rows){
  wkAssign((rows||[]).map(function(x){return x.session}));
  var r=(rows||[]).map(function(x,i){return{x:wkSid(x),i:i}});
@@ -69,20 +63,6 @@ function wkIconBtn(id,a,why){var l=WK_LBL[a]||[a,a],t=l[0]+": "+l[1];return'<but
 function wkMenuBtn(key,tip){return'<button type="button" class="wq-ic'+(WK_MENU&&WK_MENU.key===key?' on':'')+'" data-wm="'+esc(key)+'" title="'+esc(tip)+'" aria-label="'+esc(tip)+'" aria-haspopup="true">⋯</button>'}
 /** Copy the full worker id to the clipboard (the queue never shows it in full); a prompt fallback when the clipboard API is absent. */
 function wkCopyId(id){var done=function(){WK_COPY=id;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_COPY=null},1600)};try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(String(id)).then(done,function(){window.prompt("worker id (copy it)",String(id))});return}}catch(e){}window.prompt("worker id (copy it)",String(id))}
-/** The inline detail block of an open row (narrow mode shows it; wide mode hides it by CSS): what the job is doing now, its TL;DR, route and time left. */
-function wkDetail(r){
- var x='<div class="wq-x" data-x="'+esc(r.id)+'">';
- if(r.activity||r.now)x+='<div><b>'+esc(r.activity||"now")+'</b>'+(r.now?' <span class="wq-now" title="'+esc(r.activityTip||r.now)+'">'+esc(r.now)+'</span>':"")+'</div>';
- if(r.summary)x+='<div class="dim wq-sum">'+esc(r.summary)+'</div>';
- var meta=[];
- if(r.modelFull)meta.push("model: "+esc(r.modelFull)+(r.cloudWhy?" ("+esc(r.cloudWhy)+")":""));
- meta.push("priority: "+esc(r.priority));
- meta.push("time: "+wkDur(r.seconds));
- if(r.deadlineAt)meta.push(esc(wkLeft((r.deadlineAt-Date.now())/1000)));
- if(r.waits&&r.waits.length)r.waits.forEach(function(w){meta.push("a session waits: "+esc(w.label))});
- x+='<div class="dim wq-meta">'+meta.join(" · ")+'</div></div>';
- return x;
-}
 function wkTRow(r){
  var has=function(a){return r.actions.indexOf(a)>=0};
  // the inline buttons carry one meaning each: ▶ one step toward running (paused → resume, waiting → start now), ⏸ one step toward paused (running / waiting → pause); stop and everything else in …
@@ -92,14 +72,10 @@ function wkTRow(r){
  else acts=(has("deep-resume")?wkIconBtn(r.id,"deep-resume"):has("resume")?wkIconBtn(r.id,"resume"):wkIconBtn(r.id,"resume","this job cannot resume right now"))+wkMenuBtn("row:"+r.id,"more actions for "+r.task);
  var badge=r.state==="waiting"&&typeof r.slot==="number"?"waiting #"+r.slot:r.state;
  var st='<span class="wq-b '+(WK_BADGE[r.state]||"")+'" title="'+esc(r.stateText+(r.detail?" · "+r.detail:""))+'">'+esc(badge)+'</span>'+(r.activity&&r.state==="running"?' <span class="wq-act" title="'+esc(r.activityTip||r.now||"")+'">'+esc(r.activity)+'</span>':"");
- var tip=r.task+(r.sid?" · "+r.sid:"");if(r.summary)tip+="\n\n"+r.summary;tip+="\nid: "+r.id;if(r.waits&&r.waits.length){for(var wi=0;wi<r.waits.length;wi++)tip+="\na session waits for this job: "+r.waits[wi].label}
+ var tip=r.task;if(r.summary)tip+="\n\n"+r.summary;tip+="\nid: "+r.id;if(r.waits&&r.waits.length){for(var wi=0;wi<r.waits.length;wi++)tip+="\na session waits for this job: "+r.waits[wi].label}
  var kid=r.level!==1&&!!r.parent&&((WQ&&WQ.table)||[]).some(function(x){return x.id===r.parent&&x.level===1});
  tip+="\n\nmodel: "+(r.modelFull||r.model||"-")+(r.cloudWhy?" ("+r.cloudWhy+")":"")+"\npriority: "+r.priority+"\ntime: "+wkDur(r.seconds);
- var op=!!WK_OPEN[r.id];
- // the ▸ disclosure and the second line (task + short id): narrow mode shows both, wide mode hides them by CSS (the columns carry it there)
- var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,kid)+'<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
- // in wide mode the block is not drawn at all (the columns carry everything); narrow mode shows an open one (CSS .on)
- if(op&&wkNarrow())task+=wkDetail(r).replace('class="wq-x"','class="wq-x on"');
+ var task=wkLevel(r,kid)+'<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
  return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
@@ -122,8 +98,7 @@ function wkMenuHtml(){
  else{r=((WQ&&WQ.table)||[]).filter(function(x){return"row:"+x.id===k})[0];if(!r)return"";
   items=["back-to-queue","next","up","down","freeze","thaw","deep-freeze","deep-resume","to-cloud","to-local"].filter(function(a){return r.actions.indexOf(a)>=0}).map(function(a){var l=WK_LBL[a];return["data-qa",a,WK_CONF===r.id+":"+a?"confirm?":l[0],l[1],r.id]});
   if(r.kind==="job")items.push(["data-qa","stop",WK_CONF===r.id+":stop"?"confirm?":"stop","ends this job for good (click again to confirm); its work stays on its branch",r.id]);
-  items.push(["data-copy","copy",WK_COPY==="copy:"+r.id?"copied":"copy id","copy the full worker id to the clipboard: "+r.id,r.id]);
-  items.push(["data-wqx","detail",(WK_OPEN[r.id]?"collapse":"show")+" detail","what this job is doing now, its TL;DR, route and time left",r.id])}
+  items.push(["data-copy","copy",WK_COPY==="copy:"+r.id?"copied":"copy id","copy the full worker id to the clipboard: "+r.id,r.id])}
  return'<div class="wq-menu" role="menu" style="left:'+WK_MENU.x+'px;top:'+WK_MENU.y+'px">'+items.map(function(x){return'<button type="button" role="menuitem" '+x[0]+'="'+esc(x[1])+'"'+(x[4]?' data-id="'+esc(x[4])+'"':'')+' title="'+esc(x[3])+'">'+esc(x[2])+'</button>'}).join("")+'</div>';
 }
 /** Title row: (i) legend tooltip, the session chips as filters, and the All jobs menu at the right. */
@@ -135,8 +110,7 @@ function wkBar(q){
 }
 var WK_NONE='<span class="dim">nothing running or waiting</span>';
 var WQ=null,WK_BLOCKS={},WK_DRAG=null;
-/** "7m 12s" / "1h 05m"; a negative value (past the deadline) loses its sign — wkLeft words it ("over"). */
-function wkDur(s){var x=Math.abs(Math.round(s||0));return x<90?x+"s":x<5400?Math.floor(x/60)+"m"+String(x%60).padStart(2,"0")+"s":Math.floor(x/3600)+"h"+String(Math.floor(x%3600/60)).padStart(2,"0")+"m"}
+function wkDur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
 function wkSpanT(t,full){return' <span title="'+esc(full||t)+'">'+esc(t)+'</span>'}
 function wkSpan(t){return' <span title="'+esc(t)+'">'+esc(t)+'</span>'}
 function wkCmp(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}
@@ -158,8 +132,7 @@ function wkBlockOf(id){return WK_BLOCKS[id]||null}
 /** A block's card html: the table (plus its footnote); a block that is gone says so. */
 function wkBlockHtml(b){
  if(!b)return WK_NONE;
- // the table rides on the card body (no .tw wrapper): it keeps its fixed columns at every width and never stacks
- if(b.table){var tr=wkView((WQ&&WQ.table)||[]);return wkBar(WQ||{})+wkQTable(tr)+wkMenuHtml()}
+ if(b.table){var tr=wkView((WQ&&WQ.table)||[]);return wkBar(WQ||{})+'<div class="wq-w">'+wkQTable(tr)+'</div>'+wkMenuHtml()}
  return table(b.head,b.rows)+(b.foot?'<div class="dim" style="text-align:left">'+esc(b.foot)+'</div>':"");
 }
 /** Make the waiting rows of a card draggable (after every repaint; the morph does not carry the attribute). */
@@ -189,11 +162,6 @@ function wkWire(ctx){
   document.querySelectorAll(".wq-i.on").forEach(function(x){x.classList.remove("on")});
   var wm=T?T.closest("button[data-wm]"):null;
   if(wm){var k=wm.getAttribute("data-wm"),rc=wm.getBoundingClientRect();WK_MENU=WK_MENU&&WK_MENU.key===k?null:{key:k,x:Math.max(4,Math.min(Math.round(rc.left),window.innerWidth-190)),y:Math.round(rc.bottom)+2};rd();return}
-  // the row's inline detail: the ▸ button or a tap anywhere on the row (except its controls) opens it; a tap again collapses
-  var cx=T?T.closest("button[data-wqx]"):null;
-  if(cx){var xk=cx.getAttribute("data-id")||cx.getAttribute("data-wqx");if(WK_OPEN[xk])delete WK_OPEN[xk];else WK_OPEN[xk]=1;if(T.closest(".wq-menu"))WK_MENU=null;rd();return}
-  var trc=T?T.closest("tr.wq-r"):null;
-  if(trc&&!T.closest("button,select,a,input,.wq-i")){var xid=trc.getAttribute("data-id");if(WK_OPEN[xid])delete WK_OPEN[xid];else WK_OPEN[xid]=1;rd();return}
   var inMenu=T&&T.closest(".wq-menu"),qs0=T?T.closest("button[data-qs]"):null;
   if(WK_MENU&&!inMenu&&!qs0){WK_MENU=null;rd()}
   var wc=T?T.closest("button[data-copy]"):null;

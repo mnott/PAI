@@ -114,8 +114,6 @@ export interface TableRow {
   restarting?: boolean;
   /** Why "start now" cannot admit this waiting job ("the limit of started jobs (cap + 3) is reached"); absent = it can. The button shows the reason in its tooltip and stays disabled. */
   startNowWhy?: string;
-  /** Epoch ms the run is stopped at (status.deadlineAt); absent = no limit. The cockpit's narrow detail line reads "time left" from it. */
-  deadlineAt?: number;
   actions: RowAction[];
 }
 
@@ -357,7 +355,6 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       ...(s.restarting ? { restarting: true } : {}),
       ...(specMarkTip(s) ? { specTip: specMarkTip(s) } : {}),
       ...(state === "waiting" && startNowWhy(s.provider) ? { startNowWhy: startNowWhy(s.provider) } : {}),
-      ...(s.deadlineAt ? { deadlineAt: s.deadlineAt } : {}),
       actions: actionsOf(state, local, waiting, place, state === "waiting" && startNowWhy(s.provider) !== undefined),
     };
   };
