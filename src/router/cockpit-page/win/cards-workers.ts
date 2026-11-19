@@ -32,6 +32,8 @@ function wkNarrow(){return typeof document!=="undefined"&&!!document.documentEle
 function wkSid(r){r.sid=String(r.id).slice(String(r.id).lastIndexOf("-")+1);return r}
 /** "12m left" / "3m over" from the deadline (seconds to the stop; negative = past it); "" without one. */
 function wkLeft(s){if(typeof s!=="number"||!isFinite(s))return"";var x=Math.round(s);return wkDur(x)+(x<0?" over":" left")}
+/** The narrow second line's runtime: "12m · own 8m · 32m left" (age, the job's own time, budget left; parts absent when unknown). */
+function wkRuntime(r){var p=[wkDur(r.seconds)];if(typeof r.activeSeconds==="number")p.push("own "+wkDur(r.activeSeconds));if(typeof r.budgetLeftMin==="number"){var m=Math.abs(Math.round(r.budgetLeftMin));p.push((m<60?m+"m":wkDur(m*60))+(r.budgetLeftMin<0?" over":" left"))}return p.join(" · ")}
 function wkView(rows){return wkSort(wkPass(rows))}
 /** Filtered rows in admission order (no sort): the group headers count over these. */
 function wkPass(rows){
@@ -79,15 +81,24 @@ function wkCopyId(id){var done=function(){WK_COPY=id;if(WK_CT)clearTimeout(WK_CT
 /** The inline detail block of an open row (narrow mode shows it; wide mode hides it by CSS): what the job is doing now, its TL;DR, route and time left. */
 function wkDetail(r){
  var x='<div class="wq-x" data-x="'+esc(r.id)+'">';
- if(r.activity||r.now)x+='<div><b>'+esc(r.activity||"now")+'</b>'+(r.now?' <span class="wq-now" title="'+esc(r.activityTip||r.now)+'">'+esc(r.now)+'</span>':"")+'</div>';
+ // compact panel directly under the row: task, TL;DR, id, engine/provider, age / own time / budget left, turns and tools, "now:", last error, queue position
+ x+='<div class="wq-dt">'+wkLevel(r,false)+esc(r.task)+'</div>';
  if(r.summary)x+='<div class="dim wq-sum">'+esc(r.summary)+'</div>';
- var meta=[];
- if(r.modelFull)meta.push("model: "+esc(r.modelFull)+(r.cloudWhy?" ("+esc(r.cloudWhy)+")":""));
+ x+='<div class="dim wq-id2" title="'+esc("tap the row again to copy the full worker id")+'">worker: '+esc(r.sid||r.id)+'</div>';
+ var meta=[],eng=r.modelFull?r.modelFull+(r.cloudWhy?" ("+r.cloudWhy+")":""):r.model;
+ if(eng)meta.push("engine: "+esc(eng));
  meta.push("priority: "+esc(r.priority));
- meta.push("time: "+wkDur(r.seconds));
- if(r.deadlineAt)meta.push(esc(wkLeft((r.deadlineAt-Date.now())/1000)));
- if(r.waits&&r.waits.length)r.waits.forEach(function(w){meta.push("a session waits: "+esc(w.label))});
- x+='<div class="dim wq-meta">'+meta.join(" · ")+'</div></div>';
+ var t="age: "+wkDur(r.seconds);
+ if(typeof r.activeSeconds==="number")t+=" · own: "+wkDur(r.activeSeconds);
+ if(typeof r.budgetLeftMin==="number"){var m=Math.abs(Math.round(r.budgetLeftMin));t+=" · budget left: "+(m<60?m+"m":wkDur(m*60))+(r.budgetLeftMin<0?" over":"")}else if(r.deadlineAt)t+=" · "+esc(wkLeft((r.deadlineAt-Date.now())/1000));
+ meta.push(t);
+ meta.push("turns: "+(r.turns||0)+" · tools: "+(r.tools||0));
+ if(typeof r.slot==="number")meta.push("queue position: "+r.slot);
+ x+='<div class="dim wq-meta">'+meta.join("<br>")+'</div>';
+ if(r.activity||r.now)x+='<div class="wq-nowline"><b>now:</b>'+(r.now?' <span class="wq-now" title="'+esc(r.activityTip||r.now)+'">'+esc(r.now)+'</span>':" "+esc(r.activity))+'</div>';
+ if(r.lastError)x+='<div class="wq-err">last error: '+esc(r.lastError)+'</div>';else if(r.specTip)x+='<div class="wq-err">guard: '+esc(r.specTip)+'</div>';
+ if(r.waits&&r.waits.length)r.waits.forEach(function(w){x+='<div class="dim">a session waits: '+esc(w.label)+'</div>'});
+ x+='</div>';
  return x;
 }
 function wkTRow(r){
@@ -103,9 +114,9 @@ function wkTRow(r){
  var kid=r.level!==1&&!!r.parent&&((WQ&&WQ.table)||[]).some(function(x){return x.id===r.parent&&x.level===1});
  tip+="\n\nmodel: "+(r.modelFull||r.model||"-")+(r.cloudWhy?" ("+r.cloudWhy+")":"")+"\npriority: "+r.priority+"\ntime: "+wkDur(r.seconds);
  var op=!!WK_OPEN[r.id];
- // the ▸ disclosure and the second line (task + short id): narrow mode shows both, wide mode hides them by CSS (the columns carry it there)
- var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,kid)+'<span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"")+'<div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(r.sid||r.id)+'</div>';
- // in wide mode the block is not drawn at all (the columns carry everything); narrow mode shows an open one (CSS .on)
+ // the narrow second line (always there): the task ellipsised to one line, then the runtime "12m · own 8m · 32m left" and the short id
+ var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,kid)+'<div class="wq-nl"><span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span><div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(wkRuntime(r))+" · "+esc(r.sid||r.id)+'</div></div>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"");
+ // the tap detail: a compact panel directly below the row's first line (narrow mode only; wide mode hides it by CSS — the columns carry everything there)
  if(op&&wkNarrow())task+=wkDetail(r).replace('class="wq-x"','class="wq-x on"');
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';

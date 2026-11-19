@@ -11,6 +11,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { blockedMsOf } from "./active-time.js";
 import { DEFAULT_CAPACITY, type QueueRow } from "./capacity.js";
 import { pausedFree, slotLent, type WorkerStatus } from "./status.js";
 import { paneWaitsOn, type PaneRunStatus } from "./pane-run.js";
@@ -94,6 +95,12 @@ export interface TableRow {
   local: boolean;
   task: string;
   seconds: number;
+  /** The job's own time (active time, deadline accounting): wall seconds minus the blocked waits. */
+  activeSeconds?: number;
+  /** Minutes left of the run's budget (`budgetMin` else `maxMinutes`, minus its own minutes); absent = no budget. */
+  budgetLeftMin?: number;
+  turns: number;
+  tools: number;
   /** Fixed-width activity cell: "writing" | "in line" | "tool" | "idle 2m" | "waiting" | "" — real state, never a guess (see ACT_TIP). */
   activity: string;
   /** Plain sentence of what the activity word means, for its tooltip. */
@@ -116,10 +123,14 @@ export interface TableRow {
   startNowWhy?: string;
   /** Epoch ms the run is stopped at (status.deadlineAt); absent = no limit. The cockpit's narrow detail line reads "time left" from it. */
   deadlineAt?: number;
+  /** Why the run ended badly (state failed/killed/lost): its `last` line; absent while it runs fine. */
+  lastError?: string;
   actions: RowAction[];
 }
 
 export interface TableInput {
+  /** The log dir (the waits sidecars and the router-sched file live there): the blocked-wait accounting for "own" time. Absent = only the status fields count. */
+  logDir?: string;
   statuses: WorkerStatus[];
   queue: QueueRow[];
   /** Running pane commands: never rows (they are not jobs); one whose command waits on a worker id becomes an eye on that job's row. */
@@ -294,6 +305,18 @@ export function buildQueueTable(i: TableInput): TableRow[] {
     return a ? { inflight: a.activeSince > 0, queued: a.waitingSince > 0 } : undefined;
   };
   const deepIds = new Set(i.statuses.filter((s) => i.deepFrozen?.(s.id) === true).map((s) => s.id));
+  // the blocked waits per job (slot waits, build gates, the router queue, freezes): the same accounting the deadline uses, so "own" time is honest
+  const blockedMs = (s: WorkerStatus): number => {
+    let ms = s.blockedMs ?? 0;
+    if (i.logDir) {
+      try {
+        ms = Math.max(ms, blockedMsOf(i.logDir, s.id, i.now));
+      } catch {
+        /* the sidecars are unreadable: the status fields alone speak */
+      }
+    }
+    return ms + (s.queueWaitedMs ?? 0);
+  };
   // started jobs per provider (the same accounting the capacity gate uses: running, not an operator pause that freed its slot, live): "start now" admits over the cap only up to cap + idleExtraMax of these
   const extraMax = i.idleExtraMax ?? DEFAULT_CAPACITY.idleExtraMax;
   const startedByProvider = new Map<string, number>();
@@ -325,6 +348,12 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       return undefined;
     }
   };
+  /** Minutes of budget left: the live allowance (`budgetMin`, else `maxMinutes`) minus the job's own minutes. Undefined = no budget. */
+  const budgetLeftMin = (s: WorkerStatus, activeSec: number): number | undefined => {
+    const lim = s.budgetMin ?? s.maxMinutes;
+    if (!lim) return undefined;
+    return Math.round(lim - activeSec / 60);
+  };
   const row = (s: WorkerStatus, waiting: boolean, since: number, prio?: string, place?: { first: boolean; last: boolean }, moving?: string): Omit<TableRow, "slot"> => {
     const local = i.isLocal(s.provider);
     const deep = i.deepFrozen?.(s.id) === true;
@@ -352,6 +381,12 @@ export function buildQueueTable(i: TableInput): TableRow[] {
       activityTip: "",
       now: waiting ? "" : (s.last ?? "").slice(0, 120),
       seconds: sec(since),
+      // the job's own time: wall seconds minus every blocked wait (slot waits, build gates, router queue, freezes)
+      activeSeconds: Math.max(0, sec(since) - Math.floor(blockedMs(s) / 1000)),
+      ...(budgetLeftMin(s, sec(since)) !== undefined ? { budgetLeftMin: budgetLeftMin(s, sec(since)) } : {}),
+      turns: s.turns ?? 0,
+      tools: s.tools ?? 0,
+      ...(s.state === "failed" || s.state === "killed" || s.state === "lost" ? { lastError: (s.last ?? "").slice(0, 200) } : {}),
       detail: notes.map(plainWording).join("; "),
       ...(summaryOf(s) ? { summary: summaryOf(s) } : {}),
       ...(s.restarting ? { restarting: true } : {}),

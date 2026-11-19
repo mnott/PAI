@@ -52,9 +52,9 @@ describe("cockpit page script", () => {
     expect(html).toContain('title="a very long task');
     expect(html).toContain("Fix the queue. It lists pane runs as jobs.");
     expect(html).toContain("id: w-20261118-120000-55574");
-    // the short id in grey under the task; the waiting-session eye with its tooltip
+    // the short id in grey on the runtime line (narrow second line); the waiting-session eye with its tooltip
     expect(html).toContain('<div class="wq-id"');
-    expect(html).toContain(">55574<");
+    expect(html).toMatch(/· 55574</);
     expect(html).toContain('class="wq-eye"');
     expect(html).toContain("a session waits for this job: wait: right pane fix (local)");
     expect(html).toContain("aria-label=");
@@ -226,6 +226,61 @@ describe("cockpit page script", () => {
     cols.forEach((c, i) => {
       if (i !== 2) expect(c).toMatch(/width:\d+px/);
     });
+  });
+  it("narrow row: the second line carries the task and the runtime '12m · own 8m · 32m left'; wide mode never draws it", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({ document: { documentElement: { classList: { contains: () => true } } } });
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
+    (ctx as Record<string, unknown>).__r = { slot: "running", kind: "job", id: "w-20261119-230000-42424", sid: "42424", state: "running", stateText: "running", priority: "normal", session: "PAI", model: "gyro-l", modelFull: "local: qwen", local: true, level: 2, task: "fix the cockpit queue narrow rows", seconds: 738, activeSeconds: 491, budgetLeftMin: 32, turns: 6, tools: 9, activity: "writing", activityTip: "its request is open at the model — the model is writing its reply", now: "Edit: css.ts", detail: "", actions: ["pause"] };
+    const h = vm.runInContext("wkTRow(__r)", ctx) as string;
+    // the second line: task ellipsised to one line, runtime (age · own · budget left), short id
+    expect(h).toContain('class="wq-nl"');
+    expect(h).toContain("fix the cockpit queue narrow rows");
+    expect(h).toContain("12m18s · own 8m11s · 32m left");
+    expect(h).toMatch(/· 42424</);
+    // wide mode (no html.narrow class): the second line is still in the markup, CSS hides it there
+    const wctx = vm.createContext({ document: { documentElement: { classList: { contains: () => false } } } });
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, wctx);
+    (wctx as Record<string, unknown>).__r = { slot: "running", kind: "job", id: "w-1-9", sid: "9", state: "running", stateText: "running", priority: "normal", session: "PAI", model: "m", local: true, level: 2, task: "t", seconds: 5, activity: "", now: "", detail: "", actions: [] };
+    expect(vm.runInContext("wkTRow(__r)", wctx)).toContain('class="wq-nl"');
+    // the CSS owns the mode: narrow shows .wq-nl as a block line; wide never shows the disclosure or the open panel stretched
+    const cssSrc = readFileSync("src/router/cockpit-page/css.ts", "utf8");
+    expect(cssSrc).toMatch(/@media\(max-width:900px\)\{[^]*?\.wq-nl\{display:block/);
+    expect(cssSrc).toMatch(/\.wq-x\{display:none;[^}]*height:auto;min-height:0/);
+    expect(cssSrc).toMatch(/\.wq-x\.on\{display:block;height:auto;min-height:0\}/);
+  });
+  it("tap detail: a compact complete panel — id, engine, own time, budget left, turns/tools, now, error, position; never min-height/100vh", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({ document: { documentElement: { classList: { contains: () => true } } }, Date });
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
+    (ctx as Record<string, unknown>).__r = { slot: 2, kind: "job", id: "w-20261119-230000-42424", sid: "42424", state: "waiting", stateText: "waiting for a local slot", priority: "high", session: "PAI", model: "gyro-l", modelFull: "local: qwen", local: true, level: 2, task: "fix the tap detail", summary: "The queue's tap detail must be compact.", seconds: 300, activeSeconds: 120, budgetLeftMin: -3, turns: 4, tools: 7, activity: "", now: "", detail: "", actions: ["start-now"], specTip: "the guard blocked this job 2 times; the block may contradict its brief: x" };
+    vm.runInContext("WK_OPEN[__r.id]=1", ctx);
+    const h = vm.runInContext("wkTRow(__r)", ctx) as string;
+    expect(h).toContain('class="wq-x on"');
+    expect(h).toContain("fix the tap detail");
+    expect(h).toContain("The queue's tap detail must be compact.");
+    expect(h).toContain("worker: 42424");
+    expect(h).toContain("engine: local: qwen");
+    expect(h).toContain("age: 5m00s · own: 2m00s · budget left: 3m over");
+    expect(h).toContain("turns: 4 · tools: 7");
+    expect(h).toContain("queue position: 2");
+    expect(h).toContain("guard: the guard blocked this job 2 times");
+    // a running row shows its current activity as a "now:" line and its last error when it ended badly
+    (ctx as Record<string, unknown>).__b = { slot: "running", kind: "job", id: "w-2-1", sid: "1", state: "running", stateText: "running", priority: "normal", session: "PAI", model: "m", local: true, level: 2, task: "t", seconds: 5, turns: 1, tools: 2, activity: "writing", now: "Bash: npm test", detail: "", actions: [], lastError: "deadline reached: stopped for running over its budget" };
+    vm.runInContext("WK_OPEN[__b.id]=1;WK_OPEN[__r.id]=0", ctx);
+    const hb = vm.runInContext("wkTRow(__b)", ctx) as string;
+    expect(hb).toContain("<b>now:</b>");
+    expect(hb).toContain("Bash: npm test");
+    expect(hb).toContain("last error: deadline reached");
+    // the cause of the stretched box is gone: no min-height / 100vh / grow on the expanded row or its cell, in any mode
+    const cssSrc = readFileSync("src/router/cockpit-page/css.ts", "utf8");
+    for (const sel of [".wq-x", ".wq-nl", ".wq-tc", "td.wq-tc"]) {
+      const rules = cssSrc.match(new RegExp(`${sel.replace(/\./g, "\\.")}\\{[^}]*\\}`, "g")) ?? [];
+      expect(rules.length, sel).toBeGreaterThan(0);
+      for (const r of rules) expect(r, `${sel}: ${r}`).not.toMatch(/min-height:\s*(?!0)|100vh|flex-grow|height:\s*100%/);
+    }
   });
   it("the spec? marker has a real tooltip: the guard's count and the first conflicting reason, shortened", async () => {
     const { denialMark, specMarkTip } = await import("../workers/denials.js");
