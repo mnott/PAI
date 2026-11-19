@@ -166,6 +166,8 @@ export class RequestScheduler {
   idleHook?: IdleHook;
   /** per-worker priority and pause; absent = everyone normal, nobody paused */
   control?: ControlSource;
+  /** safety net: called (once per tick) for a paused waiter; true = it lifted an orphaned pause (cause gone), so the waiter is eligible again */
+  orphanPause?: (worker: string) => boolean;
   /** called when a stale holder was released (the router writes the ledger line) */
   onStale?: (engine: string, worker: string, session: string, idleMs: number) => void;
   /** engine-idle watchdog: true when the engine shows no activity right now (router wires the GPU summary); absent = watchdog off */
@@ -358,6 +360,16 @@ export class RequestScheduler {
     const cfg = this.cfg();
     const now = this.now();
     const cl = new Map(eng.waiting.map((w) => [w, this.ctl(w)] as const));
+    if (this.orphanPause) {
+      for (const w of eng.waiting) {
+        if (!cl.get(w)!.paused) continue;
+        try {
+          if (this.orphanPause(w.worker)) cl.set(w, this.ctl(w));
+        } catch {
+          /* the net is best effort */
+        }
+      }
+    }
     const elig = eng.waiting.filter((w) => !cl.get(w)!.paused);
     if (!elig.length) return undefined;
     const starved = elig.filter((w) => cl.get(w)!.priority === "low" && now - Math.max(w.at, eng.lastLowAt ?? 0) > cfg.lowAgingSec * 1000);

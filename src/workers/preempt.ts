@@ -200,8 +200,13 @@ export function resumePreempted(logDir: string, by: string, now = Date.now(), ro
   const all = loadStatuses(logDir);
   const room = new Map<string, number>();
   for (const s of all) {
-    if (s.pausedBy !== by || s.state !== "running" || !loadStatus(logDir, s.id)?.paused) continue;
+    if (s.pausedBy !== by || (s.state !== "running" && s.state !== "queued") || !loadStatus(logDir, s.id)?.paused) continue;
     try {
+      // a queued victim holds no slot: its pause just ends
+      if (s.state === "queued") {
+        if (setWorkerPaused(logDir, s.id, false, `preempt:${by}`, undefined, now)) released.push(s.id);
+        continue;
+      }
       // the preemptor ending here counts as gone: its victims are not handed to it (a victim already
       // handed to another urgent worker still keeps that one, so `all` minus this by stays the pool)
       const what = sweepOne(logDir, s, all.filter((x) => x.id !== by), room, roomFn, now);
@@ -400,4 +405,35 @@ export function endExpiredWindowNow(logDir: string, now = Date.now(), roomFn: Ro
     done.push(s.id);
   }
   return done;
+}
+
+/** Cause recorded in `pausedBy` by a pause that belongs to a machine freeze (not to an urgent worker). */
+export const FREEZE_CAUSE = "freeze";
+
+/**
+ * Safety net (router tick, SCHED-UNPAUSE-ORPHAN): `worker` is paused with a recorded cause (pausedBy) that is over —
+ * no urgent (`now`) worker is alive any more (the cause worker ended, or lost its now) and, for a freeze cause, no
+ * freeze is active. The pause is lifted and ledgered. An operator pause (no cause) is never touched. Returns true when lifted.
+ */
+export function releaseOrphanPause(logDir: string, worker: string, frozen: boolean, now = Date.now()): boolean {
+  const s = loadStatus(logDir, worker);
+  if (!s?.paused || !s.pausedBy || (s.state !== "running" && s.state !== "queued")) return false;
+  if (s.pausedBy === FREEZE_CAUSE ? frozen : loadLiveStatusesCached(logDir).some((x) => x.now && x.id !== worker && isLive(x) && (x.state === "running" || x.state === "queued"))) return false;
+  if (!setWorkerPaused(logDir, worker, false, "sched-orphan", undefined, now)) return false;
+  appendLedger(ledgerPath(logDir), "SCHED-UNPAUSE-ORPHAN", { id: worker, was: s.pausedBy });
+  return true;
+}
+
+/** Thaw: lift exactly the pauses the freeze caused (pausedBy = freeze). Returns the ids lifted. */
+export function releaseFreezePauses(logDir: string, now = Date.now()): string[] {
+  const out: string[] = [];
+  for (const s of loadStatuses(logDir)) {
+    if (!s.paused || s.pausedBy !== FREEZE_CAUSE) continue;
+    try {
+      if (setWorkerPaused(logDir, s.id, false, "thaw", undefined, now)) out.push(s.id);
+    } catch {
+      /* ended meanwhile */
+    }
+  }
+  return out;
 }

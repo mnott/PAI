@@ -37,6 +37,7 @@ import { psTable } from "./ps-table.js";
 import { readWorkersSection } from "./config.js";
 import { workersLogDir } from "./paths.js";
 import { isLive, loadStatuses, ownsPid, type OwnerFields, setWorkerNote, statusPids, type WorkerStatus } from "./status.js";
+import { releaseFreezePauses } from "./preempt.js";
 import { appendLedger as ledgerLine } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 
@@ -606,6 +607,12 @@ export function thawSome(logDir: string, d: FreezeDeps, sel: { ids?: string[]; s
       /* the worker ended meanwhile */
     }
   }
+  // the pauses the freeze itself caused end with it
+  try {
+    releaseFreezePauses(logDir, now);
+  } catch {
+    /* best effort */
+  }
   appendLedger(ledgerPath(logDir), "WORKERS-THAW", { continued, skipped, partial: pick.join(","), frozenMin: mins });
   const left = new Set(m.pids.filter((e) => !gone.has(e) && e.kind === "worker").map((e) => e.id)).size;
   lines.push(`thawed ${pick.length} workers (${pick.join(", ")}), ${continued} processes continued${skipped ? `, ${skipped} skipped` : ""}; ${left} workers stay frozen`);
@@ -681,6 +688,12 @@ export function thawAll(logDir: string, d: FreezeDeps): ThawReport {
     } catch {
       /* the worker ended meanwhile */
     }
+  }
+  // the pauses the freeze itself caused end with it
+  try {
+    releaseFreezePauses(logDir, now);
+  } catch {
+    /* best effort */
   }
   appendLedger(ledgerPath(logDir), "WORKERS-THAW", { continued, skipped, frozenMin: mins });
   lines.push(`thawed ${ids.length} workers, ${continued} processes continued${skipped ? `, ${skipped} skipped` : ""} (frozen ${mins} min)`);

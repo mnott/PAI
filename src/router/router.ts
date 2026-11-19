@@ -42,6 +42,8 @@ import {
 } from "./usage.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 import { appendLedger } from "../workers/ledger.js";
+import { releaseOrphanPause } from "../workers/preempt.js";
+import { isFrozen } from "../workers/freeze.js";
 import { recordToolError } from "../workers/tool-errors.js";
 import { declaredToolNames, fixJsonReply, ToolCaseSse } from "./tool-case.js";
 import { declaredToolSchemas } from "./tool-args.js";
@@ -1187,6 +1189,7 @@ export function routerHandler(
           // idle-engine watchdog: a request in flight while the GPU shows nothing is released so its client retries
           sched.engineIdle = () => engineIdleFrom(readLocalIdle(workersLogDir(readWorkersSection().workers)), Date.now());
           sched.engineIdleSecs = () => loadConfig().router.engineIdleSecs ?? 90;
+          sched.orphanPause = (w) => releaseOrphanPause(workersLogDir(readWorkersSection().workers), w, isFrozen());
           sched.onEngineIdle = (e, w, _s, ms) => slotReleased({ reason: "engine-idle", worker: w, engine: e, idleSec: Math.round(ms / 1000) });
           const queue = (): void => {
             startPings();
