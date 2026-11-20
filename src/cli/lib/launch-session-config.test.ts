@@ -15,7 +15,15 @@ import { launchInDir, splitFlags, sessionLaunchExtras } from "./launch.js";
 let dir: string;
 const saved: Record<string, string | undefined> = {};
 
-function setEnv(k: string, v: string) { saved[k] = process.env[k]; process.env[k] = v; }
+// "" keeps the key in `saved` as undefined, so afterEach deletes it again
+function setEnv(k: string, v: string | "") { if (v === "") delete process.env[k]; else process.env[k] = v; }
+
+/** Points readWorkersCached at a cap of `tokens`: localContextTokens rides in the main config's workers section. */
+function capConfig(name: string, tokens: number) {
+  const f = join(dir, `${name}.config.yaml`);
+  writeFileSync(f, `workers:\n  localContextTokens: ${tokens}\n`);
+  setEnv("PAI_CONFIG_FILE", f);
+}
 
 async function project(slug: string, cfg?: object) {
   const root = join(dir, slug);
@@ -160,7 +168,63 @@ describe("pai session --local plan", () => {
       expect(cmds).not.toContain("inject-observations");
       expect(cmds).not.toContain("load-core-context");
       // --model override validates against the provider's configured ids
-      // --model override validates against the provider's configured ids
       await expect(planLocalSession({ ...opts, model: "nope" })).rejects.toThrow(/not configured/);
+  });
+
+  // the compact window resolver (run-env.ts localCompactWindow): a provider env
+  // entry for the key is the model's native window as shipped in providers.yaml
+  // (gyro-l carries 262144 there), never an operator choice — it must not win
+  // over workers.localContextTokens, or `session --local` compacts at 262144
+  // and stalls the local engine at 130k+ contexts (1.2.129).
+  it("compact window: a provider env model window never widens past the cap; the cap wins; the model window caps from above", async () => {
+    const { parseWorkersConfig } = await import("../../workers/config.js");
+    const { localCompactWindow } = await import("../../workers/run-env.js");
+    // parseWorkersConfig fills the provider shape from its defaults (strict parse)
+    const mk = (env: Record<string, string>) => parseWorkersConfig({ providers: { gyro: { ...mkProvider(9), env } } }).providers.gyro;
+    // the cap reads from the main config's workers section (a fresh file per
+    // value: readWorkersCached keys its cache on path+mtime)
+    capConfig("cap64k", 65536);
+    // a provider entry above the cap is the model window, not an operator choice
+    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144" }))).toBe(65536);
+    // no provider entry: the configured value alone
+    expect(localCompactWindow(mk({}))).toBe(65536);
+    // a model window below the cap (apple-fm ships 8k under it) still holds: a conversation must fit the model
+    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "8192" }))).toBe(8192);
+    // a configured cap above the model window lets the model window stand
+    capConfig("cap300k", 300000);
+    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144" }))).toBe(262144);
+    // a configured cap always wins, however small (the parse floor is 1000)
+    capConfig("cap1k", 1000);
+    expect(localCompactWindow(mk({}))).toBe(1000);
+    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "8192" }))).toBe(1000);
+  });
+
+  it("print-cmd shows the configured cap under a provider's model window, and the configured value when set", async () => {
+    const { parseWorkersConfig } = await import("../../workers/config.js");
+    const { planLocalSession, localSessionPrintText } = await import("../commands/session.js");
+    // gyro ships a 262144 model window in its provider env (the shipped providers.yaml form)
+    const withWin = parseWorkersConfig({ providers: { gyro: { ...mkProvider(9), env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144" } } } }).providers.gyro;
+    // the cap rides from the main config's workers section (readWorkersCached),
+    // not from parseWorkersConfig's arg
+    capConfig("pcap64k", 65536);
+    const ch = join(dir, "claude-home-win");
+    mkdirSync(ch, { recursive: true });
+    writeFileSync(join(ch, "settings.json"), JSON.stringify({ env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "200000" } }));
+    setEnv("CLAUDE_CONFIG_DIR", ch);
+    const cj = join(dir, `claude-win-${Date.now()}.json`);
+    writeFileSync(cj, JSON.stringify({ mcpServers: { aibroker: { command: "echo" }, pai: { command: "echo" } } }));
+    const opts = { workers: parseWorkersConfig({ providers: { gyro: withWin } }), logDir: join(dir, "logs-win"), sessionName: "win", check: async () => true, route: () => "http://127.0.0.1:65432", claudeJson: cj };
+    // defaults (workers.localContextTokens = 64k): print-cmd shows 65536, never the model's 262144
+    const p = await planLocalSession(opts);
+    expect(p.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("65536");
+    expect(localSessionPrintText(p)).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW=65536");
+    // the written slim settings carry it too (settings env outranks the process env)
+    const s = JSON.parse(readFileSync(p.settingsFile!, "utf8")) as Record<string, any>;
+    expect(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("65536");
+    // an explicit configured value wins and print-cmd shows it
+    capConfig("pcap100k", 100000);
+    const q = await planLocalSession(opts);
+    expect(q.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("100000");
+    expect(localSessionPrintText(q)).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000");
   });
 });

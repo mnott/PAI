@@ -642,8 +642,10 @@ export interface WorkersConfig {
    * unrecognised local model's window and assumes 200k, so it compacts only
    * near that — on one local engine every turn then costs a 130k+ context. The
    * value goes to the worker as CLAUDE_CODE_AUTO_COMPACT_WINDOW (Claude Code's
-   * own autocompact-window setting; an explicit provider env for the key still
-   * wins). `pai worker resume` on a local provider above this cap starts a
+   * own autocompact-window setting; workers.localContextTokens is the one
+   * explicit value for the key — a provider env entry for it is the model's
+   * native window and only caps this from above, never widens it).
+   * `pai worker resume` on a local provider above this cap starts a
    * fresh conversation instead of --resume (resume-args.ts). Cloud runs are untouched.
    */
   localContextTokens: number;

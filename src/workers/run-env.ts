@@ -251,21 +251,19 @@ export function buildRunEnv(
     delete env.PAI_WORKER_LOCAL;
     if (isLoopbackProvider(provider)) env.PAI_WORKER_LOCAL = "1";
   }
-  // Local runs compact early — see the block after the provider env merge,
-  // where the cap is applied (a provider's own env for the key wins).
+  // Local runs compact early — the resolver below runs after the provider env
+  // merge, where the value is applied.
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
-  // provider env is the operator's explicit per-provider call and wins over the
-  // local autocompact cap above (the apple-fm default ships its own window).
-  // Interactive too: `pai session --local` runs the main context through the
-  // same loopback engine, and it must fit workers.localContextTokens as well.
-  if (isLoopbackProvider(provider) && provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === undefined) {
-    try {
-      const cap = readWorkersCached().localContextTokens;
-      if (cap > 0) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(cap);
-    } catch {
-      /* unreadable config: Claude Code keeps its own default */
-    }
-  }
+  // workers.localContextTokens is THE value for a loopback run (the operator's
+  // explicit config), interactive `pai session --local` included: Claude Code
+  // assumes an unrecognised local model's window is 200k and compacts only
+  // near it, so a main session on a 64k-capped engine stalls gyro-l at 130k+
+  // (1.2.129). A provider env entry for the key is not an operator choice —
+  // providers.yaml ships each model's native window there (gyro-l 262144) — so
+  // it never widens past the cap; it only stands when the cap itself is larger
+  // (apple-fm: cap 64k > its own 8k, a conversation must still fit the model).
+  const localWindow = isLoopbackProvider(provider) ? localCompactWindow(provider) : undefined;
+  if (localWindow !== undefined) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(localWindow);
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   // The billing header Claude Code puts first in the system prompt changes on
   // every request (cch=<body hash>); a prefix cache then reuses only the tool
@@ -287,6 +285,29 @@ export function buildRunEnv(
     env.ENABLE_TOOL_SEARCH = "true";
   }
   return env;
+}
+
+/**
+ * The autocompact window (tokens) of a loopback run — the one resolver every
+ * local path uses (buildRunEnv, slim-profile settings, `pai session --local`).
+ * workers.localContextTokens is the operator's explicit value for the key and
+ * wins; a provider env entry for it is the model's native window as shipped in
+ * providers.yaml (gyro-l 262144), never an operator choice — it only caps the
+ * value from above (a conversation must fit the model: apple-fm ships its own
+ * 8k under the 64k cap). An unreadable config keeps a provider's window when
+ * it has one, else leaves Claude Code its own default.
+ */
+export function localCompactWindow(provider: WorkerProvider): number | undefined {
+  const modelWindow = Number(provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+  const cap = (() => {
+    try {
+      return readWorkersCached().localContextTokens;
+    } catch {
+      return 0;
+    }
+  })();
+  if (cap > 0) return Number.isFinite(modelWindow) && modelWindow > 0 ? Math.min(cap, modelWindow) : cap;
+  return Number.isFinite(modelWindow) && modelWindow > 0 ? modelWindow : undefined;
 }
 
 /** First-party route a native run is pinned to when no route is set. */
