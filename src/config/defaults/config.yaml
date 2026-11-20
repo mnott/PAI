@@ -255,6 +255,11 @@ router:
   # (`pai antipatterns set <id> proxy enforce`); shipped patterns stay monitor.
   guard:
     mode: off
+  # Cloud -> local failover: a cloud request that fails with a usage/subscription limit (429) or with no network at all is retried
+  # on the running local model; the session then stays local for stickyMin minutes, after which a 1-token probe decides when to go back.
+  failover:
+    enabled: true
+    stickyMin: 30
   bind: loopback
   # Tool-call repair rules (src/router/tool-call-rules.ts). Files live in <PAI home>/<dir>/;
   # providers maps a provider (or provider -> model, "*" = any) to a file that starts with

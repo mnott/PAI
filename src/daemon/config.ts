@@ -150,6 +150,8 @@ export interface RouterConfig {
   watchdog?: { failStreak?: number };
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
+  /** Cloud failure (usage limit 429, no network) -> the same request is retried on the running local model, and the session stays local for stickyMin minutes. Default: enabled true, stickyMin 30. */
+  failover?: { enabled?: boolean; stickyMin?: number };
   /** Retry once a local answer whose text is an unparsed tool-call block (the router holds local answers until complete). Default: true. */
   localToolCallRetry?: boolean;
   /** Guard rules on the model replies passing the router. "monitor" records firings with source proxy and never alters, delays or blocks a reply; "enforce" additionally rewrites a tool call the rules deny (a pattern acts on the proxy only when its own `proxy` field is enforce). Default: off. */

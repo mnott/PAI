@@ -31,6 +31,7 @@ More on the commands: [config.md](config.md). Worker keys: [workers-config.md](w
 | Notices to your phone | `notices.pailot.*`, `notices.runReports.*`, `notices.trouble.*` | What may reach PAILot: rate limit (default 5 per minute), de-duplication window (24 h), run-report throttles, worker-trouble thresholds. |
 | Panes | `panes.*` | Minimum pane size, pane verification tries, grace and linger times, how long pane run records are kept. |
 | Router | `router.enabled` (default off), `router.bind` | The local-model router ([router](concepts/router.md)). |
+| Router failover | `router.failover.enabled` (default on), `router.failover.stickyMin` (30) | Cloud exhausted or offline: the session continues on the local model ([router](router.md)). |
 | Router scheduling | `router.scheduling.*` | One request per engine, fair across sessions: token weights, aging, session weights, warm and ping times. |
 | Router parking | `router.parking.enabled` (off), `parkAfterSec` 120 | Park an idle local conversation to disk. |
 | Router sampling | `router.samples.*` | Sample interval and history length for the cockpit's model cards. |

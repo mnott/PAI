@@ -49,3 +49,24 @@ pai daemon restart
 ```
 
 While the daemon is stopped, scheduler passes and router supervision do not run. `pai help` lists these under Services. MCP: `daemon_service` with the same four actions.
+
+## Failover to the local model
+
+When the cloud subscription is exhausted or there is no network, a normal session (`pai NAME`) keeps working on the local model without a restart. The router retries the same request on the running local model (the one `pai worker run --local` resolves, e.g. gyro-l) when a cloud request fails with
+
+- a usage or subscription limit: HTTP 429/402 whose body says "usage limit reached" (or whose `retry-after` is 5 minutes or more). An ordinary short rate limit is not an exhaustion and keeps the normal cloud retry;
+- a network failure before any response byte: DNS failure, connection refused or reset, no connection within 10 s.
+
+The model id is mapped to the local model, thinking blocks and the billing header are stripped like for any local provider, and the local answer is streamed back in the same format. The session (`x-pai-session`, else the Claude session id) stays local for `router.failover.stickyMin` minutes (default 30); then a 1-token cloud probe decides when to go back. Workers already on a local provider are unaffected.
+
+If the request is larger than the local window (`workers.localContextTokens`), the client gets an error asking it to `/compact` instead of an oversized prompt reaching the engine.
+
+Each failover writes one ledger line `ROUTER-FAILOVER` (session, reason `usage-limit` or `offline`, `to`), and sends one notice per failover to the session's mailbox and PAILot ("cloud unavailable (<reason>), this session now runs on the local model"). Local requests carry the session id, so the cockpit shows the session as local.
+
+Switch: `pai config set router.failover.enabled false` (default true); `router.failover.stickyMin` sets the sticky minutes.
+
+### Starting without network
+
+`pai NAME` and `pai NAME --local` start offline: `--local` launches set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and the launcher's only network step before exec is the route probe of the local router, limited to 2 s. When the router answers that its cloud upstream is unreachable, the session stays on the router (which fails over) instead of falling back to the first-party URL.
+
+MCP servers that need the network and simply return errors while offline: coogle, todoist, teams, webfetch and browsr (web pages). Local ones (aibroker, pai) keep working.

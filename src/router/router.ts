@@ -62,6 +62,10 @@ import { createUpstreamStreak } from "./preflight.js";
 import { acquireEngine, engineAgent, isResetError, RESET_BACKOFF_MS } from "./engine-limit.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
+import { FailoverState, failoverNotice, isOfflineError, isUsageExhaustion, localModelOf, probeCloud, type FailoverReason } from "./failover.js";
+import { resolveLocalProvider } from "../workers/local-provider.js";
+import { aibrokerMessenger } from "../workers/run-events.js";
+import { readWorkersCached } from "../workers/config.js";
 import { engineIdleFrom } from "./engine-idle.js";
 import { readLocalIdle } from "../workers/local-idle.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
@@ -296,6 +300,20 @@ export interface RouterOptions {
    * is answered 403. Proxy traffic (Host 127.0.0.1:<port>, no Origin) passes.
    */
   hosts?: { bind: string; extraHosts: string[] };
+  /** Cloud -> local failover; each field defaults to config router.failover. `notify` receives the once-per-failover notice (default: session mailbox + PAILot). */
+  failover?: {
+    enabled?: boolean;
+    stickyMin?: number;
+    /** local window in tokens; default workers.localContextTokens */
+    localContextTokens?: number;
+    /** local provider name; default: the first running local engine (like `pai worker run --local`) */
+    localProvider?: () => Promise<string>;
+    /** cloud probe once the sticky window is over; default: a 1-token messages call */
+    probe?: (headers: Record<string, string>, model: string) => Promise<boolean>;
+    notify?: (info: { session: string; reason: FailoverReason; text: string }) => void;
+    /** ledger line; default appendLedger ROUTER-FAILOVER */
+    onFailover?: (info: { session: string; reason: FailoverReason; to: string }) => void;
+  };
 }
 
 /** Catalogue shape endpointRegistry needs: which providers a managed model launches (cached 2 s). */
@@ -612,6 +630,7 @@ export function routerHandler(
   // runs that died without revoking: their tokens go with the next sweep
   setInterval(() => tokens.sweep(), 30_000).unref();
   const gaps = new GapTracker();
+  const failState = new FailoverState();
   const warned = new Set<string>();
   const instancesOf = options?.instances ?? stateFileInstances();
   const launched = launchedConfig();
@@ -808,6 +827,80 @@ export function routerHandler(
       // Preemption (scheduled local requests only): `yielded` polls whether a --now run paused this worker;
       // `onYield` frees the engine and parks the same request again (see the abort below).
       let touchHold: () => void = () => {};
+      // ---- cloud -> local failover (router.failover) ----
+      const foCfg = (): { enabled: boolean; stickyMin: number } => {
+        const c = loadConfig().router.failover;
+        return { enabled: options?.failover?.enabled ?? c?.enabled ?? true, stickyMin: options?.failover?.stickyMin ?? c?.stickyMin ?? 30 };
+      };
+      const foKey = headerValue(req.headers["x-pai-session"], 80) || sessionId || "anon";
+      const foEligible =
+        target.kind === "claude" && !runProvider && !isCount && wire!.id === "messages" && !req.headers["x-pai-failover"] && !!(presented || req.headers["x-api-key"]) && foCfg().enabled; // an unauthenticated request is the launch probe: it never fails over
+      const failoverTo = (reason: FailoverReason | "sticky"): void => {
+        void (async () => {
+          const reasonKey: FailoverReason = reason === "sticky" ? failState.get(foKey)?.reason ?? "offline" : reason;
+          const cap = options?.failover?.localContextTokens ?? readWorkersCached().localContextTokens ?? 65536;
+          const tokens = estimateTokens(up.body);
+          if (tokens > cap) {
+            return fail(
+              400,
+              `cloud unavailable (${reasonKey}) and this conversation (~${tokens} tokens) is larger than the local model window (${cap}); run /compact, then retry`,
+              target.model,
+              ANTHROPIC_NATIVE
+            );
+          }
+          let name: string;
+          try {
+            name = await (options?.failover?.localProvider ?? (async () => (await resolveLocalProvider(readWorkersSection().workers, workersLogDir(readWorkersSection().workers))).name))();
+          } catch (e) {
+            return fail(502, `cloud unavailable (${reasonKey}) and no local model is running: ${(e as Error).message}`, target.model, ANTHROPIC_NATIVE);
+          }
+          const lp = providers[name];
+          const lm = lp ? localModelOf(lp) : undefined;
+          if (!lp || !lm) return fail(502, `cloud unavailable (${reasonKey}) and local provider ${name} declares no model`, target.model, ANTHROPIC_NATIVE);
+          if (reason !== "sticky") {
+            const fresh = failState.pin(foKey, reason, foCfg().stickyMin);
+            if (fresh) {
+              try {
+                (options?.failover?.onFailover ?? ((i) => appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-FAILOVER", i)))({ session: foKey, reason, to: name });
+              } catch {
+                /* the ledger is best effort */
+              }
+              const text = failoverNotice(reason);
+              try {
+                if (options?.failover?.notify) options.failover.notify({ session: foKey, reason, text });
+                else {
+                  const msg = aibrokerMessenger(workersLogDir(readWorkersSection().workers));
+                  void msg.toSession({ name: foKey }, text).catch(() => false);
+                  void msg.toPailot(`${text} (${foKey}, ${new Date().toISOString().slice(11, 16)})`).catch(() => false);
+                }
+              } catch {
+                /* notices are best effort */
+              }
+            }
+          }
+          const body = Buffer.from(JSON.stringify({ ...(safeBody(Buffer.concat(chunks)) ?? {}), model: lm }));
+          const headers: Record<string, string> = {};
+          for (const [k, v] of Object.entries(req.headers)) {
+            const lk = k.toLowerCase();
+            if (HOP.has(lk) || AUTH.has(lk) || lk === "accept-encoding" || lk === "content-encoding" || v === undefined) continue;
+            headers[lk] = Array.isArray(v) ? v.join(", ") : v;
+          }
+          headers["content-length"] = String(body.length);
+          headers["x-pai-provider"] = name;
+          headers["x-pai-failover"] = "1";
+          const lq = http.request({ host: "127.0.0.1", port: req.socket.localPort, path: req.url ?? path, method: "POST", headers }, (lres) => {
+            const rh = { ...lres.headers };
+            delete rh["transfer-encoding"];
+            delete rh.connection;
+            res.writeHead(lres.statusCode ?? 502, rh);
+            lres.pipe(res);
+          });
+          lq.on("error", (e) => fail(502, `local failover to ${name} failed: ${e.message}`, lm, name));
+          res.on("close", () => lq.destroy());
+          lq.end(body);
+        })();
+      };
+
       const forward = (release0: (u?: Usage, opts?: { gate?: boolean }) => void, preempt?: { yielded: () => boolean; onYield: () => void }): void => {
         // a local engine takes a bounded number of requests at once; the rest wait here, whichever path they came by
         if (res.destroyed) return release0();
@@ -1100,8 +1193,35 @@ export function routerHandler(
         touchHold();
         ures0.on("data", touchHold);
         if (resets) log(`${new Date().toISOString()} ${target.model} ${prov} upstream reset, retried ${resets}x, ok`);
+        if (foEligible && (ures0.statusCode === 429 || ures0.statusCode === 402)) {
+          const bits: Buffer[] = [];
+          ures0.on("data", (c: Buffer) => bits.push(c));
+          ures0.on("end", () => {
+            const raw = Buffer.concat(bits);
+            if (!res.destroyed && isUsageExhaustion(ures0.statusCode ?? 429, ures0.headers, raw.toString("utf8"))) {
+              release();
+              return failoverTo("usage-limit");
+            }
+            const h = { ...ures0.headers };
+            delete h["content-length"];
+            const src = Readable.from([raw]) as unknown as http.IncomingMessage;
+            src.statusCode = ures0.statusCode;
+            src.headers = h;
+            gate(src);
+          });
+          return;
+        }
         gate(ures0);
       });
+      if (foEligible) {
+        // no connection within 10 s = offline (a slow answer after connecting is not)
+        ureq.on("socket", (sock) => {
+          if (!sock.connecting) return;
+          const t = setTimeout(() => ureq.destroy(Object.assign(new Error("connect timeout"), { code: "ETIMEDOUT" })), 10_000);
+          t.unref();
+          sock.once("connect", () => clearTimeout(t));
+        });
+      }
       ureq.on("error", (e: NodeJS.ErrnoException) => {
         if (aborted) return;
         // engine reset before any response byte reached the client: wait and send again
@@ -1111,6 +1231,11 @@ export function routerHandler(
           return;
         }
         if (resets) log(`${new Date().toISOString()} ${target.model} ${prov} upstream reset, retried ${resets}x, failed ${e.code ?? e.message}`);
+        if (foEligible && isOfflineError(e.code) && !streamed && !res.headersSent && !res.destroyed) {
+          release();
+          log(`${new Date().toISOString()} ${target.model} ${prov} cloud unreachable (${e.code}), failing over to the local model`);
+          return failoverTo("offline");
+        }
         release();
         record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());
         if (!isLocal(up.url)) upstreamStreak().failure(e.code);
@@ -1154,6 +1279,29 @@ export function routerHandler(
       }
       send();
       };
+      if (foEligible || (target.kind === "claude" && isCount && failState.get(foKey) && foCfg().enabled)) {
+        const st = failState.get(foKey);
+        if (st && isCount) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ input_tokens: estimateTokens(up.body) }));
+          return;
+        }
+        if (st) {
+          void (async () => {
+            if (Date.now() < st.until) return failoverTo("sticky");
+            const ph: Record<string, string> = { ...up.headers };
+            delete ph["content-length"];
+            const back = await (options?.failover?.probe ?? ((h: Record<string, string>, m: string) => probeCloud(claudeBase, h, m)))(ph, target.model);
+            if (back) {
+              failState.release(foKey);
+              return forward(() => {});
+            }
+            failState.pin(foKey, st.reason, foCfg().stickyMin);
+            failoverTo("sticky");
+          })();
+          return;
+        }
+      }
       // Local engine: one request in flight, the rest wait here (scheduler.ts). Any scheduler fault forwards directly.
       let scheduled = false;
       if (target.kind === "provider" && !isCount && isLocal(up.url) && schedEnabled()) {

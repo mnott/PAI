@@ -497,7 +497,8 @@ req.end(body);
 `;
 
 
-const PROBE_TIMEOUT_MS = 3000;
+/** Time box of the launch preflight: a dead network must never hold `pai NAME` back (2 s). */
+const PROBE_TIMEOUT_MS = 2000;
 const PROBE_MODEL = "claude-haiku-4-5";
 
 export interface RouteProbe {
@@ -519,6 +520,8 @@ export function interpretProbe(route: string, out: string): RouteProbe {
   }
   if (r.status !== undefined) {
     if (r.status < 500) return { live: true };
+    // offline with router.failover on: the router itself is up and answers the session from the local model
+    if (/upstream error: (ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH)/.test(r.message ?? "") && loadConfig().router.failover?.enabled !== false) return { live: true };
     return {
       live: false,
       reason: `router upstream failed (${r.status}: ${r.message ?? ""})`, fix: "check router.claudeUpstream in config.yaml",
