@@ -8,7 +8,8 @@ import { embedChunksWithBackend } from "../../../memory/indexer-backend.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { EMBED_PASS_BATCH_SIZE, DEFAULT_EMBED_MAX_LOAD, DEFAULT_EMBED_MAX_MINUTES, liveYieldCheck } from "../../../memory/embed-pass.js";
 import { indexTick, jobProgressFromEnv } from "../../../memory/job-progress.js";
-import { acquireRun, readRun, type RunHandle, type RunKind, type RunOutcome } from "../../../memory/run-state.js";
+import { rmSync } from "node:fs";
+import { acquireRun, inFlightPass, readRun, runStateFile, type RunHandle, type RunKind, type RunOutcome } from "../../../memory/run-state.js";
 import { reexecBackground, type PassName } from "../../../daemon/pass-priority.js";
 
 async function runPass(name: PassName, sleepMs: number, embed: EmbedPassArgs): Promise<unknown> {
@@ -16,9 +17,23 @@ async function runPass(name: PassName, sleepMs: number, embed: EmbedPassArgs): P
     await new Promise((r) => setTimeout(r, sleepMs));
     return { pid: process.pid };
   }
+  const kind = name as RunKind;
+  // a marker bearing OUR pid is never another pass: the daemon's in-process pass
+  // holds it under the daemon's pid, and `reexecBackground` re-execs this very
+  // command — forking keeps the pid. Only the daemon's own in-flight word says a
+  // pass of this kind runs here (2026-11-20: the nightly chain spawned its child
+  // while the daemon's index pass held the marker under that same pid, and the
+  // child refused the daemon's own marker).
   const held = readRun();
-  if (held) throw new Error(`${held.kind} already running (started by ${held.by}, pid ${held.pid})`);
-  const run = acquireRun(name as RunKind, { by: "daemon" });
+  if (held && !(held.pid === process.pid && !inFlightPass(held.kind))) {
+    throw new Error(`${held.kind} already running (started by ${held.by}, pid ${held.pid})`);
+  }
+  if (held) {
+    // a same-pid marker with no pass in flight here is stale (an earlier pass of
+    // this pid died without releasing): drop it, and take our own below.
+    rmSync(runStateFile(), { force: true });
+  }
+  const run = acquireRun(kind, { by: "daemon" });
   if (!run) throw new Error("another memory run just started");
   let result: { outcome: RunOutcome; reason?: string } = { outcome: "failed", reason: "pass threw" };
   try {

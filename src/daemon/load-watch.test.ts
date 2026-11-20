@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshLoadWatchState, loadWatchConfig, loadWatchTick, selectSuspects, stepLoadWatch, type LoadWatchDeps, type PsRow } from "./load-watch.js";
 import {
   lowPriorityConfig,
@@ -7,6 +11,15 @@ import {
   freshKeeperState,
   type KeeperDeps,
 } from "./low-priority-keeper.js";
+import {
+  acquireRun,
+  beginPass,
+  endPass,
+  inFlightPass,
+  readFinishedRun,
+  readRun,
+  runStateFile,
+} from "../memory/run-state.js";
 import {
   AUTOSTART_MAX_FAILURES,
   AUTOSTART_RETRY_MS,
@@ -526,5 +539,262 @@ describe("low priority keeper", () => {
     const status = await lowPriorityKeeperTick(keeperCfg, freshKeeperState(), keeperDeps(log, prios));
     expect(lowPriorityStatusLine(status)).toBe("Low priority: seaf-daemon (pid 1468, background)");
     expect(lowPriorityStatusLine(null)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The shared index/embed run marker + the daemon's own pass around it
+// (src/memory/run-state.ts, src/daemon/daemon/scheduler.ts) — incident
+// 2026-11-20 08:00: since 1.2.121 the daemon's in-process index pass holds the
+// marker under the daemon's OWN pid; a pass that died without releasing left
+// that marker standing, and every later scheduled pass refused itself
+// ("index already running (started by daemon, pid 15672)" — pid 15672 IS the
+// daemon), four FAILED attempts, then gave up with the cockpit Memory card red.
+// ---------------------------------------------------------------------------
+
+const runHome = mkdtempSync(join(tmpdir(), "pai-runmarker-"));
+afterAll(() => rmSync(runHome, { recursive: true, force: true }));
+
+/** The incident's leaked marker: this very pid, an index pass that is long gone. */
+const writeStaleOwnMarker = (kind: "index" | "embed"): void => {
+  mkdirSync(join(runHome, "state"), { recursive: true });
+  writeFileSync(
+    runStateFile(runHome),
+    JSON.stringify({ kind, pid: process.pid, by: "daemon", startedAt: new Date().toISOString(), backlogStart: null, done: 0, updatedAt: new Date(Date.now() - 45 * 60_000).toISOString(), jobId: "" }),
+    "utf8",
+  );
+};
+
+describe("the daemon's index pass no longer refuses itself", () => {
+  afterEach(() => {
+    endPass("index");
+    endPass("embed");
+    rmSync(runStateFile(runHome), { force: true });
+  });
+
+  it("a marker left by an earlier failed pass of this same pid is stale; the next pass takes it", () => {
+    writeStaleOwnMarker("index");
+    expect(readRun(runHome)).toBeNull(); // our own pid without beginPass = no pass in flight
+    const h = acquireRun("index", { by: "daemon", home: runHome });
+    expect(h).not.toBeNull();
+    expect(inFlightPass("index")).toBe(true); // the acquired handle registers the in-flight word
+    expect(readRun(runHome)?.pid).toBe(process.pid); // while in flight our own marker reads live
+    h!.release({ outcome: "failed", reason: "boom" });
+    expect(readRun(runHome)).toBeNull();
+    expect(inFlightPass("index")).toBe(false);
+    expect(readFileSync(join(runHome, "state", "memory-last-index.json"), "utf8")).toContain("boom"); // kept as the last finished run
+    const h2 = acquireRun("index", { by: "daemon", home: runHome }); // and the pass after it runs
+    expect(h2).not.toBeNull();
+    h2!.release({ outcome: "done" });
+  });
+
+  it("a marker held by another live process still blocks, even while this process has its own pass in flight", () => {
+    mkdirSync(join(runHome, "state"), { recursive: true });
+    writeFileSync(
+      runStateFile(runHome),
+      JSON.stringify({ kind: "embed", pid: 1, by: "cli", startedAt: new Date().toISOString(), backlogStart: null, done: 0, updatedAt: new Date().toISOString(), jobId: "" }),
+      "utf8",
+    );
+    beginPass("index"); // the daemon's own pass in flight must not override another starter's marker
+    expect(acquireRun("embed", { by: "daemon", home: runHome })).toBeNull();
+    expect(readRun(runHome)?.pid).toBe(1);
+  });
+
+  it("a crashed acquire (handle never returned) leaves no in-flight word and no live marker; the next pass still runs", () => {
+    // beginPass happens before takeMarker writes the file, so a crash inside the
+    // start cannot strand the in-flight word — and release() removes the file
+    // unconditionally, so no path leaves a same-pid marker that reads live.
+    beginPass("index");
+    endPass("index"); // the acquire's own finally (a crashed handle never keeps its word)
+    expect(inFlightPass("index")).toBe(false); // crashed acquire clears its word
+    const h = acquireRun("index", { by: "daemon", home: runHome });
+    expect(h).not.toBeNull();
+    h!.release({ outcome: "done" });
+    expect(readRun(runHome)).toBeNull();
+  });
+
+  it("the summaries child takes no marker at all: `code relate` / `code summarize --all --changed` spawn plain, not through the pass runner", async () => {
+    type EE = import("node:events").EventEmitter;
+    const req = createRequire(import.meta.url);
+    const spawn = vi.fn((cmd: string, args: string[]) => {
+      const { EventEmitter } = req("node:events") as typeof import("node:events");
+      const e = new EventEmitter() as EE & { stderr: { on: () => void } };
+      e.stderr = { on: () => undefined };
+      setTimeout(() => e.emit("close", 0), 0);
+      return e as never;
+    });
+    vi.doMock("node:child_process", async (importOriginal) => ({ ...(await importOriginal() as object), spawn }));
+    // fresh module instance: the daily gate is module state, and an earlier import must not pre-arm it
+    vi.resetModules();
+    const { runCodeSummariesDaily } = await import("./code-summaries-pass.js");
+    await runCodeSummariesDaily();
+    await runCodeSummariesDaily(); // daily gate: a second call the same day does nothing
+    vi.doUnmock("node:child_process");
+    vi.resetModules(); // hand the later tests (and their doMock) a clean module graph again
+    expect(spawn).toHaveBeenCalledTimes(2);
+    const [relate, summaries] = spawn.mock.calls as unknown as [string, string[], { env?: NodeJS.ProcessEnv }][];
+    for (const [cmd, args] of [relate, summaries]) {
+      expect(cmd).not.toContain("taskpolicy"); // no low-priority pass wrapper…
+      expect(args.join(" ")).not.toMatch(/(^|\/)memory pass( |$)/); // …and never the marker-taking `memory pass` entry
+    }
+    expect(relate[1].join(" ")).toContain("code relate");
+    expect(summaries[1].join(" ")).toMatch(/code summarize --all --changed/);
+    expect(summaries[2]?.env?.PAI_PASS_BACKGROUND).toBe("1"); // still background priority inside
+    expect(readRun(runHome)).toBeNull();
+  });
+
+  it("the summaries chain holds no marker anywhere: neither the code-graph nightly nor the summaries step takes one", () => {
+    const src = readFileSync(new URL("./code-summaries-pass.ts", import.meta.url), "utf8")
+      + readFileSync(new URL("../codegraph/nightly.ts", import.meta.url), "utf8")
+      + readFileSync(new URL("../codegraph/summaries.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/acquireRun|memory-run\.json|runPassChild|"memory pass"/); // the whole nightly chain: no marker, never the `memory pass` entry
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The daemon's scheduled index pass against the marker (src/daemon/daemon/
+// scheduler.ts): a leaked own-pid marker must not stop the pass; a genuinely
+// in-flight pass is "skipped: already running", never a FAILED attempt — a
+// skip must not turn the cockpit Memory card red (passFailures → dashboard
+// level red). The real module runs against a temp PAI_HOME with everything
+// heavy mocked, so no backend or child process is touched.
+// ---------------------------------------------------------------------------
+
+vi.mock("../storage/factory.js", () => ({
+  getStorageBackend: async () => ({}),
+  getRegistryBackend: async () => ({}),
+}));
+vi.mock("./config.js", async (importOriginal) => {
+  const orig = await importOriginal() as { loadConfig: () => Record<string, unknown> };
+  return { ...orig, loadConfig: () => ({ ...orig.loadConfig(), passPriority: "in-process" }) };
+});
+vi.mock("../battery-guard.js", () => ({ batteryPassRefusal: () => null }));
+// the load guard is machine state, not the thing under test: this box runs busy
+vi.mock("../memory/embed-pass.js", async (importOriginal) => {
+  const orig = await importOriginal() as Record<string, unknown>;
+  return { ...orig, passYieldReason: () => null };
+});
+vi.mock("../pass-priority.js", async (importOriginal) => {
+  const orig = await importOriginal() as object;
+  return { ...orig, runPassChild: vi.fn(async () => { throw new Error("child spawn must not be used"); }) };
+});
+vi.mock("./handler.js", () => ({ sendNotification: async () => undefined }));
+
+const schedIdx = await import("./daemon/scheduler.js");
+const schedState = await import("./daemon/state.js");
+
+describe("the daemon's scheduled index pass and the marker", () => {
+  let lines: string[];
+  let writeSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    lines = [];
+    writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(((s: string | Uint8Array) => { lines.push(String(s)); return true; }) as never);
+    schedState.setIndexInProgress(false);
+    schedState.passFailures.clear();
+    schedState.setLastIndexPass({ at: 0, durationMs: 0, projects: 0, files: 0, chunks: 0 });
+    endPass("index");
+    rmSync(runStateFile(), { force: true }); // PAI_HOME is the per-run temp home (test/setup-home-guard.ts)
+  });
+  afterEach(() => writeSpy.mockRestore());
+
+  it("a marker left by an earlier failed pass of this same pid does not stop the next pass", async () => {
+    writeStaleOwnMarker("index"); // same pid as this test process = same rule as the daemon's own pid
+    schedState.setStorageBackend({ indexAll: vi.fn(async () => ({ result: { filesProcessed: 3, chunksCreated: 7 }, projects: 2 })) } as never);
+    schedState.setRegistryBackend({} as never);
+    schedState.setDaemonConfig({ ...schedState.daemonConfig, passPriority: "in-process" } as never);
+    await schedIdx.runIndex();
+    expect(schedState.storageBackend.indexAll).toHaveBeenCalledTimes(1); // the pass ran (old code: refused itself)
+    if (lines.some((l) => l.includes("pass FAILED"))) throw new Error(lines.join("|"));
+    expect(lines.some((l) => l.includes("pass FAILED"))).toBe(false);
+    expect(schedState.passFailures.has("index")).toBe(false);
+    expect(readRun()).toBeNull(); // released on the success path
+    expect(inFlightPass("index")).toBe(false);
+  });
+
+  it("a pass that throws still releases the marker and its in-flight word (the leak's finally)", async () => {
+    schedState.setStorageBackend({ indexAll: vi.fn(async () => { throw new Error("backend died"); }) } as never);
+    schedState.setRegistryBackend({} as never);
+    schedState.setDaemonConfig({ ...schedState.daemonConfig, passPriority: "in-process" } as never);
+    await schedIdx.runIndex(); // attempt 1 fails (retry timers are unref'd and never fire in a test run)
+    expect(schedState.passFailures.get("index")?.attempts).toBe(1);
+    expect(lines.some((l) => l.includes("Index error: backend died"))).toBe(true);
+    expect(readRun()).toBeNull();
+    expect(inFlightPass("index")).toBe(false);
+    expect(schedState.indexInProgress).toBe(false);
+  });
+
+  it("a concurrent scheduled pass while one is in flight is skipped, not FAILED; a foreign marker with nothing in flight is a refusal", async () => {
+    let release!: (v: unknown) => void;
+    schedState.setStorageBackend({ indexAll: vi.fn(() => new Promise((r) => { release = r; })) } as never);
+    schedState.setRegistryBackend({} as never);
+    schedState.setDaemonConfig({ ...schedState.daemonConfig, passPriority: "in-process" } as never);
+    const first = schedIdx.runIndex();
+    await vi.waitFor(() => expect(schedState.indexInProgress).toBe(true));
+    if (lines.some((l) => l.includes("Index error"))) throw new Error(lines.join("|"));
+    await schedIdx.runIndex(); // the next tick lands while the first is mid-flight
+    expect(lines.some((l) => l.includes("in progress, skipping") || l.includes("skipped: already running"))).toBe(true);
+    expect(lines.some((l) => l.includes("pass FAILED"))).toBe(false);
+    expect(schedState.passFailures.has("index")).toBe(false); // no failure record → the dashboard pass tile stays green, the card is not red
+    expect(schedState.storageBackend.indexAll).toHaveBeenCalledTimes(1);
+    release({ result: { filesProcessed: 1, chunksCreated: 1 }, projects: 1 });
+    await first;
+    expect(readRun()).toBeNull();
+    // a marker of another starter (pid 1) with nothing in flight here: still refused, never run
+    writeFileSync(runStateFile(), JSON.stringify({ kind: "index", pid: 1, by: "cli", startedAt: new Date().toISOString(), backlogStart: null, done: 0, updatedAt: new Date().toISOString(), jobId: "" }), "utf8");
+    await schedIdx.runIndex();
+    expect(schedState.storageBackend.indexAll).toHaveBeenCalledTimes(1); // the foreign marker was never overwritten
+    expect(lines.some((l) => l.includes("another index/embed run holds the marker"))).toBe(true);
+    expect(schedState.passFailures.has("index")).toBe(false); // held ≠ FAILED either
+  });
+
+  it("the cockpit Memory card does not go red for a skip or a refusal", async () => {
+    // dashboard-live joins the daemon-config singleton; after a module reset it needs its own
+    vi.resetModules();
+    const dstate = await import("./daemon/state.js");
+    const dcfg = await import("./config.js");
+    dstate.setDaemonConfig(dcfg.loadConfig());
+    const { livePasses, memoryDashboard } = await import("./daemon/dashboard-live.js");
+    const { cockpitMemoryPayload, resetMemoryStale } = await import("../router/cockpit-memory.js");
+    schedState.passFailures.clear(); // no FAILED attempt: the skip/refusal paths leave none
+    schedState.setDaemonConfig({ ...schedState.daemonConfig, passPriority: "in-process" } as never);
+    dstate.setLastIndexPass({ at: Date.now(), durationMs: 0, projects: 0, files: 0, chunks: 0, outcome: "refused", reason: "another index/embed run is active" });
+    const s = memoryDashboard(null);
+    const passes = livePasses(); // the daemon's pass snapshots (what dashboard.ts marks red on a failure)
+    expect(passes.find((p) => p.name === "index")?.failure).toBeNull();
+    expect((s.lastIndexPass as { outcome?: string } | null)?.outcome).toBe("refused"); // the refusal record shows as text, not as a failed pass
+    resetMemoryStale();
+    const status = {
+      generatedAt: Date.now(), level: "green", reason: "all systems healthy",
+      daemon: { pid: process.pid, uptimeSecs: 1, version: "test", storage: "sqlite" },
+      index: { level: "green", files: 10, chunks: 100, embedded: 100, coverage: 1, countsExact: true, countsAt: Date.now(), segments: null, binding: null, configured: { backend: "sqlite", model: "m", dims: 4 }, mismatch: false, hint: null, error: null, bindingFailure: null },
+      jobs: [], passes,
+      backend: { level: "green", id: "sqlite", model: null, available: true, reason: null, loaded: null },
+    } as never;
+    const p = (await cockpitMemoryPayload({
+      daemon: async () => ({ status, embedBacklog: 0, maintenanceHour: null, indexIntervalSecs: 900, embedIntervalSecs: 900, embedMaxMinutes: null, lastIndexPass: { at: Date.now(), durationMs: 0, projects: 0, files: 0, chunks: 0, outcome: "refused", reason: "another index/embed run is active" }, lastEmbedPass: null, orphans: null, indexInProgress: false, embedInProgress: false }),
+      run: () => null,
+      home: runHome,
+      now: Date.now,
+      embedPasses: () => [],
+      deadRun: () => null,
+      finished: () => null,
+      lessons: () => [],
+    })) as { level: string; reason: string; lastIndex?: { refused?: string }; passes: { name: string; state: string }[] };
+    expect(p.level).not.toBe("red"); // a refusal shows as refused text, never red
+    expect(p.lastIndex?.refused).toBe("another index/embed run is active");
+    expect(p.passes.find((x) => x.name === "index")?.state).toBe("ok");
+    resetMemoryStale();
+  });
+
+  it("the cockpit's duplicate guard still refuses while the daemon's pass runs, and frees once it ends", async () => {
+    const { memoryRunRefusal } = await import("../router/cockpit-actions.js");
+    type ActionDeps = Parameters<typeof memoryRunRefusal>[0];
+    const deps = { home: runHome, readRun: () => readRun(runHome), daemonMemoryBusy: async () => null } as unknown as ActionDeps;
+    beginPass("index"); // our own marker (pid = this process) reads live for the guard…
+    writeStaleOwnMarker("index");
+    expect(await memoryRunRefusal(deps)).toContain("already running");
+    endPass("index"); // …and frees with the pass — a leaked marker never blocks "index now"
+    rmSync(runStateFile(runHome), { force: true });
+    expect(await memoryRunRefusal(deps)).toBeNull();
   });
 });

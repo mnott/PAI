@@ -5,7 +5,12 @@
  * (`pai memory pass`) write <PAI home>/state/memory-run.json while they run:
  * who started it, its pid and how far it is. The cockpit's Memory section
  * reads it to show progress and to refuse a second run; a marker whose pid is
- * gone is stale and ignored.
+ * gone is stale and ignored. A marker carrying the SAME pid as the reader is
+ * only held when that process registered an in-flight run of this kind
+ * (`beginPass`/`endPass`): the daemon's own index pass runs in-process, so its
+ * marker shares the daemon's pid, and a marker left by an earlier pass that
+ * ended without releasing must not lock every later pass out (2026-11-20
+ * 08:00: the daemon refused itself four times, then gave up).
  */
 
 import { execFileSync } from "node:child_process";
@@ -101,11 +106,25 @@ export function readRun(
       const s = startOf(r.pid);
       if (s === undefined || Math.abs(s - r.pidStart) > 2000) return null;
     }
+    // a marker carrying THIS process's pid is only held while this process says a
+    // run of that kind is in flight (`inFlightPass`): a long-lived process — the
+    // daemon — whose earlier pass left its marker behind must not read it as live.
+    if (r.pid === process.pid && !inFlightPass(r.kind)) return null;
     return r;
   } catch {
     return null;
   }
 }
+
+/** Kinds with a run in flight in this process, set by beginPass/endPass around every pass that holds the marker. */
+const passesInFlight = new Set<RunKind>();
+
+/** Register (or clear) that this process has an index/embed run in flight — the same handle's acquire…release window. */
+export function beginPass(kind: RunKind): void { passesInFlight.add(kind); }
+export function endPass(kind: RunKind): void { passesInFlight.delete(kind); }
+
+/** Whether this process holds a run of this kind in flight; the sole authority for a marker bearing our own pid. */
+export function inFlightPass(kind: RunKind): boolean { return passesInFlight.has(kind); }
 
 function write(file: string, r: RunState | FinishedRun): void {
   mkdirSync(dirname(file), { recursive: true });
@@ -139,9 +158,18 @@ export function acquireRun(
   const unlock = lockStart(file);
   if (!unlock) return null;
   try {
-    const held = readRun(o.home);
-    if (held && held.pid !== process.pid) return null;
-    return takeMarker(kind, o, file);
+    // readRun already treats a marker bearing our own pid as stale unless this
+    // process registered an in-flight run of that kind, so any marker it still
+    // reports belongs to another live run — refuse it (a same-pid marker left by
+    // an earlier pass of this process is overwritten below).
+    if (readRun(o.home)) return null;
+    beginPass(kind);
+    try {
+      return takeMarker(kind, o, file);
+    } catch (e) {
+      endPass(kind);
+      throw e;
+    }
   } finally {
     unlock();
   }
@@ -207,9 +235,14 @@ function takeMarker(
       try { write(file, state); } catch { /* progress is best effort */ }
     },
     release(result) {
+      // the in-flight flag goes first: from here on our own marker reads stale,
+      // and the file itself is removed unconditionally — every path that took
+      // this handle releases it (the callers' finally blocks), so a leftover
+      // same-pid marker is by definition ours and dead.
+      endPass(kind);
       try {
-        if (readRun(o.home)?.pid === process.pid) rmSync(file, { force: true });
-      } catch { /* a stale marker is ignored by readRun */ }
+        rmSync(file, { force: true });
+      } catch { /* best effort; readRun ignores a stale marker */ }
       try {
         const r = result ?? { outcome: "failed" as RunOutcome, reason: "ended without a result" };
         const fin: FinishedRun = { kind, by: state.by, startedAt: state.startedAt, endedAt: new Date(now()).toISOString(), backlogStart: state.backlogStart, done: Math.max(state.done, latest), outcome: r.outcome, reason: r.reason ?? "" };
