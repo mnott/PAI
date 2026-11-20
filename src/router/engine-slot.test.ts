@@ -318,3 +318,31 @@ describe("cloud -> local failover", () => {
     expect(t.ledger).toEqual([]);
   });
 });
+
+describe("stable prompt prefix for local requests", () => {
+  const mk = (date: string, git: string) => ({
+    system: [{ type: "text", text: "SYSPROMPT\ngitStatus: " + git + "\n# other\nkeep" }, { type: "text", text: "Today's date is " + date + "." }],
+    tools: [{ name: "b" }, { name: "a" }],
+    messages: [{ role: "user", content: "first" }, { role: "assistant", content: "ok" }, { role: "user", content: [{ type: "text", text: "go" }] }],
+  });
+  it("differing date/git status give identical system + tools; volatile text ends the last user message", async () => {
+    const { stabilizePrefix } = await import("./router.js");
+    const a = stabilizePrefix(mk("2026-11-20", "branch main\n\n(clean)")) as ReturnType<typeof mk>;
+    const b = stabilizePrefix(mk("2026-11-21", "branch dev\n\nM x.ts")) as ReturnType<typeof mk>;
+    expect(JSON.stringify([a.system, a.tools, a.messages.slice(0, 2)])).toBe(JSON.stringify([b.system, b.tools, b.messages.slice(0, 2)]));
+    expect(JSON.stringify(a.system)).toContain("keep");
+    expect(JSON.stringify(a.system)).not.toContain("2026-11-20");
+    const lastA = JSON.stringify(a.messages.at(-1));
+    expect(lastA).toContain("context:");
+    expect(lastA).toContain("2026-11-20");
+    expect(lastA).toContain("(clean)");
+    expect(JSON.stringify(b.messages.at(-1))).toContain("M x.ts");
+  });
+  it("cloud requests are untouched", async () => {
+    const { prepare } = await import("./router.js");
+    const raw = Buffer.from(JSON.stringify({ model: "claude-sonnet-5-5", ...mk("2026-11-20", "x") }));
+    const r = prepare("/v1/messages", {}, raw, {}, "https://api.anthropic.com");
+    expect(r.ok && r.up.body.toString()).toContain("Today's date is 2026-11-20");
+    expect(r.ok && r.up.body.toString()).not.toContain("context:");
+  });
+});
