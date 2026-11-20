@@ -69,7 +69,10 @@ import {
   benignNote,
   detectToolErrors,
   readToolErrors,
+  recordToolErrorCandidates,
   SAME_WORKER_WINDOW_MS,
+  TOOL_ERROR_CANDIDATE_SCAN_MS,
+  TOOL_ERROR_CANDIDATE_WINDOW_MS,
   toolErrorSigTag,
   toolErrorText,
   pushable,
@@ -387,6 +390,8 @@ export interface SupervisionState {
   pointered?: Record<string, number>;
   /** worker id → dedup key of the last repeat-loop finding handled (see loop-watch.ts). */
   loopSent?: Record<string, string>;
+  /** epoch ms of the last tool-error candidate scan (one per TOOL_ERROR_CANDIDATE_SCAN_MS). */
+  toolErrorCandidateAt?: number;
 }
 
 /** Cap on remembered workers: terminal and delivered is history, not state. */
@@ -652,6 +657,12 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   for (const w of Object.keys(runningSent)) if (!statuses.some((s) => s.id === w)) delete runningSent[w];
   const byId = new Map(statuses.map((s) => [s.id, s]));
   const records = readToolErrors(logDir, now.getTime() - SAME_WORKER_WINDOW_MS);
+  // a model/unknown tool-error signature repeating across runs becomes one
+  // antipattern candidate (deduped by signature): the alerts alone taught nothing
+  if ((state.toolErrorCandidateAt ?? 0) < now.getTime() - TOOL_ERROR_CANDIDATE_SCAN_MS) {
+    state.toolErrorCandidateAt = now.getTime();
+    recordToolErrorCandidates(readToolErrors(logDir, now.getTime() - TOOL_ERROR_CANDIDATE_WINDOW_MS), now.getTime());
+  }
   const ownedIds = new Set(statuses.filter((s) => ownershipKey(s)).map((s) => s.id));
   for (const p of detectRunningWorkerErrors(
     statuses

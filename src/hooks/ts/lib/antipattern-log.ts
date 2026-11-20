@@ -264,6 +264,8 @@ export interface CandidateInput {
   /** The observed input; only the excerpt is written. */
   input: string;
   env?: NodeJS.ProcessEnv;
+  /** How the candidate was observed; default: a guard stop no pattern covers. */
+  observed?: string;
 }
 
 /**
@@ -291,7 +293,7 @@ export function writeCandidate(c: CandidateInput): string | null {
       action: c.action,
       message: excerptOf(c.message) || "guard stop without a pattern",
       tests: { match: [excerpt], no_match: [] },
-      provenance: { date, model: modelOf(env), observed: `${c.action} by a guard no pattern covers` },
+      provenance: { date, model: modelOf(env), observed: c.observed ?? `${c.action} by a guard no pattern covers` },
     };
     writeFileSync(path, stringify(doc), { mode: 0o600 });
     return path;
