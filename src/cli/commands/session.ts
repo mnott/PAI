@@ -883,9 +883,9 @@ export async function planLocalSession(o: {
   // continue this folder's last conversation unless --new or rest already carries a resume/continue
   const cwd = o.cwd ?? process.cwd();
   const wantsResume = (o.rest ?? []).some((a) => a === "--resume" || a === "--continue");
-  const resumeUuid = wantsResume
+  const resumeUuid = wantsResume || o.forceFresh
     ? undefined
-    : await (o.resume ?? (() => resolveLocalResume({ cwd, resumeUuid: o.resumeUuid, forceFresh: o.forceFresh })))();
+    : await (o.resume ?? (() => resolveLocalResume({ cwd, resumeUuid: o.resumeUuid })))();
   const argv = [
     "claude",
     "--model",
