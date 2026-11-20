@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import type { WorkerProvider } from "./config.js";
 import { claudeHomeDir } from "../config/pai-home.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
+import { localCompactWindow } from "./run-env.js";
 import { writePrivateFile } from "./settings-file.js";
 import { claudeJsonPath } from "../config/claude-json.js";
 import { readMcpServers, writeMcpConfig } from "./mcp.js";
@@ -94,16 +95,18 @@ function applyProviderEnv(e: Record<string, unknown>, provider: WorkerProvider, 
   const cap = provider.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
   if (cap !== undefined) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = cap;
   else delete e.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
-  // The user settings' env outranks the process env, so a local worker's early
-  // autocompact window (buildRunEnv's CLAUDE_CODE_AUTO_COMPACT_WINDOW, from
-  // workers.localContextTokens) rides into this file — and whatever the
-  // operator set for their own first-party session goes: the user's percentage
-  // override rescales compaction against it and never applies to a provider route.
-  // the spawner's own value (the local cap) rides into the file: settings env
-  // outranks the process env, and this file is where a provider run reads env.
+  // The user settings' env outranks the process env, so a local run's early
+  // autocompact window rides into this file — and whatever the operator set
+  // for their own first-party session goes: the user's percentage override
+  // rescales compaction against it and never applies to a provider route.
+  // The value comes from the one resolver (localCompactWindow: the configured
+  // workers.localContextTokens, the model's own window only capping it from
+  // above — a providers.yaml entry for the key is the model's native window,
+  // not an operator choice, and must not print or run at 262144 under a 64k
+  // cap). The procEnv fallback keeps an injected cap (tests) working.
   // Only for a loopback provider — a cloud worker keeps whatever the user set.
   const win = isLoopbackUrl(provider.baseUrl)
-    ? provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? procEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    ? String(localCompactWindow(provider) ?? procEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "") || undefined
     : undefined;
   if (win !== undefined) e.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win;
   else delete e.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
