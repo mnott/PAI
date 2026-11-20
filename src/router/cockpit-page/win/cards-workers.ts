@@ -122,10 +122,23 @@ function wkTRow(r){
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
  return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
 }
+/** Interactive local sessions: state (generating / idle Nm) + failover badge, session chip, engine, last request age, tokens served; the second line (narrow pattern) carries tokens and request age. */
+function wkTok(n){n=n||0;return n<1000?String(n):n<1e6?(n/1000).toFixed(1)+"k":(n/1e6).toFixed(1)+"M"}
+function wkSessRow(s){
+ var st=s.inflight?"generating":"idle "+Math.floor(s.lastAgeSec/60)+"m",fo=s.failover?' <span class="wq-b" title="failed over from the cloud to the local model (ROUTER-FAILOVER)">failover</span>':"";
+ var sub=wkTok(s.tokens)+" tokens · last request "+wkDur(s.lastAgeSec)+" ago";
+ return'<tr class="wq-r wq-sess" data-sess="'+esc(s.session)+'"><td><span class="wq-b '+(s.inflight?"wq-run":"")+'">'+esc(st)+'</span>'+fo+'</td><td>'+wkChip(s.session,WK_FILTERS.indexOf(s.session)>=0)+'</td><td class="wq-tc"><div class="wq-nl"><span class="wq-t" title="'+esc(s.requests+" request(s)")+'">'+esc(s.session)+' · '+esc(s.engine)+'</span><div class="wq-id">'+esc(sub)+'</div></div></td><td class="wq-m">'+esc(s.engine)+'</td><td class="wq-p"></td><td class="r wq-tm">'+wkDur(s.lastAgeSec)+'</td><td class="wq-ac">'+esc(wkTok(s.tokens))+'</td></tr>';
+}
+function wkSessHtml(ss){
+ if(!ss||!ss.length)return"";
+ var out='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">Sessions (interactive)</td></tr>';
+ ss.forEach(function(s){out+=wkSessRow(s)});
+ return out;
+}
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
 /** The one table: fixed layout, one line per job. A group's label appears ONCE, above its rows — never after a row and never more than once per group (an empty group still shows "(none)"). */
 function wkQTable(rows){
- var g0=wkGroupOf,out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){var k=c[0]==="time"?"time":c[0],sk=k==="state"||k==="session"||k==="time",on=WK_SORT&&WK_SORT.col===k,ar=on?(WK_SORT.dir==="desc"?" ▼":" ▲"):"";return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+(on?' aria-sort="'+(WK_SORT.dir==="desc"?"descending":"ascending")+'"':'')+'>'+(sk?'<button type="button" class="wq-sort'+(on?' on':'')+'" data-qsort="'+k+'" title="sort by '+k+' (click again: ascending, descending, default order)">'+c[0]+ar+'</button>':c[0])+'</th>'}).join("")+'</tr></thead><tbody>';
+ var g0=wkGroupOf,out='<table class="wq"><colgroup>'+WK_COLS.map(function(c){return'<col'+(c[2]?' style="width:'+c[2]+(typeof c[2]==="string"?"":"px")+'"':'')+'>'}).join("")+'</colgroup><thead><tr>'+WK_COLS.map(function(c){var k=c[0]==="time"?"time":c[0],sk=k==="state"||k==="session"||k==="time",on=WK_SORT&&WK_SORT.col===k,ar=on?(WK_SORT.dir==="desc"?" ▼":" ▲"):"";return'<th'+(c[1].indexOf(" r")>0?' class="r"':'')+(on?' aria-sort="'+(WK_SORT.dir==="desc"?"descending":"ascending")+'"':'')+'>'+(sk?'<button type="button" class="wq-sort'+(on?' on':'')+'" data-qsort="'+k+'" title="sort by '+k+' (click again: ascending, descending, default order)">'+c[0]+ar+'</button>':c[0])+'</th>'}).join("")+'</tr></thead><tbody>'+wkSessHtml(WQ&&WQ.sessions);
  var bs=WK_SORT&&WK_SORT.col==="session",flat=WK_SORT&&!bs;
  if(flat){rows.forEach(function(r){out+=wkTRow(r)})}
  else{

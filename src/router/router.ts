@@ -1399,7 +1399,7 @@ export function routerHandler(
           const queue = (): void => {
             startPings();
             sched
-              .acquire(engine, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint)
+              .acquire(engine, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint, req.headers["x-pai-interactive"] === "1" || req.headers["x-pai-failover"] === "1" ? { failover: req.headers["x-pai-failover"] === "1" } : undefined)
               .then(
                 (ticket) => {
                   stopPings();

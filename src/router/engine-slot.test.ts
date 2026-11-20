@@ -196,6 +196,28 @@ describe("interactive session priority", () => {
   });
 });
 
+describe("interactive session entries", () => {
+  it("an interactive request creates a session entry, tokens are counted, it expires after 30 min without requests", async () => {
+    let t = 1_000_000;
+    const s = new RequestScheduler(() => DEFAULT_SCHED, () => t);
+    const tk = await s.acquire("e", "my-sess", "conn:1", undefined, "high" as Priority, {});
+    expect(s.snapshot().sessions!["my-sess"]).toMatchObject({ engine: "e", inflight: true, requests: 1, tokens: 0 });
+    t += 2000;
+    tk.release({ prefill: 100, decode: 20 });
+    expect(s.snapshot().sessions!["my-sess"]).toMatchObject({ inflight: false, tokens: 120, lastServiceMs: 2000 });
+    const w = await s.acquire("e", "worker-sess", "w1"); // not interactive: no entry
+    w.release();
+    expect(Object.keys(s.snapshot().sessions!)).toEqual(["my-sess"]);
+    const fo = await s.acquire("e", "cloud-sess", "conn:2", undefined, undefined, { failover: true });
+    fo.release();
+    expect(s.snapshot().sessions!["cloud-sess"]!.failover).toBe(true);
+    t += 29 * 60_000;
+    expect(s.snapshot().sessions!["my-sess"]).toBeDefined();
+    t += 2 * 60_000;
+    expect(s.snapshot().sessions).toEqual({});
+  });
+});
+
 describe("router body for local engines does not grow", () => {
   it("strip/fold only shrink the client's body; tools and system stay once", async () => {
     const { foldSystemMessages, stripBillingHeader, stripThinking } = await import("./router.js");

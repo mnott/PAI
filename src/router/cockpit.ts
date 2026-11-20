@@ -54,7 +54,7 @@ import { loadPaneRunStatuses, paneRunRows } from "../workers/pane-run.js";
 import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
-import { readSchedFile, schedPlain, sharedScheduler, type SchedSnapshot } from "./scheduler.js";
+import { readSchedFile, schedPlain, sharedScheduler, SESSION_TTL_MS, type SchedSnapshot } from "./scheduler.js";
 import { isLive, loadStatus, loadStatusesCached, ownsPidCached, type WorkerStatus } from "../workers/status.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
 import { buildSpeed, percentile } from "./speed.js";
@@ -1221,7 +1221,7 @@ export function cockpitQueue(
   workers: WorkersConfig,
   now = Date.now(),
   owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPidCached
-): { now: number; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; table: TableRow[]; worktrees: string; localModel: string; localModelTitle: string } {
+): { now: number; sessions: SessionRow[]; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; table: TableRow[]; worktrees: string; localModel: string; localModelTitle: string } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const byProvider = new Map<string, QueueProvider>();
@@ -1284,11 +1284,32 @@ export function cockpitQueue(
   // name beats that slug; a worker's own session name tops both
   // the scheduler line is a display string: its sources (the agent-sessions registry, the job names) are read at most once per window
   const sched = sharedSchedLine(snap, logDir);
-  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now, (id) => { const w = statuses.find((x) => x.id === id); return w ? sessionGroup(w) : undefined; }), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
+  return { now, sessions: sessionRows(snap, now), plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now, (id) => { const w = statuses.find((x) => x.id === id); return w ? sessionGroup(w) : undefined; }), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
+}
+
+/** An interactive local session as the queue card shows it. */
+export interface SessionRow {
+  session: string;
+  engine: string;
+  inflight: boolean;
+  /** seconds since the last request */
+  lastAgeSec: number;
+  tokens: number;
+  requests: number;
+  failover?: boolean;
+}
+
+/** Interactive sessions of the scheduler snapshot, most recent first; entries past the 30 min expiry are left out. */
+export function sessionRows(snap: SchedSnapshot | null, now: number): SessionRow[] {
+  return Object.values(snap?.sessions ?? {})
+    .filter((a) => a.inflight || now - a.lastRequest <= SESSION_TTL_MS)
+    .sort((a, b) => b.lastRequest - a.lastRequest)
+    .map((a) => ({ session: a.session, engine: a.engine, inflight: a.inflight, lastAgeSec: Math.max(0, Math.floor((now - a.lastRequest) / 1000)), tokens: a.tokens, requests: a.requests, ...(a.failover ? { failover: true } : {}) }));
 }
 
 export interface CockpitQueue {
   now: number;
+  sessions: SessionRow[];
   plans: ReturnType<typeof planRows>;
   panes: ReturnType<typeof paneRunRows>;
   paneViolations: Array<{ id: string; mark: string; why?: string }>;

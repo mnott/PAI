@@ -129,6 +129,29 @@ describe("cockpit page script", () => {
     vm.runInContext("WK_SORT=null", ctx);
     expect(vm.runInContext("wkBar({table:__g})", ctx)).toContain("▶ one step toward running · ⏸ one step toward paused · stop and more in …");
   });
+  it("interactive sessions render in their own group above running/waiting, with failover badge and a narrow second line", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const { sessionRows } = await import("./cockpit.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
+    const now = 10_000_000;
+    const acct = (session: string, lastRequest: number, inflight: boolean, failover?: boolean) => ({ session, engine: "gyro-l", requests: 3, waitMsTotal: 0, lastWaitMs: 0, serviceMsTotal: 0, lastServiceMs: 0, lastRequest, inflight, tokens: 12345, ...(failover ? { failover } : {}) });
+    const snap = { at: now, engines: {}, workers: {}, sessions: { a: acct("a", now - 5000, true), b: acct("b", now - 300_000, false, true), gone: acct("gone", now - 31 * 60_000, false) } };
+    const rows = sessionRows(snap, now);
+    expect(rows.map((r) => r.session)).toEqual(["a", "b"]);
+    (ctx as Record<string, unknown>).__q = { sessions: rows };
+    vm.runInContext("WQ=__q", ctx);
+    const mk = (id: string) => ({ slot: 1, kind: "job", id, state: "running", stateText: "", priority: "normal", session: "s", model: "gyro-l", local: true, task: id, seconds: 5, activity: "", now: "", detail: "", actions: ["pause"] });
+    (ctx as Record<string, unknown>).__rows = [mk("r1")];
+    const html = vm.runInContext("wkQTable(wkView(__rows))", ctx) as string;
+    expect(html).toContain("Sessions (interactive)");
+    expect(html.indexOf("Sessions (interactive)")).toBeLessThan(html.indexOf(">running</td>"));
+    expect(html).toContain(">generating</span>");
+    expect(html).toContain(">idle 5m</span>");
+    expect(html).toContain(">failover</span>");
+    expect(html).toContain("12.3k tokens · last request 5s ago");
+  });
   it("the activity word shows with its meaning in the tooltip", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
