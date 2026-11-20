@@ -12,6 +12,12 @@
  * env/permissions plus only the guard hooks. The project CLAUDE.md stays.
  * Opt out with PAI_WORKER_FULL_PROFILE=1 or by passing your own
  * --settings/--setting-sources.
+ *
+ * The same mechanism has a "session" variant for an interactive main session
+ * on the local model (`pai session --local`): the identical guard-hook filter,
+ * plus only the MCP servers an operator session needs (aibroker + pai), no
+ * worker note hook and no brief — the point is a small context that fits the
+ * local window while the safety hooks stay.
  */
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -23,6 +29,8 @@ import type { WorkerProvider } from "./config.js";
 import { claudeHomeDir } from "../config/pai-home.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
 import { writePrivateFile } from "./settings-file.js";
+import { claudeJsonPath } from "../config/claude-json.js";
+import { readMcpServers, writeMcpConfig } from "./mcp.js";
 
 /** Hook commands kept for a worker; everything else is context or bookkeeping. */
 const GUARD_HOOKS = [
@@ -185,4 +193,81 @@ export function slimProfileArgs(
  */
 export function poolSlotSettingsId(providerName: string, model: string): string {
   return `pool-slot-${providerName}-${model}`.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+/** The MCP servers an interactive local session keeps: the operator's channels, nothing else. */
+export const SESSION_MCP_SERVERS = ["aibroker", "pai"];
+
+/**
+ * The settings object of a slim interactive session: the same reduction as a
+ * worker (env/permissions/model + only the guard hooks), no worker note hook,
+ * plus the pinned route env and the small MCP list. `pin` merges like
+ * slimProfileArgs does — Claude Code honours one --settings only.
+ */
+export function sessionSlimSettings(
+  user: Record<string, unknown>,
+  procEnv: NodeJS.ProcessEnv = {},
+  pin?: { env: Record<string, string> } & Record<string, unknown>,
+  mcpNames: string[] = SESSION_MCP_SERVERS,
+  provider?: WorkerProvider,
+): Record<string, unknown> {
+  // the provider rides through so applyProviderEnv drops the user's output cap
+  // and percentage override the way a worker run does — for a loopback route
+  // an interactive session keeps its CLAUDE.md and memory: the worker's
+  // context-off switches must not ride into this file (settings env outranks
+  // the process env, so they would stick for the whole session). And no key
+  // ever travels to a local-model session — not the user's, not the shell's.
+  const slim = slimSettings(user, procEnv, provider);
+  const e = (slim.env ?? {}) as Record<string, unknown>;
+  delete e.CLAUDE_CODE_DISABLE_CLAUDE_MDS;
+  delete e.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+  // the route goes where the pin sends it, but a key never: ANTHROPIC_AUTH_TOKEN
+  // is the router placeholder and travels; API keys do not
+  for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]) delete e[k];
+  slim.env = e;
+  if (pin) Object.assign(slim, { ...pin, env: { ...(slim.env as Record<string, unknown> | undefined), ...pin.env } });
+  slim.mcpServers = Object.fromEntries(mcpNames.map((n) => [n, { type: "sdk" }]));
+  return slim;
+}
+
+/**
+ * Args for a slim interactive session (the worker profile's mechanism, the
+ * session variant): `--setting-sources project,local`, a generated
+ * `--settings` file (guards kept, context injectors off, route pinned, MCP
+ * limited to SESSION_MCP_SERVERS) and `--strict-mcp-config --mcp-config` with
+ * exactly those servers from ~/.claude.json. A server the machine does not
+ * define is dropped rather than failing the launch. [] when there is no user
+ * settings file to slim (then nothing shadows the route anyway).
+ */
+export function sessionSlimArgs(
+  logDir: string,
+  id: string,
+  env: NodeJS.ProcessEnv = process.env,
+  pin?: { env: Record<string, string> } & Record<string, unknown>,
+  userSettingsPath = join(claudeHomeDir(), "settings.json"),
+  claudeJson = claudeJsonPath(),
+  provider?: WorkerProvider,
+): string[] {
+  if (!existsSync(userSettingsPath)) return [];
+  let user: Record<string, unknown>;
+  try {
+    user = JSON.parse(readFileSync(userSettingsPath, "utf8"));
+  } catch {
+    return [];
+  }
+  // a definition that is not a loadable server (no command/url) would make
+  // claude refuse the whole --mcp-config: it goes into the settings file only
+  const loadable = (v: unknown): boolean => {
+    const s = v as Record<string, unknown>;
+    return typeof s?.command === "string" || typeof s?.url === "string";
+  };
+  const available = readMcpServers(claudeJson);
+  const names = SESSION_MCP_SERVERS.filter((n) => n in available);
+  const mcpNames = names.filter((n) => loadable(available[n]));
+  mkdirSync(logDir, { recursive: true });
+  const path = join(logDir, `${id}.settings.json`);
+  writePrivateFile(path, JSON.stringify(sessionSlimSettings(user, env, pin, names, provider), null, 2) + "\n");
+  const args = ["--setting-sources", "project,local", "--settings", path];
+  if (mcpNames.length) args.push("--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, id, mcpNames, claudeJson));
+  return args;
 }
