@@ -217,3 +217,104 @@ describe("router body for local engines does not grow", () => {
     expect(after).not.toContain("thinking");
   });
 });
+
+describe("cloud -> local failover", () => {
+  type Cloud = (req: http.IncomingMessage, res: http.ServerResponse) => void;
+  async function fo(cloud: Cloud | null, extra: Record<string, unknown> = {}) {
+    const seen = { cloud: 0, local: 0, localBody: "" as string, localHeaders: {} as http.IncomingHttpHeaders };
+    const local = http.createServer((req, res) => {
+      seen.local++;
+      seen.localHeaders = req.headers;
+      const bits: Buffer[] = [];
+      req.on("data", (c) => bits.push(c));
+      req.on("end", () => {
+        seen.localBody = Buffer.concat(bits).toString("utf8");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: "gyro-m", content: [{ type: "text", text: "from-local" }], usage: { input_tokens: 1, output_tokens: 1 } }));
+      });
+    });
+    const lp = await listen(local);
+    let cloudBase = "http://127.0.0.1:1"; // refused
+    if (cloud) {
+      const c = http.createServer((req, res) => {
+        seen.cloud++;
+        req.resume();
+        req.on("end", () => cloud(req, res));
+      });
+      cloudBase = `http://127.0.0.1:${await listen(c)}`;
+    }
+    const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: `http://127.0.0.1:${lp}`, models: { default: "gyro-m" } } } }).providers;
+    const ledger: Array<{ session: string; reason: string; to: string }> = [];
+    const notes: string[] = [];
+    const r = createRouter(() => prov, cloudBase, () => {}, undefined, undefined, {
+      instances: () => [],
+      failover: { enabled: true, stickyMin: 30, localContextTokens: 5000, localProvider: async () => "gyro", onFailover: (i) => ledger.push(i), notify: (i) => notes.push(i.text), probe: async () => false, ...extra },
+    });
+    const port = await listen(r);
+    const post = (content = "hi", session = "sess1") =>
+      new Promise<{ status: number; text: string }>((resolve) => {
+        const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "content-type": "application/json", "x-pai-session": session, authorization: "Bearer cloud-key" } }, (x) => {
+          let text = "";
+          x.on("data", (c) => (text += c));
+          x.on("end", () => resolve({ status: x.statusCode ?? 0, text }));
+        });
+        q.end(JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 10, messages: [{ role: "user", content }, { role: "assistant", content: [{ type: "thinking", thinking: "t", signature: "s" }, { type: "text", text: "a" }] }] }));
+      });
+    return { post, seen, ledger, notes };
+  }
+  const limit: Cloud = (_q, res) => {
+    res.writeHead(429, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "Claude usage limit reached. Your limit will reset at 5pm." } }));
+  };
+
+  it("usage-limit 429 is served by the local model, ledgered once, notice once, and the session stays local", async () => {
+    const t = await fo(limit);
+    const a = await t.post();
+    expect(a.status).toBe(200);
+    expect(a.text).toContain("from-local");
+    expect(JSON.parse(t.seen.localBody).model).toBe("gyro-m");
+    expect(t.seen.localBody).not.toContain("thinking");
+    expect(t.seen.localHeaders.authorization).not.toBe("Bearer cloud-key");
+    const b = await t.post("again");
+    expect(b.text).toContain("from-local");
+    expect(t.seen.cloud).toBe(1); // sticky: the second request never touched the cloud
+    expect(t.ledger).toEqual([{ session: "sess1", reason: "usage-limit", to: "gyro" }]);
+    expect(t.notes).toEqual(["cloud unavailable (usage-limit), this session now runs on the local model"]);
+  });
+
+  it("a network failure is served by the local model", async () => {
+    const t = await fo(null);
+    const a = await t.post();
+    expect(a.status).toBe(200);
+    expect(a.text).toContain("from-local");
+    expect(t.ledger[0]?.reason).toBe("offline");
+  });
+
+  it("an input larger than the local window gets a /compact error", async () => {
+    const t = await fo(limit);
+    const a = await t.post("x".repeat(40_000));
+    expect(a.status).toBe(400);
+    expect(a.text).toContain("/compact");
+    expect(t.seen.local).toBe(0);
+  });
+
+  it("failover disabled: the cloud error passes through", async () => {
+    const t = await fo(limit, { enabled: false });
+    const a = await t.post();
+    expect(a.status).toBe(429);
+    expect(a.text).toContain("usage limit");
+    expect(t.seen.local).toBe(0);
+    expect(t.ledger).toEqual([]);
+  });
+
+  it("an ordinary short rate limit is not failed over", async () => {
+    const t = await fo((_q, res) => {
+      res.writeHead(429, { "content-type": "application/json", "retry-after": "5" });
+      res.end(JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "Number of request tokens has exceeded your per-minute rate limit" } }));
+    });
+    const a = await t.post();
+    expect(a.status).toBe(429);
+    expect(t.seen.local).toBe(0);
+    expect(t.ledger).toEqual([]);
+  });
+});
