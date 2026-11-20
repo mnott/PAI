@@ -98,8 +98,9 @@ export class BatteryGuardRefusedError extends Error {}
 /**
  * The battery guard's refusal for a run resolved onto a local (loopback)
  * provider while the guard has paused new local work, or null when admission
- * is open. Cloud runs are untouched; the message names the reading and the
- * config keys that move the thresholds.
+ * is open. Cloud runs are untouched. The message states the rule that
+ * actually holds admission — admission reopens only above pauseBelowPct +
+ * hysteresisPct — with the values from the resolved config, not the defaults.
  */
 export function batteryGuardRefusal(
   local: boolean,
@@ -112,9 +113,19 @@ export function batteryGuardRefusal(
   if (refusal === undefined) refusal = batteryGateRefusal(now, benchmark);
   if (!local || !refusal) return null;
   appendLedger(ledgerPath(logDir), "BATTERY-GATE-REFUSED", { provider: name, reason: refusal });
+  // the real rule: admission hysteresis — it reopens above pauseBelowPct +
+  // hysteresisPct, so a reading between the two is refused even though it is
+  // above pauseBelowPct; quoting stopBelowPct here would name the wrong reason
+  const { cfg } = readPowerConfig();
+  const reopen = cfg.pauseBelowPct + cfg.hysteresisPct;
+  const pct = /battery at (\d+(?:\.\d+)?) %/.exec(refusal)?.[1];
+  const rule =
+    pct !== undefined && Number(pct) > cfg.pauseBelowPct
+      ? `admission paused since it fell to pauseBelowPct ${cfg.pauseBelowPct}, reopens above ${reopen} % (pauseBelowPct + hysteresisPct)`
+      : `admission reopens above ${reopen} % (pauseBelowPct + hysteresisPct)`;
   return (
     `provider "${name}" is a local (loopback) provider and the battery guard has ${benchmark ? "stopped benchmark runs" : "paused new local-model work"}: ` +
-    `${refusal}. This run is refused instead of starting.\n` +
+    `${refusal}; ${rule}. This run is refused instead of starting.\n` +
     `Raise power.batteryGuard.pauseBelowPct, or set power.batteryGuard.enabled: false, in config.yaml.`
   );
 }

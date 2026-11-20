@@ -478,10 +478,21 @@ function writeJson(path: string, v: unknown): void {
   }
 }
 
-const pauseReason = (pct: number, cfg: BatteryGuardConfig, stopped: boolean): string =>
-  stopped
-    ? `battery at ${pct} % (at or below power.batteryGuard.stopBelowPct ${cfg.stopBelowPct})`
-    : `battery at ${pct} % (at or below power.batteryGuard.pauseBelowPct ${cfg.pauseBelowPct})`;
+// The reason names the rule that actually holds admission, not just the
+// current reading: admission paused when the battery fell to pauseBelowPct and
+// reopens only above pauseBelowPct + hysteresisPct, so a reading inside the
+// band is refused even though it sits above pauseBelowPct — quoting a plain
+// "at or below" threshold there would name the wrong reason.
+const pauseReason = (pct: number, cfg: BatteryGuardConfig, stopped: boolean): string => {
+  const reopen = cfg.pauseBelowPct + cfg.hysteresisPct;
+  const fell = pct > cfg.pauseBelowPct;
+  const threshold = stopped
+    ? `at or below power.batteryGuard.stopBelowPct ${cfg.stopBelowPct}`
+    : fell
+      ? "admission paused since it fell to pauseBelowPct " + cfg.pauseBelowPct
+      : `at or below power.batteryGuard.pauseBelowPct ${cfg.pauseBelowPct}`;
+  return `battery at ${pct} % (${threshold}, reopens above ${reopen} % (pauseBelowPct + hysteresisPct))`;
+};
 
 // ---------------------------------------------------------------------------
 // The stop pass
