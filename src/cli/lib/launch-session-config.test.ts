@@ -329,6 +329,59 @@ describe("pai session --local plan", () => {
       expect(t).toContain("mcp deferred (tool search): todoist, teams, jobs");
       expect(t).toMatch(/estimated start-up tool-definition tokens: ~\d+/);
     });
+
+    // the bug: after /exit, `pai local` in the same folder started a NEW
+    // conversation. The default launch must continue the folder's last one —
+    // the resume seam stands in for the real folder scan + probeResume here;
+    // the next test proves the resolver against a real transcript layout.
+    it("default continues the folder's last conversation (--resume in argv); --new does not", async () => {
+      const { localSessionPrintText } = await import("../commands/session.js");
+      const resume = async () => "11111111-2222-4333-8444-555555555555";
+      const p = await plan({ cwd: dir, resume });
+      const i = p.argv.indexOf("--resume");
+      expect(i).toBeGreaterThan(0);
+      expect(p.argv[i + 1]).toBe("11111111-2222-4333-8444-555555555555");
+      expect(p.resumeUuid).toBe("11111111-2222-4333-8444-555555555555");
+      // --print-cmd shows it, before the exec line that carries it
+      const t = localSessionPrintText(p);
+      expect(t).toContain("continues 11111111-2222-4333-8444-555555555555");
+      expect(t).toMatch(/claude .*--resume 11111111-2222-4333-8444-555555555555/);
+      // --new (forceFresh): no seam call, no --resume anywhere
+      const fresh = await plan({ cwd: dir, forceFresh: true, resume: async () => { throw new Error("--new must not resolve a resume"); } });
+      expect(fresh.argv).not.toContain("--resume");
+      expect(fresh.resumeUuid).toBeUndefined();
+      expect(localSessionPrintText(fresh)).toContain("fresh conversation");
+      // rest already carries --resume/--continue: no second one computed
+      const manual = await plan({ cwd: dir, resume, rest: ["--continue"] });
+      expect(manual.argv.filter((a) => a === "--resume")).toEqual([]);
+    });
+
+    it("latestFolderSession picks the newest transcript, sessions/ archive included; probe gates it", async () => {
+      const { latestFolderSession, resolveLocalResume } = await import("../commands/session.js");
+      const cwd = join(dir, "folder");
+      mkdirSync(cwd, { recursive: true });
+      // claude's own encoding of the cwd is what launch.ts writes and reads
+      const ch = join(dir, `home-${Math.random().toString(36).slice(2)}`);
+      const pdir = join(ch, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+      mkdirSync(join(pdir, "sessions"), { recursive: true });
+      writeFileSync(join(pdir, "aaaaaaaa-1111-4111-8111-111111111111.jsonl"), '{"type":"system"}\n');
+      // an archived (cleanly stopped) transcript, newer than the top-level one:
+      // claude --resume does not read sessions/ directly — probeResume links it
+      writeFileSync(join(pdir, "sessions", "bbbbbbbb-2222-4222-8222-222222222222.jsonl"), '{"type":"user"}\n');
+      setEnv("CLAUDE_CONFIG_DIR", ch);
+      expect(latestFolderSession(cwd)?.uuid).toBe("bbbbbbbb-2222-4222-8222-222222222222");
+      // an even newer top-level transcript wins
+      writeFileSync(join(pdir, "cccccccc-3333-4333-8333-333333333333.jsonl"), '{"type":"user"}\n');
+      expect(latestFolderSession(cwd)?.uuid).toBe("cccccccc-3333-4333-8333-333333333333");
+      // a folder that never had a conversation: fresh, honestly
+      expect(latestFolderSession(join(dir, "never"))).toBeUndefined();
+      // the gate: an unresumable candidate degrades to fresh, never errors
+      const probeOk = await resolveLocalResume({ cwd, probe: () => ({ ok: true }) });
+      expect(probeOk).toBe("cccccccc-3333-4333-8333-333333333333");
+      expect(await resolveLocalResume({ cwd, forceFresh: true, probe: () => ({ ok: true }) })).toBeUndefined();
+      expect(await resolveLocalResume({ cwd, resumeUuid: "dddddddd-4444-4444-8444-444444444444", probe: () => ({ ok: false }) })).toBe("dddddddd-4444-4444-8444-444444444444");
+      expect(await resolveLocalResume({ cwd, probe: () => ({ ok: false, reason: "stub" }) })).toBeUndefined();
+    });
     it("pai local is a listed command; the group passes -- through; local is no session name", async () => {
       const { GROUPS } = await import("../registry.js");
       const { localTop, sessionCommand } = await import("../commands/session.js");

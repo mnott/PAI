@@ -21,6 +21,7 @@ Shortcut for `pai session --local`.
 | `--model ID` | string | — | Model id on the local provider (default: its default model) |
 | `--mcp LIST` | string | — | MCP servers to load: a,b,c | lean (aibroker+pai) | all (default, config session.localMcp); all but aibroker and pai are deferred behind tool search |
 | `--context N` | string | — | Context cap (autocompact window): a number, 128k or 256k (default config session.localContextTokens, 262144; minimum 100000) |
+| `--new` | flag | — | Start a fresh conversation (default: continue this folder's last conversation) |
 | `--ask-permissions` | flag | — | Keep claude's permission prompts (default: --dangerously-skip-permissions) |
 | `--print-cmd` | flag | — | Print the env, loaded/deferred MCP servers and command instead of starting claude |
 
