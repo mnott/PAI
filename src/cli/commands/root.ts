@@ -408,7 +408,7 @@ export async function runNewWith(
 }
 
 export async function runRoot(
-  args: { name?: string; with?: string; dryRun: boolean },
+  args: { name?: string; with?: string; dryRun: boolean; local?: { opts: Record<string, unknown>; rest: string[] } },
   term: Term = systemTerm()
 ): Promise<number> {
   const st = term.st;
@@ -416,6 +416,9 @@ export async function runRoot(
   if (args.name && looksLikePath(args.name)) {
     if (args.with) return runNewWith({ dir: args.name, with: args.with, dryRun: args.dryRun }, term);
     return (await import("./session.js")).runNewDefault({ dir: args.name, dryRun: args.dryRun });
+  }
+  if (args.name?.toLowerCase() === "local") {
+    throw new CliError('"local" is a command, never a session name', "pai local   (or: pai session --local)");
   }
   const workers = loadWorkers();
   // Looking up a session scans the transcripts: say so at once, never a silent wait.
@@ -470,7 +473,23 @@ export async function runRoot(
     }
   }
 
+  if (args.local) return openRowLocal(picked, args.local, term);
   return openRow(picked, workers, args.with, args.dryRun, term);
+}
+
+/** `pai NAME --local`: the same project lookup, cwd, session name and resume as `pai NAME`, started as a local session. */
+async function openRowLocal(row: SessionRow, local: { opts: Record<string, unknown>; rest: string[] }, term: Term): Promise<number> {
+  const out = (s: string) => term.output.write(s + "\n");
+  const cwd = await openableDir(row.name, row.stored, row.dir, term, out);
+  const probe = probeResume(row.uuid, cwd);
+  if (!probe.ok) {
+    throw new CliError(
+      `"${row.name}" has no conversation history to continue (${probe.reason ?? "unknown reason"})`,
+      `pai ${JSON.stringify(row.name)}   then press n to start fresh under the same name`
+    );
+  }
+  const { runLocalSession } = await import("./session.js");
+  return runLocalSession({ opts: local.opts, rest: local.rest, cwd, sessionName: row.name, resumeUuid: row.uuid });
 }
 
 export const rootCommand: CommandDef = {
@@ -484,8 +503,19 @@ export const rootCommand: CommandDef = {
   options: [
     { name: "with", type: "string", value: "SETUP", summary: "Scripting: start with this setup, no questions (see: pai setups)" },
     { ...OPT.dryRun },
+    { name: "local", type: "boolean", default: false, summary: "Start this session on the running local model (as `pai session --local`, same flags: --model --mcp --context --ask-permissions --print-cmd; args after -- go to claude)" },
+    { name: "model", type: "string", value: "ID", summary: "With --local: model id on the local provider" },
+    { name: "mcp", type: "string", value: "LIST", summary: "With --local: MCP servers a,b,c | lean | all" },
+    { name: "context", type: "string", value: "N", summary: "With --local: context cap (number, 128k, 256k)" },
+    { name: "ask-permissions", type: "boolean", default: false, summary: "With --local: keep permission prompts" },
+    { name: "print-cmd", type: "boolean", default: false, summary: "With --local: print the command instead of starting claude" },
   ],
+  passthrough: true,
   examples: ["pai", 'pai "20 - Webseiten"', 'pai webseiten --with "glm only"', 'pai --with "anthropic only"'],
   seeAlso: ["pai setups", "pai ls", "pai more"],
-  run: (ctx) => runRoot({ name: ctx.args.NAME as string | undefined, with: ctx.opts.with as string | undefined, dryRun: ctx.dryRun }),
+  run: (ctx) => {
+    const local = ctx.opts.local === true;
+    if (ctx.rest.length && !local) throw new CliError(`unexpected arguments after --: ${ctx.rest.join(" ")}`, "pai NAME --local -- <claude args>");
+    return runRoot({ name: ctx.args.NAME as string | undefined, with: ctx.opts.with as string | undefined, dryRun: ctx.dryRun, ...(local ? { local: { opts: ctx.opts, rest: ctx.rest } } : {}) });
+  },
 };

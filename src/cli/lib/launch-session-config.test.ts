@@ -124,7 +124,7 @@ describe("pai session --local plan", () => {
   it("print-cmd shows the router route, the local model, the compact window, no API key, the slim MCP list", async () => {
     const { parseWorkersConfig } = await import("../../workers/config.js");
     const { planLocalSession, localSessionPrintText } = await import("../commands/session.js");
-    const workers = parseWorkersConfig({ providers: { gyro: mkProvider(9) }, localContextTokens: 65536 });
+    const workers = parseWorkersConfig({ providers: { gyro: mkProvider(9) }, localContextTokens: 100000 });
     // a claude home under our control: the slim profile reads its settings.json + MCP defs from here
     const ch = join(dir, "claude-home");
     mkdirSync(ch, { recursive: true });
@@ -148,21 +148,22 @@ describe("pai session --local plan", () => {
       const p = await planLocalSession(opts);
       expect(p.model).toBe("gyro-m");
       expect(p.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:65432");
-      expect(p.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("65536");
+      expect(p.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
       expect(p.env.ANTHROPIC_API_KEY).toBeUndefined();
       expect(p.env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-pai-interactive: 1");
       const text = localSessionPrintText(p);
       expect(text).toContain("ANTHROPIC_BASE_URL=http://127.0.0.1:65432");
-      expect(text).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW=65536");
+      expect(text).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144");
       expect(text).toContain("ANTHROPIC_API_KEY=(not set)");
-      expect(text).toContain("mcpServers=aibroker, pai");
+      expect(text).toContain("mcpServers=aibroker, pai, todoist");
+      expect(text).toContain("mcp deferred (tool search): todoist");
       expect(text).toMatch(/^claude --model gyro-m/m);
       // the written settings file: route pinned inside it (settings env outranks process env),
       // the user's proxy+key dropped, guard hooks kept, context injectors off
       const s = JSON.parse(readFileSync(p.settingsFile!, "utf8")) as Record<string, any>;
       expect(s.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:65432");
       expect(s.env.ANTHROPIC_API_KEY).toBeUndefined();
-      expect(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("65536");
+      expect(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
       const cmds = JSON.stringify(s.hooks);
       expect(cmds).toContain("worker-guard");
       expect(cmds).not.toContain("inject-observations");
@@ -184,19 +185,22 @@ describe("pai session --local plan", () => {
     // the cap reads from the main config's workers section (a fresh file per
     // value: readWorkersCached keys its cache on path+mtime)
     capConfig("cap64k", 65536);
+    // Claude Code clamps anything below 100000 up to it (and warns): PAI never passes less
+    expect(localCompactWindow(mk({}))).toBe(100000);
     // a provider entry above the cap is the model window, not an operator choice
-    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144" }))).toBe(65536);
+    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144" }))).toBe(100000);
     // no provider entry: the configured value alone
-    expect(localCompactWindow(mk({}))).toBe(65536);
-    // a model window below the cap (apple-fm ships 8k under it) still holds: a conversation must fit the model
-    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "8192" }))).toBe(8192);
+    expect(localCompactWindow(mk({}))).toBe(100000);
+    // a small model window (apple-fm 8k) is lifted to the 100k minimum too
+    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "8192" }))).toBe(100000);
     // a configured cap above the model window lets the model window stand
     capConfig("cap300k", 300000);
     expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144" }))).toBe(262144);
-    // a configured cap always wins, however small (the parse floor is 1000)
+    // however small the configured cap, the value passed is never below 100000
     capConfig("cap1k", 1000);
-    expect(localCompactWindow(mk({}))).toBe(1000);
-    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "8192" }))).toBe(1000);
+    expect(localCompactWindow(mk({}))).toBe(100000);
+    // a session cap override (session --local) is independent of the workers cap
+    expect(localCompactWindow(mk({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144" }), 131072)).toBe(131072);
   });
 
   it("print-cmd shows the configured cap under a provider's model window, and the configured value when set", async () => {
@@ -214,17 +218,100 @@ describe("pai session --local plan", () => {
     const cj = join(dir, `claude-win-${Date.now()}.json`);
     writeFileSync(cj, JSON.stringify({ mcpServers: { aibroker: { command: "echo" }, pai: { command: "echo" } } }));
     const opts = { workers: parseWorkersConfig({ providers: { gyro: withWin } }), logDir: join(dir, "logs-win"), sessionName: "win", check: async () => true, route: () => "http://127.0.0.1:65432", claudeJson: cj };
-    // defaults (workers.localContextTokens = 64k): print-cmd shows 65536, never the model's 262144
+    // defaults: the session cap (262144) under the model window
     const p = await planLocalSession(opts);
-    expect(p.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("65536");
-    expect(localSessionPrintText(p)).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW=65536");
+    expect(p.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
+    expect(localSessionPrintText(p)).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144");
     // the written slim settings carry it too (settings env outranks the process env)
     const s = JSON.parse(readFileSync(p.settingsFile!, "utf8")) as Record<string, any>;
-    expect(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("65536");
-    // an explicit configured value wins and print-cmd shows it
-    capConfig("pcap100k", 100000);
-    const q = await planLocalSession(opts);
+    expect(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
+    // an explicit session cap (--context) wins and print-cmd shows it; the workers cap is not involved
+    const q = await planLocalSession({ ...opts, contextTokens: 100000 });
     expect(q.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("100000");
     expect(localSessionPrintText(q)).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000");
+  });
+
+  describe("local session: MCP, context, permissions, shortcuts", () => {
+    async function plan(extra: Record<string, unknown> = {}, servers: string[] = ["aibroker", "pai", "todoist", "teams", "jobs"]) {
+      const { parseWorkersConfig } = await import("../../workers/config.js");
+      const { planLocalSession } = await import("../commands/session.js");
+      const ch = join(dir, `ch-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(ch, { recursive: true });
+      writeFileSync(join(ch, "settings.json"), JSON.stringify({ env: {} }));
+      setEnv("CLAUDE_CONFIG_DIR", ch);
+      const cj = join(dir, `cj-${Math.random().toString(36).slice(2)}.json`);
+      writeFileSync(cj, JSON.stringify({ mcpServers: Object.fromEntries(servers.map((n) => [n, { command: "echo" }])) }));
+      return planLocalSession({ workers: parseWorkersConfig({ providers: { gyro: mkProvider(9) } }), logDir: join(dir, "logs-x"), sessionName: "x", check: async () => true, route: () => "http://127.0.0.1:65432", claudeJson: cj, ...extra });
+    }
+    const mcpFile = (p: { mcpFile?: string }) => JSON.parse(readFileSync(p.mcpFile!, "utf8")).mcpServers as Record<string, { alwaysLoad: boolean }>;
+
+    it("default loads all servers, deferred except aibroker+pai, tool search on", async () => {
+      const p = await plan();
+      expect(p.mcpLoaded.sort()).toEqual(["aibroker", "jobs", "pai", "teams", "todoist"]);
+      expect(p.mcpDeferred.sort()).toEqual(["jobs", "teams", "todoist"]);
+      expect(p.env.ENABLE_TOOL_SEARCH).toBe("true");
+      const f = mcpFile(p);
+      expect(f.aibroker.alwaysLoad).toBe(true);
+      expect(f.pai.alwaysLoad).toBe(true);
+      expect(f.todoist.alwaysLoad).toBe(false);
+    });
+    it("--mcp lean = two servers; a list is honoured; unknown names fail", async () => {
+      const lean = await plan({ mcp: "lean" });
+      expect(lean.mcpLoaded).toEqual(["aibroker", "pai"]);
+      expect(lean.mcpDeferred).toEqual([]);
+      const some = await plan({ mcp: ["pai", "teams"] });
+      expect(some.mcpLoaded).toEqual(["pai", "teams"]);
+      expect(some.mcpDeferred).toEqual(["teams"]);
+      await expect(plan({ mcp: ["nope"] })).rejects.toThrow(/unknown MCP server/);
+      const { parseMcpSpec } = await import("../commands/session.js");
+      expect(parseMcpSpec("a,b")).toEqual(["a", "b"]);
+      expect(parseMcpSpec("lean")).toBe("lean");
+      expect(parseMcpSpec(undefined)).toBe("all");
+    });
+    it("session.localMcp / session.localContextTokens come from the config", async () => {
+      const f = join(dir, "sess.config.yaml");
+      writeFileSync(f, "session:\n  localMcp: lean\n  localContextTokens: 150000\n");
+      setEnv("PAI_CONFIG_FILE", f);
+      const { readSessionLocalConfig } = await import("../commands/session.js");
+      expect(readSessionLocalConfig(f)).toEqual({ contextTokens: 150000, mcp: "lean" });
+      const g = join(dir, "sess2.config.yaml");
+      writeFileSync(g, "session:\n  localContextTokens: 5000\n");
+      expect(readSessionLocalConfig(g)).toEqual({ contextTokens: 100000, mcp: "all" });
+    });
+    it("--context parses n/128k/256k and refuses below 100000; the window is never below 100000", async () => {
+      const { parseContextTokens } = await import("../commands/session.js");
+      expect(parseContextTokens("128k")).toBe(131072);
+      expect(parseContextTokens("256k")).toBe(262144);
+      expect(parseContextTokens("200000")).toBe(200000);
+      expect(() => parseContextTokens("64k")).toThrow(/100000/);
+      expect((await plan({ contextTokens: 131072 })).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("131072");
+      expect((await plan({ contextTokens: 1000 })).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("100000");
+      const { parseWorkersConfig } = await import("../../workers/config.js");
+      expect(parseWorkersConfig({}).localContextTokens).toBe(100000);
+    });
+    it("permissions are skipped by default; --ask-permissions keeps them; rest passes verbatim", async () => {
+      const p = await plan({ rest: ["--continue", "-p", "hi"] });
+      expect(p.argv).toContain("--dangerously-skip-permissions");
+      expect(p.argv.slice(-3)).toEqual(["--continue", "-p", "hi"]);
+      expect((await plan({ askPermissions: true })).argv).not.toContain("--dangerously-skip-permissions");
+    });
+    it("print-cmd lists loaded and deferred servers and the token estimate", async () => {
+      const { localSessionPrintText } = await import("../commands/session.js");
+      const t = localSessionPrintText(await plan());
+      expect(t).toContain("mcp loaded (always): aibroker, pai");
+      expect(t).toContain("mcp deferred (tool search): todoist, teams, jobs");
+      expect(t).toMatch(/estimated start-up tool-definition tokens: ~\d+/);
+    });
+    it("pai local is a listed command; the group passes -- through; local is no session name", async () => {
+      const { GROUPS } = await import("../registry.js");
+      const { localTop, sessionCommand } = await import("../commands/session.js");
+      expect(GROUPS.flatMap((g) => g.commands).map((c) => c.name)).toContain("local");
+      expect(localTop.passthrough).toBe(true);
+      expect(sessionCommand.passthrough).toBe(true);
+      const { runRoot } = await import("../commands/root.js");
+      await expect(runRoot({ name: "local", dryRun: true })).rejects.toThrow(/command, never a session name/);
+      const { rootCommand } = await import("../commands/root.js");
+      expect(rootCommand.options!.map((o) => o.name)).toContain("local");
+    });
   });
 });

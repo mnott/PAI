@@ -297,17 +297,23 @@ export function buildRunEnv(
  * 8k under the 64k cap). An unreadable config keeps a provider's window when
  * it has one, else leaves Claude Code its own default.
  */
-export function localCompactWindow(provider: WorkerProvider): number | undefined {
+/** Claude Code clamps CLAUDE_CODE_AUTO_COMPACT_WINDOW below this up to it and warns; PAI never passes less. */
+export const MIN_COMPACT_WINDOW = 100000;
+
+export function localCompactWindow(provider: WorkerProvider, capOverride?: number): number | undefined {
   const modelWindow = Number(provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
-  const cap = (() => {
-    try {
-      return readWorkersCached().localContextTokens;
-    } catch {
-      return 0;
-    }
-  })();
-  if (cap > 0) return Number.isFinite(modelWindow) && modelWindow > 0 ? Math.min(cap, modelWindow) : cap;
-  return Number.isFinite(modelWindow) && modelWindow > 0 ? modelWindow : undefined;
+  const hasModel = Number.isFinite(modelWindow) && modelWindow > 0;
+  const cap =
+    capOverride ??
+    (() => {
+      try {
+        return readWorkersCached().localContextTokens;
+      } catch {
+        return 0;
+      }
+    })();
+  const w = cap > 0 ? (hasModel ? Math.min(cap, modelWindow) : cap) : hasModel ? modelWindow : undefined;
+  return w === undefined ? undefined : Math.max(MIN_COMPACT_WINDOW, w);
 }
 
 /** First-party route a native run is pinned to when no route is set. */

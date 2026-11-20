@@ -558,3 +558,12 @@ helper:
     tldr: true
     # 3-line summary of a failing merge gate / build / test run
     gateSummary: true
+# `pai session --local` / `pai local` (src/cli/commands/session.ts).
+session:
+  # Autocompact window of a local session in tokens (flag --context n|128k|256k).
+  # Claude Code treats anything below 100000 as 100000, so PAI never passes less.
+  localContextTokens: 262144
+  # MCP servers a local session loads: "all" (every server in ~/.claude.json,
+  # all but aibroker and pai deferred behind tool search), "lean" (aibroker +
+  # pai only) or a list of server names (flag --mcp).
+  localMcp: all

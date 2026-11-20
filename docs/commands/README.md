@@ -41,6 +41,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai launch`](launch.md) | Start Claude Code on a chosen provider (for scripts) |
 | [`pai lessons`](lessons.md) | Review-gated lessons for agents |
 | [`pai list`](list.md) | List the markdown session notes |
+| [`pai local`](local.md) | Start a session on the running local model (= pai session --local) |
 | [`pai ls`](ls.md) | List sessions, newest first |
 | [`pai mcp`](mcp.md) | Install the PAI tools for Claude Code |
 | [`pai memory`](memory.md) | Search and index your notes and memory files |
@@ -235,6 +236,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai lessons show` | Show one lesson |
 | `pai lessons supersede` | Replace an approved lesson by another approved one |
 | `pai list` | List the markdown session notes |
+| `pai local` | Start a session on the running local model (= pai session --local) |
 | `pai ls` | List sessions, newest first |
 | `pai mcp` | Install the PAI tools for Claude Code |
 | `pai mcp install` | Register the PAI MCP server with Claude Code |
