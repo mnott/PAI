@@ -20,7 +20,7 @@
  * local window while the safety hooks stay.
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +31,7 @@ import { isLoopbackUrl } from "../utils/loopback.js";
 import { localCompactWindow } from "./run-env.js";
 import { writePrivateFile } from "./settings-file.js";
 import { claudeJsonPath } from "../config/claude-json.js";
-import { readMcpServers, writeMcpConfig } from "./mcp.js";
+import { readMcpServers, runMcpConfigPath } from "./mcp.js";
 
 /** Hook commands kept for a worker; everything else is context or bookkeeping. */
 const GUARD_HOOKS = [
@@ -91,7 +91,7 @@ type HookGroup = { matcher?: string; hooks?: Array<{ type?: string; command?: st
  * goes, and thinking is switched off (no `thinking`, no effort in the request)
  * unless the provider asks for it.
  */
-function applyProviderEnv(e: Record<string, unknown>, provider: WorkerProvider, procEnv: NodeJS.ProcessEnv = {}): void {
+function applyProviderEnv(e: Record<string, unknown>, provider: WorkerProvider, procEnv: NodeJS.ProcessEnv = {}, compactCap?: number): void {
   const cap = provider.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
   if (cap !== undefined) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = cap;
   else delete e.CLAUDE_CODE_MAX_OUTPUT_TOKENS;
@@ -106,7 +106,7 @@ function applyProviderEnv(e: Record<string, unknown>, provider: WorkerProvider, 
   // cap). The procEnv fallback keeps an injected cap (tests) working.
   // Only for a loopback provider — a cloud worker keeps whatever the user set.
   const win = isLoopbackUrl(provider.baseUrl)
-    ? String(localCompactWindow(provider) ?? procEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "") || undefined
+    ? String(localCompactWindow(provider, compactCap) ?? procEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "") || undefined
     : undefined;
   if (win !== undefined) e.CLAUDE_CODE_AUTO_COMPACT_WINDOW = win;
   else delete e.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
@@ -124,6 +124,7 @@ export function slimSettings(
   procEnv: NodeJS.ProcessEnv = {},
   provider?: WorkerProvider,
   noteHook?: string,
+  compactCap?: number,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of ["env", "permissions", "model"]) if (user[k] !== undefined) out[k] = user[k];
@@ -133,7 +134,7 @@ export function slimSettings(
   if ((out.env && typeof out.env === "object") || nonNative) {
     const e = { ...((out.env ?? {}) as Record<string, unknown>) };
     for (const k of PROVIDER_KEYS) if (procEnv[k]) delete e[k];
-    if (provider && nonNative) applyProviderEnv(e, provider, procEnv);
+    if (provider && nonNative) applyProviderEnv(e, provider, procEnv, compactCap);
     out.env = e;
   }
   const hooks: Record<string, HookGroup[]> = {};
@@ -213,6 +214,7 @@ export function sessionSlimSettings(
   pin?: { env: Record<string, string> } & Record<string, unknown>,
   mcpNames: string[] = SESSION_MCP_SERVERS,
   provider?: WorkerProvider,
+  compactCap?: number,
 ): Record<string, unknown> {
   // the provider rides through so applyProviderEnv drops the user's output cap
   // and percentage override the way a worker run does — for a loopback route
@@ -220,7 +222,7 @@ export function sessionSlimSettings(
   // context-off switches must not ride into this file (settings env outranks
   // the process env, so they would stick for the whole session). And no key
   // ever travels to a local-model session — not the user's, not the shell's.
-  const slim = slimSettings(user, procEnv, provider);
+  const slim = slimSettings(user, procEnv, provider, undefined, compactCap);
   const e = (slim.env ?? {}) as Record<string, unknown>;
   delete e.CLAUDE_CODE_DISABLE_CLAUDE_MDS;
   delete e.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
@@ -242,6 +244,30 @@ export function sessionSlimSettings(
  * define is dropped rather than failing the launch. [] when there is no user
  * settings file to slim (then nothing shadows the route anyway).
  */
+export interface SessionSlimOpts {
+  /** Servers to load (default SESSION_MCP_SERVERS); "all" = every loadable server in ~/.claude.json. */
+  mcp?: string[] | "all";
+  /** Servers that stay always-loaded; the rest are deferred behind tool search (alwaysLoad false). */
+  alwaysLoad?: string[];
+  /** The session's own autocompact cap (tokens), instead of workers.localContextTokens. */
+  compactCap?: number;
+}
+
+/** What sessionSlimArgs loaded: for --print-cmd. */
+export interface SessionMcpLoad {
+  loaded: string[];
+  deferred: string[];
+}
+
+export function resolveSessionMcp(claudeJson: string, o: SessionSlimOpts = {}): SessionMcpLoad & { available: Record<string, unknown> } {
+  const available = readMcpServers(claudeJson);
+  const wanted = o.mcp === "all" ? Object.keys(available) : (o.mcp ?? SESSION_MCP_SERVERS);
+  const always = o.alwaysLoad ?? SESSION_MCP_SERVERS;
+  // a server the machine does not define is dropped rather than failing the launch
+  const loaded = wanted.filter((n) => n in available);
+  return { loaded, deferred: loaded.filter((n) => !always.includes(n)), available };
+}
+
 export function sessionSlimArgs(
   logDir: string,
   id: string,
@@ -250,6 +276,7 @@ export function sessionSlimArgs(
   userSettingsPath = join(claudeHomeDir(), "settings.json"),
   claudeJson = claudeJsonPath(),
   provider?: WorkerProvider,
+  o: SessionSlimOpts = {},
 ): string[] {
   if (!existsSync(userSettingsPath)) return [];
   let user: Record<string, unknown>;
@@ -258,19 +285,19 @@ export function sessionSlimArgs(
   } catch {
     return [];
   }
-  // a definition that is not a loadable server (no command/url) would make
-  // claude refuse the whole --mcp-config: it goes into the settings file only
-  const loadable = (v: unknown): boolean => {
-    const s = v as Record<string, unknown>;
-    return typeof s?.command === "string" || typeof s?.url === "string";
-  };
-  const available = readMcpServers(claudeJson);
-  const names = SESSION_MCP_SERVERS.filter((n) => n in available);
-  const mcpNames = names.filter((n) => loadable(available[n]));
+  const { loaded: names, available } = resolveSessionMcp(claudeJson, o);
+  const always = o.alwaysLoad ?? SESSION_MCP_SERVERS;
   mkdirSync(logDir, { recursive: true });
   const path = join(logDir, `${id}.settings.json`);
-  writePrivateFile(path, JSON.stringify(sessionSlimSettings(user, env, pin, names, provider), null, 2) + "\n");
+  writePrivateFile(path, JSON.stringify(sessionSlimSettings(user, env, pin, names, provider, o.compactCap), null, 2) + "\n");
   const args = ["--setting-sources", "project,local", "--settings", path];
-  if (mcpNames.length) args.push("--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, id, mcpNames, claudeJson));
+  if (names.length) {
+    // alwaysLoad marks a server whose tool definitions stay in the first request;
+    // the rest wait behind tool search (ENABLE_TOOL_SEARCH), loaded on demand
+    const servers = Object.fromEntries(names.map((n) => [n, { ...(available[n] as object), alwaysLoad: always.includes(n) }]));
+    const mcpPath = runMcpConfigPath(logDir, id);
+    writeFileSync(mcpPath, JSON.stringify({ mcpServers: servers }, null, 2) + "\n", "utf8");
+    args.push("--strict-mcp-config", "--mcp-config", mcpPath);
+  }
   return args;
 }

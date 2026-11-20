@@ -12,7 +12,7 @@ import { SESSION_NOTE_COMMANDS, sessionsCommand } from "./commands/session-notes
 import { backupTop, cdTop, clearNamesCmd, endTop, findTop, launchTop, listTop, notesTop, pauseTop, restoreTop, resumeTop, shellInitTop, updateTop } from "./commands/lifecycle.js";
 import { hooksDbCommand } from "./commands/hooks-db.js";
 import { installAlias, setupCommand } from "./commands/setup.js";
-import { lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
+import { localTop, lsCommand, newTop, openTop, renameTop, sessionCommand } from "./commands/session.js";
 import { BATCH_C } from "./commands/batch-c.js";
 import { memoryCommand } from "./commands/memory.js";
 import { kgCommand } from "./commands/kg.js";
@@ -68,7 +68,7 @@ const BATCH_B_EXTRA: Partial<Record<string, CommandDef[]>> = {
 };
 
 export const GROUPS: GroupDef[] = [
-  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, renameTop, sessionGroup, pauseTop, endTop, resumeTop, clearNamesCmd, sessionsCommand, handoffCommand] },
+  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, localTop, renameTop, sessionGroup, pauseTop, endTop, resumeTop, clearNamesCmd, sessionsCommand, handoffCommand] },
   { id: "providers", title: "Providers", daily: true, commands: [providersTop] },
   { id: "help", title: "Help", daily: true, commands: [moreCommand, helpCommand, docCommand] },
   ...(["workers", "memory", "daemon"] as const).map((id) => ({

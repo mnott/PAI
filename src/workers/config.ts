@@ -638,7 +638,7 @@ export interface WorkersConfig {
   localHandoffMinutes: number;
   /**
    * Context window Claude Code is told for local (loopback) workers, in tokens
-   * (workers.localContextTokens; default 65536). Claude Code does not know an
+   * (workers.localContextTokens; default 100000). Claude Code does not know an
    * unrecognised local model's window and assumes 200k, so it compacts only
    * near that — on one local engine every turn then costs a 130k+ context. The
    * value goes to the worker as CLAUDE_CODE_AUTO_COMPACT_WINDOW (Claude Code's
@@ -783,7 +783,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     cacheKeepaliveSecs: num(w.cacheKeepaliveSecs, 0),
     defaultMaxMinutes: num(w.defaultMaxMinutes, 60),
     localHandoffMinutes: num(w.localHandoffMinutes, 0),
-    localContextTokens: num(w.localContextTokens, 65536),
+    localContextTokens: num(w.localContextTokens, 100000),
     timeBudget: { ...DEFAULT_TIME_BUDGET, ...obj(w.timeBudget) },
     waitAlarmMinutes: num(w.waitAlarmMinutes, 120),
     scanBudgetMs: num(w.scanBudgetMs, 5000),
@@ -1523,7 +1523,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
     localHandoffMinutes = w.localHandoffMinutes;
   }
-  let localContextTokens = d.localContextTokens ?? 65536;
+  let localContextTokens = d.localContextTokens ?? 100000;
   if (w.localContextTokens !== undefined) {
     if (typeof w.localContextTokens !== "number" || !Number.isInteger(w.localContextTokens) || w.localContextTokens < 1000) {
       bad(".localContextTokens", "must be an integer of at least 1000 tokens (Claude Code accepts a window from 100k down to its floor; PAI's own cap may go below it)");

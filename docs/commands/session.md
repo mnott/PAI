@@ -13,8 +13,11 @@ Everything about sessions lives under `pai session`; the daily verbs also exist 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--local STRING` | string | — | Start a lean interactive session on the running local model (same as `pai session local`; an optional name picks one running model) |
-| `--model ID` | string | — | With --local: model id on the local provider (default: its default model) |
-| `--print-cmd` | flag | — | With --local: print the env and command instead of starting claude |
+| `--model ID` | string | — | With --local: Model id on the local provider (default: its default model) |
+| `--mcp LIST` | string | — | With --local: MCP servers to load: a,b,c | lean (aibroker+pai) | all (default, config session.localMcp); all but aibroker and pai are deferred behind tool search |
+| `--context N` | string | — | With --local: Context cap (autocompact window): a number, 128k or 256k (default config session.localContextTokens, 262144; minimum 100000) |
+| `--ask-permissions` | flag | — | With --local: Keep claude's permission prompts (default: --dangerously-skip-permissions) |
+| `--print-cmd` | flag | — | With --local: Print the env, loaded/deferred MCP servers and command instead of starting claude |
 
 ```sh
 pai session list
@@ -184,17 +187,21 @@ Start an interactive session on the running local model (through the router)
 pai session local [options]
 ```
 
-Opens Claude Code in the current folder talking only to the local model, so work continues when the cloud subscription is exhausted. The route goes through the PAI router; requests carry x-pai-interactive=1 and are served before queued worker requests on the same engine (never preempting one in flight). The session runs a slim profile: guard hooks kept, heavy context injectors off, MCP limited to aibroker + pai, and an early autocompact window (workers.localContextTokens) that fits the local model. --local <name> picks a specific running local model; --model overrides its default; extra claude args go after `--`. No ANTHROPIC_API_KEY is ever passed.
+Opens Claude Code in the current folder talking only to the local model, so work continues when the cloud subscription is exhausted. The route goes through the PAI router; requests carry x-pai-interactive=1 and are served before queued worker requests on the same engine (never preempting one in flight). The session runs a slim profile: guard hooks kept, heavy context injectors off. It loads your whole MCP server set (--mcp lean = aibroker + pai only) with tool definitions deferred behind tool search, so they do not fill the context; only aibroker and pai stay always-loaded. The autocompact window is session.localContextTokens (default 262144, --context to override; never below 100000). Permission prompts are off (--dangerously-skip-permissions) unless --ask-permissions. --local <name> picks a specific running local model; --model overrides its default; everything after `--` goes to claude verbatim. No ANTHROPIC_API_KEY is ever passed.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--local NAME` | string | — | A specific running local model (default: the one --local resolves) |
 | `--model ID` | string | — | Model id on the local provider (default: its default model) |
-| `--print-cmd` | flag | — | Print the env and command instead of starting claude |
+| `--mcp LIST` | string | — | MCP servers to load: a,b,c | lean (aibroker+pai) | all (default, config session.localMcp); all but aibroker and pai are deferred behind tool search |
+| `--context N` | string | — | Context cap (autocompact window): a number, 128k or 256k (default config session.localContextTokens, 262144; minimum 100000) |
+| `--ask-permissions` | flag | — | Keep claude's permission prompts (default: --dangerously-skip-permissions) |
+| `--print-cmd` | flag | — | Print the env, loaded/deferred MCP servers and command instead of starting claude |
 
 ```sh
 pai session --local
 pai session --local --model qwen3-coder
+pai session --local --mcp lean --context 128k
 pai session --local --print-cmd
 pai session --local -- --continue
 ```
@@ -655,7 +662,7 @@ See also: `pai session route`, `pai project info`
 
 ## See also
 
-[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai budget`](budget.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai graph`](graph.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai whisper`](whisper.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai antipatterns`](antipatterns.md) · [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai bench`](bench.md) · [`pai budget`](budget.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clean`](clean.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai code`](code.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai deepfreeze`](deepfreeze.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai freeze`](freeze.md) · [`pai git`](git.md) · [`pai graph`](graph.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai local`](local.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai now`](now.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai power`](power.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai stop`](stop.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai tests`](tests.md) · [`pai thaw`](thaw.md) · [`pai topic`](topic.md) · [`pai uhp`](uhp.md) · [`pai update`](update.md) · [`pai whisper`](whisper.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <command>` to read any of these in the terminal.
 

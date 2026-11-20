@@ -38,7 +38,12 @@ import { httpModelsCheck, type PortCheck } from "../lib/setups.js";
 /** The real port probe of `--local` (the cached daemon answer is never trusted for "none"). */
 const probeLocal: PortCheck = httpModelsCheck;
 import { addSessionSchedulingHeaders, buildRunEnv, pinnedSettings } from "../../workers/run-env.js";
-import { sessionSlimArgs } from "../../workers/slim-profile.js";
+import { resolveSessionMcp, sessionSlimArgs, SESSION_MCP_SERVERS } from "../../workers/slim-profile.js";
+import { readMcpServers } from "../../workers/mcp.js";
+import { localCompactWindow, MIN_COMPACT_WINDOW } from "../../workers/run-env.js";
+import { effectiveMainConfig } from "../../config/shipped-defaults.js";
+import { paiConfigFilePath } from "../../daemon/config.js";
+import { claudeJsonPath } from "../../config/claude-json.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { prepareDir } from "../lib/new-dir.js";
 import { legacy } from "../lib/legacy.js";
@@ -681,6 +686,51 @@ export interface LocalSessionPlan {
   /** The files the slim session profile wrote (shown by --print-cmd). */
   settingsFile?: string;
   mcpFile?: string;
+  /** MCP servers loaded, and those of them deferred behind tool search. */
+  mcpLoaded: string[];
+  mcpDeferred: string[];
+  /** Estimated tool-definition tokens in the first request. */
+  mcpStartupTokens: number;
+  contextTokens: number;
+}
+
+/** "128k" / "256k" / "200000" -> tokens; below Claude Code's 100k minimum is refused. */
+export function parseContextTokens(v: string | number): number {
+  const m = /^(\d+(?:\.\d+)?)\s*(k)?$/i.exec(String(v).trim());
+  const n = m ? Math.round(Number(m[1]) * (m[2] ? 1024 : 1)) : NaN;
+  if (!Number.isFinite(n)) throw new CliError(`--context needs a number or 128k/256k, got "${v}"`, "pai local --context 256k");
+  if (n < MIN_COMPACT_WINDOW) {
+    throw new CliError(`--context ${v} is below ${MIN_COMPACT_WINDOW}: Claude Code treats anything lower as the 100k minimum`, "pai local --context 128k");
+  }
+  return n;
+}
+
+/** The session section of the main config: context cap and default MCP set. */
+export function readSessionLocalConfig(path: string = paiConfigFilePath()): { contextTokens: number; mcp: string[] | "all" | "lean" } {
+  let sec: Record<string, unknown> = {};
+  try {
+    sec = ((effectiveMainConfig(path).session ?? {}) as Record<string, unknown>) ?? {};
+  } catch {
+    /* unreadable config: shipped defaults below */
+  }
+  const t = sec.localContextTokens;
+  const contextTokens = typeof t === "number" && Number.isFinite(t) ? Math.max(MIN_COMPACT_WINDOW, Math.round(t)) : 262144;
+  return { contextTokens, mcp: parseMcpSpec(sec.localMcp) };
+}
+
+/** "all" | "lean" | "a,b,c" | ["a","b"] -> the canonical form; unset = all. */
+export function parseMcpSpec(v: unknown): string[] | "all" | "lean" {
+  if (Array.isArray(v)) {
+    const l = v.map(String).map((x) => x.trim()).filter(Boolean);
+    return l.length === 1 && (l[0] === "all" || l[0] === "lean") ? (l[0] as "all" | "lean") : l.length ? l : "all";
+  }
+  if (typeof v !== "string" || !v.trim()) return "all";
+  return parseMcpSpec(v.split(","));
+}
+
+/** Rough start-up cost: ~350 tokens per always-loaded tool (assume ~20 per server), ~40 per deferred server for the tool-search listing. */
+export function estimateMcpTokens(always: number, deferred: number): number {
+  return always * 20 * 350 + deferred * 40;
 }
 
 /** Resolve provider+model and build the env/argv; throws NoLocalServerError when nothing local runs. */
@@ -700,6 +750,12 @@ export async function planLocalSession(o: {
   route?: () => string;
   /** ~/.claude.json seam (tests inject; default the real one). */
   claudeJson?: string;
+  /** MCP set: "all" (default), "lean" (aibroker+pai) or a server list. */
+  mcp?: string[] | "all" | "lean";
+  /** Autocompact window in tokens (default session.localContextTokens). */
+  contextTokens?: number;
+  /** Skip --dangerously-skip-permissions (default: the session skips permission prompts). */
+  askPermissions?: boolean;
 }): Promise<LocalSessionPlan> {
   const res = await resolveLocalProvider(o.workers, o.logDir, { ...(o.name !== undefined ? { name: o.name } : {}), ...(o.check ? { check: o.check } : {}) });
   const provider = getProviderOrNative(o.workers, res.name)!;
@@ -726,8 +782,22 @@ export async function planLocalSession(o: {
   delete env.PAI_POOL_SLOT;
   addSessionSchedulingHeaders(env, o.sessionName);
   // --settings travels as a file (a token never rides in argv); print-cmd shows the file it wrote
-  const args = sessionSlimArgs(o.logDir, "session-local", env, pinnedSettings(env, true), undefined, o.claudeJson, provider);
-  const argv = ["claude", "--model", model, ...args, ...(o.rest ?? [])];
+  const contextTokens = Math.max(MIN_COMPACT_WINDOW, o.contextTokens ?? readSessionLocalConfig().contextTokens);
+  const window = localCompactWindow(provider, contextTokens) ?? contextTokens;
+  env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
+  // tool definitions are deferred behind tool search; only aibroker + pai stay always-loaded
+  env.ENABLE_TOOL_SEARCH = "true";
+  const spec = o.mcp ?? "all";
+  const mcpOpt = spec === "lean" ? SESSION_MCP_SERVERS : spec;
+  const claudeJson = o.claudeJson ?? claudeJsonPath();
+  const load = resolveSessionMcp(claudeJson, { mcp: mcpOpt });
+  if (Array.isArray(spec)) {
+    const unknown = spec.filter((n) => !(n in readMcpServers(claudeJson)));
+    if (unknown.length) throw new CliError(`unknown MCP server(s): ${unknown.join(", ")}. Available: ${Object.keys(readMcpServers(claudeJson)).join(", ")}`, "pai local --mcp lean");
+  }
+  // --settings travels as a file (a token never rides in argv); print-cmd shows the file it wrote
+  const args = sessionSlimArgs(o.logDir, "session-local", env, pinnedSettings(env, true), undefined, claudeJson, provider, { mcp: mcpOpt, compactCap: contextTokens });
+  const argv = ["claude", "--model", model, ...args, ...(o.askPermissions ? [] : ["--dangerously-skip-permissions"]), ...(o.rest ?? [])];
   const settingsIdx = args.indexOf("--settings");
   const mcpIdx = args.indexOf("--mcp-config");
   return {
@@ -738,6 +808,10 @@ export async function planLocalSession(o: {
     argv,
     ...(settingsIdx >= 0 ? { settingsFile: args[settingsIdx + 1] } : {}),
     ...(mcpIdx >= 0 ? { mcpFile: args[mcpIdx + 1] } : {}),
+    mcpLoaded: load.loaded,
+    mcpDeferred: load.deferred,
+    mcpStartupTokens: estimateMcpTokens(load.loaded.length - load.deferred.length, load.deferred.length),
+    contextTokens: window,
   };
 }
 
@@ -755,6 +829,11 @@ export function localSessionPrintText(p: LocalSessionPlan): string {
     try {
       const s = JSON.parse(readFileSync(p.settingsFile, "utf8")) as { mcpServers?: Record<string, unknown> };
       lines.push(`mcpServers=${Object.keys(s.mcpServers ?? {}).join(", ")}`);
+      const always = p.mcpLoaded.filter((n) => !p.mcpDeferred.includes(n));
+      lines.push(`mcp loaded (always): ${always.join(", ") || "(none)"}`);
+      lines.push(`mcp deferred (tool search): ${p.mcpDeferred.join(", ") || "(none)"}`);
+      lines.push(`ENABLE_TOOL_SEARCH=${env.ENABLE_TOOL_SEARCH ?? "(unset)"}`);
+      lines.push(`estimated start-up tool-definition tokens: ~${p.mcpStartupTokens}`);
     } catch {
       /* unreadable settings file: the line above already named it */
     }
@@ -763,46 +842,99 @@ export function localSessionPrintText(p: LocalSessionPlan): string {
   return lines.join("\n");
 }
 
+const LOCAL_FLAGS = [
+  { ...OPT.model, summary: "Model id on the local provider (default: its default model)" },
+  { name: "mcp", type: "string" as const, value: "LIST", summary: "MCP servers to load: a,b,c | lean (aibroker+pai) | all (default, config session.localMcp); all but aibroker and pai are deferred behind tool search" },
+  { name: "context", type: "string" as const, value: "N", summary: "Context cap (autocompact window): a number, 128k or 256k (default config session.localContextTokens, 262144; minimum 100000)" },
+  { name: "ask-permissions", type: "boolean" as const, default: false, summary: "Keep claude's permission prompts (default: --dangerously-skip-permissions)" },
+  { name: "print-cmd", type: "boolean" as const, default: false, summary: "Print the env, loaded/deferred MCP servers and command instead of starting claude" },
+];
+
+/** Resolve the local-session flags against the session config. */
+function localFlagValues(opts: Record<string, unknown>): { mcp: string[] | "all" | "lean"; contextTokens: number; askPermissions: boolean } {
+  const cfg = readSessionLocalConfig();
+  return {
+    mcp: typeof opts.mcp === "string" ? parseMcpSpec(opts.mcp) : cfg.mcp,
+    contextTokens: opts.context !== undefined && opts.context !== true ? parseContextTokens(opts.context as string | number) : cfg.contextTokens,
+    askPermissions: opts["ask-permissions"] === true,
+  };
+}
+
+/** Plan and (unless --print-cmd) start a local session; `resumeUuid`/`sessionName`/`cwd` carry `pai NAME --local`. */
+export async function runLocalSession(o: {
+  opts: Record<string, unknown>;
+  rest?: string[];
+  name?: string;
+  sessionName?: string;
+  resumeUuid?: string;
+  cwd?: string;
+}): Promise<number> {
+  const workers = loadWorkers();
+  const logDir = workersLogDir(workers);
+  const cwd = o.cwd ?? process.cwd();
+  const sessionName = o.sessionName ?? ((process.env[SESSION_NAME_ENV] ?? basename(cwd)) || undefined);
+  const named = o.sessionName ? ["--name", o.sessionName] : [];
+  const resume = o.resumeUuid ? ["--resume", o.resumeUuid] : [];
+  let plan: LocalSessionPlan;
+  try {
+    plan = await planLocalSession({
+      workers,
+      logDir,
+      name: o.name,
+      model: o.opts.model as string | undefined,
+      rest: [...resume, ...named, ...(o.rest ?? [])],
+      sessionName,
+      check: probeLocal,
+      ...localFlagValues(o.opts),
+    });
+  } catch (e) {
+    if (e instanceof WorkersConfigError) throw new CliError(e.message, "pai worker local   (shows the running local models)");
+    throw e;
+  }
+  if (o.sessionName) plan.env[SESSION_NAME_ENV] = o.sessionName;
+  if (o.opts["print-cmd"]) {
+    out(localSessionPrintText(plan));
+    return 0;
+  }
+  const r = spawnSync("claude", plan.argv.slice(1), { stdio: "inherit", env: plan.env, cwd });
+  if (r.error) throw new CliError(`could not start claude: ${r.error.message}`, "pai local --print-cmd   (shows the command)");
+  return r.status ?? 0;
+}
+
+const LOCAL_DESCRIPTION =
+  "Opens Claude Code in the current folder talking only to the local model, so work continues when the cloud subscription is exhausted. " +
+  "The route goes through the PAI router; requests carry x-pai-interactive=1 and are served before queued worker requests on the same engine (never preempting one in flight). " +
+  "The session runs a slim profile: guard hooks kept, heavy context injectors off. It loads your whole MCP server set (--mcp lean = aibroker + pai only) with tool definitions deferred behind tool search, so they do not fill the context; only aibroker and pai stay always-loaded. " +
+  "The autocompact window is session.localContextTokens (default 262144, --context to override; never below 100000). Permission prompts are off (--dangerously-skip-permissions) unless --ask-permissions. " +
+  "--local <name> picks a specific running local model; --model overrides its default; everything after `--` goes to claude verbatim. No ANTHROPIC_API_KEY is ever passed.";
+
 const localCommand: CommandDef = {
   name: "local",
   summary: "Start an interactive session on the running local model (through the router)",
-  description:
-    "Opens Claude Code in the current folder talking only to the local model, so work continues when the cloud subscription is exhausted. " +
-    "The route goes through the PAI router; requests carry x-pai-interactive=1 and are served before queued worker requests on the same engine (never preempting one in flight). " +
-    "The session runs a slim profile: guard hooks kept, heavy context injectors off, MCP limited to aibroker + pai, and an early autocompact window (workers.localContextTokens) that fits the local model. " +
-    "--local <name> picks a specific running local model; --model overrides its default; extra claude args go after `--`. No ANTHROPIC_API_KEY is ever passed.",
+  description: LOCAL_DESCRIPTION,
   options: [
     { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "A specific running local model (default: the one --local resolves)" },
-    { ...OPT.model, summary: "Model id on the local provider (default: its default model)" },
-    { name: "print-cmd", type: "boolean", default: false, summary: "Print the env and command instead of starting claude" },
+    ...LOCAL_FLAGS,
   ],
-  examples: ["pai session --local", "pai session --local --model qwen3-coder", "pai session --local --print-cmd", "pai session --local -- --continue"],
+  examples: ["pai session --local", "pai session --local --model qwen3-coder", "pai session --local --mcp lean --context 128k", "pai session --local --print-cmd", "pai session --local -- --continue"],
   seeAlso: ["pai worker local", "pai router", "pai launch"],
   passthrough: true,
-  async run(ctx) {
-    const workers = loadWorkers();
-    const logDir = workersLogDir(workers);
-    const name = typeof ctx.opts.local === "string" ? ctx.opts.local : undefined;
-    let plan: LocalSessionPlan;
-    try {
-      plan = await planLocalSession({
-        workers,
-        logDir,
-        name,
-        model: ctx.opts.model as string | undefined,
-        rest: ctx.rest,
-        sessionName: (process.env[SESSION_NAME_ENV] ?? basename(process.cwd())) || undefined,
-        check: probeLocal,
-      });
-    } catch (e) {
-      if (e instanceof WorkersConfigError) throw new CliError(e.message, "pai worker local   (shows the running local models)");
-      throw e;
-    }
-    if (ctx.opts["print-cmd"]) return void out(localSessionPrintText(plan));
-    const r = spawnSync("claude", plan.argv.slice(1), { stdio: "inherit", env: plan.env, cwd: process.cwd() });
-    if (r.error) throw new CliError(`could not start claude: ${r.error.message}`, "pai session --local --print-cmd   (shows the command)");
-    return r.status ?? 0;
-  },
+  run: (ctx) => runLocalSession({ opts: ctx.opts, rest: ctx.rest, name: typeof ctx.opts.local === "string" ? ctx.opts.local : undefined }),
+};
+
+/** `pai local [NAME] [flags] [-- args]` = `pai session --local`. */
+export const localTop: CommandDef = {
+  name: "local",
+  summary: "Start a session on the running local model (= pai session --local)",
+  description: LOCAL_DESCRIPTION,
+  args: [{ name: "NAME", summary: "A specific running local model (default: the one that resolves)" }],
+  options: LOCAL_FLAGS,
+  examples: ["pai local", "pai local --mcp lean --context 128k", "pai local --print-cmd", "pai local -- --continue"],
+  seeAlso: ["pai session --local", "pai worker local", "pai NAME --local"],
+  aliasOf: "session --local",
+  daily: true,
+  passthrough: true,
+  run: (ctx) => runLocalSession({ opts: ctx.opts, rest: ctx.rest, name: ctx.args.NAME as string | undefined }),
 };
 
 // ---------------------------------------------------------------------------
@@ -821,9 +953,9 @@ export const sessionCommand: CommandDef = {
   // reads as `pai session local --print-cmd`, and --local <name> keeps its value form
   options: [
     { name: "local", type: "string", optionalValue: true, summary: "Start a lean interactive session on the running local model (same as `pai session local`; an optional name picks one running model)" },
-    { ...OPT.model, summary: "With --local: model id on the local provider (default: its default model)" },
-    { name: "print-cmd", type: "boolean", default: false, summary: "With --local: print the env and command instead of starting claude" },
+    ...LOCAL_FLAGS.map((f) => ({ ...f, summary: `With --local: ${f.summary}` })),
   ],
+  passthrough: true,
   async run(ctx) {
     if (ctx.opts.local === true || typeof ctx.opts.local === "string") return localCommand.run!(ctx);
     throw new CliError("nothing given — pai session takes a subcommand", "pai session --local   or   pai help session");

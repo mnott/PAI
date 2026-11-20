@@ -105,7 +105,7 @@ workers:
   # (Claude Code's autocompact-window setting; an explicit provider env for that
   # key still wins). `pai worker resume` on a local provider above this cap
   # starts a fresh conversation instead of --resume. Cloud runs are untouched.
-  localContextTokens: 65536
+  localContextTokens: 100000
   # Progress-based time budget (src/workers/time-budget.ts): a run opens with
   # `start` minutes of own time; at each checkpoint, new edits/commits, test
   # runs, or (read-only jobs) successful tool calls double the allowance up to
