@@ -503,7 +503,8 @@ export const rootCommand: CommandDef = {
   options: [
     { name: "with", type: "string", value: "SETUP", summary: "Scripting: start with this setup, no questions (see: pai setups)" },
     { ...OPT.dryRun },
-    { name: "local", type: "boolean", default: false, summary: "Start this session on the running local model (as `pai session --local`, same flags: --model --mcp --context --ask-permissions --print-cmd; args after -- go to claude)" },
+    { name: "local", type: "boolean", default: false, summary: "Start this session on the running local model (as `pai session --local`, same flags: --model --mcp --context --new --ask-permissions --print-cmd; args after -- go to claude)" },
+    { name: "new", type: "boolean", default: false, summary: "With --local: start a fresh conversation (default: continue this folder's last conversation)" },
     { name: "model", type: "string", value: "ID", summary: "With --local: model id on the local provider" },
     { name: "mcp", type: "string", value: "LIST", summary: "With --local: MCP servers a,b,c | lean | all" },
     { name: "context", type: "string", value: "N", summary: "With --local: context cap (number, 128k, 256k)" },

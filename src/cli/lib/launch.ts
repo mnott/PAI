@@ -177,8 +177,13 @@ export function hasConversation(path: string, chunkBytes = 1 << 20): boolean {
  * Claude Code stores transcripts at ~/.claude/projects/<encoded-cwd>/, where the
  * encoding replaces every non-alphanumeric character with `-`.
  */
-function encodedProjectDir(cwd: string): string {
+export function encodedProjectDir(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/** ~/.claude/projects/<encoded-cwd> — the transcript dir claude --resume reads. */
+export function projectTranscriptDir(cwd: string, home = homedir()): string {
+  return join(home, ".claude", "projects", encodedProjectDir(cwd));
 }
 
 function transcriptOnDisk(
@@ -187,7 +192,7 @@ function transcriptOnDisk(
   home = homedir()
 ): true | "missing" | "stub" | null {
   try {
-    const dir = join(home, ".claude", "projects", encodedProjectDir(cwd));
+    const dir = projectTranscriptDir(cwd, home);
     if (!existsSync(dir)) return null; // unknown layout — not evidence of absence
     if (!restoreTopLevel(uuid, dir)) return "missing";
     // Present is not the same as resumable. A metadata stub survives every
