@@ -4,8 +4,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
-import { basename } from "node:path";
+import { readFileSync, readdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { ANTHROPIC_NATIVE, readWorkersSection, WorkersConfigError, type WorkersConfig, nativeOrchestratorModel } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
@@ -839,6 +840,13 @@ export function localSessionPrintText(p: LocalSessionPlan): string {
       /* unreadable settings file: the line above already named it */
     }
   }
+  // the user setting source is loaded (skills/commands/agents resolve); what
+  // must stay out is neutralised by --settings (guard hooks only) and
+  // --strict-mcp-config. The dirs shown are the ones that exist.
+  const home = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  const found = (d: string) => { try { return readdirSync(join(home, d)).length > 0; } catch { return false; } };
+  const dirs = (["skills", "commands", "agents"] as const).filter(found);
+  lines.push(`user skills/commands/agents: ${dirs.length ? dirs.join(", ") : "(none found)"} from ${home}`);
   lines.push(p.argv.map((a) => (/[\s"'$`\\{}]/.test(a) ? JSON.stringify(a) : a)).join(" "));
   return lines.join("\n");
 }
