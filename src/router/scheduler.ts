@@ -110,6 +110,7 @@ interface Waiter {
   session: string;
   worker: string;
   at: number;
+  interactive?: SessionOpts;
   grant: (t: Ticket) => void;
   fail: (e: Error) => void;
 }
@@ -158,10 +159,39 @@ export interface WorkerAcct {
   paused?: boolean;
 }
 
+/** What the router knows of an interactive request (x-pai-interactive, x-pai-failover). */
+export interface SessionOpts {
+  /** the request was failed over from the cloud (ROUTER-FAILOVER) */
+  failover?: boolean;
+}
+
+/** An interactive local session (pai local / pai NAME --local), keyed by session name; gone 30 min after its last request. */
+export interface SessionAcct {
+  session: string;
+  engine: string;
+  requests: number;
+  waitMsTotal: number;
+  lastWaitMs: number;
+  serviceMsTotal: number;
+  lastServiceMs: number;
+  /** epoch ms of the last request */
+  lastRequest: number;
+  /** a request is being served now */
+  inflight: boolean;
+  /** prefill + decode tokens served */
+  tokens: number;
+  failover?: boolean;
+}
+
+/** An interactive session entry expires after this long without a request (ms). */
+export const SESSION_TTL_MS = 30 * 60_000;
+
 export interface SchedSnapshot {
   at: number;
   engines: Record<string, { inflight: { session: string; worker: string; sinceMs: number } | null; queued: Record<string, number>; counters: Record<string, number> }>;
   workers: Record<string, WorkerAcct>;
+  /** interactive sessions by name (absent in snapshots written by older routers) */
+  sessions?: Record<string, SessionAcct>;
 }
 
 /** Local prompt-reading speed assumed by the stale reaper (tokens/s), and the slack on it. */
@@ -178,6 +208,7 @@ export class RequestScheduler {
   private engines = new Map<string, Engine>();
   private counters = new Map<string, Map<string, number>>();
   private workers = new Map<string, WorkerAcct>();
+  private sessions = new Map<string, SessionAcct>();
   private seq = 0;
   /** called after any state change (the router mirrors the snapshot to disk) */
   onChange?: () => void;
@@ -314,7 +345,7 @@ export class RequestScheduler {
   }
 
   /** Wait for the engine. Resolves with a ticket; rejects only when cancelled. */
-  acquire(engineName: string, session: string, worker: string, signal?: { onAbort(cb: () => void): void }, hint?: Priority): Promise<Ticket> {
+  acquire(engineName: string, session: string, worker: string, signal?: { onAbort(cb: () => void): void }, hint?: Priority, interactive?: SessionOpts): Promise<Ticket> {
     const eng = this.engine(engineName);
     const now = this.now();
     const ctr = this.ctr(engineName);
@@ -327,8 +358,12 @@ export class RequestScheduler {
       ctr.set(session, Math.max(ctr.get(session) ?? 0, floor));
     } else if (!ctr.has(session)) ctr.set(session, 0);
     const acct = this.acct(worker, session, engineName);
+    if (interactive) {
+      const prev = this.sessions.get(session);
+      this.sessions.set(session, { session, engine: engineName, requests: prev?.requests ?? 0, waitMsTotal: prev?.waitMsTotal ?? 0, lastWaitMs: prev?.lastWaitMs ?? 0, serviceMsTotal: prev?.serviceMsTotal ?? 0, lastServiceMs: prev?.lastServiceMs ?? 0, lastRequest: now, inflight: prev?.inflight ?? false, tokens: prev?.tokens ?? 0, ...(interactive.failover || (prev?.failover && now - prev.lastRequest < SESSION_TTL_MS) ? { failover: true } : {}) });
+    }
     return new Promise<Ticket>((resolve, reject) => {
-      const w: Waiter = { seq: ++this.seq, hint, session, worker, at: now, grant: resolve, fail: reject };
+      const w: Waiter = { seq: ++this.seq, hint, session, worker, at: now, interactive, grant: resolve, fail: reject };
       eng.waiting.push(w);
       if (!acct.waitingSince) acct.waitingSince = now;
       signal?.onAbort(() => {
@@ -432,6 +467,13 @@ export class RequestScheduler {
       a.waitMsTotal += waitedMs;
       a.lastWaitMs = waitedMs;
       a.activeSince = start;
+      const sa = w.interactive ? this.sessions.get(w.session) : undefined;
+      if (sa) {
+        sa.requests++;
+        sa.waitMsTotal += waitedMs;
+        sa.lastWaitMs = waitedMs;
+        sa.inflight = true;
+      }
       this.refreshWaiting(w.worker);
       let done = false;
       const flight = eng.inflight;
@@ -463,6 +505,12 @@ export class RequestScheduler {
           a.lastServiceMs = end - start;
           a.serviceMsTotal += end - start;
           a.lastEnd = end;
+          if (sa) {
+            sa.inflight = false;
+            sa.lastServiceMs = end - start;
+            sa.serviceMsTotal += end - start;
+            if (served) sa.tokens += Math.max(0, served.prefill) + Math.max(0, served.decode);
+          }
           if (served) {
             const cfg = this.cfg();
             const weight = cfg.sessionWeights[w.session] ?? 1;
@@ -520,7 +568,12 @@ export class RequestScheduler {
       const c = w ? this.ctl(w) : this.control?.(id);
       workers[id] = c ? { ...a, priority: c.priority, paused: c.paused } : { ...a };
     }
-    return { at: now, engines, workers };
+    const sessions: Record<string, SessionAcct> = {};
+    for (const [name, a] of this.sessions) {
+      if (!a.inflight && now - a.lastRequest > SESSION_TTL_MS) this.sessions.delete(name);
+      else sessions[name] = { ...a };
+    }
+    return { at: now, engines, workers, sessions };
   }
 }
 
