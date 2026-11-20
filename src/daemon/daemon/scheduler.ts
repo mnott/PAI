@@ -65,7 +65,7 @@ import {
   recordEmbedPass,
   runEmbedCycle,
 } from "../../memory/embed-pass.js";
-import { acquireRun } from "../../memory/run-state.js";
+import { acquireRun, beginPass, endPass } from "../../memory/run-state.js";
 import { indexTick, jobProgressFromEnv } from "../../memory/job-progress.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
@@ -232,11 +232,24 @@ export async function runIndex(opts: { triggered?: boolean } = {}): Promise<void
   // run holds the marker — that run is the truth, this trigger has nothing to start.
   const handle = acquireRun("index", { by: "daemon" });
   if (!handle) {
+    // a live run of some starter holds the marker. The daemon's own pass IS this
+    // process, so when one is in flight this reads as a concurrent scheduled pass:
+    // skip it (the in-flight pass is the truth), never a FAILED attempt — a skip
+    // must not turn the cockpit Memory card red.
+    if (indexInProgress) {
+      process.stderr.write("[pai-daemon] Index pass skipped: already running.\n");
+      return;
+    }
     process.stderr.write("[pai-daemon] Index run held: another index/embed run holds the marker.\n");
     if (opts.triggered) setLastIndexPass({ at: Date.now(), durationMs: 0, projects: 0, files: 0, chunks: 0, outcome: "refused", reason: "another index/embed run is active" });
     return;
   }
 
+  // the in-process pass holds the marker under the daemon's OWN pid, so nothing
+  // else can tell a live pass from a leaked marker; beginPass is that word, and
+  // the finally below clears it on every path (2026-11-20: an early throw left
+  // the marker standing and the daemon refused itself until it gave up).
+  beginPass("index");
   setIndexInProgress(true);
   const t0 = Date.now();
 
@@ -263,6 +276,10 @@ export async function runIndex(opts: { triggered?: boolean } = {}): Promise<void
     handle.release({ outcome: "failed", reason: msg });
     failPass("index", e, () => runIndex(opts));
   } finally {
+    // the marker and its in-flight word go on every path — including a throw
+    // before the try (the pass child's spawn itself) and a shutdown interrupt.
+    handle.release();
+    endPass("index");
     setIndexInProgress(false);
   }
 }
@@ -463,11 +480,17 @@ export async function runEmbed(opts: { triggered?: boolean } = {}): Promise<Embe
   // the shared run marker (same as the index pass): visible to the cockpit, duplicate-guarded.
   const handle = acquireRun("embed", { by: "daemon" });
   if (!handle) {
+    // same as the index pass: our own in-flight embed means a concurrent pass — skip, never FAILED.
+    if (embedInProgress) {
+      process.stderr.write("[pai-daemon] Embed pass skipped: already running.\n");
+      return null;
+    }
     process.stderr.write("[pai-daemon] Embed pass held: another index/embed run holds the marker.\n");
     if (opts.triggered) setLastEmbedPass({ at: Date.now(), durationMs: 0, outcome: "failed", embedded: 0, reason: "refused: another index/embed run is active" });
     return null;
   }
 
+  beginPass("embed");
   setEmbedInProgress(true);
   const t0 = Date.now();
   let ended: { outcome: EmbedPassOutcome; reason?: string } = { outcome: "done" };
@@ -553,6 +576,9 @@ export async function runEmbed(opts: { triggered?: boolean } = {}): Promise<Embe
     failPass("embed", e, () => runEmbed(opts).then(() => undefined));
     return await recordPass(t0, 0, "error", msg);
   } finally {
+    // release on every path (see the index pass above).
+    handle.release();
+    endPass("embed");
     setEmbedInProgress(false);
   }
 }

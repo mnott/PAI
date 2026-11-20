@@ -5,7 +5,7 @@
  * error and the pass is skipped until tomorrow). Best-effort: logs, never throws.
  */
 import { spawn } from "node:child_process";
-import { buildPassCommand, cliEntry } from "./pass-priority.js";
+import { cliEntry } from "./pass-priority.js";
 
 const DAY_MS = 24 * 3600_000;
 const MAX_MINUTES = 90;
@@ -20,7 +20,12 @@ export async function runCodeSummariesDaily(): Promise<void> {
 }
 
 function runStep(label: string, passArgs: string[]): Promise<void> {
-  const { cmd, args } = buildPassCommand(process.platform, process.execPath, cliEntry(), passArgs);
+  // NOT buildPassCommand/`pai memory pass`: those are the index/embed pass children and take the
+  // shared memory-run marker. `code relate` / `code summarize` hold no marker, so this child must
+  // not be wrapped in the pass runner (2026-11-20: the nightly chain's child read like an index
+  // run for its whole ~90 min). Low priority is still held inside via PAI_PASS_BACKGROUND.
+  const cmd = process.execPath;
+  const args = [cliEntry(), ...passArgs];
   return new Promise<void>((resolve) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PAI_PASS_BACKGROUND: "1" } });
     let err = "";
