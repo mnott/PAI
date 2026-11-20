@@ -694,6 +694,10 @@ export interface LocalSessionPlan {
   /** Estimated tool-definition tokens in the first request. */
   mcpStartupTokens: number;
   contextTokens: number;
+  /** The conversation this launch continues (undefined when it starts fresh). */
+  resumeUuid?: string;
+  /** What that conversation was about, for --print-cmd ("last active … · last: …"). */
+  resumeContext?: string;
 }
 
 /** "128k" / "256k" / "200000" -> tokens; below Claude Code's 100k minimum is refused. */
@@ -735,6 +739,46 @@ export function estimateMcpTokens(always: number, deferred: number): number {
   return always * 20 * 350 + deferred * 40;
 }
 
+/**
+ * The conversation `pai local` continues: the most recent resumable transcript
+ * of this folder. `scanSessions` sorts by mtime desc and reports transcripts
+ * PAI archived under `sessions/` as resumable — probeResume links them back to
+ * the top level before answering, which is what makes the label true — so the
+ * first one whose directory resolves to this cwd IS the folder's last
+ * conversation. Undefined when the folder never had one (the caller starts
+ * fresh, honestly).
+ */
+export async function latestFolderSession(cwd: string): Promise<ScannedSession | undefined> {
+  const sessions = await scanSessions({ limit: 500, filter: "all" });
+  for (const s of sessions) {
+    if (!s.resumable) continue;
+    if (sessionDir(s) === cwd) return s;
+  }
+  return undefined;
+}
+
+/**
+ * The resume decision of a local launch, shared by the plan and --print-cmd so
+ * neither can drift: an explicit uuid (`pai NAME --local`) wins; `--new` starts
+ * fresh; otherwise continue this folder's most recent conversation — exactly
+ * what plain `pai NAME` continues, on the local engine. A candidate whose
+ * transcript turns out unresumable degrades to fresh rather than erroring: a
+ * local session must still start.
+ */
+export async function resolveLocalResume(o: {
+  cwd: string;
+  resumeUuid?: string;
+  forceFresh?: boolean;
+  probe?: (uuid: string, cwd: string) => { ok: boolean };
+}): Promise<string | undefined> {
+  if (o.resumeUuid) return o.resumeUuid;
+  if (o.forceFresh) return undefined;
+  const candidate = await latestFolderSession(o.cwd);
+  if (!candidate) return undefined;
+  const probe = (o.probe ?? probeResume)(candidate.uuid, o.cwd);
+  return probe.ok ? candidate.uuid : undefined;
+}
+
 /** Resolve provider+model and build the env/argv; throws NoLocalServerError when nothing local runs. */
 export async function planLocalSession(o: {
   workers: WorkersConfig;
@@ -758,6 +802,12 @@ export async function planLocalSession(o: {
   contextTokens?: number;
   /** Skip --dangerously-skip-permissions (default: the session skips permission prompts). */
   askPermissions?: boolean;
+  /** The folder to continue (default process.cwd()). */
+  cwd?: string;
+  /** `--new`: start a fresh conversation instead of continuing this folder's last. */
+  forceFresh?: boolean;
+  /** Resume-resolution seam (tests inject; default the real folder scan + probe). */
+  resume?: () => Promise<string | undefined>;
 }): Promise<LocalSessionPlan> {
   const res = await resolveLocalProvider(o.workers, o.logDir, { ...(o.name !== undefined ? { name: o.name } : {}), ...(o.check ? { check: o.check } : {}) });
   const provider = getProviderOrNative(o.workers, res.name)!;
@@ -799,7 +849,21 @@ export async function planLocalSession(o: {
   }
   // --settings travels as a file (a token never rides in argv); print-cmd shows the file it wrote
   const args = sessionSlimArgs(o.logDir, "session-local", env, pinnedSettings(env, true), undefined, claudeJson, provider, { mcp: mcpOpt, compactCap: contextTokens });
-  const argv = ["claude", "--model", model, ...args, "--append-system-prompt", CODE_GRAPH_FIRST_LINE, ...(o.askPermissions ? [] : ["--dangerously-skip-permissions"]), ...(o.rest ?? [])];
+  // continue this folder's last conversation unless --new or rest already carries a resume/continue
+  const cwd = o.cwd ?? process.cwd();
+  const wantsResume = (o.rest ?? []).some((a) => a === "--resume" || a === "--continue");
+  const resumeUuid = wantsResume ? undefined : await (o.resume ?? (() => resolveLocalResume({ cwd, forceFresh: o.forceFresh })))();
+  const argv = [
+    "claude",
+    "--model",
+    model,
+    ...args,
+    "--append-system-prompt",
+    CODE_GRAPH_FIRST_LINE,
+    ...(o.askPermissions ? [] : ["--dangerously-skip-permissions"]),
+    ...(resumeUuid ? ["--resume", resumeUuid] : []),
+    ...(o.rest ?? []),
+  ];
   const settingsIdx = args.indexOf("--settings");
   const mcpIdx = args.indexOf("--mcp-config");
   return {
@@ -814,6 +878,7 @@ export async function planLocalSession(o: {
     mcpDeferred: load.deferred,
     mcpStartupTokens: estimateMcpTokens(load.loaded.length - load.deferred.length, load.deferred.length),
     contextTokens: window,
+    ...(resumeUuid ? { resumeUuid, resumeContext: transcriptResumeContext(join(encodedProjectDir(cwd), `${resumeUuid}.jsonl`)) } : {}),
   };
 }
 
