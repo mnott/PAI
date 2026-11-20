@@ -3,10 +3,11 @@
  * `pai ls`, `pai open`, `pai new`, `pai rename`.
  */
 
-import { realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFileSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
-import { ANTHROPIC_NATIVE, readWorkersSection, type WorkersConfig, nativeOrchestratorModel } from "../../workers/config.js";
+import { ANTHROPIC_NATIVE, readWorkersSection, WorkersConfigError, type WorkersConfig, nativeOrchestratorModel } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { renderTable, makeStyle, colorEnabled, type Style } from "../help.js";
@@ -30,7 +31,15 @@ import {
   scanSessions,
   type ScannedSession,
 } from "../lib/session-scan.js";
-import { getProfile } from "../../workers/session-profile-store.js";
+import { getProfile, SESSION_NAME_ENV } from "../../workers/session-profile-store.js";
+import { resolveLocalProvider } from "../../workers/local-provider.js";
+import { httpModelsCheck, type PortCheck } from "../lib/setups.js";
+
+/** The real port probe of `--local` (the cached daemon answer is never trusted for "none"). */
+const probeLocal: PortCheck = httpModelsCheck;
+import { addSessionSchedulingHeaders, buildRunEnv, pinnedSettings } from "../../workers/run-env.js";
+import { sessionSlimArgs } from "../../workers/slim-profile.js";
+import { workersLogDir } from "../../workers/paths.js";
 import { prepareDir } from "../lib/new-dir.js";
 import { legacy } from "../lib/legacy.js";
 import { resolveSessionFolder, type FolderResolution } from "../lib/folder-resolve.js";
@@ -645,16 +654,181 @@ const profileCommand: CommandDef = {
 };
 
 // ---------------------------------------------------------------------------
+// local
+// ---------------------------------------------------------------------------
+
+/**
+ * `pai session --local` — an interactive main session that talks only to the
+ * running local model, through the PAI router: work continues when the cloud
+ * subscription is exhausted. The route, the compact window and the timeouts are
+ * exactly what a local worker gets (buildRunEnv); on top of it the session
+ * variant of the slim profile keeps the guard hooks, drops the heavy context
+ * injectors and limits MCP to aibroker + pai, so the main context fits the
+ * local window. The requests carry x-pai-interactive=1 (+ a high hint), which
+ * makes the router's scheduler serve them before queued worker requests on the
+ * same engine — never preempting one in flight. --print-cmd shows the env and
+ * the command instead of starting claude (for tests and for the operator).
+ */
+
+/** The plan behind `pai session --local`: everything the exec needs, resolved. Pure enough to test. */
+export interface LocalSessionPlan {
+  providerName: string;
+  /** How the running local model was picked (resolveLocalProvider's why). */
+  why: string;
+  model: string;
+  env: NodeJS.ProcessEnv;
+  argv: string[];
+  /** The files the slim session profile wrote (shown by --print-cmd). */
+  settingsFile?: string;
+  mcpFile?: string;
+}
+
+/** Resolve provider+model and build the env/argv; throws NoLocalServerError when nothing local runs. */
+export async function planLocalSession(o: {
+  workers: WorkersConfig;
+  logDir: string;
+  /** `--local <name>`: a specific running local model. */
+  name?: string;
+  /** `--model <id>`: overrides the provider's default model. */
+  model?: string;
+  /** Extra claude args after `--`. */
+  rest?: string[];
+  sessionName?: string;
+  /** Port-probe seam (tests inject; default httpModelsCheck, as every --local path uses). */
+  check?: import("../../cli/lib/setups.js").PortCheck;
+  /** Router-route seam (tests inject; default the real loopback router URL). */
+  route?: () => string;
+  /** ~/.claude.json seam (tests inject; default the real one). */
+  claudeJson?: string;
+}): Promise<LocalSessionPlan> {
+  const res = await resolveLocalProvider(o.workers, o.logDir, { ...(o.name !== undefined ? { name: o.name } : {}), ...(o.check ? { check: o.check } : {}) });
+  const provider = getProviderOrNative(o.workers, res.name)!;
+  if (o.model && !Object.values(provider.models).includes(o.model)) {
+    throw new CliError(
+      `model "${o.model}" is not configured for local provider "${res.name}". Configured: ${Object.values(provider.models).join(", ")}`,
+      "pai session --local   (the running model's default)"
+    );
+  }
+  const model = o.model ?? provider.models.default;
+  // the exact env a local worker runs with, interactive edition: router route,
+  // tier model pins, compact window (workers.localContextTokens), local
+  // timeouts — and never an ANTHROPIC_API_KEY (nativeLaunchEnv strips it)
+  const env = buildRunEnv(provider, false, undefined, res.name, true);
+  if (o.route) {
+    // the route seam replaces only the URL; the header line buildRunEnv keyed
+    // the scheduling headers to is re-set first so they still attach
+    const url = o.route();
+    env.ANTHROPIC_BASE_URL = url;
+    env.ANTHROPIC_CUSTOM_HEADERS = `x-pai-provider: ${res.name}`;
+  }
+  delete env.PAI_WORKER;
+  delete env.PAI_WORKER_ID;
+  delete env.PAI_POOL_SLOT;
+  addSessionSchedulingHeaders(env, o.sessionName);
+  // --settings travels as a file (a token never rides in argv); print-cmd shows the file it wrote
+  const args = sessionSlimArgs(o.logDir, "session-local", env, pinnedSettings(env, true), undefined, o.claudeJson, provider);
+  const argv = ["claude", "--model", model, ...args, ...(o.rest ?? [])];
+  const settingsIdx = args.indexOf("--settings");
+  const mcpIdx = args.indexOf("--mcp-config");
+  return {
+    providerName: res.name,
+    why: res.why,
+    model,
+    env,
+    argv,
+    ...(settingsIdx >= 0 ? { settingsFile: args[settingsIdx + 1] } : {}),
+    ...(mcpIdx >= 0 ? { mcpFile: args[mcpIdx + 1] } : {}),
+  };
+}
+
+/** The --print-cmd text: env lines the launcher would set, then the exec line. */
+export function localSessionPrintText(p: LocalSessionPlan): string {
+  const env = p.env;
+  const lines = [
+    `local model: ${p.providerName} (${p.why}) · model ${p.model}`,
+    `ANTHROPIC_BASE_URL=${env.ANTHROPIC_BASE_URL}`,
+    `CLAUDE_CODE_AUTO_COMPACT_WINDOW=${env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ?? "(unset)"}`,
+    `ANTHROPIC_API_KEY=${env.ANTHROPIC_API_KEY ?? "(not set)"}`,
+    `ANTHROPIC_CUSTOM_HEADERS=${(env.ANTHROPIC_CUSTOM_HEADERS ?? "").split("\n").join(" | ")}`,
+  ];
+  if (p.settingsFile) {
+    try {
+      const s = JSON.parse(readFileSync(p.settingsFile, "utf8")) as { mcpServers?: Record<string, unknown> };
+      lines.push(`mcpServers=${Object.keys(s.mcpServers ?? {}).join(", ")}`);
+    } catch {
+      /* unreadable settings file: the line above already named it */
+    }
+  }
+  lines.push(p.argv.map((a) => (/[\s"'$`\\{}]/.test(a) ? JSON.stringify(a) : a)).join(" "));
+  return lines.join("\n");
+}
+
+const localCommand: CommandDef = {
+  name: "local",
+  summary: "Start an interactive session on the running local model (through the router)",
+  description:
+    "Opens Claude Code in the current folder talking only to the local model, so work continues when the cloud subscription is exhausted. " +
+    "The route goes through the PAI router; requests carry x-pai-interactive=1 and are served before queued worker requests on the same engine (never preempting one in flight). " +
+    "The session runs a slim profile: guard hooks kept, heavy context injectors off, MCP limited to aibroker + pai, and an early autocompact window (workers.localContextTokens) that fits the local model. " +
+    "--local <name> picks a specific running local model; --model overrides its default; extra claude args go after `--`. No ANTHROPIC_API_KEY is ever passed.",
+  options: [
+    { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "A specific running local model (default: the one --local resolves)" },
+    { ...OPT.model, summary: "Model id on the local provider (default: its default model)" },
+    { name: "print-cmd", type: "boolean", default: false, summary: "Print the env and command instead of starting claude" },
+  ],
+  examples: ["pai session --local", "pai session --local --model qwen3-coder", "pai session --local --print-cmd", "pai session --local -- --continue"],
+  seeAlso: ["pai worker local", "pai router", "pai launch"],
+  passthrough: true,
+  async run(ctx) {
+    const workers = loadWorkers();
+    const logDir = workersLogDir(workers);
+    const name = typeof ctx.opts.local === "string" ? ctx.opts.local : undefined;
+    let plan: LocalSessionPlan;
+    try {
+      plan = await planLocalSession({
+        workers,
+        logDir,
+        name,
+        model: ctx.opts.model as string | undefined,
+        rest: ctx.rest,
+        sessionName: (process.env[SESSION_NAME_ENV] ?? basename(process.cwd())) || undefined,
+        check: probeLocal,
+      });
+    } catch (e) {
+      if (e instanceof WorkersConfigError) throw new CliError(e.message, "pai worker local   (shows the running local models)");
+      throw e;
+    }
+    if (ctx.opts["print-cmd"]) return void out(localSessionPrintText(plan));
+    const r = spawnSync("claude", plan.argv.slice(1), { stdio: "inherit", env: plan.env, cwd: process.cwd() });
+    if (r.error) throw new CliError(`could not start claude: ${r.error.message}`, "pai session --local --print-cmd   (shows the command)");
+    return r.status ?? 0;
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Exports: the group and its daily shortcuts
 // ---------------------------------------------------------------------------
 
 export const sessionCommand: CommandDef = {
   name: "session",
-  summary: "Work with sessions: list, open, new, rename, profile",
-  description: "Everything about sessions lives under `pai session`; the daily verbs also exist as short top-level commands.",
-  examples: ["pai session list", "pai session open my-session", "pai session new --provider glm", "pai session profile"],
+  summary: "Work with sessions: list, open, new, rename, profile, local",
+  description:
+    "Everything about sessions lives under `pai session`; the daily verbs also exist as short top-level commands. " +
+    "`pai session --local` starts a lean interactive session on the running local model (see pai session local).",
+  examples: ["pai session list", "pai session open my-session", "pai session new --provider glm", "pai session profile", "pai session --local"],
   seeAlso: ["pai ls", "pai open", "pai new"],
-  subcommands: [listCommand, openCommand, newCommand, renameCommand, profileCommand],
+  // the group accepts --local's own flags and forwards them: `pai session --local --print-cmd`
+  // reads as `pai session local --print-cmd`, and --local <name> keeps its value form
+  options: [
+    { name: "local", type: "string", optionalValue: true, summary: "Start a lean interactive session on the running local model (same as `pai session local`; an optional name picks one running model)" },
+    { ...OPT.model, summary: "With --local: model id on the local provider (default: its default model)" },
+    { name: "print-cmd", type: "boolean", default: false, summary: "With --local: print the env and command instead of starting claude" },
+  ],
+  async run(ctx) {
+    if (ctx.opts.local === true || typeof ctx.opts.local === "string") return localCommand.run!(ctx);
+    throw new CliError("nothing given — pai session takes a subcommand", "pai session --local   or   pai help session");
+  },
+  subcommands: [listCommand, openCommand, newCommand, renameCommand, profileCommand, localCommand],
 };
 
 export const lsCommand: CommandDef = { ...listCommand, name: "ls", aliasOf: "session list", daily: true };

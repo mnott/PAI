@@ -1,9 +1,13 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseWorkersConfig } from "../workers/config.js";
 import { createRouter } from "./router.js";
-import { DEFAULT_SCHED, RequestScheduler, sharedScheduler } from "./scheduler.js";
+import { DEFAULT_SCHED, RequestScheduler, sharedScheduler, type Priority } from "./scheduler.js";
+import { engineControlReader } from "../workers/engine-control.js";
 
 const closers: Array<() => void> = [];
 afterEach(() => {
@@ -158,6 +162,37 @@ describe("stale reaper counts prompt reading as progress", () => {
     t.setPromptTokens(2000);
     adv(6 * 60_000);
     expect(s.reapStale()).toBe(1);
+  });
+});
+
+describe("interactive session priority", () => {
+  // `pai session --local` announces x-pai-priority: high with no worker status file;
+  // the control reader must let that hint through, and the queue must serve it first.
+  it("an interactive hint beats a queued normal worker once the engine frees", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sched-int-"));
+    closers.push(() => rmSync(dir, { recursive: true, force: true }));
+    const s = new RequestScheduler(() => DEFAULT_SCHED);
+    s.control = engineControlReader(() => dir);
+    const held = await s.acquire("e", "sA", "wA"); // occupies the engine (a normal worker)
+    const w1p = s.acquire("e", "sB", "w1"); // queued normal worker, enqueued first
+    const sessp = s.acquire("e", "sC", "session-local", undefined, "high" as Priority); // interactive, enqueued second
+    await new Promise((r) => setTimeout(r, 5)); // distinct queue timestamps: aging cannot reorder
+    expect(s.snapshot().engines.e!.inflight?.worker).toBe("wA");
+    held.release(); // the engine frees; both waiters are eligible
+    const sess = await sessp; // the interactive request goes first despite enqueuing second
+    expect(s.snapshot().engines.e!.inflight?.worker).toBe("session-local");
+    sess.release();
+    const t1 = await w1p;
+    expect(s.snapshot().engines.e!.inflight?.worker).toBe("w1");
+    t1.release();
+  });
+  it("the control reader passes a hint through for a bare client, normal without one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sched-int2-"));
+    closers.push(() => rmSync(dir, { recursive: true, force: true }));
+    const r = engineControlReader(() => dir);
+    expect(r("session-local", "high").priority).toBe("high");
+    expect(r("session-local").priority).toBe("normal");
+    expect(r("session-local", "high").paused).toBe(false);
   });
 });
 

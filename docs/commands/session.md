@@ -2,19 +2,26 @@
 
 # pai session
 
-Work with sessions: list, open, new, rename, profile
+Work with sessions: list, open, new, rename, profile, local
 
 ```
-pai session <command>
+pai session [command] [options]
 ```
 
-Everything about sessions lives under `pai session`; the daily verbs also exist as short top-level commands.
+Everything about sessions lives under `pai session`; the daily verbs also exist as short top-level commands. `pai session --local` starts a lean interactive session on the running local model (see pai session local).
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--local STRING` | string | — | Start a lean interactive session on the running local model (same as `pai session local`; an optional name picks one running model) |
+| `--model ID` | string | — | With --local: model id on the local provider (default: its default model) |
+| `--print-cmd` | flag | — | With --local: print the env and command instead of starting claude |
 
 ```sh
 pai session list
 pai session open my-session
 pai session new --provider glm
 pai session profile
+pai session --local
 ```
 
 See also: `pai ls`, `pai open`, `pai new`
@@ -168,6 +175,31 @@ pai session profile repair
 ```
 
 See also: `pai worker route`, `pai setups`
+
+### pai session local
+
+Start an interactive session on the running local model (through the router)
+
+```
+pai session local [options]
+```
+
+Opens Claude Code in the current folder talking only to the local model, so work continues when the cloud subscription is exhausted. The route goes through the PAI router; requests carry x-pai-interactive=1 and are served before queued worker requests on the same engine (never preempting one in flight). The session runs a slim profile: guard hooks kept, heavy context injectors off, MCP limited to aibroker + pai, and an early autocompact window (workers.localContextTokens) that fits the local model. --local <name> picks a specific running local model; --model overrides its default; extra claude args go after `--`. No ANTHROPIC_API_KEY is ever passed.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--local NAME` | string | — | A specific running local model (default: the one --local resolves) |
+| `--model ID` | string | — | Model id on the local provider (default: its default model) |
+| `--print-cmd` | flag | — | Print the env and command instead of starting claude |
+
+```sh
+pai session --local
+pai session --local --model qwen3-coder
+pai session --local --print-cmd
+pai session --local -- --continue
+```
+
+See also: `pai worker local`, `pai router`, `pai launch`
 
 ### pai session info
 
@@ -602,6 +634,7 @@ See also: `pai session route`, `pai project info`
 | `pai session new` | Start a new session in a new or existing folder |
 | `pai session rename` | Give a session a new name |
 | `pai session profile` | Show or change this session's model profile (chat, workers) |
+| `pai session local` | Start an interactive session on the running local model (through the router) |
 | `pai session info` | Show everything known about one session note |
 | `pai session repair-registry` | Point registry rows at the note files they belong to |
 | `pai session slug` | Suggest a short name for a session note from its transcript |

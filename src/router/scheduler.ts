@@ -13,6 +13,9 @@
  *   - a request waiting longer than agingSec goes next regardless
  *   - inside a session: FIFO, except a request whose worker's conversation is
  *     warm (last turn under warmMs ago, prefix likely cached) goes first
+ *   - a hint (x-pai-priority, e.g. the high of an interactive `pai session
+ *     --local`) ranks a bare client — one with no worker status file for the
+ *     control source to read; a worker's current controls always win
  *
  * Accounting per request (queue wait, service time) is kept per worker
  * (x-pai-worker) and published through snapshot(): the router serves it at

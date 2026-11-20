@@ -255,8 +255,10 @@ export function buildRunEnv(
   // where the cap is applied (a provider's own env for the key wins).
   for (const [k, v] of Object.entries(provider.env)) env[k] = v;
   // provider env is the operator's explicit per-provider call and wins over the
-  // local autocompact cap above (the apple-fm default ships its own window)
-  if (headless && isLoopbackProvider(provider) && provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === undefined) {
+  // local autocompact cap above (the apple-fm default ships its own window).
+  // Interactive too: `pai session --local` runs the main context through the
+  // same loopback engine, and it must fit workers.localContextTokens as well.
+  if (isLoopbackProvider(provider) && provider.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === undefined) {
     try {
       const cap = readWorkersCached().localContextTokens;
       if (cap > 0) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(cap);
@@ -306,6 +308,24 @@ export function addSchedulingHeaders(env: NodeJS.ProcessEnv, ids: { session?: st
   // announced at spawn only; the router reads the worker's current priority from its status file
   if (ids.priority && /^(high|normal|low)$/.test(ids.priority)) extra.push(`x-pai-priority: ${ids.priority}`);
   if (extra.length) env.ANTHROPIC_CUSTOM_HEADERS = [base, ...extra].join("\n");
+}
+
+/**
+ * Scheduling identity of an interactive main session (`pai session --local`).
+ * Workers go through addSchedulingHeaders; a session's claude sets its own
+ * headers from the env buildRunEnv built, so this mirrors that for the case
+ * with no worker ids: x-pai-session names the session, and x-pai-interactive=1
+ * marks the traffic as an operator at the keyboard. The router's scheduler
+ * reads the mark (x-pai-priority: high) as the admission hint when no worker
+ * status file overrides it — a queued interactive request goes before the
+ * normal-priority workers on the same engine; nothing in flight is preempted.
+ */
+export function addSessionSchedulingHeaders(env: NodeJS.ProcessEnv, session?: string | null): void {
+  const base = env.ANTHROPIC_CUSTOM_HEADERS;
+  if (!base || !base.includes("x-pai-provider")) return;
+  const extra = ["x-pai-interactive: 1", "x-pai-priority: high"];
+  if (session) extra.unshift(`x-pai-session: ${session.replace(/[\r\n:]+/g, " ").trim().slice(0, 80)}`);
+  env.ANTHROPIC_CUSTOM_HEADERS = [base, ...extra].join("\n");
 }
 
 /** Loopback URL of the local model router — the route every accounted run takes. */
