@@ -243,6 +243,60 @@ export function foldSystemMessages(body: Record<string, unknown>): Record<string
   return { ...body, messages: out };
 }
 
+const DATE_RE = /(?:^|\n)(?:# currentDate\n)?Today's date is [^\n]*/g;
+const GIT_RE = /(?:^|\n)gitStatus:[\s\S]*?(?=\n# |<\/system-reminder>|$)/g;
+
+/** Cut the volatile lines (date, gitStatus) out of one text; returns the cleaned text and what was cut. */
+function cutVolatile(text: string, found: string[]): string {
+  const take = (re: RegExp) => {
+    text = text.replace(re, (m) => {
+      found.push(m.trim());
+      return "";
+    });
+  };
+  take(DATE_RE);
+  take(GIT_RE);
+  return text;
+}
+
+function cutBlocks(content: unknown, found: string[]): unknown {
+  if (typeof content === "string") return cutVolatile(content, found);
+  if (!Array.isArray(content)) return content;
+  return content.map((b) =>
+    b && typeof b === "object" && typeof (b as { text?: unknown }).text === "string"
+      ? { ...(b as object), text: cutVolatile((b as { text: string }).text, found) }
+      : b
+  );
+}
+
+/**
+ * Local engines cache the KV state of the longest byte-identical prompt prefix.
+ * Claude Code puts the date and the git status into the system prompt, so a
+ * resume on another day or after a commit changes the start and the engine
+ * re-reads the whole conversation. Cut those parts out of the system prompt
+ * (and the first user message) and append them as a short note to the end of
+ * the last user message; the model still sees them. Tools and the remaining
+ * system text stay untouched.
+ */
+export function stabilizePrefix(body: Record<string, unknown>): Record<string, unknown> {
+  const found: string[] = [];
+  const system = cutBlocks(body.system, found);
+  const messages = body.messages;
+  if (!Array.isArray(messages)) return body;
+  const first = messages.findIndex((m) => m && (m as { role?: unknown }).role === "user");
+  const cleaned = messages.map((m, i) => (i === first ? { ...(m as object), content: cutBlocks((m as { content?: unknown }).content, found) } : m));
+  if (!found.length) return body;
+  let last = -1;
+  for (let i = cleaned.length - 1; i >= 0; i--) if ((cleaned[i] as { role?: unknown })?.role === "user") { last = i; break; }
+  const note = { type: "text", text: `context: ${found.join("; ")}` };
+  if (last >= 0) {
+    const m = cleaned[last] as { content: unknown };
+    const blocks = typeof m.content === "string" ? [{ type: "text", text: m.content }] : Array.isArray(m.content) ? m.content : [];
+    cleaned[last] = { ...(m as object), content: [...blocks, note] };
+  } else cleaned.push({ role: "user", content: [note] });
+  return { ...body, system, messages: cleaned };
+}
+
 const isLoopback = isLoopbackUrl;
 
 export interface Upstream {
@@ -428,7 +482,10 @@ export function prepare(
   } else {
     if (wire === "messages") out = stripBillingHeader(stripThinking(out));
     base = res.provider.baseUrl;
-    if (wire === "messages" && isLoopback(base)) out = foldSystemMessages(out);
+    if (wire === "messages" && isLoopback(base)) {
+      out = foldSystemMessages(out);
+      if (loadConfig().router.local?.stablePrefix !== false) out = stabilizePrefix(out);
+    }
     let token: string | null;
     try {
       token = resolveProviderKey(res.provider);

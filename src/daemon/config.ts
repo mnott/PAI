@@ -154,6 +154,8 @@ export interface RouterConfig {
   failover?: { enabled?: boolean; stickyMin?: number };
   /** Retry once a local answer whose text is an unparsed tool-call block (the router holds local answers until complete). Default: true. */
   localToolCallRetry?: boolean;
+  /** Local requests: date and gitStatus move from the system prompt to the end of the last user message, so a resumed session keeps a byte-identical prefix (engine cache hit). Default: true. */
+  local?: { stablePrefix?: boolean };
   /** Guard rules on the model replies passing the router. "monitor" records firings with source proxy and never alters, delays or blocks a reply; "enforce" additionally rewrites a tool call the rules deny (a pattern acts on the proxy only when its own `proxy` field is enforce). Default: off. */
   guard?: { mode?: "off" | "monitor" | "enforce" };
   /**
