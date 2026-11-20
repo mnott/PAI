@@ -255,6 +255,15 @@ describe("pai session --local plan", () => {
       expect(f.pai.alwaysLoad).toBe(true);
       expect(f.todoist.alwaysLoad).toBe(false);
     });
+    it("session carries the code-graph instruction and pai tools always-loaded", async () => {
+      const p = await plan();
+      const i = p.argv.indexOf("--append-system-prompt");
+      expect(i).toBeGreaterThan(0);
+      expect(p.argv[i + 1]).toContain("pai code explore");
+      expect(p.argv[i + 1]).toContain("code_search");
+      expect(p.mcpDeferred).not.toContain("pai");
+      expect(mcpFile(p).pai.alwaysLoad).toBe(true);
+    });
     it("--mcp lean = two servers; a list is honoured; unknown names fail", async () => {
       const lean = await plan({ mcp: "lean" });
       expect(lean.mcpLoaded).toEqual(["aibroker", "pai"]);

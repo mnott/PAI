@@ -59,3 +59,14 @@ describe("workerContractPrompt — planner classes (orchestrate/plan without the
     expect(WORKER_CONTRACT_PROMPT).not.toContain("L1 planner");
   });
 });
+
+describe("workerContractPrompt — code graph lines", () => {
+  it("indexed repo gets the three code-graph lines; unindexed gets none", () => {
+    const on = workerContractPrompt(undefined, "ag2", false, undefined, undefined, true);
+    const off = workerContractPrompt(undefined, "ag2", false, undefined, undefined, false);
+    expect(on).toContain("pai code explore");
+    expect(on).toContain("pai code callers <symbol>");
+    expect(on).toContain("pai code search <text>");
+    expect(off).not.toContain("indexed in the code graph");
+  });
+});
