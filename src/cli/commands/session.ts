@@ -38,6 +38,7 @@ import { httpModelsCheck, type PortCheck } from "../lib/setups.js";
 /** The real port probe of `--local` (the cached daemon answer is never trusted for "none"). */
 const probeLocal: PortCheck = httpModelsCheck;
 import { addSessionSchedulingHeaders, buildRunEnv, pinnedSettings } from "../../workers/run-env.js";
+import { CODE_GRAPH_FIRST_LINE } from "../../workers/report.js";
 import { resolveSessionMcp, sessionSlimArgs, SESSION_MCP_SERVERS } from "../../workers/slim-profile.js";
 import { readMcpServers } from "../../workers/mcp.js";
 import { localCompactWindow, MIN_COMPACT_WINDOW } from "../../workers/run-env.js";
@@ -797,7 +798,7 @@ export async function planLocalSession(o: {
   }
   // --settings travels as a file (a token never rides in argv); print-cmd shows the file it wrote
   const args = sessionSlimArgs(o.logDir, "session-local", env, pinnedSettings(env, true), undefined, claudeJson, provider, { mcp: mcpOpt, compactCap: contextTokens });
-  const argv = ["claude", "--model", model, ...args, ...(o.askPermissions ? [] : ["--dangerously-skip-permissions"]), ...(o.rest ?? [])];
+  const argv = ["claude", "--model", model, ...args, "--append-system-prompt", CODE_GRAPH_FIRST_LINE, ...(o.askPermissions ? [] : ["--dangerously-skip-permissions"]), ...(o.rest ?? [])];
   const settingsIdx = args.indexOf("--settings");
   const mcpIdx = args.indexOf("--mcp-config");
   return {
