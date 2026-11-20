@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import DatabaseCtor from "better-sqlite3";
@@ -128,6 +128,14 @@ describe("pai session --local plan", () => {
     // a claude home under our control: the slim profile reads its settings.json + MCP defs from here
     const ch = join(dir, "claude-home");
     mkdirSync(ch, { recursive: true });
+    // the user's real customization dirs ride under this fake home: with the
+    // user source loaded, print-cmd must show them reachable
+    mkdirSync(join(ch, "skills/demo-skill"), { recursive: true });
+    writeFileSync(join(ch, "skills/demo-skill/SKILL.md"), "---\nname: demo-skill\ndescription: probe\n---\n");
+    mkdirSync(join(ch, "commands"), { recursive: true });
+    writeFileSync(join(ch, "commands/demo-cmd.md"), "# demo command\n");
+    mkdirSync(join(ch, "agents"), { recursive: true });
+    writeFileSync(join(ch, "agents/demo-agent.md"), "---\nname: demo-agent\n---\n");
     writeFileSync(join(ch, "settings.json"), JSON.stringify({
       // the user's settings carry a proxy route AND an API key: an interactive
       // local session must never keep the key (it bills the subscription, and
@@ -158,6 +166,16 @@ describe("pai session --local plan", () => {
       expect(text).toContain("mcpServers=aibroker, pai, todoist");
       expect(text).toContain("mcp deferred (tool search): todoist");
       expect(text).toMatch(/^claude --model gyro-m/m);
+      // the user setting source is loaded: /Name resolves against ~/.claude skills,
+      // commands and agents; what stays out is neutralised elsewhere — hooks come
+      // from --settings alone (the guard filter), MCP from --strict-mcp-config
+      expect(text).toContain("--setting-sources user,project,local");
+      expect(p.argv).toContain("--strict-mcp-config");
+      // print-cmd names the user's customization dirs and they exist under this home
+      expect(text).toContain("user skills/commands/agents: skills, commands, agents from " + ch);
+      expect(existsSync(join(ch, "skills/demo-skill/SKILL.md"))).toBe(true);
+      expect(existsSync(join(ch, "commands/demo-cmd.md"))).toBe(true);
+      expect(existsSync(join(ch, "agents/demo-agent.md"))).toBe(true);
       // the written settings file: route pinned inside it (settings env outranks process env),
       // the user's proxy+key dropped, guard hooks kept, context injectors off
       const s = JSON.parse(readFileSync(p.settingsFile!, "utf8")) as Record<string, any>;

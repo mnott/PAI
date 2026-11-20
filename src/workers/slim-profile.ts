@@ -18,6 +18,14 @@
  * plus only the MCP servers an operator session needs (aibroker + pai), no
  * worker note hook and no brief — the point is a small context that fits the
  * local window while the safety hooks stay.
+ *
+ * The session variant loads the user setting source after all: the skills,
+ * slash commands and agents under ~/.claude are what an operator types /Name
+ * for, and dropping the source made every one of them "Unknown command".
+ * What must stay out is neutralised by other means — hooks come only from the
+ * generated --settings file (the guard filter), MCP only from
+ * --strict-mcp-config --mcp-config, and the user's route env was already
+ * dropped from that file. The worker profile above keeps `project,local`.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -237,12 +245,16 @@ export function sessionSlimSettings(
 
 /**
  * Args for a slim interactive session (the worker profile's mechanism, the
- * session variant): `--setting-sources project,local`, a generated
- * `--settings` file (guards kept, context injectors off, route pinned, MCP
- * limited to SESSION_MCP_SERVERS) and `--strict-mcp-config --mcp-config` with
- * exactly those servers from ~/.claude.json. A server the machine does not
- * define is dropped rather than failing the launch. [] when there is no user
- * settings file to slim (then nothing shadows the route anyway).
+ * session variant): `--setting-sources user,project,local` — the user source
+ * is in, so the skills, slash commands and agents under ~/.claude resolve
+ * (`/Name` works) — plus a generated `--settings` file (guards kept, context
+ * injectors off, route pinned, MCP limited to SESSION_MCP_SERVERS) and
+ * `--strict-mcp-config --mcp-config` with exactly those servers from
+ * ~/.claude.json. The user source's own hooks never run: Claude Code takes
+ * session hooks from the --settings file alone (probed 2026-11-20 on 2.1.316),
+ * and its MCP is already pinned by --strict-mcp-config. A server the machine
+ * does not define is dropped rather than failing the launch. [] when there is
+ * no user settings file to slim (then nothing shadows the route anyway).
  */
 export interface SessionSlimOpts {
   /** Servers to load (default SESSION_MCP_SERVERS); "all" = every loadable server in ~/.claude.json. */
@@ -290,7 +302,9 @@ export function sessionSlimArgs(
   mkdirSync(logDir, { recursive: true });
   const path = join(logDir, `${id}.settings.json`);
   writePrivateFile(path, JSON.stringify(sessionSlimSettings(user, env, pin, names, provider, o.compactCap), null, 2) + "\n");
-  const args = ["--setting-sources", "project,local", "--settings", path];
+  // the user source is loaded for skills/commands/agents; its hooks never run
+  // (hooks come from --settings alone) and its MCP is pinned by --strict-mcp-config
+  const args = ["--setting-sources", "user,project,local", "--settings", path];
   if (names.length) {
     // alwaysLoad marks a server whose tool definitions stay in the first request;
     // the rest wait behind tool search (ENABLE_TOOL_SEARCH), loaded on demand
