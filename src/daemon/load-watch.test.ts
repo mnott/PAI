@@ -193,6 +193,28 @@ describe("runtime autostart", () => {
     expect(runtimeAutostartConfig({ nothing: { autostart: true } }, [autostartTier("apple-fm")]).enabled).toBe(false); // no start command, no tier: nothing to start
   });
 
+  it("a runtime stopped on purpose is not autostarted: one log line, no start; an explicit start lifts it", async () => {
+    const cfg = runtimeAutostartConfig({ "apple-fm": { autostart: true } }, [autostartTier("apple-fm", 8)]);
+    const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
+    let stopped = true;
+    const deps = autostartDeps(log, { stopped: () => stopped });
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, freshAutostartStates(), deps)).toEqual([]);
+    expect(log.starts).toEqual([]);
+    expect(log.lines.filter((l) => /stopped on purpose/.test(l))).toHaveLength(1);
+    stopped = false; // `pai models start` cleared the marker
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, freshAutostartStates(), deps)).toEqual([{ kind: "start", runtime: "apple-fm" }]);
+  });
+
+  it("the stop marker is written by a successful stop and cleared by a start", async () => {
+    const home = mkdtempSync(join(tmpdir(), "stopmark-"));
+    const { markRuntimeStopped, clearRuntimeStopped, isRuntimeStopped } = await import("../workers/model-runtimes.js");
+    expect(isRuntimeStopped(home, "gyro-l")).toBe(false);
+    markRuntimeStopped(home, "gyro-l");
+    expect(isRuntimeStopped(home, "gyro-l")).toBe(true);
+    clearRuntimeStopped(home, "gyro-l");
+    expect(isRuntimeStopped(home, "gyro-l")).toBe(false);
+  });
+
   it("starts a down autostart runtime once; one without autostart is never touched", async () => {
     const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
     let up = false;
