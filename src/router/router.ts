@@ -892,6 +892,8 @@ export function routerHandler(
       const foKey = headerValue(req.headers["x-pai-session"], 80) || sessionId || "anon";
       const foEligible =
         target.kind === "claude" && !runProvider && !isCount && wire!.id === "messages" && !req.headers["x-pai-failover"] && !!(presented || req.headers["x-api-key"]) && foCfg().enabled; // an unauthenticated request is the launch probe: it never fails over
+      /** A network blip is retried after 30 s; a spent allowance keeps the configured window. */
+      const stickyFor = (reason: FailoverReason): number => (reason === "offline" ? Math.min(foCfg().stickyMin, 0.5) : foCfg().stickyMin);
       const failoverTo = (reason: FailoverReason | "sticky"): void => {
         void (async () => {
           const reasonKey: FailoverReason = reason === "sticky" ? failState.get(foKey)?.reason ?? "offline" : reason;
@@ -915,8 +917,9 @@ export function routerHandler(
           const lm = lp ? localModelOf(lp) : undefined;
           if (!lp || !lm) return fail(502, `cloud unavailable (${reasonKey}) and local provider ${name} declares no model`, target.model, ANTHROPIC_NATIVE);
           if (reason !== "sticky") {
-            const fresh = failState.pin(foKey, reason, foCfg().stickyMin);
+            const fresh = failState.pin(foKey, reason, stickyFor(reason));
             if (fresh) {
+              log(`${new Date().toISOString()} ${target.model} cloud ${reason}, session ${foKey} failing over to ${name}; the cloud is retried ${reason === "offline" ? "after 30s" : `after ${foCfg().stickyMin} min`}`);
               try {
                 (options?.failover?.onFailover ?? ((i) => appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-FAILOVER", i)))({ session: foKey, reason, to: name });
               } catch {
@@ -950,7 +953,14 @@ export function routerHandler(
             delete rh["transfer-encoding"];
             delete rh.connection;
             res.writeHead(lres.statusCode ?? 502, rh);
+            lres.on("error", () => {}); // an abort is handled by the close handler below
             lres.pipe(res);
+            // the local engine dropped mid-answer: never leave the client waiting, surface an error it retries
+            lres.on("close", () => {
+              if (lres.complete || res.writableEnded || res.destroyed) return;
+              log(`${new Date().toISOString()} ${lm} ${name} failover answer closed mid-answer, error sent to the client`);
+              res.end(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "overloaded_error", message: `local failover model ${name} closed mid-answer; retry` } })}\n\n`);
+            });
           });
           lq.on("error", (e) => fail(502, `local failover to ${name} failed: ${e.message}`, lm, name));
           res.on("close", () => lq.destroy());
@@ -958,6 +968,7 @@ export function routerHandler(
         })();
       };
 
+      let scheduled = false; // declared before any path (probe-back included) can call forward()
       const forward = (release0: (u?: Usage, opts?: { gate?: boolean }) => void, preempt?: { yielded: () => boolean; onYield: () => void }): void => {
         // a local engine takes a bounded number of requests at once; the rest wait here, whichever path they came by
         if (res.destroyed) return release0();
@@ -1024,6 +1035,24 @@ export function routerHandler(
           upSniff.push(c);
         });
         ures0.on("error", () => {});
+        // the engine dropped mid-answer while the reply was held: without this the client waits forever; answer with an error it retries
+        ures0.on("close", () => {
+          if (ures0.complete || res.writableEnded || res.destroyed) return;
+          if (pings) clearInterval(pings);
+          log(`${new Date().toISOString()} ${target.model} ${prov} upstream closed mid-answer`);
+          release();
+          const message = `${prov} closed the connection mid-answer; retry`;
+          if (res.headersSent) {
+            res.end(
+              wire!.id === "messages"
+                ? `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "overloaded_error", message } })}\n\n`
+                : `data: ${JSON.stringify({ error: { type: "api_error", message } })}\n\n`
+            );
+          } else {
+            res.writeHead(502, { "content-type": "application/json" });
+            res.end(JSON.stringify({ type: "error", error: { type: "api_error", message } }));
+          }
+        });
         ures0.on("end", () => {
           const first = Buffer.concat(bits);
           upSniff.finish();
@@ -1351,16 +1380,16 @@ export function routerHandler(
             const back = await (options?.failover?.probe ?? ((h: Record<string, string>, m: string) => probeCloud(claudeBase, h, m)))(ph, target.model);
             if (back) {
               failState.release(foKey);
+              log(`${new Date().toISOString()} ${target.model} cloud answers again, session ${foKey} back on the cloud`);
               return forward(() => {});
             }
-            failState.pin(foKey, st.reason, foCfg().stickyMin);
+            failState.pin(foKey, st.reason, stickyFor(st.reason));
             failoverTo("sticky");
           })();
           return;
         }
       }
       // Local engine: one request in flight, the rest wait here (scheduler.ts). Any scheduler fault forwards directly.
-      let scheduled = false;
       if (target.kind === "provider" && !isCount && isLocal(up.url) && schedEnabled()) {
         try {
           const sched = sharedScheduler();

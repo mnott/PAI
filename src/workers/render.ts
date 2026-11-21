@@ -29,6 +29,7 @@ import { parseWorkerReport, renderReport } from "./report.js";
 import { scanLine } from "./scan.js";
 import { activityOf, levelOf, type RequestState } from "./queue-table.js";
 import { readSchedFile } from "../router/scheduler.js";
+import { servedMismatch, servedModelOf } from "./served-model.js";
 
 export type ColorEnabled = boolean;
 
@@ -507,7 +508,7 @@ export function renderTable(
   /** The worker log dir: the router's scheduler snapshot (the activity word's source) is read from here. */
   logDir = ""
 ): string {
-  const provTag = (s: WorkerStatus) => providerTag(s, workers);
+  const provTag = (s: WorkerStatus) => providerTag(s, workers, isLive(s) ? servedModelOf(s) : null);
   const queued: WorkerStatus[] = [];
   const running: WorkerStatus[] = [];
   const done: WorkerStatus[] = [];
@@ -751,12 +752,15 @@ function safeWorkers(): Pick<WorkersConfig, "providers" | "nativeModels"> {
  *  provider's default (e.g. the router picked another). */
 export function providerTag(
   s: WorkerStatus,
-  workers: Pick<WorkersConfig, "providers" | "nativeModels">
+  workers: Pick<WorkersConfig, "providers" | "nativeModels">,
+  /** Model that served the last turn (transcript); a different one is marked. */
+  served?: string | null
 ): string {
   const model = shortModel(s.model);
   const dflt = getProviderOrNative(workers, s.provider)?.models.default;
-  if (!model || (dflt && shortModel(dflt) === model)) return `[${s.provider}]`;
-  return `[${s.provider}/${model}]`;
+  const base = !model || (dflt && shortModel(dflt) === model) ? `[${s.provider}]` : `[${s.provider}/${model}]`;
+  if (servedMismatch(s.model || dflt, served)) return `${base.slice(0, -1)} -> served by ${shortModel(served)}]`;
+  return base;
 }
 
 export function shortModel(model: string | null | undefined): string {
