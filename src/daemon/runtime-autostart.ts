@@ -50,7 +50,8 @@ import { connect } from "node:net";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { readLocalConfig, healthUrl, type LocalTier } from "../workers/local-tiers.js";
-import { readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommands } from "../workers/model-runtimes.js";
+import { paiHomeDir } from "../config/pai-home.js";
+import { isRuntimeStopped, readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommands } from "../workers/model-runtimes.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { freeMemoryGb } from "../workers/local-memory.js";
 import { isFrozen } from "../workers/freeze.js";
@@ -157,6 +158,8 @@ export interface AutostartDeps {
   isUp: (runtime: string) => Promise<boolean>;
   /** Liveness of the runtime's server, independent of how slow its health check is: its port accepts a TCP connection, or the router's local scheduler has requests in flight for it. A busy engine answers /v1/models too slowly yet stays alive — this is what separates busy from down. */
   alive: (runtime: string) => Promise<boolean>;
+  /** The runtime was stopped on purpose (`pai models stop`) and not started since: autostart must not bring it back. */
+  stopped?: (runtime: string) => boolean;
   /** True while the machine is frozen (`pai freeze`): nothing starts. */
   frozen: () => boolean;
   /** Available memory (reclaimable counted) after the reserve, GB; undefined = unmeasurable (a short-memory skip cannot be made). */
@@ -223,6 +226,10 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
     const secondRefusal = st.attempts > 0 || confirmMs === 0;
     if (!secondRefusal && d.now() - st.suspectedDownAt < confirmMs) continue; // still inside the window: wait, start nothing
     if (st.gaveUp) continue;
+    if (d.stopped?.(runtime)) {
+      d.log(`autostart ${runtime}: stopped on purpose (pai models stop), not starting; \`pai models start ${runtime}\` lifts it`);
+      continue;
+    }
     const needGb = cfg.memoryGb[runtime] ?? 0;
     if (needGb > 0 && avail === undefined) avail = await d.freeGb();
     if (avail !== undefined && avail < needGb) {
@@ -293,6 +300,7 @@ export function liveAutostartDeps(): AutostartDeps {
       return readyIsUrl(cmd.ready) ? liveRuntimeOpDeps.getUrl(cmd.ready) : (await liveRuntimeOpDeps.runCmd(cmd.ready)) === 0;
     },
     alive: (runtime) => liveRuntimeAlive(runtime),
+    stopped: (runtime) => isRuntimeStopped(paiHomeDir(), runtime),
     frozen: () => isFrozen() || deepfreezeHold(),
     // no reserve here: the skip compares the measured AVAILABLE (reclaimable counted) against the tier's memoryGb as the brief demands
     freeGb: () => freeMemoryGb(0),

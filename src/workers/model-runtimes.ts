@@ -17,7 +17,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, mkdirSync, openSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
@@ -247,3 +247,12 @@ export function embeddingRuntimeName(): string {
     return "pai";
   }
 }
+
+/** Marker of a runtime stopped on purpose (`pai models stop`): <PAI home>/logs/local/<runtime>.stopped. Only an explicit start clears it. */
+export const runtimeStoppedFile = (home: string, runtime: string): string => join(home, "logs", "local", `${runtime}.stopped`);
+export const markRuntimeStopped = (home: string, runtime: string): void => {
+  mkdirSync(dirname(runtimeStoppedFile(home, runtime)), { recursive: true });
+  writeFileSync(runtimeStoppedFile(home, runtime), new Date().toISOString() + "\n");
+};
+export const clearRuntimeStopped = (home: string, runtime: string): void => rmSync(runtimeStoppedFile(home, runtime), { force: true });
+export const isRuntimeStopped = (home: string, runtime: string): boolean => existsSync(runtimeStoppedFile(home, runtime));
