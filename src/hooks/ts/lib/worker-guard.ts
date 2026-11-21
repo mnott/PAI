@@ -17,7 +17,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { livePaiHomeDirs } from "../../../config/pai-home.js";
 import { type GateDecision } from "./render-decision.js";
 import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
@@ -959,17 +959,57 @@ function addedByBranch(file: string): boolean {
   }
 }
 
-function localRmReason(segs: Segment[], cwd: string): string | null {
+/** The prune plan's file list from PAI_WORKER_PRUNE_FILES (set only by `pai tests prune --apply`): the tracked files this worker may delete. */
+function pruneAllowedFiles(env: Record<string, string | undefined>): Set<string> | null {
+  const raw = env.PAI_WORKER_PRUNE_FILES;
+  if (!raw) return null;
+  const files = raw.split("\n").map((s) => s.trim()).filter(Boolean);
+  return files.length ? new Set(files) : null;
+}
+
+function localRmReason(segs: Segment[], cwd: string, env: Record<string, string | undefined>): string | null {
+  const planned = pruneAllowedFiles(env);
   for (const { words } of segs) {
     const i = words[0] === "rm" ? 1 : words[0] === "git" && words[1] === "rm" ? 2 : -1;
     if (i < 0) continue;
     for (const w of words.slice(i)) {
       if (w.startsWith("-")) continue;
       const f = resolve(cwd, w);
-      if (existsSync(f) && isTracked(f) && !addedByBranch(f)) return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: Local workers do not delete tracked files. Leave ${w} as is, finish the rest, and list it in your report as \`delete: ${w} (<reason>)\`; your orchestrator deletes it.`;
+      if (!(existsSync(f) && isTracked(f) && !addedByBranch(f))) continue;
+      // the `pai tests prune --apply` worker may delete exactly its plan's files: same repo-relative path, nothing else
+      if (planned) {
+        const key = planKey(f, ctxRepoRoot(cwd));
+        if (key && planned.has(key)) continue;
+      }
+      return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: Local workers do not delete tracked files${planned ? ` (only the files listed in PAI_WORKER_PRUNE_FILES may be deleted here)` : ""}. Leave ${w} as is, finish the rest, and list it in your report as \`delete: ${w} (<reason>)\`; your orchestrator deletes it.`;
     }
   }
   return null;
+}
+
+/** Repo top-level of cwd (git rev-parse --show-toplevel); falls back to cwd outside a repo. */
+function ctxRepoRoot(cwd: string): string {
+  try {
+    return execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 }).trim() || cwd;
+  } catch {
+    return cwd;
+  }
+}
+
+/** The file's path relative to the repo root, as a prune plan lists it (slash form); "" when outside the repo. */
+function planKey(file: string, root: string): string {
+  // git reports its toplevel through symlinks (/var -> /private/var), so walk from the file up to the
+  // realpath-resolved root and join the names; the plan's own paths are repo-root-relative strings.
+  const rroot = realpathSync(root);
+  let dir = dirname(file);
+  const names: string[] = [basename(file)];
+  while (realpathSync(dir) !== rroot) {
+    const parent = dirname(dir);
+    if (parent === dir) return ""; // reached the filesystem top without finding the repo root
+    names.unshift(basename(dir));
+    dir = parent;
+  }
+  return names.join("/");
 }
 
 export function decideWorkerGuard(
@@ -1049,7 +1089,7 @@ export function decideWorkerGuard(
       const why = nodeOnTypeScriptReason(cmd, ctx().testScript()) ?? tscFileArgReason(cmd) ?? maskedProofReason(cmd) ?? tmpScratchReason(cmd) ?? forceAddReason(cmd, ctx().isIgnored ?? (() => false), ctx().cwd);
       if (why) return deny(why);
       if (isLocalWorker(env)) {
-        const why2 = localRmReason(parseCommand(cmd), ctx().cwd);
+        const why2 = localRmReason(parseCommand(cmd), ctx().cwd, env);
         if (why2) return deny(why2);
       }
     }

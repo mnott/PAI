@@ -219,6 +219,8 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       browser: o["no-browser"] === true ? false : o.browser === true ? true : undefined,
       allowTests: o["allow-tests"] === true ? true : undefined,
       allowDbWrites: o["allow-db-writes"] === true ? true : undefined,
+      // internal: repeatable --prune-file is passed only by `pai tests prune --apply` (src/testgov/prune.ts)
+      pruneFiles: ctx.multi?.["prune-file"],
       printCmd: o["print-cmd"] === true || ctx.dryRun ? true : undefined,
       reportFormatFlag: report as "json" | "ag2" | undefined,
       noReportRetry: o["no-report-retry"] === true,
@@ -367,6 +369,7 @@ const runCommand: CommandDef = {
     { name: "no-browser", type: "boolean", summary: "Remove every browser tool from this worker" },
     { name: "allow-tests", type: "boolean", summary: "Let this worker run tests even when the project has `.pai/checks.yaml` `tests: operator`; use only when the operator asked for tests" },
     { name: "allow-db-writes", type: "boolean", summary: "Allow writes to live databases and containers (PAI_ALLOW_DB_WRITES=1): let this worker's SQL clients write databases and lift the live-container cp/exec rule (workers.guard.liveContainers); by default every INSERT/UPDATE/DELETE/DDL through psql/mysql/sqlite3/… is denied unless the statement is read-only or the target matches workers guard.dbWriteAllow; use only for briefs that really need writes" },
+    { name: "prune-file", type: "string", value: "PATH", repeatable: true, hidden: true, summary: "Internal (`pai tests prune --apply` only): one tracked file this worker's delete guard (PAI_WORKER_PRUNE_FILES) allows it to remove; every other tracked-file deletion stays blocked" },
     { name: "print-cmd", type: "boolean", summary: "Print the claude command as JSON and exit without starting anything" },
     { name: "report", type: "string", value: "FORMAT", summary: "Final report format: json or ag2 (default ag2)" },
     { name: "no-report-retry", type: "boolean", summary: "Do not ask once more when the final report is malformed" },

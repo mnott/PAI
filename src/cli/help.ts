@@ -152,7 +152,7 @@ export function renderCommandHelp(path: string[], cmd: CommandDef, st: Style): s
     );
   }
   const opts: OptDef[] = [
-    ...(cmd.options ?? []),
+    ...(cmd.options ?? []).filter((o) => !o.hidden),
     { name: "help", short: "h", type: "boolean", summary: "Show this help" },
   ];
   out.push(st.head("Options"));

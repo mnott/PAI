@@ -28,6 +28,8 @@ export interface OptDef {
   repeatable?: boolean;
   /** String flag whose value may be left out (`--auto-exit` or `--auto-exit 30`); absent value reads as true. */
   optionalValue?: boolean;
+  /** Works, but is not listed in help or the generated docs (an internal flag another pai command passes). */
+  hidden?: boolean;
 }
 
 export interface RunContext {

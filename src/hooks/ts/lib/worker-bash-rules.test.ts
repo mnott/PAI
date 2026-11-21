@@ -609,3 +609,48 @@ describe("worker guard Edit/Write stays inside the worktree and scratch dirs", (
     expect(bash("echo hi > /dev/null").decision).not.toBe("deny"); // /dev writes are exempt
   });
 });
+
+// the local-worker tracked-file delete rule and its `pai tests prune --apply` exception (2026-11-20: worker 20261120-224741-74918 was blocked from git rm-ing its plan's file and rewrote 91 lines of tests/KEPT.md instead)
+describe("worker guard local tracked-file delete and the prune-plan exception", () => {
+  const base = mkdtempSync(join(tmpdir(), "rmrule-"));
+  const repo = join(base, "repo");
+  mkdirSync(join(repo, "src", "bench"), { recursive: true });
+  mkdirSync(join(repo, "tests"), { recursive: true });
+  writeFileSync(join(repo, "src", "bench", "onboarding.test.ts"), "test(1);\n");
+  writeFileSync(join(repo, "tests", "KEPT.md"), "# kept\n");
+  writeFileSync(join(repo, "src", "bench", "onboarding.test.ts.bak"), "stale copy, still tracked\n"); // prefix of the plan path: must not match it
+  const g = (a: string) => execSync(`git -C ${repo} ${a}`, { encoding: "utf8" });
+  g("init -q");
+  g("config user.email t@t.local");
+  g("config user.name test");
+  g("add src/bench/onboarding.test.ts tests/KEPT.md src/bench/onboarding.test.ts.bak");
+  g("commit -qm init"); // a HEAD: addedByBranch sees both files as tracked from the branch start
+  const gctx = (): WorkerGuardContext => ({
+    cwd: repo,
+    home: "/home/u",
+    worktreeRoot: repo,
+    inWorktree: true,
+    mainCheckout: repo,
+    testScript: () => null,
+  });
+  const localEnv = (extra: Record<string, string | undefined> = {}) => ({ PAI_WORKER: "1", PAI_WORKER_PROVIDER: "local-model", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir", ...extra });
+  const denied = (command: string, env: Record<string, string | undefined>) =>
+    decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, env, gctx).decision === "deny";
+  const PLAN = "src/bench/onboarding.test.ts";
+  it("a normal local worker is blocked from git rm of a tracked file", () => {
+    expect(denied(`git rm ${PLAN}`, localEnv())).toBe(true);
+    expect(denied(`rm ${PLAN}`, localEnv())).toBe(true);
+  });
+  it("a prune worker deletes exactly its plan's file", () => {
+    expect(denied(`git rm ${PLAN}`, localEnv({ PAI_WORKER_PRUNE_FILES: PLAN }))).toBe(false);
+    expect(denied(`rm ${PLAN}`, localEnv({ PAI_WORKER_PRUNE_FILES: PLAN }))).toBe(false);
+  });
+  it("a prune worker is still blocked on an unplanned tracked file", () => {
+    expect(denied("git rm tests/KEPT.md", localEnv({ PAI_WORKER_PRUNE_FILES: PLAN }))).toBe(true);
+    // a prefix path does not sneak through the plan match
+    expect(denied("git rm src/bench/onboarding.test.ts.bak", localEnv({ PAI_WORKER_PRUNE_FILES: PLAN }))).toBe(true);
+  });
+  it("an anthropic (non-local) worker is never touched by this rule", () => {
+    expect(denied("git rm tests/KEPT.md", { PAI_WORKER: "1", PAI_WORKER_PROVIDER: "anthropic", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" })).toBe(false);
+  });
+});
