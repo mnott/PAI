@@ -366,3 +366,15 @@ export function withTierProviders(
   }
   return out;
 }
+
+/**
+ * The provider a queue run starts on when no --provider/--local is given: the
+ * queue settings' provider, but a loopback one (named or merely first/active)
+ * becomes the mechanism value `local`, resolved at run start to the server that
+ * answers. Never a local provider picked by name (apple-fm down refused runs).
+ */
+export function queueProviderName(workers: WorkersConfig, configured?: string): string {
+  if (!configured) return "local";
+  const p = getProviderOrNative(workers, configured);
+  return p && isLoopbackProvider(p) ? "local" : configured;
+}

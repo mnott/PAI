@@ -75,3 +75,14 @@ describe("a busy or full local model is running", () => {
     expect(up?.providerFlag).toBe("gyro-l");
   });
 });
+
+describe("queue provider", () => {
+  it("a queue run never names a loopback provider; it resolves local at run start", async () => {
+    const { queueProviderName } = await import("./local-provider.js");
+    const w = { ...cfg(), providers: { ...cfg().providers, cloud: { ...prov("https://api.example.com", "m"), enabled: true } } } as unknown as WorkersConfig;
+    expect(queueProviderName(w, undefined)).toBe("local");
+    expect(queueProviderName(w, "apple-fm")).toBe("local");
+    expect(queueProviderName(w, "gyro-l")).toBe("local");
+    expect(queueProviderName(w, "cloud")).toBe("cloud");
+  });
+});
