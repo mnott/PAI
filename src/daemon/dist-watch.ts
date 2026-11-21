@@ -4,7 +4,9 @@
  * `pai daemon restart`. The watcher polls dist's whole-microsecond newest mtime
  * (the build id); once it differs from the id the daemon started with and has
  * stayed the same for the debounce (a build writes many files), and no write-heavy
- * pass is running, it restarts. The restart is a SIGTERM to ourselves: the existing
+ * pass is running — but only while it is NEWER than what we run: an id under ours is
+ * dist rolled back to an older generation, and we never restart onto old code. The
+ * restart is a SIGTERM to ourselves: the existing
  * shutdown path closes the store and removes the socket, launchd (KeepAlive) starts
  * the new build.
  *
@@ -64,9 +66,18 @@ export function createDistWatch(d: DistWatchDeps, startId: string | undefined = 
     const now = d.now();
     const id = d.readId();
     const busy = d.busy();
-    if (id === undefined || startId === undefined || id === startId) {
-      // no readable change right now, or dist is back on our own build: forget any pending settle,
-      // and re-arm so a later build can fire again (a failed restart leaves us on startId).
+    if (id === undefined || startId === undefined) {
+      // no readable change right now: forget any pending settle, and re-arm so a later build can fire again.
+      seen = undefined;
+      fired = false;
+      return "idle";
+    }
+    // the id is a whole-µs stamp: comparable as strings only while both are fixed width — a future clock overflows to 17
+    // digits and breaks the ordering (and numbers would lose µs precision), so pad to a fixed width for the comparison.
+    const cmp = (v: string) => v.padStart(32, "0");
+    if (cmp(id) <= cmp(startId)) {
+      // dist is back on our own build, or holds an OLDER one (a rollback swapped in over us): nothing to restart onto —
+      // never restart onto old code. Re-arm so a later build can fire again (a failed restart leaves us on startId).
       seen = undefined;
       fired = false;
       return "idle";
@@ -87,20 +98,22 @@ export function createDistWatch(d: DistWatchDeps, startId: string | undefined = 
 }
 
 /**
- * Build id of a built entry: the NEWEST whole-µs stamp over its own dir and that dir's
- * entries, where a DIRECTORY counts at its newest mtime-or-birthtime and a file at its
- * mtime. Not rounded to ms — a rebuild finishing in the same millisecond as the previous
- * one must still read as a new build (the 2026-11-16 miss) — and not taken from the entry
- * alone: a rebuild that replaces dist (a rename-swap of a staging dir, a clean build)
- * leaves us polling a fresh inode whose entry can match what we run byte for byte (the
- * 2026-11-20 miss). Birthtime is the signal a swap cannot erase: on APFS it survives both
- * rename and utimes, so any generation STAGED after ours carries a stamp newer than ours
- * even when every mtime was re-stamped to look like ours — while a generation staged
- * before ours (a rollback) stays under our id and must not restart us onto old code. One
- * level only: dist/hooks and
- * dist/skills are rewritten by their own atomic staging steps on every build, so recursing
- * there would re-stamp on work that never changes the code we run; sibling stamps (entry
- * dirs, maps, the prune manifest) cover every rebuild. Only the ENTRY's own dir is walked:
+ * Build id of a built entry: the NEWEST whole-µs stamp over its own dir (mtime and
+ * birthtime) and that dir's entries — files at max(mtime, birthtime), directories at
+ * mtime only; nothing below them is ever read. Not rounded to ms —
+ * a rebuild finishing in the same millisecond as the previous one must still read as a
+ * new build (the 2026-11-16 miss) — and not taken from the entry alone: a rebuild that
+ * replaces dist (a rename-swap of a staging dir, a clean build) leaves us polling a fresh
+ * inode whose entry can match what we run byte for byte (the 2026-11-20 miss). Birthtime
+ * is the signal a swap cannot erase: on APFS it survives both rename and utimes, so any
+ * generation STAGED after ours carries a stamp newer than ours even when every mtime was
+ * re-stamped to look like ours — while a generation staged before ours (a rollback) stays
+ * under our id, which the watcher ignores: never restart onto old code. Top-level
+ * directories count at mtime only and their contents are never walked: dist/hooks and
+ * dist/skills are rewritten by their own atomic staging steps on every build, so their
+ * fresh staging birthtimes would re-stamp on work that never changes the code we run;
+ * sibling stamps (entry files, maps, the prune manifest) cover every rebuild. Only the
+ * ENTRY's own dir is walked:
  * an ancestor above it (the package root holding dist/) keeps mtimes from commits and
  * unrelated work — future stamps included — which would pin a change that never settles
  * (a restart loop) or mask a real swap.
@@ -113,8 +126,12 @@ export function distBuildId(entry: string): string | undefined {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       try {
         const st = statSync(`${dir}/${e.name}`);
-        // every entry also carries its birthtime: the staging stamp a rename-swap cannot erase (APFS keeps both stamps across rename and utimes)
-        const t = Math.max(Math.round(st.mtimeMs * 1000), Math.round(st.birthtimeMs * 1000));
+        let t = e.isDirectory() ? Math.round(st.mtimeMs * 1000) : Math.max(Math.round(st.mtimeMs * 1000), Math.round(st.birthtimeMs * 1000));
+        // top-level dirs count at MTIME only: hooks/skills are re-staged inside them on every build, and a fresh
+        // staging birthtime there is work that never changes the code we run — counting it would fire forever.
+        // What shows a swap is the entry dir's own birthtime (the rename-swap replaces exactly that) plus the
+        // birthtimes of the FILES in it: a staged generation's files were created at staging, and utimes on the way
+        // in cannot erase that (probed on APFS). A rollback stays under our id — its chain was staged before ours.
         if (t > id) id = t;
       } catch {
         /* vanished mid-walk (the build is swapping files): the rest of the dir still stamps */
