@@ -25,12 +25,16 @@
  *   do not exceed what we run (a merge whose changes are not imported by an entry, or a
  *   byte-identical re-emit), the entry id never moves: `id === startId`, forever idle,
  *   while the merge gate's 60 s verify window ran out and restarted the daemon by hand.
- *   The id is now dist's NEWEST whole-µs mtime over the dir and its files (the same walk
- *   scripts/dist-stale.mjs does): a build always writes something after the entry — the
- *   prune manifest, then hooks/docs/skill-stubs — so even a replacement whose bytes are
- *   identical carries a fresh stamp, and a rename-swap never hides it. The entry file is
- *   still included in the walk: a rebuild that touches only files older than it must
- *   still read as newer than what we run (2026-11-16's same-ms re-emit stays covered).
+ *   The id is now dist's NEWEST whole-µs mtime over the entry and its own dir plus that
+ *   dir's files: a build always writes something after the entry — the prune manifest,
+ *   then hooks/docs/skill-stubs — so even a replacement whose bytes are identical carries
+ *   a fresh stamp, and a rename-swap never hides it. The entry file is still included in
+ *   the walk: a rebuild that touches only files older than it must still read as newer
+ *   than what we run (2026-11-16's same-ms re-emit stays covered). The dir walked is the
+ *   ENTRY's parent, never an ancestor above it: dist/cli is rewritten by every build and
+ *   swapped with the whole dist on a rollback, while the repo root holding dist/ keeps
+ *   mtimes from commits and unrelated work — including stamps set to the future — which
+ *   would pin `id > startId` forever (a permanent self-restart loop) or hide a real swap.
  */
 import { readdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
@@ -83,24 +87,34 @@ export function createDistWatch(d: DistWatchDeps, startId: string | undefined = 
 }
 
 /**
- * Build id of a dist dir: its NEWEST whole-µs mtime over the dir itself, one level of
- * entries and the entry file. Not rounded to ms — a rebuild finishing in the same
- * millisecond as the previous one must still read as a new build (the 2026-11-16 miss) —
- * and not taken from the entry alone: a rebuild that replaces dist (a rename-swap of a
- * staging dir, a clean build) leaves us polling a fresh inode whose entry can match what
- * we run byte for byte, while the build's last writes land beside it (the 2026-11-20 miss).
- * One level only: dist/hooks and dist/skills are rewritten by their own atomic staging
- * steps on every build, so recursing there would re-stamp on work that never changes the
- * code we run; top-level mtimes (entries, maps, the prune manifest) cover every rebuild.
+ * Build id of a built entry: the NEWEST whole-µs stamp over its own dir and that dir's
+ * entries, where a DIRECTORY counts at its newest mtime-or-birthtime and a file at its
+ * mtime. Not rounded to ms — a rebuild finishing in the same millisecond as the previous
+ * one must still read as a new build (the 2026-11-16 miss) — and not taken from the entry
+ * alone: a rebuild that replaces dist (a rename-swap of a staging dir, a clean build)
+ * leaves us polling a fresh inode whose entry can match what we run byte for byte (the
+ * 2026-11-20 miss). Birthtime is the signal a swap cannot erase: on APFS it survives both
+ * rename and utimes, so any generation STAGED after ours carries a stamp newer than ours
+ * even when every mtime was re-stamped to look like ours — while a generation staged
+ * before ours (a rollback) stays under our id and must not restart us onto old code. One
+ * level only: dist/hooks and
+ * dist/skills are rewritten by their own atomic staging steps on every build, so recursing
+ * there would re-stamp on work that never changes the code we run; sibling stamps (entry
+ * dirs, maps, the prune manifest) cover every rebuild. Only the ENTRY's own dir is walked:
+ * an ancestor above it (the package root holding dist/) keeps mtimes from commits and
+ * unrelated work — future stamps included — which would pin a change that never settles
+ * (a restart loop) or mask a real swap.
  */
 export function distBuildId(entry: string): string | undefined {
   try {
-    const newest = Math.round(statSync(entry).mtimeMs * 1000);
     const dir = dirname(entry);
-    let id = Math.max(newest, Math.round(statSync(dir).mtimeMs * 1000));
+    const ds = statSync(dir);
+    let id = Math.max(Math.round(statSync(entry).mtimeMs * 1000), Math.round(ds.mtimeMs * 1000), Math.round(ds.birthtimeMs * 1000));
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       try {
-        const t = Math.round(statSync(`${dir}/${e.name}`).mtimeMs * 1000);
+        const st = statSync(`${dir}/${e.name}`);
+        // every entry also carries its birthtime: the staging stamp a rename-swap cannot erase (APFS keeps both stamps across rename and utimes)
+        const t = Math.max(Math.round(st.mtimeMs * 1000), Math.round(st.birthtimeMs * 1000));
         if (t > id) id = t;
       } catch {
         /* vanished mid-walk (the build is swapping files): the rest of the dir still stamps */
