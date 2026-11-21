@@ -978,10 +978,8 @@ function localRmReason(segs: Segment[], cwd: string, env: Record<string, string 
       if (!(existsSync(f) && isTracked(f) && !addedByBranch(f))) continue;
       // the `pai tests prune --apply` worker may delete exactly its plan's files: same repo-relative path, nothing else
       if (planned) {
-        const root = ctxRepoRoot(cwd);
-        // git prints its toplevel through symlinks (/var -> /private/var): compare realpath-resolved roots, keep the lexical relpath for the match
-        const key = realpathSync(root) === realpathSync(dirname(f)) ? relative(root, f) : "";
-        if (key && !key.startsWith("..") && planned.has(key)) continue;
+        const key = planKey(f, ctxRepoRoot(cwd));
+        if (key && planned.has(key)) continue;
       }
       return `${words.slice(0, i).join(" ")} of tracked ${w} blocked: Local workers do not delete tracked files${planned ? ` (only the files listed in PAI_WORKER_PRUNE_FILES may be deleted here)` : ""}. Leave ${w} as is, finish the rest, and list it in your report as \`delete: ${w} (<reason>)\`; your orchestrator deletes it.`;
     }
@@ -996,6 +994,22 @@ function ctxRepoRoot(cwd: string): string {
   } catch {
     return cwd;
   }
+}
+
+/** The file's path relative to the repo root, as a prune plan lists it (slash form); "" when outside the repo. */
+function planKey(file: string, root: string): string {
+  // git reports its toplevel through symlinks (/var -> /private/var), so walk from the file up to the
+  // realpath-resolved root and join the names; the plan's own paths are repo-root-relative strings.
+  const rroot = realpathSync(root);
+  let dir = dirname(file);
+  const names: string[] = [basename(file)];
+  while (realpathSync(dir) !== rroot) {
+    const parent = dirname(dir);
+    if (parent === dir) return ""; // reached the filesystem top without finding the repo root
+    names.unshift(basename(dir));
+    dir = parent;
+  }
+  return names.join("/");
 }
 
 export function decideWorkerGuard(

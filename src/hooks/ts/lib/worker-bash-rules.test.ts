@@ -618,11 +618,13 @@ describe("worker guard local tracked-file delete and the prune-plan exception", 
   mkdirSync(join(repo, "tests"), { recursive: true });
   writeFileSync(join(repo, "src", "bench", "onboarding.test.ts"), "test(1);\n");
   writeFileSync(join(repo, "tests", "KEPT.md"), "# kept\n");
-  writeFileSync(join(repo, "src", "bench", "onboarding.test.ts.bak"), "stale copy, not tracked\n"); // prefix of the plan path: must not match it
+  writeFileSync(join(repo, "src", "bench", "onboarding.test.ts.bak"), "stale copy, still tracked\n"); // prefix of the plan path: must not match it
   const g = (a: string) => execSync(`git -C ${repo} ${a}`, { encoding: "utf8" });
-  // no commits yet: addedByBranch takes the HEAD-less fallback, every tracked file counts as tracked
   g("init -q");
-  g("add src/bench/onboarding.test.ts tests/KEPT.md");
+  g("config user.email t@t.local");
+  g("config user.name test");
+  g("add src/bench/onboarding.test.ts tests/KEPT.md src/bench/onboarding.test.ts.bak");
+  g("commit -qm init"); // a HEAD: addedByBranch sees both files as tracked from the branch start
   const gctx = (): WorkerGuardContext => ({
     cwd: repo,
     home: "/home/u",
@@ -636,8 +638,8 @@ describe("worker guard local tracked-file delete and the prune-plan exception", 
     decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, env, gctx).decision === "deny";
   const PLAN = "src/bench/onboarding.test.ts";
   it("a normal local worker is blocked from git rm of a tracked file", () => {
-    expect(denied(`git rm src/bench/onboarding.test.ts`, localEnv())).toBe(true);
-    expect(denied("rm src/bench/onboarding.test.ts", localEnv())).toBe(true);
+    expect(denied(`git rm ${PLAN}`, localEnv())).toBe(true);
+    expect(denied(`rm ${PLAN}`, localEnv())).toBe(true);
   });
   it("a prune worker deletes exactly its plan's file", () => {
     expect(denied(`git rm ${PLAN}`, localEnv({ PAI_WORKER_PRUNE_FILES: PLAN }))).toBe(false);
