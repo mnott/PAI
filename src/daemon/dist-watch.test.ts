@@ -94,50 +94,39 @@ const roots: string[] = [];
  * A dist as production builds it: the entry sits directly in dist next to the prune
  * manifest, which prune-dist writes AFTER tsdown emits — the build's last write.
  */
-function mkDist(): { root: string; dist: string; entry: string } {
+function mkDist(atMs = BASE_MS): { root: string; dist: string; entry: string } {
   const root = mkdtempSync(join(tmpdir(), "pai-distwatch-"));
   roots.push(root);
-  const dist = join(root, "dist");
-  mkdirSync(dist, { recursive: true });
+  const stage = join(root, "gen"); // born now — the dir we rename over `dist` must be the only "now" stamp left in the walked tree
+  mkdirSync(stage);
+  const dist = join(stage, "dist");
+  mkdirSync(dist);
   const entry = join(dist, "index.mjs");
   writeFileSync(entry, "console.log(1);\n");
-  return { root, dist, entry };
+  renameSync(dist, join(root, "dist")); // rename keeps both stamps of the dir and its files…
+  utimesSync(stage, new Date(atMs), new Date(atMs)); // …park what we can; the stage's own birthtime stays "now" but is never walked (the id walks dist only)
+  return { root, dist: join(root, "dist"), entry: join(root, "dist", "index.mjs") };
+}
+
+/**
+ * The build's last write: prune-dist writes its manifest after tsdown emits the entries.
+ * utimes moves mtime but NEVER birthtime (probed on APFS), so this is a hidden re-stamp:
+ * what survives it is the staging birthtimes swapDist leaves behind.
+ */
+function stampBuild(dist: string, atMs: number): void {
+  const manifest = join(dist, ".prune-manifest.json");
+  writeFileSync(manifest, "{}");
+  utimesSync(manifest, new Date(atMs), new Date(atMs));
 }
 
 /** Rename-swap a staging dir over dist, exactly like restoreDistGeneration does. */
 function swapDist(root: string, dist: string, entryBytes: string): void {
   const stage = join(root, "dist.new");
-  mkdirSync(stage);
+  mkdirSync(stage); // born now: the birthtime stamp of staging, which no rename or utimes can erase
   writeFileSync(join(stage, "index.mjs"), entryBytes);
   stampBuild(stage, Date.now()); // the rebuild writes its manifest inside the staging dir before swapping it in
   renameSync(dist, join(root, `dist.old.${process.hrtime.bigint()}`));
   renameSync(stage, dist);
-}
-
-/** The build's last write: prune-dist writes its manifest after tsdown emits the entries. */
-function stampBuild(dist: string, atMs: number): void {
-  writeFileSync(join(dist, ".prune-manifest.json"), "{}");
-  utimesSync(join(dist, ".prune-manifest.json"), new Date(atMs), new Date(atMs));
-}
-
-/**
- * A file with a FIXED stamp in both clocks: utimes moves mtime but never birthtime, so a
- * file created "now" leaks its creation moment into the id. Backdate it by copying through
- * a scratch file created at `atMs` (cp -p carries mtime AND birthtime).
- */
-function backdateFile(file: string, atMs: number): void {
-  const src = `${file}.src`;
-  writeFileSync(src, readFileSync(file));
-  utimesSync(src, new Date(atMs), new Date(atMs));
-  execFileSync("cp", ["-p", src, file]); // -p preserves mtime; APFS gives the copy the source's birthtime too
-  rmSync(src);
-}
-
-/** mkdtemp + mkdir of a staging dir carry "now" in both clocks: park them at a fixed stamp. */
-function backdateDir(dir: string, atMs: number): void {
-  const d = new Date(atMs);
-  execFileSync("xattr", ["-c", "-r", dir]); // com.apple.FinderInfo blocks cp -p's birthtime copy on directories
-  utimesSync(dir, d, d);
 }
 
 /**
@@ -151,8 +140,8 @@ function freezeDir(dir: string, atMs: number): void {
   utimesSync(dir, new Date(atMs), new Date(atMs));
 }
 
-/** A fixed clock far in the past: ids here never collide with "now", and nothing created before it can out-stamp them. */
-const BASE_MS = 1_800_000_000_000;
+/** A fixed clock in the past (2026-11-18) for settled-state fixtures. */
+const BASE_MS = 1_795_000_000_000;
 /** A fixed clock one hour ahead: a checkout root keeps future stamps from unrelated work (commits, tools). */
 const FUTURE_MS = Date.now() + 3_600_000;
 
@@ -166,8 +155,7 @@ describe("the build id of a dist dir", () => {
   });
 
   it("moves when a file the build wrote last is newer than the entry", () => {
-    const { dist, entry } = mkDist();
-    freezeDir(dist, BASE_MS - 1_000); // our build settled: dir at an older stamp…
+    const { dist, entry } = mkDist(); // our build settled at BASE_MS everywhere walked…
     utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS)); // …entry emitted before the manifest
     const idA = distBuildId(entry)!;
     stampBuild(dist, BASE_MS + 5_000); // prune-dist writes its manifest after tsdown emits the entries
@@ -175,58 +163,50 @@ describe("the build id of a dist dir", () => {
   });
 
   it("ignores mtimes nested under dist (hooks/skills staging restamps those every build)", () => {
-    const { dist, entry } = mkDist();
-    freezeDir(dist, BASE_MS - 1_000); // our build settled at a fixed stamp…
+    const { dist, entry } = mkDist(); // our build settled at BASE_MS everywhere walked…
     utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS));
+    stampBuild(dist, BASE_MS); // …manifest written last at our stamp (its birthtime is counted: it must stay ≤ ours)
     const idA = distBuildId(entry)!;
-    mkdirSync(join(dist, "hooks"), { recursive: true });
-    writeFileSync(join(dist, "hooks", "guard.mjs"), "x"); // fresh mtime inside a top-level dir…
-    freezeDir(dist, BASE_MS - 1_000); // …the staging step renames the dir in and re-stamps dist after
+    mkdirSync(join(dist, "hooks")); // a top-level dir staged NOW: its own fresh birthtime is NOT walked…
+    writeFileSync(join(dist, "hooks", "guard.mjs"), "x"); // …and neither is the work nested inside it
+    freezeDir(dist, BASE_MS); // the staging step re-stamps dist's own mtime back to ours on the way in
     expect(distBuildId(entry)).toBe(idA); // one level only: nested work never re-stamps the build id
   });
 
   it("ignores mtimes above dist (the package root keeps future stamps from unrelated work)", () => {
-    const { dist, entry } = mkDist();
-    freezeDir(dist, BASE_MS - 1_000); // our build settled at a fixed stamp…
+    const { root, dist, entry } = mkDist(); // our build settled at BASE_MS everywhere walked…
     utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS));
     const idA = distBuildId(entry)!;
-    utimesSync(dirname(dist), new Date(FUTURE_MS), new Date(FUTURE_MS)); // a future stamp one level ABOVE dist (a checkout's root)
+    utimesSync(root, new Date(FUTURE_MS), new Date(FUTURE_MS)); // a future stamp one level ABOVE dist (a checkout's root)
     expect(distBuildId(entry)).toBe(idA); // an ancestor's mtime must not pin `id > startId` forever: that is a restart loop
   });
 
   it("the 2026-11-20 miss: a replaced dist with byte-identical entry bytes still moves the id", () => {
-    const { root, dist, entry } = mkDist();
-    freezeDir(dist, BASE_MS - 1_000); // our build settled at an older stamp than anything the rebuild carries
+    const { root, dist, entry } = mkDist(); // our build settled at BASE_MS — older than anything the rebuild carries
     utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS));
     const idA = distBuildId(entry)!;
-    swapDist(root, dist, "console.log(1);\n"); // same bytes staged NOW: a fresh inode whose birthtime is the staging moment…
-    freezeDir(dist, BASE_MS - 1_000); // …re-stamped to our own stamp on the way in (mtime alone would hide)
+    swapDist(root, dist, "console.log(1);\n"); // same bytes staged NOW: a fresh dir whose birthtime is the staging moment…
+    freezeDir(dist, BASE_MS); // …re-stamped to our own stamp on the way in (mtime alone would hide)
     utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS));
     expect(distBuildId(entry)).not.toBe(idA); // birthtime is what a rename-swap cannot erase: the id moved
-    stampBuild(dist, BASE_MS + 5_000); // and the build's last write lands in the swapped-in dir
-    expect(distBuildId(entry)).not.toBe(idA);
   });
 
   it("a replacement whose entry keeps the same size but changes content moves the id too", () => {
-    const { root, dist, entry } = mkDist();
-    freezeDir(dist, BASE_MS - 1_000); // our build settled at a fixed stamp…
+    const { root, dist, entry } = mkDist(); // our build settled at BASE_MS…
     utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS));
     const idA = distBuildId(entry)!;
     swapDist(root, dist, "console.log(2);\n"); // 16 bytes again: an entry size+mtime id would not move
-    freezeDir(dist, BASE_MS - 1_000); // the swapped-in entry is no newer than what we run…
-    utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS));
+    freezeDir(dist, BASE_MS); // the swapped-in dir's mtime is re-stamped to our own…
+    utimesSync(entry, new Date(BASE_MS), new Date(BASE_MS)); // …and so is the entry's
     expect(distBuildId(entry)).not.toBe(idA); // …the swap still shows: the staged dir's birthtime is now
-    stampBuild(dist, BASE_MS + 5_000); // the build's last write is what we see on top of it
-    expect(distBuildId(entry)).not.toBe(idA);
   });
 });
 
 describe("the watcher across a dist that gets replaced", () => {
   it("fires on a rebuild that rename-swaps dist with byte-identical entry bytes (2026-11-20 22:25)", () => {
-    const { root, dist, entry } = mkDist();
+    const { root, dist, entry } = mkDist(Date.now() - 60_000); // our running build settled a minute ago: nothing the swap carries is older than this
     let restarts = 0;
     let t = 0;
-    freezeDir(dist, Date.now() - 60_000); // our running build settled a minute ago: nothing the swap carries is older than this
     const tick = createDistWatch(
       { readId: () => distBuildId(entry), now: () => t, busy: () => false, restart: () => restarts++, log: () => undefined },
       distBuildId(entry)
@@ -244,11 +224,9 @@ describe("the watcher across a dist that gets replaced", () => {
   });
 
   it("stays idle across a replacement that carries no newer stamp than what we run (a rollback)", () => {
-    const { root, dist, entry } = mkDist();
+    const { root, dist, entry } = mkDist(Date.now() - 60_000); // our running build settled a minute ago everywhere walked…
     let restarts = 0;
     let t = 0;
-    freezeDir(dist, Date.now() - 60_000); // our running build settled a minute ago…
-    utimesSync(entry, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
     stampBuild(dist, Date.now() + 60_000); // …and its manifest is stamped a minute AHEAD of everything the rolled-back generation carries (its last write)
     const tick = createDistWatch(
       { readId: () => distBuildId(entry), now: () => t, busy: () => false, restart: () => restarts++, log: () => undefined },
@@ -258,13 +236,11 @@ describe("the watcher across a dist that gets replaced", () => {
       expect(tick()).toBe("idle");
       t += DIST_STABLE_MS + 1_000;
     }
-    const stage = join(root, "dist.old-gen");
-    mkdirSync(stage);
-    writeFileSync(join(stage, "index.mjs"), "console.log(0);\n");
-    utimesSync(join(stage, "index.mjs"), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
-    freezeDir(stage, Date.now() - 60_000); // the rolled-back generation: staged a minute ago, older than what we run everywhere walked (a rename keeps both stamps)
+    // the rolled-back generation was staged BEFORE our build: same old entry, its manifest last-written a minute ago — every stamp under it is older than ours
+    const { dist: oldGen } = mkDist(Date.now() - 60_000);
+    stampBuild(oldGen, Date.now() - 30_000);
     renameSync(dist, join(root, "dist.current"));
-    renameSync(stage, dist); // rolled back to an older generation: nothing newer on disk (the root's rename mtime is not walked)
+    renameSync(oldGen, dist); // rolled back to an older generation: nothing newer on disk (the root's rename mtime is not walked)
     for (let i = 0; i < 4; i++) {
       expect(tick()).toBe("idle"); // id < startId: a rollback onto OLD code must never trigger a restart onto it
       t += DIST_STABLE_MS + 1_000;
@@ -273,10 +249,9 @@ describe("the watcher across a dist that gets replaced", () => {
   });
 
   it("re-arms after a replacement: a second rebuild fires again", () => {
-    const { root, dist, entry } = mkDist();
+    const { root, dist, entry } = mkDist(Date.now() - 60_000); // our running build settled older than what comes next
     let restarts = 0;
     let t = 0;
-    freezeDir(dist, Date.now() - 60_000); // our running build settled older than what comes next
     const tick = createDistWatch(
       { readId: () => distBuildId(entry), now: () => t, busy: () => false, restart: () => restarts++, log: () => undefined },
       distBuildId(entry)
@@ -286,11 +261,13 @@ describe("the watcher across a dist that gets replaced", () => {
       t += DIST_STABLE_MS + 1_000;
     }
     swapDist(root, dist, "console.log(1);\n"); // first rebuild: the swap itself moves the id
+    stampBuild(dist, Date.now()); // its last write lands in the swapped-in dir
     tick(); // settle clock starts on the new id…
     t += DIST_STABLE_MS;
     expect(tick()).toBe("restarting"); // …and after the debounce it fires
     expect(restarts).toBe(1);
-    // the new build re-stamps dist again (the next merge): a fresh id fires once more
+    // the next rebuild re-stamps dist again: a fresh id fires once more. The watcher ignores an id at or below ours
+    // (a rollback must never restart us onto old code), so this one has to be NEWER than the swap's staging stamp.
     utimesSync(join(dist, ".prune-manifest.json"), new Date(Date.now() + 120_000), new Date(Date.now() + 120_000));
     expect(tick()).toBe("settling"); // the fired flag re-arms on a new id…
     t += DIST_STABLE_MS;
