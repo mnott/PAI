@@ -315,7 +315,7 @@ async function walkList(
   const walk = localOkFirst ? [...entries.filter(isLocal), ...entries.filter((n) => !isLocal(n))] : entries;
   for (const name of walk) {
     if (!isLocal(name)) {
-      if (cloudOk(name)) return res(skipLocal || (localOkFirst ? "--local-ok: no local running" : "route: cloud"), null);
+      if (cloudOk(name)) return res(skipLocal || (localOkFirst ? "--local-ok: no local running" : why === "no local provider" ? "route: cloud" : `route: cloud (${why})`), null);
       continue;
     }
     if (skipLocal) continue;

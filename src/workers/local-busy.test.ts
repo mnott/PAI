@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { probeServedModels } from "./served-models.js";
 import { pickLocal } from "./local-provider.js";
 import { routeRun } from "./policy.js";
+import { resolveTarget } from "./routing.js";
 import type { WorkersConfig } from "./config.js";
 
 const prov = (url: string, model: string) => ({ baseUrl: url, enabled: true, models: { default: model, fast: model }, tags: [] });
@@ -57,5 +58,20 @@ describe("a busy or full local model is running", () => {
     writeFileSync(y, "local: gyro-l\n");
     expect(pickLocal(["apple-fm", "gyro-l"], dir, y, []).name).toBe("gyro-l");
     expect(pickLocal(["apple-fm", "gyro-l"], dir, y, ["gyro-l", "apple-fm"]).name).toBe("gyro-l");
+  });
+
+  it("a local entry left out on purpose (--cloud) is not reported as 'not running'; a down server says 'local down'", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-busy-"));
+    const c = { ...cfg(), tiers: [{ id: "t2", name: "W", models: ["gyro-l", "anthropic/sonnet"], classes: ["implement"], default: true }] } as unknown as WorkersConfig;
+    const cloud = await routeRun(c, dir, { className: "implement", cloud: true }, { ping: async () => true });
+    expect(cloud?.route.local).toBe(false);
+    const t = resolveTarget(c, dir, { className: "implement", localWhy: cloud!.route.reason });
+    expect(t.providerName).toBe("anthropic");
+    expect(t.routeWhy).toContain("gyro-l: local (--cloud)");
+    expect(t.routeWhy).not.toContain("not running");
+    const down = await routeRun(c, dir, { className: "implement" }, { ping: async () => false });
+    expect(down?.route.reason).toBe("route: cloud (local down)");
+    const up = await routeRun(c, dir, { className: "implement" }, { ping: async () => true });
+    expect(up?.providerFlag).toBe("gyro-l");
   });
 });
