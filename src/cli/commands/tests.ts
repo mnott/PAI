@@ -15,7 +15,7 @@ export const testsCommand: CommandDef = {
     "Tests stay only with evidence (tests/KEPT.md): (a) a real fix they guarded, (b) a security or destructive-operation guard, (c) an external contract. " +
     "UI/simulator targets, snapshot baselines and run outputs (.xcresult, recordings, screenshots, DerivedData) are classified too; outputs are always dropped unless listed. " +
     "`audit` reads git and files only and never runs a test. `prune` prints the plan; with --apply a worker (orchestrate class) removes the rest on its own branch and commits; you land it. " +
-    "The growth alarm (config tests.growthAlarm, default 20) tells the session when a project's suite outgrows its core or a gate run reports more than 500 tests.",
+    "The growth alarm (config tests.growthAlarm, default 20) counts test call sites — it()/test() definitions, not a runner's expanded cases — and tells the session when a project's suite outgrows its core or holds more than 500 of them.",
   examples: ["pai tests audit --repo .", "pai tests prune --repo ~/code/app", "pai tests prune --repo ~/code/app --apply"],
   seeAlso: ["pai worker merge"],
   subcommands: [
