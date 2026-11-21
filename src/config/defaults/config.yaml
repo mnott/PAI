@@ -50,9 +50,11 @@ embedding:
     baseUrl: http://127.0.0.1:11434
 # Daemon log level: debug, info, warn, or error.
 logLevel: info
-# Test governance (src/testgov, `pai tests`). growthAlarm: tests (and UI/simulator
-# run outputs) a project may hold above its tests/KEPT.md core before the session
-# is told to `clean up tests`; a gate run reporting more than 500 tests alarms too.
+# Test governance (src/testgov, `pai tests`). Both numbers count test call sites
+# (it()/test() definitions), not a runner's expanded cases: describe.each/it.each rows
+# are data. growthAlarm: call sites (and UI/simulator run outputs) a project may hold
+# above its tests/KEPT.md core before the session is told to `clean up tests`;
+# more than 500 call sites in the tree alarms too, core or not.
 tests:
   growthAlarm: 20
 # Notices to the session and to PAILot: the throttles and windows of the
