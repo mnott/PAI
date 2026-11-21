@@ -14,11 +14,13 @@ export function pruneSpec(a: Audit): string {
     "",
     "Governance: a test file stays only with evidence. (a) a real product bug it guarded, (b) it pins a security guard or destructive-operation block, (c) it pins an external contract (wire format, schema migration, CLI output, docs-sync). Visual-app run outputs (.xcresult, recordings, screenshots, DerivedData) and simulator run scripts are one-time and are scratched unless listed in tests/KEPT.md.",
     "",
+    "Scope: delete exactly the DROP files below and the test-only fixtures/helpers they leave orphaned. In tests/KEPT.md only remove the entries of deleted files — never rewrite or reformat it, and never add or reword an entry of a kept file.",
+    "",
     `Audit: ${a.rows.length} test-related files (${a.totalTests} tests); keep ${keep.length} (support files stay), drop ${drop.length}.`,
     "",
     "Steps:",
-    "1. `git rm` every DROP file below (rm the untracked ones), plus fixtures, helpers, mocks and snapshot baselines that only the dropped tests used (check with grep first). Remove emptied directories.",
-    "2. Write tests/KEPT.md with exactly the KEEP rows below (keep the header text). Re-check each KEEP row against the file: drop a row whose evidence you cannot confirm.",
+    "1. `git rm` every DROP file below (rm the untracked ones), plus fixtures, helpers, mocks and snapshot baselines that only the dropped tests used (check with grep first). Remove emptied directories. This run was started by `pai tests prune --apply`: the delete guard allows exactly the files passed as --prune-file (PAI_WORKER_PRUNE_FILES); every other tracked-file deletion stays blocked — never work around it by rewriting tests/KEPT.md.",
+    "2. Edit tests/KEPT.md only to remove the entries of deleted files (keep the header text and every kept entry verbatim). Re-check each KEEP row against the file: drop a row whose evidence you cannot confirm.",
     "3. Keep the project's test script (package.json scripts.test, Makefile, xcodebuild scheme or equivalent) working on the kept core only; remove references to deleted targets/files (e.g. a UI test target in the Xcode project or CI workflow) so build and typecheck still pass.",
     "4. Run the typecheck/build (never the full suite of a mobile simulator). Prove they pass.",
     '5. ONE commit: "chore: prune the test suite to the governed core". No attribution lines.',
@@ -46,9 +48,15 @@ export function prune(repo: string, apply: boolean, cli: { cmd: string; args: st
   ];
   if (!apply) return { audit, lines: [...lines, "dry run: pass --apply to start the worker (it commits on its own branch; you land it)"], started: false };
   if (!drop.length) return { audit, lines: [...lines, "nothing to prune"], started: false };
+  // the plan's file list travels to the worker as repeatable --prune-file flags -> PAI_WORKER_PRUNE_FILES,
+  // the delete guard's narrow exception: this worker may git rm exactly these tracked files
   const r = spawnSync(
     cli.cmd,
-    [...cli.args, "worker", "run", "--class", "orchestrate", "--label", "prune the test suite", "-p", pruneSpec(audit), "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob"],
+    [
+      ...cli.args, "worker", "run", "--class", "orchestrate", "--label", "prune the test suite", "-p", pruneSpec(audit),
+      "--allowedTools", "Read,Edit,Write,Bash,Grep,Glob",
+      ...drop.flatMap((d) => ["--prune-file", d.file]),
+    ],
     { cwd: repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
   );
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").slice(-6);

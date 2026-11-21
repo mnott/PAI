@@ -84,6 +84,8 @@ export interface RunOptions {
   allowTests?: boolean;
   /** --allow-db-writes: this worker's SQL clients may write databases (PAI_ALLOW_DB_WRITES=1); only for briefs that really need writes. */
   allowDbWrites?: boolean;
+  /** Set by `pai tests prune --apply` only: the plan's file list (PAI_WORKER_PRUNE_FILES), the tracked files this local worker's guard lets it delete. */
+  pruneFiles?: string[];
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
@@ -297,6 +299,8 @@ export interface ExecuteArgs {
   allowTests?: boolean;
   /** --allow-db-writes: PAI_ALLOW_DB_WRITES=1 in the env; the guard then allows SQL-client writes to databases. */
   allowDbWrites?: boolean;
+  /** `pai tests prune --apply` only: PAI_WORKER_PRUNE_FILES holds these paths; the local-worker delete guard allows deleting exactly them. */
+  pruneFiles?: string[];
   /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */
   opts: RunOptions;
   /** The gatekeeper's cloud approval this run carries (local-only.ts); recorded on the status as `cloudApproved`. */

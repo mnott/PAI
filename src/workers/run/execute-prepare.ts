@@ -249,6 +249,8 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (a.allowTests) env.PAI_WORKER_ALLOW_TESTS = "1";
   // --allow-db-writes: the worker Bash guard allows SQL-client writes to databases
   if (a.allowDbWrites) env.PAI_ALLOW_DB_WRITES = "1";
+  // `pai tests prune --apply`: the local-worker delete guard allows deleting exactly the plan's tracked files
+  if (a.pruneFiles?.length) env.PAI_WORKER_PRUNE_FILES = a.pruneFiles.join("\n");
 
   const mcpFlag = noBrowser ? stripBrowserNames(a.mcpFlag ? [a.mcpFlag] : [])[0] : a.mcpFlag;
   const classMcp = noBrowser && target.classMcp ? stripBrowserNames(target.classMcp) : target.classMcp;
