@@ -288,6 +288,8 @@ export function resolveTarget(
     sessionEnv?: NodeJS.ProcessEnv;
     home?: string;
     cwd?: string;
+    /** Why routeRun left the class list's local entries out (its verdict: "--cloud", "urgent", "battery", "local down"). Absent: routing never pinned one. */
+    localWhy?: string;
   } = {}
 ): ResolvedTarget {
   if (opts.flagProvider) {
@@ -391,7 +393,7 @@ export function resolveTarget(
     for (const entry of list) {
       const { provider: name, model } = parseEntry(entry);
       const p = getProviderOrNative(config, name);
-      const why = !p ? "not configured" : isLocalProvider(p.baseUrl) ? "local (not running)" : exclusionReason(config, state, name, cls, budgets);
+      const why = !p ? "not configured" : isLocalProvider(p.baseUrl) ? `local (${opts.localWhy ?? "not pinned by routing"})` : exclusionReason(config, state, name, cls, budgets);
       if (why || !p) {
         excluded.push(`${entry}: ${why}`);
         continue;

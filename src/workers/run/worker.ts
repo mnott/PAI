@@ -286,6 +286,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         flagProvider: providerFlag,
         className: routeClassOf(opts),
         cwd: opts.cwd,
+        localWhy: route && !route.local ? route.reason : undefined,
       });
   assertProviderRunnable(target.providerName, target.provider);
   // the local-only window (local-only.ts): judged on THIS run's resolved
