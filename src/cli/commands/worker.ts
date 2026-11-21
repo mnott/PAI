@@ -615,6 +615,39 @@ const usageCommand: CommandDef = {
     }),
 };
 
+const watchCommand: CommandDef = {
+  name: "watch",
+  summary: "Stream evidence about workers, one line per event (for a monitor)",
+  description:
+    "Polls the worker statuses `pai worker ps` shows and prints a line only on evidence: STATE on every state change (queued->running and each terminal state), STALL when the turn count has not grown for --stall, DENIED when guard denials grow, SERVER DOWN when a worker's provider stops answering, PROGRESS turns every --beat, and ALL TERMINAL (exit 0) once every id has finished.",
+  args: [{ name: "ID", summary: "Worker id(s) to watch (none: the ps table refreshes every 2 seconds, Ctrl-C leaves)", variadic: true }],
+  options: [
+    { name: "stall", type: "string", value: "DUR", summary: "No new turn for this long prints STALL (default 4m)" },
+    { name: "beat", type: "string", value: "DUR", summary: "PROGRESS line interval (default 5m)" },
+    { name: "poll", type: "string", value: "DUR", summary: "Status polling interval (default 5s)" },
+  ],
+  examples: ["pai worker watch w-20260101-abc", "pai worker watch w-1 w-2 --stall 2m --beat 1m"],
+  seeAlso: ["pai worker ps", "pai worker wait", "pai worker follow"],
+  run: (ctx) => {
+    if (!ctx.args.ID || [ctx.args.ID].flat().length === 0) {
+      return new Promise<number>((resolve, reject) => {
+        const proc = spawn("watch", ["-n", "2", "pai worker ps --all"], { stdio: "inherit" });
+        proc.on("error", (e) => reject(new CliError(`cannot run watch: ${e.message}`, "pai worker ps --all")));
+        proc.on("close", (code) => resolve(code ?? 1));
+      });
+    }
+    return guard("pai worker ps", async () => {
+      const { parseDuration, realWatchDeps, watchWorkers } = await import("../../workers/watch.js");
+      const dur = (v: unknown, dflt: string): number => parseDuration(typeof v === "string" ? v : dflt);
+      const rc = await watchWorkers(
+        { ids: [ctx.args.ID].flat().map(String), stallMs: dur(ctx.opts.stall, "4m"), beatMs: dur(ctx.opts.beat, "5m"), pollMs: dur(ctx.opts.poll, "5s") },
+        realWatchDeps(logDir(), (l) => out(l))
+      );
+      process.exitCode = rc;
+    });
+  },
+};
+
 const followCommand: CommandDef = {
   name: "follow",
   summary: "Watch a worker live, or all running workers",
@@ -670,20 +703,6 @@ const replayCommand: CommandDef = {
   run: (ctx) =>
     guard("pai worker ps", () => {
       out(replayOutput(logDir(), ctx.args.ID as string, process.stdout.isTTY === true, num(ctx.opts.tail)));
-    }),
-};
-
-const watchCommand: CommandDef = {
-  name: "watch",
-  summary: "Worker list that refreshes every 2 seconds",
-  description: "Runs `pai worker ps --all` again every 2 seconds with the system `watch` program. Ctrl-C leaves it.",
-  examples: ["pai worker watch", "pai worker ps --all"],
-  seeAlso: ["pai worker ps", "pai worker follow"],
-  run: () =>
-    new Promise<number>((resolve, reject) => {
-      const proc = spawn("watch", ["-n", "2", "pai worker ps --all"], { stdio: "inherit" });
-      proc.on("error", (e) => reject(new CliError(`cannot run watch: ${e.message}`, "pai worker ps --all")));
-      proc.on("close", (code) => resolve(code ?? 1));
     }),
 };
 
@@ -1519,6 +1538,7 @@ export const workerCommand: CommandDef = {
     resumeCommand,
     psCommand,
     usageCommand,
+    watchCommand,
     followCommand,
     replayCommand,
     watchCommand,

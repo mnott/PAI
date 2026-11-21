@@ -563,7 +563,8 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker wait-file` | Wait for files to appear |
 | `pai worker wait-on` | Wait for a background job to finish |
 | `pai worker wait-url` | Wait for a server to answer HTTP |
-| `pai worker watch` | Worker list that refreshes every 2 seconds |
+| `pai worker watch` | Stream evidence about workers, one line per event (for a monitor) |
+| `pai worker watch` | Stream evidence about workers, one line per event (for a monitor) |
 | `pai zettel` | Explore the links between your notes |
 | `pai zettel converse` | Ask the vault a question |
 | `pai zettel explore` | Follow link chains from a note |

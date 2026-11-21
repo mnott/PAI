@@ -182,6 +182,33 @@ pai worker usage --label armA --since 2026-10-18T06:00:00 --json
 
 See also: `pai audit tokens usage`, `pai worker ps`
 
+### pai worker watch
+
+Stream evidence about workers, one line per event (for a monitor)
+
+```
+pai worker watch [ID...] [options]
+```
+
+Polls the worker statuses `pai worker ps` shows and prints a line only on evidence: STATE on every state change (queued->running and each terminal state), STALL when the turn count has not grown for --stall, DENIED when guard denials grow, SERVER DOWN when a worker's provider stops answering, PROGRESS turns every --beat, and ALL TERMINAL (exit 0) once every id has finished.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID...` | no | Worker id(s) to watch (none: the ps table refreshes every 2 seconds, Ctrl-C leaves) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--stall DUR` | string | — | No new turn for this long prints STALL (default 4m) |
+| `--beat DUR` | string | — | PROGRESS line interval (default 5m) |
+| `--poll DUR` | string | — | Status polling interval (default 5s) |
+
+```sh
+pai worker watch w-20260101-abc
+pai worker watch w-1 w-2 --stall 2m --beat 1m
+```
+
+See also: `pai worker ps`, `pai worker wait`, `pai worker follow`
+
 ### pai worker follow
 
 Watch a worker live, or all running workers
@@ -238,20 +265,30 @@ See also: `pai worker follow`, `pai worker log`
 
 ### pai worker watch
 
-Worker list that refreshes every 2 seconds
+Stream evidence about workers, one line per event (for a monitor)
 
 ```
-pai worker watch
+pai worker watch [ID...] [options]
 ```
 
-Runs `pai worker ps --all` again every 2 seconds with the system `watch` program. Ctrl-C leaves it.
+Polls the worker statuses `pai worker ps` shows and prints a line only on evidence: STATE on every state change (queued->running and each terminal state), STALL when the turn count has not grown for --stall, DENIED when guard denials grow, SERVER DOWN when a worker's provider stops answering, PROGRESS turns every --beat, and ALL TERMINAL (exit 0) once every id has finished.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID...` | no | Worker id(s) to watch (none: the ps table refreshes every 2 seconds, Ctrl-C leaves) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--stall DUR` | string | — | No new turn for this long prints STALL (default 4m) |
+| `--beat DUR` | string | — | PROGRESS line interval (default 5m) |
+| `--poll DUR` | string | — | Status polling interval (default 5s) |
 
 ```sh
-pai worker watch
-pai worker ps --all
+pai worker watch w-20260101-abc
+pai worker watch w-1 w-2 --stall 2m --beat 1m
 ```
 
-See also: `pai worker ps`, `pai worker follow`
+See also: `pai worker ps`, `pai worker wait`, `pai worker follow`
 
 ### pai worker pane
 
@@ -2011,9 +2048,10 @@ See also: `pai worker providers`
 | `pai worker resume` | Continue a finished worker with a new instruction, or release a paused one |
 | `pai worker ps` | List this session's workers, running and finished |
 | `pai worker usage` | Token totals per provider and model for a set of workers |
+| `pai worker watch` | Stream evidence about workers, one line per event (for a monitor) |
 | `pai worker follow` | Watch a worker live, or all running workers |
 | `pai worker replay` | Print the transcript of one worker |
-| `pai worker watch` | Worker list that refreshes every 2 seconds |
+| `pai worker watch` | Stream evidence about workers, one line per event (for a monitor) |
 | `pai worker pane` | Open a window pane that follows a worker |
 | `pai worker log` | Worker ledger or the raw events of one worker |
 | `pai worker errors` | Tool errors workers hit, grouped by kind |

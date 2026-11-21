@@ -141,8 +141,13 @@ const runCmd: CommandDef = {
     const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === cloudTier, ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), ...(ctx.opts["no-pool"] === true ? { noPool: true } : {}), onEvent }, realQueueDeps(logDir, repo));
     await reporter?.finish();
     finishDetached(logDir);
+    out(`started workers: ${s.started.join(", ") || "none"}`);
     out(`ready: ${s.ready.join(", ") || "none"}; too-big: ${s.tooBig.join(", ") || "none"}; needs-decision: ${s.needsDecision.join(", ") || "none"}`);
     if (s.spawnRefusal) out(`spawn refused, scheduling stopped: ${s.spawnRefusal}`);
+    if (!s.started.length && (s.ready.length || s.tooBig.length || s.needsDecision.length)) {
+      process.stderr.write("pai queue run: no worker was started; the items did not run\n");
+      return 1;
+    }
     return s.needsDecision.length ? 1 : 0;
   },
 };
