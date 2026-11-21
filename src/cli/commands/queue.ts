@@ -14,7 +14,7 @@ import { escalationCloud, getProviderOrNative, readWorkersSection } from "../../
 import { workersLogDir } from "../../workers/paths.js";
 import { effectiveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/config.js";
-import { localProviderForDelegation } from "../../workers/local-provider.js";
+import { localProviderForDelegation, queueProviderName } from "../../workers/local-provider.js";
 import { again, loadSettings, queueStatePath, QueueStore, renderList, renderReview, move, type QueueItem, type QueueSettings } from "../../workers/queue.js";
 import { acceptItems, runQueue } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
@@ -55,12 +55,7 @@ function namedCap(name: string): number {
 function providerOf(settings: QueueSettings): { name: string; cap: number } {
   try {
     const w = readWorkersSection().workers;
-    const local = (n: string) => {
-      const p = getProviderOrNative(w, n);
-      return p && isLocalProvider(p.baseUrl) ? p : undefined;
-    };
-    const found = w.active && w.active !== "auto" && local(w.active) ? w.active : Object.keys(w.providers).find((n) => local(n));
-    const name = settings.provider ?? found ?? "local";
+    const name = queueProviderName(w, settings.provider);
     const p = name === "local" ? undefined : getProviderOrNative(w, name);
     return { name, cap: effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true, p?.conversationSlots) };
   } catch {
