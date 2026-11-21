@@ -49,12 +49,24 @@ export const realRestartVerifyDeps = (): RestartVerifyDeps => ({
   forceRestart: forceDaemonRestart,
 });
 
+/** Snapshot the running daemon now; the returned verifier waits for it to be replaced. */
+export function startDaemonRestartWatch(deps: RestartVerifyDeps = realRestartVerifyDeps()): () => { restarted: boolean; forced: boolean; detail: string } {
+  const before = deps.identity();
+  return () => (before === undefined ? waitForDaemonRestart(deps) : waitForDaemonRestart(deps, RESTART_VERIFY_WINDOW_MS, before));
+}
+
 /** Real implementation of {@link waitForDaemonRestart}: the running daemon before the call, then verified. */
 export function waitForDaemonRestart(
   deps: RestartVerifyDeps = realRestartVerifyDeps(),
-  windowMs = RESTART_VERIFY_WINDOW_MS
+  windowMs = RESTART_VERIFY_WINDOW_MS,
+  /** The daemon as it was BEFORE the build touched dist; taken here only when the caller did not snapshot earlier. */
+  snapshot?: DaemonIdentity
 ): { restarted: boolean; forced: boolean; detail: string } {
-  const before = deps.identity();
+  // The snapshot must predate the build: the watcher fires ~15 s after dist settles, and the merge's smoke
+  // start runs in between. A snapshot taken after the watcher already restarted the daemon sees the NEW
+  // process, waits the whole window for a change that already happened and then restarts it by hand
+  // ("watcher missed the build", 2026-11-21 12:20/16:41/19:12) — a false miss.
+  const before = snapshot ?? deps.identity();
   if (before === undefined) return { restarted: false, forced: false, detail: "no daemon is running — nothing to restart" };
   const deadline = deps.now() + windowMs;
   for (;;) {
