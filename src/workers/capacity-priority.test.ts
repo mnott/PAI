@@ -602,3 +602,41 @@ describe("engine-idle admission", () => {
     void g;
   });
 });
+
+describe("ps/watch show the model that served the last turn", () => {
+  const cfg = { providers: {}, nativeModels: {} } as never;
+  const st = { id: "w1", provider: "anthropic", model: "claude-sonnet-5-5", state: "running", turns: 3, cwd: "/x" } as unknown as WorkerStatus;
+  it("lastServedModel reads the last assistant turn of the transcript", async () => {
+    const { lastServedModel } = await import("./served-model.js");
+    const d = mkdtempSync(join(tmpdir(), "served-"));
+    const f = join(d, "t.jsonl");
+    writeFileSync(f, [{ type: "assistant", message: { model: "claude-sonnet-5-5" } }, { type: "user" }, { type: "assistant", message: { model: "qwen3.8-flash-next-gyro-l" } }, { type: "assistant", message: { model: "<synthetic>" } }].map((l) => JSON.stringify(l)).join("\n") + "\n");
+    expect(lastServedModel(f)).toBe("qwen3.8-flash-next-gyro-l");
+    rmSync(d, { recursive: true, force: true });
+  });
+  it("providerTag marks a mismatch and stays plain when the model matches", async () => {
+    const { providerTag } = await import("./render.js");
+    expect(providerTag(st, cfg, "qwen3.8-flash-next-gyro-l")).toBe("[anthropic/sonnet-5.5 -> served by qwen3.8-flash-next-gyro-l]");
+    expect(providerTag(st, cfg, "claude-sonnet-5-5-20261001")).toBe("[anthropic/sonnet-5.5]");
+    expect(providerTag(st, cfg, null)).toBe("[anthropic/sonnet-5.5]");
+  });
+  it("watch emits a MODEL line when the serving model changes", async () => {
+    const { watchWorkers } = await import("./watch.js");
+    const lines: string[] = [];
+    const served = ["claude-sonnet-5-5", "qwen3.8-flash-next-gyro-l", "qwen3.8-flash-next-gyro-l"];
+    let i = 0;
+    await watchWorkers(
+      { ids: ["w1"], stallMs: 1e9, beatMs: 1e9, pollMs: 1 },
+      {
+        now: () => 0,
+        sleep: async () => {},
+        statuses: () => [{ ...st, state: i >= 2 ? "done" : "running" } as WorkerStatus],
+        urls: () => ({}),
+        probe: async () => true,
+        served: () => served[Math.min(i++, 2)],
+        emit: (l) => lines.push(l),
+      }
+    );
+    expect(lines.filter((l) => l.startsWith("MODEL"))).toEqual(["MODEL w1 [anthropic] claude-sonnet-5-5 -> qwen3.8-flash-next-gyro-l"]);
+  });
+});

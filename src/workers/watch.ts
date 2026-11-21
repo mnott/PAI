@@ -7,12 +7,14 @@
  *   STALL <id> ...                                    turns did not grow for --stall
  *   DENIED <id> ...                                   guard denials grew
  *   SERVER DOWN <provider> <url>                      the provider's health URL stopped answering
+ *   MODEL <id> [provider] <old> -> <new>              the model serving the last turn changed (router failover)
  *   PROGRESS turns:<id>:<n>...                        every --beat
  *   ALL TERMINAL                                      every id finished
  */
 
 import { readWorkersSection } from "./config.js";
 import { probeEndpointUrl } from "./endpoint-health.js";
+import { servedModelOf } from "./served-model.js";
 import { isTerminal, loadStatuses, reconcileStatuses, type WorkerStatus } from "./status.js";
 
 export interface WatchOptions {
@@ -29,6 +31,8 @@ export interface WatchDeps {
   /** provider name -> health URL (empty/absent: not probed). */
   urls(): Record<string, string>;
   probe(url: string): Promise<boolean>;
+  /** Model that served the worker's last turn (transcript); absent: not checked. */
+  served?(s: WorkerStatus): string | null;
   emit(line: string): void;
 }
 
@@ -38,6 +42,7 @@ interface Seen {
   turnsAt: number;
   denials: number;
   stalled: boolean;
+  model: string | null;
 }
 
 /** "4m", "90s", "250ms", bare number = seconds. */
@@ -61,7 +66,7 @@ export async function watchWorkers(o: WatchOptions, d: WatchDeps): Promise<numbe
     for (const { id, s } of rows) {
       if (!s) {
         if (!seen.has(id)) {
-          seen.set(id, { state: "missing", turns: 0, turnsAt: now, denials: 0, stalled: false });
+          seen.set(id, { state: "missing", turns: 0, turnsAt: now, denials: 0, stalled: false, model: null });
           d.emit(`STATE ${id} [?] ? -> missing (turns 0)`);
         }
         continue;
@@ -71,7 +76,12 @@ export async function watchWorkers(o: WatchOptions, d: WatchDeps): Promise<numbe
       if (!prev || prev.state !== s.state) {
         d.emit(`STATE ${id} [${s.provider}] ${prev?.state ?? "?"} -> ${s.state} (turns ${turns})`);
       }
-      const cur: Seen = { state: s.state, turns, turnsAt: prev && prev.turns === turns ? prev.turnsAt : now, denials: denials(s), stalled: prev?.stalled ?? false };
+      const cur: Seen = { state: s.state, turns, turnsAt: prev && prev.turns === turns ? prev.turnsAt : now, denials: denials(s), stalled: prev?.stalled ?? false, model: prev?.model ?? null };
+      const served = d.served?.(s) ?? null;
+      if (served) {
+        if (prev?.model && prev.model !== served) d.emit(`MODEL ${id} [${s.provider}] ${prev.model} -> ${served}`);
+        cur.model = served;
+      }
       if (prev && cur.denials > prev.denials) d.emit(`DENIED ${id} [${s.provider}] denials ${prev.denials} -> ${cur.denials}`);
       if (prev && turns !== prev.turns) cur.stalled = false;
       if (s.state === "running" && !cur.stalled && now - cur.turnsAt >= o.stallMs) {
@@ -120,6 +130,7 @@ export function realWatchDeps(logDir: string, emit: (l: string) => void): WatchD
       }
     },
     probe: (u) => probeEndpointUrl(u, 3000),
+    served: (s) => (isTerminal(s.state) ? null : servedModelOf(s)),
     emit,
   };
 }

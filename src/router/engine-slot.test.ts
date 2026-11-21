@@ -242,11 +242,15 @@ describe("router body for local engines does not grow", () => {
 
 describe("cloud -> local failover", () => {
   type Cloud = (req: http.IncomingMessage, res: http.ServerResponse) => void;
-  async function fo(cloud: Cloud | null, extra: Record<string, unknown> = {}) {
+  async function fo(cloud: Cloud | null, extra: Record<string, unknown> = {}, localOverride?: Cloud) {
     const seen = { cloud: 0, local: 0, localBody: "" as string, localHeaders: {} as http.IncomingHttpHeaders };
     const local = http.createServer((req, res) => {
       seen.local++;
       seen.localHeaders = req.headers;
+      if (localOverride) {
+        req.resume();
+        return void req.on("end", () => localOverride(req, res));
+      }
       const bits: Buffer[] = [];
       req.on("data", (c) => bits.push(c));
       req.on("end", () => {
@@ -280,6 +284,7 @@ describe("cloud -> local failover", () => {
           x.on("data", (c) => (text += c));
           x.on("end", () => resolve({ status: x.statusCode ?? 0, text }));
         });
+        q.on("error", (e) => resolve({ status: 0, text: `client-error ${e.message}` }));
         q.end(JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 10, messages: [{ role: "user", content }, { role: "assistant", content: [{ type: "thinking", thinking: "t", signature: "s" }, { type: "text", text: "a" }] }] }));
       });
     return { post, seen, ledger, notes };
@@ -310,6 +315,35 @@ describe("cloud -> local failover", () => {
     expect(a.status).toBe(200);
     expect(a.text).toContain("from-local");
     expect(t.ledger[0]?.reason).toBe("offline");
+  });
+
+  it("failover does not stick: after a network blip the next request goes back to the cloud", async () => {
+    let n = 0;
+    const cloud: Cloud = (q, res) => {
+      if (++n === 1) return void q.socket.destroy(); // the blip: connection reset before any byte
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "c", type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "text", text: "from-cloud" }], usage: { input_tokens: 1, output_tokens: 1 } }));
+    };
+    // stickyMin 0.0005 min = 30 ms backoff (an offline blip is retried after min(stickyMin, 30 s))
+    const t = await fo(cloud, { stickyMin: 0.0005, probe: async () => true });
+    const a = await t.post();
+    expect(a.text).toContain("from-local");
+    expect(t.ledger[0]?.reason).toBe("offline");
+    await new Promise((r) => setTimeout(r, 80));
+    const b = await t.post("again");
+    expect(b.text).toContain("from-cloud");
+    expect(t.seen.local).toBe(1);
+  });
+
+  it("a failover answer cut mid-answer ends with a retryable error, not a hang", async () => {
+    const t = await fo(null, {}, (_q, res) => {
+      res.writeHead(200, { "content-type": "application/json", "content-length": "500" });
+      res.write('{"id":"m","type":"mess');
+      setTimeout(() => res.destroy(), 30);
+    });
+    const a = await t.post();
+    expect(a.status).toBeGreaterThanOrEqual(500); // an error the client retries, not a hang
+    expect(a.text).toContain("mid-answer");
   });
 
   it("an input larger than the local window gets a /compact error", async () => {
