@@ -5,7 +5,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { breakStaleMutex } from "../builds/queue.js";
@@ -92,7 +92,13 @@ export function loadSettings(repo: string): QueueSettings {
 
 /** Per-project state file under the PAI home, never in the repo. */
 export function queueStatePath(repo: string): string {
-  const abs = resolve(repo);
+  // the real path: a symlinked and a real name of one checkout share one queue file
+  let abs = resolve(repo);
+  try {
+    abs = realpathSync(abs);
+  } catch {
+    /* a path that does not exist (yet) keeps its resolved name */
+  }
   const key = `${basename(abs).replace(/[^A-Za-z0-9._-]/g, "_")}-${createHash("sha1").update(abs).digest("hex").slice(0, 8)}`;
   return paiHomePath("queue", `${key}.json`);
 }

@@ -22,7 +22,7 @@ import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../.
 import { dirtyPaths } from "../../workers/plan-deps.js";
 import { idleText, planStatus, planStopPath, requestPlanStop, readRunLog, renderSchedule, resumeState, tail, type RunLogEntry } from "../../workers/plan-runner.js";
 import { again, loadSettings, move, queueStatePath, QueueStore, type QueueItem, type QueueSettings } from "../../workers/queue.js";
-import { acceptItems } from "../../workers/queue-runner.js";
+import { acceptItems, startedQueueWorkers } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
 import { reportOriginWithHost, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
 import type { RunOrigin, RunRecord } from "../../workers/run-events.js";
@@ -75,6 +75,8 @@ export interface DelegationDeps {
   dirtyPaths(repo: string): Promise<string[]>;
   /** Hand a plan/queue run to a detached process (same path as `pai plan|queue run --detach`). */
   detach(req: DetachRequest): RunRecord;
+  /** Worker ids that exist for these queue items, waiting a bounded time for the first one; absent in tests that do not start workers. */
+  startedWorkers?(itemIds: string[], sinceMs: number): Promise<string[]>;
   accept(store: QueueStore, settings: QueueSettings, ids: string[], repo: string): ReturnType<typeof acceptItems>;
   branchDiff(repo: string, workerId: string): Promise<string>;
   /** Calling session: where the run's events are delivered. */
@@ -152,6 +154,15 @@ export function realDelegationDeps(): DelegationDeps {
     dirtyPaths,
     logDir: () => workersLogDir(readWorkersSection().workers),
     detach: (req) => startDetached(workersLogDir(readWorkersSection().workers), req),
+    async startedWorkers(itemIds, sinceMs) {
+      const dir = workersLogDir(readWorkersSection().workers);
+      for (let i = 0; i < 40; i++) {
+        const ids = startedQueueWorkers(dir, itemIds, sinceMs);
+        if (ids.length) return ids;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      return [];
+    },
     accept: (store, settings, ids, repo) => acceptItems(store, settings, ids, realQueueDeps(workersLogDir(readWorkersSection().workers), repo)),
     branchDiff,
     origin: () => reportOriginWithHost(),
@@ -385,8 +396,11 @@ export async function queueRun(args: { project: string; escalate?: boolean } & W
     if (held) return fail(`A run of the queue is already in progress ${sinceText(held)}. Call queue_review for progress.`);
     const target = await resolveWhere(args, deps, true);
     const prov =target?.provider ? { name: target.provider, cap: deps.capOf(target.provider) } : deps.provider(settings);
+    const since = Date.now() - 1000;
     deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...runTarget(target, false), ...(args.escalate ? { escalate: escalationCloud().tier } : {}) }, cwd: repo, origin: await deps.origin() });
-    return text(withTarget(target, `Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`));
+    const workers = deps.startedWorkers ? await deps.startedWorkers(pending.map((i) => i.id), since) : undefined;
+    if (workers && !workers.length) return fail(`No worker started within 20 s for ${pending.map((i) => i.id).join(", ")} (queue file ${store.path}). Check pai worker ps and the run output; the items did not run.`);
+    return text(withTarget(target, `Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background${workers ? `; workers running: ${workers.join(", ")}` : ""}. Call queue_review in a few minutes.`));
   } catch (e) {
     return error(e);
   }

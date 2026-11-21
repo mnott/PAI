@@ -7,6 +7,7 @@
 
 import { withRunLock, queueLockPath, type LockDeps } from "./run-lock.js";
 import { escalationCloud } from "./config.js";
+import { loadStatuses } from "./status.js";
 import { filesOverlap } from "./plan.js";
 import { tail, type MergeOutcome, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import { classifySize, composeQueueSpec, move, type DiffInfo, type QueueItem, type QueueSettings, type QueueStore } from "./queue.js";
@@ -42,6 +43,8 @@ export interface QueueRunOptions {
 }
 
 export interface QueueRunSummary {
+  /** Ids of the workers this run actually started (every item attempt that got a worker). */
+  started: string[];
   ready: string[];
   tooBig: string[];
   needsDecision: string[];
@@ -70,7 +73,7 @@ export function runQueue(store: QueueStore, settings: QueueSettings, opts: Queue
 }
 
 async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: QueueRunOptions, deps: QueueDeps, active: Set<string>): Promise<QueueRunSummary> {
-  const summary: QueueRunSummary = { ready: [], tooBig: [], needsDecision: [] };
+  const summary: QueueRunSummary = { started: [], ready: [], tooBig: [], needsDecision: [] };
   const take = opts.escalate ? "cloud" : "pending";
   const queue = store.list().filter((i) => i.state === take);
   const running = new Map<string, { item: QueueItem; done: Promise<void> }>();
@@ -90,6 +93,7 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
     for (let i = 0; i < ladder.length; i++) {
       const { tier, provider } = ladder[i];
       const out = await deps.startWorker({ itemId: item.id, label: `queue: ${item.id}`, spec: composeQueueSpec(item, settings, failure), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}), ...(opts.noPool ? { noPool: true } : {}), ...(item.topic ? { topic: item.topic } : {}) });
+      if (out.id) summary.started.push(out.id);
       if (!out.ok && out.spawnRefused) {
         failure = out.failure || "worker spawn refused";
         const n = (refusals.get(failure) ?? 0) + 1;
@@ -159,6 +163,17 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
   }
   if (halted) summary.spawnRefusal = [...refusals.keys()].pop();
   return summary;
+}
+
+/**
+ * Worker ids that exist for queue items: statuses labelled `queue: <item>`
+ * started at or after `sinceMs`. Evidence from the status files, not a count.
+ */
+export function startedQueueWorkers(logDir: string, itemIds: string[], sinceMs: number): string[] {
+  const labels = new Set(itemIds.map((i) => `queue: ${i}`));
+  return loadStatuses(logDir)
+    .filter((s) => labels.has(s.label) && Date.parse(s.started) >= sinceMs)
+    .map((s) => s.id);
 }
 
 /** Merge ready items with the gate, then run the install command. A failed merge leaves the item ready. */
