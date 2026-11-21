@@ -32,7 +32,7 @@ import { readMergeVerify } from "./workers-config.js";
 import { acquireTestSlotSync, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
 import { lowPriorityWrap } from "../builds/gate.js";
-import { waitForDaemonRestart } from "../daemon/daemon-restart.js";
+import { startDaemonRestartWatch } from "../daemon/daemon-restart.js";
 import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 import { summarizeGateFailure } from "./helper-uses.js";
 import type { SmokeStartResult } from "./smoke-start.js";
@@ -1819,7 +1819,6 @@ export interface BuildResult { ok: boolean; ms: number; tail: string }
 export type BuildRunner = (cwd: string) => BuildResult;
 /** Waits for the daemon to come up on the new build and forces a restart when the watcher misses it; injectable for tests. */
 export type RestartVerifier = () => { restarted: boolean; forced: boolean; detail: string };
-const defaultRestartVerify: RestartVerifier = () => waitForDaemonRestart();
 
 /** The full restart gate (health check + rollback); injectable for tests. Returns the line to print, or null when no gate applies. */
 export type RestartGate = (logDir: string, distDir: string) => Promise<{ ok: boolean; line: string; rolledBack?: boolean; failures?: string[] } | null>;
@@ -1887,6 +1886,8 @@ async function rebuildDist(
       prepared = { prevKept: false, runtimesUpBefore: [] };
     }
   }
+  // snapshot the daemon BEFORE the build replaces dist: its watcher may restart it while smoke runs
+  const verifyRestart: RestartVerifier = opts.restartVerify ?? startDaemonRestartWatch();
   let res: BuildResult;
   try {
     res = (opts.build ?? defaultBuild)(target);
@@ -1920,7 +1921,7 @@ async function rebuildDist(
     }
     let line = "build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)";
     try {
-      const v = (opts.restartVerify ?? defaultRestartVerify)();
+      const v = verifyRestart();
       line = v.restarted
         ? `build: ok (dist rebuilt; daemon restarted on the new build${v.forced ? " — its own watcher missed it, this merge restarted it" : ""}: ${v.detail}; the router swaps gaplessly within ~30 s)`
         : `build: ok (dist rebuilt; WARNING: the daemon was NOT restarted: ${v.detail} — run \`pai daemon restart\`; the router swaps gaplessly within ~30 s)`;

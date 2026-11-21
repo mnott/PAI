@@ -318,3 +318,43 @@ describe("the watcher across a dist that gets replaced", () => {
     expect(restarts).toBe(2);
   });
 });
+
+// 2026-11-21 (12:20, 16:41, 19:12): the merge gate reported "watcher missed the build" although the watcher
+// worked. The gate snapshotted the daemon AFTER the build and smoke start; the watcher (poll 5 s + settle
+// 10 s) had already restarted it, so the snapshot was the NEW process, no change was ever seen, and the gate
+// restarted the fresh daemon by hand.
+describe("merge gate restart check", () => {
+  const mk = (ids: Array<{ pid: number } | undefined>) => {
+    let i = 0;
+    let t = 0;
+    const forceRestart = vi.fn(() => true);
+    return {
+      forceRestart,
+      deps: {
+        identity: () => ids[Math.min(i++, ids.length - 1)],
+        sleep: (ms: number) => void (t += ms),
+        now: () => t,
+        forceRestart,
+      },
+    };
+  };
+
+  it("a restart that happened before the gate looked is recognised, not forced (snapshot from before the build)", async () => {
+    const { startDaemonRestartWatch } = await import("./daemon-restart.js");
+    // identity at snapshot time: old pid; by the time the gate verifies, the watcher already swapped it
+    const { deps, forceRestart } = mk([{ pid: 1 }, { pid: 2 }]);
+    const verify = startDaemonRestartWatch(deps);
+    const r = verify();
+    expect(r.restarted).toBe(true);
+    expect(r.forced).toBe(false);
+    expect(forceRestart).not.toHaveBeenCalled();
+  });
+
+  it("still forces a restart when the watcher really never fires", async () => {
+    const { startDaemonRestartWatch } = await import("./daemon-restart.js");
+    const { deps, forceRestart } = mk([{ pid: 1 }]);
+    const r = startDaemonRestartWatch(deps)();
+    expect(forceRestart).toHaveBeenCalledTimes(1);
+    expect(r.forced).toBe(true);
+  });
+});
