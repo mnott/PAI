@@ -1037,7 +1037,7 @@ export function routerHandler(
         ures0.on("error", () => {});
         // the engine dropped mid-answer while the reply was held: without this the client waits forever; answer with an error it retries
         ures0.on("close", () => {
-          if (ures0.complete || res.writableEnded || res.destroyed) return;
+          if (ures0.complete || ures0.readableEnded || res.writableEnded || res.destroyed) return;
           if (pings) clearInterval(pings);
           log(`${new Date().toISOString()} ${target.model} ${prov} upstream closed mid-answer`);
           release();
@@ -1122,7 +1122,8 @@ export function routerHandler(
           if (sniff) ures.on("data", (c: Buffer) => sniff.push(c));
           // engine dropped mid-answer: bytes already went out so no retry; free the engine slot and cut the client
           ures.on("close", () => {
-            if (ures.complete || res.writableEnded) return;
+            // a held reply is re-sent as a plain Readable (no .complete): it is whole once it has ended
+            if (ures.complete || ures.readableEnded || res.writableEnded) return;
             log(`${new Date().toISOString()} ${target.model} ${prov} upstream closed mid-answer`);
             release(sniff ? sniff.finish() : undefined);
             res.destroy();
