@@ -7,7 +7,7 @@ import { readRuntimeCommands } from "../../workers/model-runtimes.js";
 
 export const modelsCommand: CommandDef = {
   name: "models",
-  summary: "Every local model runtime, its models, memory and users; start/stop a runtime",
+  summary: "Every local model runtime, its models, memory and users; start/stop/switch a runtime",
   description:
     "One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. " +
     "Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. " +
@@ -18,6 +18,7 @@ export const modelsCommand: CommandDef = {
     "`pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> " +
     "(start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here. " +
     "models.runtimes.<runtime>.autostart: true lets the PAI daemon start that runtime when it is not up (at daemon start and after a crash, same path, memory checked first); never shipped true. " +
+    "models.runtimes.<runtime>.exclusive: <group> keeps the runtimes of one group from running together: start (and autostart) is refused while another of the group is up; `pai models switch <runtime>` parks the workers served by the other one, waits for its requests to drain (up to 120 s), stops it, starts this one and resumes the workers an earlier switch parked on it. " +
     "`pai models add <hf-id|path>` registers a new local model: it resolves the weights (HF ids are downloaded only with --download), " +
     "picks the runtime by format (MLX: mlx_lm.server; GGUF: llama-server if installed, else refused with the reason), assigns a free port " +
     "and writes a DISABLED registry entry (workers.yaml) with location, start, health and port filled. It never enables or routes to the model. " +
@@ -45,7 +46,7 @@ export const modelsCommand: CommandDef = {
     { name: "rounds", type: "number", summary: "rules probe: times each rule's probe is sent (default 3)" },
     { name: "out", type: "string", value: "FILE", summary: "rules probe: where the adapted rules file is written (default <PAI home>/tool-call-rules/probe-<provider>.yaml)" },
   ],
-  examples: ["pai models rules list", "pai models rules test", "pai models rules probe --provider strata --rounds 5 --out /tmp/rules.yaml", "pai models rules reload", "pai models add mlx-community/Qwen3-4B-4bit --try", "pai models add ~/models/x.gguf --name x", "pai models chat apple-fm", "pai models", "pai models --fresh --json", "pai models start ollama", "pai models stop docker-model-runner --model e5"],
+  examples: ["pai models rules list", "pai models rules test", "pai models rules probe --provider strata --rounds 5 --out /tmp/rules.yaml", "pai models rules reload", "pai models add mlx-community/Qwen3-4B-4bit --try", "pai models add ~/models/x.gguf --name x", "pai models chat apple-fm", "pai models", "pai models --fresh --json", "pai models start ollama", "pai models stop docker-model-runner --model e5", "pai models switch hy4-flash"],
   seeAlso: ["pai worker local"],
   async run(ctx) {
     const words = [ctx.args.OP, ctx.args.RUNTIME].filter((x): x is string => typeof x === "string" && x.length > 0);
@@ -85,12 +86,12 @@ export const modelsCommand: CommandDef = {
       if (!r.ok) process.exitCode = 1;
       return;
     }
-    const op = words[0] === "start" || words[0] === "stop" ? words[0] : "";
+    const op = words[0] === "start" || words[0] === "stop" || words[0] === "switch" ? words[0] : "";
     if (op) {
       const runtime = words[1];
       if (!runtime) throw new Error(`usage: pai models ${op} <runtime> (configured: ${Object.keys(readRuntimeCommands()).join(", ") || "none"})`);
-      const { defaultDeps, runtimeStartStop } = await import("../../router/cockpit-actions.js");
-      const r = await runtimeStartStop(runtime, op, defaultDeps(), { model: typeof ctx.opts.model === "string" ? ctx.opts.model : undefined });
+      const { defaultDeps, runtimeStartStop, runtimeSwitch } = await import("../../router/cockpit-actions.js");
+      const r = op === "switch" ? await runtimeSwitch(runtime, defaultDeps()) : await runtimeStartStop(runtime, op, defaultDeps(), { model: typeof ctx.opts.model === "string" ? ctx.opts.model : undefined });
       process.stdout.write(r.message + "\n");
       if (!r.ok) process.exitCode = 1;
       return;

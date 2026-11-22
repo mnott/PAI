@@ -2233,10 +2233,10 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
 
   server.tool(
     "model_runtime",
-    "Start or stop a local model runtime through its configured models.runtimes.<runtime> commands (`pai models start|stop`, the cockpit runtime action); status lists runtimes (all, or one) from the inventory. Refuses on short memory or requests in flight.",
+    "Start, stop or switch a local model runtime (runtimes with models.runtimes.<r>.exclusive never run together: start is refused while a group peer is up, switch swaps them) through its configured models.runtimes.<runtime> commands (`pai models start|stop`, the cockpit runtime action); status lists runtimes (all, or one) from the inventory. Refuses on short memory or requests in flight.",
     {
       runtime: z.string().optional().describe("Runtime name (required for start, stop)."),
-      action: z.enum(["status", "start", "stop"]).optional().describe("Default: status."),
+      action: z.enum(["status", "start", "stop", "switch"]).optional().describe("Default: status. switch: swap to <runtime> within its exclusive group (parks the other runtime's workers, stops it, starts this one)."),
       model: z.string().optional().describe("start/stop: the model to load or unload (docker model run|unload)."),
     },
     async (args) => modelRuntime(args)

@@ -17,7 +17,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
@@ -34,6 +34,21 @@ export interface RuntimeCommands {
   note?: string;
   /** the PAI daemon starts this runtime when it is not up (daemon-autostart.ts); default false — never shipped true */
   autostart?: boolean;
+  /** exclusive group (e.g. "heavy"): runtimes of one group never run together; start is refused while a peer is up, `switch` swaps them */
+  exclusive?: string;
+}
+
+/** The other runtimes of `runtime`'s exclusive group; [] when it has none. */
+export function exclusivePeers(runtime: string, commands: Record<string, RuntimeCommands>): string[] {
+  const g = commands[runtime]?.exclusive;
+  if (!g) return [];
+  return Object.keys(commands).filter((n) => n !== runtime && commands[n]?.exclusive === g);
+}
+
+/** The refusal text when a peer of `runtime`'s group is up (`isUp` = names of up runtimes), else null. */
+export function exclusiveRefusalText(runtime: string, commands: Record<string, RuntimeCommands>, isUp: (name: string) => boolean): string | null {
+  const peer = exclusivePeers(runtime, commands).find(isUp);
+  return peer ? `${peer} is running in exclusive group ${commands[runtime]!.exclusive}; use switch (pai models switch ${runtime})` : null;
 }
 
 /** The `models.runtimes` block: the shipped defaults deep-merged UNDER the
@@ -57,7 +72,8 @@ export function readRuntimeCommands(configPath: string = ""): Record<string, Run
       if (typeof e.ready === "string" && e.ready.trim()) cmd.ready = e.ready;
       if (typeof e.note === "string" && e.note.trim()) cmd.note = e.note;
       if (e.autostart === true) cmd.autostart = true;
-      if (cmd.start || cmd.stop || cmd.ready || cmd.note || cmd.autostart) out[name] = cmd;
+      if (typeof e.exclusive === "string" && e.exclusive.trim()) cmd.exclusive = e.exclusive.trim();
+      if (cmd.start || cmd.stop || cmd.ready || cmd.note || cmd.autostart || cmd.exclusive) out[name] = cmd;
     }
     return out;
   } catch {
@@ -256,3 +272,21 @@ export const markRuntimeStopped = (home: string, runtime: string): void => {
 };
 export const clearRuntimeStopped = (home: string, runtime: string): void => rmSync(runtimeStoppedFile(home, runtime), { force: true });
 export const isRuntimeStopped = (home: string, runtime: string): boolean => existsSync(runtimeStoppedFile(home, runtime));
+
+/** Workers a `switch` parked, per runtime they were served by: <PAI home>/logs/local/switch-parked.json ({runtime: [worker ids]}). A later switch back to that runtime resumes exactly these. */
+export const switchParkedFile = (home: string): string => join(home, "logs", "local", "switch-parked.json");
+export function readSwitchParked(home: string): Record<string, string[]> {
+  try {
+    const j = JSON.parse(readFileSync(switchParkedFile(home), "utf8")) as Record<string, unknown>;
+    const out: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(j)) if (Array.isArray(v)) out[k] = v.filter((x): x is string => typeof x === "string");
+    return out;
+  } catch {
+    return {};
+  }
+}
+export function writeSwitchParked(home: string, parked: Record<string, string[]>): void {
+  const live = Object.fromEntries(Object.entries(parked).filter(([, v]) => v.length));
+  mkdirSync(dirname(switchParkedFile(home)), { recursive: true });
+  writeFileSync(switchParkedFile(home), JSON.stringify(live) + "\n");
+}

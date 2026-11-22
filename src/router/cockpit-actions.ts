@@ -24,6 +24,7 @@ import { parseEnginePriority, setWorkerPaused, setWorkerPriority } from "../work
 import { resumeWorker } from "../workers/preempt.js";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
+import { loadStatuses } from "../workers/status.js";
 import { readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { readInventory } from "../workers/model-inventory.js";
@@ -40,7 +41,7 @@ import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
 import type { JobRunProgress } from "../memory/job-progress.js";
 import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
 import { cockpitLayout } from "./cockpit-layout.js";
-import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, markRuntimeStopped, clearRuntimeStopped, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
+import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, exclusivePeers, exclusiveRefusalText, readSwitchParked, writeSwitchParked, markRuntimeStopped, clearRuntimeStopped, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
 export const RUNTIME_START_EVENT = "RUNTIME-START";
@@ -85,6 +86,12 @@ export interface ActionDeps {
   runtimeOps?: RuntimeOpDeps;
   /** Runtime name → inventory kind (docker-model-runner needs no ready check); default read from the inventory cache. */
   runtimeKinds?: Record<string, string>;
+  /** Exclusive-group seams (tests); defaults: the ready probe, the status files, the scheduler snapshot, pause/resume. */
+  runtimeUp?: (runtime: string) => Promise<boolean>;
+  workersOn?: (runtime: string) => { id: string; model: string }[];
+  runtimeInflight?: (runtime: string) => number;
+  pauseWorker?: (id: string) => boolean;
+  unparkWorker?: (id: string) => boolean;
   /** Overrides of the managed-instance registry sync after a runtime op (tests); default lsof and the live log dir. */
   runtimeInstance?: Partial<RuntimeInstanceDeps>;
   /** Fresh model-inventory probe written over the 30 s cache; called when a runtime job ends. Default: compute + write. */
@@ -405,6 +412,82 @@ export function defaultDeps(): ActionDeps {
   };
 }
 
+/** Does the runtime's `ready` answer: the seam, else the ready URL/command. No ready configured reads down. */
+async function runtimeIsUp(runtime: string, commands: Record<string, RuntimeCommands>, deps: ActionDeps): Promise<boolean> {
+  if (deps.runtimeUp) return deps.runtimeUp(runtime);
+  const ready = commands[runtime]?.ready;
+  if (!ready) return false;
+  const ops = deps.runtimeOps ?? liveRuntimeOpDeps;
+  return readyIsUrl(ready) ? ops.getUrl(ready) : (await ops.runCmd(ready)) === 0;
+}
+
+/** Requests running or waiting on a provider's engines (keys `<provider>` / `<provider>#<n>`). */
+function providerInflight(runtime: string): number {
+  const snap = sharedScheduler().snapshot();
+  return Object.keys(snap.engines).filter((k) => k === runtime || k.startsWith(`${runtime}#`)).reduce((n, k) => n + engineInflight(snap, k), 0);
+}
+
+export const SWITCH_WAIT_MS = 120_000;
+
+/** `switch <runtime>`: park the workers served by the running peers of its exclusive group, wait for the peers' engines to drain
+ *  (bounded), stop them the normal way, start <runtime>, resume the workers an earlier switch parked on <runtime>. */
+export async function runtimeSwitch(
+  runtime: string,
+  deps: ActionDeps,
+  opts: { waitMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void> } = {}
+): Promise<{ ok: boolean; message: string }> {
+  const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
+  const group = commands[runtime]?.exclusive;
+  if (!group) return { ok: false, message: `${runtime} has no exclusive group (models.runtimes.${runtime}.exclusive); use start` };
+  const logDir = workersLogDir(deps.workers);
+  const pause = deps.pauseWorker ?? ((id: string) => setWorkerPaused(logDir, id, true, "switch"));
+  const unpark = deps.unparkWorker ?? ((id: string) => resumeWorker(logDir, id, "switch"));
+  const workersOn = deps.workersOn ?? ((rt: string) => loadStatuses(logDir).filter((w) => w.provider === rt && (w.state === "running" || w.state === "queued")).map((w) => ({ id: w.id, model: w.model })));
+  const inflight = deps.runtimeInflight ?? providerInflight;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const notes: string[] = [];
+  const parked: Record<string, string[]> = readSwitchParked(deps.home);
+  const parkedNow: string[] = [];
+  for (const peer of exclusivePeers(runtime, commands)) {
+    if (!(await runtimeIsUp(peer, commands, deps))) continue;
+    const ids: string[] = parked[peer] ?? [];
+    for (const w of workersOn(peer)) {
+      let changed = false;
+      try { changed = pause(w.id); } catch { /* not pausable (ended meanwhile): nothing to park */ }
+      if (changed) { ids.push(w.id); parkedNow.push(`${w.id} (${w.model} on ${peer})`); }
+    }
+    parked[peer] = ids;
+    writeSwitchParked(deps.home, parked);
+    // the request in flight finishes; stopping under it would fail it
+    const waitMs = opts.waitMs ?? SWITCH_WAIT_MS;
+    const pollMs = opts.pollMs ?? 2_000;
+    let waited = 0;
+    while (inflight(peer) > 0 && waited < waitMs) { await sleep(pollMs); waited += pollMs; }
+    if (inflight(peer) > 0) notes.push(`${peer} still had requests in flight after ${Math.round(waitMs / 1000)} s; stopped anyway`);
+    const stopped = await runtimeStartStop(peer, "stop", deps);
+    if (!stopped.ok) {
+      // nothing swapped: give the workers this switch parked back
+      for (const id of parkedNow) { try { unpark(id.split(" ")[0]!); } catch { /* ended */ } }
+      parked[peer] = (parked[peer] ?? []).filter((id) => !parkedNow.some((p) => p.startsWith(id + " ")));
+      writeSwitchParked(deps.home, parked);
+      return { ok: false, message: `switch to ${runtime} stopped at ${peer}: ${stopped.message}` };
+    }
+  }
+  const started = await runtimeStartStop(runtime, "start", deps);
+  if (!started.ok) return { ok: false, message: `${started.message}${parkedNow.length ? `; parked: ${parkedNow.join(", ")}` : ""}` };
+  const back: string[] = [];
+  for (const id of parked[runtime] ?? []) {
+    try { if (unpark(id)) back.push(id); } catch { /* ended meanwhile */ }
+  }
+  delete parked[runtime];
+  writeSwitchParked(deps.home, parked);
+  const parts = [`${runtime} up (group ${group})`, ...notes];
+  parts.push(parkedNow.length ? `parked: ${parkedNow.join(", ")} (stay parked until a switch back)` : "no workers parked");
+  if (back.length) parts.push(`resumed: ${back.join(", ")}`);
+  appendLedger(deps.ledger, "RUNTIME-SWITCH", { runtime, group, parked: parkedNow.length, resumed: back.length });
+  return { ok: true, message: parts.join("; ") };
+}
+
 /** The runtime start/stop through the configured commands: the shell run, the ledger line, the job file.
  *  Shared by the cockpit action and `pai models start|stop`. */
 export async function runtimeStartStop(
@@ -416,6 +499,12 @@ export async function runtimeStartStop(
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
   const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime]);
   if (refused) return { ok: false, message: refused };
+  if (op === "start") {
+    const up = new Set<string>();
+    for (const peer of exclusivePeers(runtime, commands)) if (await runtimeIsUp(peer, commands, deps)) up.add(peer);
+    const group = exclusiveRefusalText(runtime, commands, (n) => up.has(n));
+    if (group) return { ok: false, message: group };
+  }
   const r = await runRuntimeOp(runtime, op, commands, deps.runtimeOps ?? liveRuntimeOpDeps, deps.home, opts);
   // a deliberate stop holds until an explicit start; the daemon's autostart checks the marker before it ever calls here
   if (r.ok) (op === "stop" ? markRuntimeStopped : clearRuntimeStopped)(deps.home, runtime);
