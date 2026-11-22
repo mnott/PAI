@@ -53,35 +53,69 @@ const DENY_TEXT =
   `No new test files (operator rule). One-time checks go under ${SCRATCH_DIR}/ (never committed, removed when the worker lands); ` +
   `a kept test needs an entry in ${KEPT_LEDGER} with its evidence.`;
 
+/** How many existing test files a denial may name. */
+const HINT_LIMIT = 5;
+
+/** True when `dir` equals or sits under `root`. */
+function isWithin(dir: string, root: string): boolean {
+  return dir === root || dir.startsWith(root + sep);
+}
+
 /**
  * Existing *.test.ts files closest to the target: same directory first, then
- * parent directories, up to `limit`. Paths are relative to `cwd` when they
- * stay inside it (absolute otherwise).
+ * parent directories, sorted within each directory, up to `limit`. The walk
+ * starts at the target's own directory and stops at the nearest bound — the
+ * repo root when the target sits inside it, else the cwd; never above the cwd
+ * and never to the filesystem root. Paths are relative to `cwd` when they stay
+ * inside it (absolute otherwise). No files found: no hint.
  */
-function nearestTestFiles(abs: string, cwd: string, limit = 3): string[] {
+function nearestTestFiles(abs: string, cwd: string, limit = HINT_LIMIT): string[] {
+  const target = resolve(abs);
+  const here = resolve(cwd);
+  // the bound: the repo root when the target sits inside a repo at or below
+  // the cwd (the nearest `.git` ancestor of the target's existing ancestors —
+  // a new file's not-yet-created directories are no repo marker), else the cwd;
+  // never above the cwd, never to the filesystem root
+  let start = dirname(target);
+  while (!existsSync(start)) {
+    const parent = dirname(start);
+    if (parent === start) break;
+    start = parent;
+  }
+  let stop = here;
+  for (let d = start; isWithin(d, here); ) {
+    if (existsSync(join(d, ".git"))) {
+      stop = d;
+      break;
+    }
+    const parent = dirname(d);
+    if (parent === d) break;
+    d = parent;
+  }
   const found: string[] = [];
-  let dir = dirname(abs);
-  for (;;) {
+  let dir = dirname(target);
+  while (isWithin(dir, stop)) {
     try {
       for (const f of readdirSync(dir).filter((f) => f.endsWith(".test.ts")).sort()) {
         const full = join(dir, f);
-        const rel = relative(cwd, full);
+        const rel = relative(here, full);
         found.push(rel.startsWith("..") ? full : rel);
         if (found.length >= limit) return found;
       }
     } catch {
-      // unreadable directory: keep walking up
+      // unreadable directory: keep walking up to the bound
     }
     const parent = dirname(dir);
-    if (parent === dir) return found;
+    if (parent === dir) break;
     dir = parent;
   }
+  return found;
 }
 
-/** The denial reason: the base text plus the existing test files to extend. */
+/** The denial reason: the base text plus, when they exist nearby, the test files to extend. */
 function denyText(target: string, cwd: string): string {
   const files = nearestTestFiles(target, cwd);
-  if (!files.length) return DENY_TEXT;
+  if (!files.length) return `${DENY_TEXT} No existing test file found near it to extend.`;
   return `${DENY_TEXT} Extend one of: ${files.join(", ")}`;
 }
 
@@ -283,22 +317,24 @@ function interpreterScriptTexts(command: string, readFile: (path: string) => str
 /** Why this Bash command creates a new test file outside scratch, or null. */
 export function bashCreatesNewTest(command: string, cwd: string): string | null {
   const vars = simpleAssignments(command);
-  const consider = (raw: string, at: number): string | null => {
+  const consider = (raw: string, at: number): boolean => {
     const t = resolveVars(raw.replace(/^["']|["']$/g, ""), vars);
-    if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return null;
+    if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return false;
     const here = cwdAfterCds(command.slice(0, at), cwd);
     const base = t.startsWith("/") || t.startsWith("$") || t.startsWith("~") ? t : join(here, t);
-    if (!looksLikeTest(base)) return null;
-    return !promoted(base, here) ? base : null; // a KEPT.md-promoted path is not an unkept new test
+    if (!looksLikeTest(base)) return false;
+    lastTarget = base; // the hint list walks from the resolved target
+    return !promoted(base, here); // a KEPT.md-promoted path is not an unkept new test
   };
+  // the resolved target of the last accepted `consider` call, for the hint list
+  let lastTarget = "";
   // heredoc bodies are data, not commands: a `cat > f <<EOF` start line writes f
   let pos = 0;
   for (const line of blankHeredocBodies(command).split("\n")) {
     const h = line.match(HEREDOC_START);
     if (h && HEREDOC_SINK.test(line)) {
       const target = /(?<![>&\d])>>?\s*([^\s;&|)]+)/.exec(line)?.[1] ?? /\btee\s+(?:-\w+\s+)*([^\s;&|<>-])/.exec(line)?.[1] ?? /(?<![>&\d])>\s*([^\s;&|)]+)/.exec(line)?.[1];
-      const t = target ? consider(target, pos) : null;
-      if (t) return denyText(t, cwd);
+      if (target && consider(target, pos)) return denyText(lastTarget, cwd);
     }
     pos += line.length + 1;
   }
@@ -308,8 +344,8 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
   // raw text, so blank `<>` inside quoted scripts (offsets preserved) before
   // looking for targets.
   const quotable = scan.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, (q) => q.replace(/[<>]/g, " "));
-  for (const m of quotable.matchAll(ANY_REDIRECT)) { const t = consider(m[1], m.index ?? 0); if (t) return denyText(t, cwd); }
-  for (const m of quotable.matchAll(ANY_TEE)) { const t = consider(m[1], m.index ?? 0); if (t) return denyText(t, cwd); }
+  for (const m of quotable.matchAll(ANY_REDIRECT)) if (consider(m[1], m.index ?? 0)) return denyText(lastTarget, cwd);
+  for (const m of quotable.matchAll(ANY_TEE)) if (consider(m[1], m.index ?? 0)) return denyText(lastTarget, cwd);
   for (const seg of parseCommand(scan)) {
     const words = [...seg.words];
     // an in-place editor rewrites its file arguments: existing files are edits
@@ -319,9 +355,9 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
       // the file arguments sit after the interpreter word: resolve them with the
       // segment's own cd state (`cd test; sed -i '' f` edits test/f)
       const at = scan.indexOf(words[0]) + words[0].length;
-      for (const t of inPlaceEditTargets(words)) { const r = consider(t, at); if (r) return denyText(r, cwd); }
+      for (const t of inPlaceEditTargets(words)) if (consider(t, at)) return denyText(lastTarget, cwd);
     }
-    for (const t of toolWriteTargets(words)) { const r = consider(t, 0); if (r) return denyText(r, cwd); }
+    for (const t of toolWriteTargets(words)) if (consider(t, 0)) return denyText(lastTarget, cwd);
   }
   // an interpreter script (inline -c/-e, or a /tmp script) that writes repo code:
   // it counts as a new-test write when the code names a test path outside scratch.
@@ -348,7 +384,7 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
       for (const s of quotedLiterals(text)) {
         if (!(s.includes("/") || /\.\w{1,5}$/.test(s))) continue;
         if (looksLikeCode(s)) continue;
-        for (const at of interpAt.length ? interpAt : [0]) { const r = consider(s, at); if (r) return denyText(r, cwd); }
+        for (const at of interpAt.length ? interpAt : [0]) if (consider(s, at)) return denyText(lastTarget, cwd);
       }
     }
   }

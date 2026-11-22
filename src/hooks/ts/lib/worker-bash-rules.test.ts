@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason, forceAddReason, gitAddPaths, dbWriteReason, liveContainerReason, type DbWriteContext } from "./worker-bash-rules.js";
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -656,21 +656,53 @@ describe("worker guard local tracked-file delete and the prune-plan exception", 
   });
 });
 
-// the new-test-file denial names the existing test files to extend (same directory first, then parents)
+// the new-test-file denial names the existing test files to extend (same directory first, then parents, bounded at the repo root)
 describe("test-governance denial names existing test files to extend", () => {
-  it("names the nearest existing *.test.ts files in the denial reason", () => {
-    // a bare /tmp base: tmpdir() here is the worker's pai-scratch dir, which the guard treats as scratch
-    const base = mkdtempSync(join("/tmp", "gov-"));
-    const repo = join(base, "repo");
+  let base: string;
+  let repo: string;
+  beforeEach(() => {
+    // a bare /tmp base: tmpdir() here is the worker's pai-scratch dir, which the guard treats as scratch;
+    // the fixture paths are not, so the guard governs them with cwd/repo root pointed at the fixture
+    base = mkdtempSync(join("/tmp", "gov-"));
+    repo = join(base, "repo");
     mkdirSync(join(repo, "src"), { recursive: true });
+    execSync(`git -C ${repo} init -q`);
+  });
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
+  const denyReason = (filePath: string, cwd = repo) => {
+    const d = decideTestGovernance({ tool: "Write", filePath, cwd });
+    expect(d.decision).toBe("deny");
+    return (d as { reason?: string }).reason ?? "";
+  };
+  it("names the same-directory existing *.test.ts files in the denial reason", () => {
     writeFileSync(join(repo, "src", "a.test.ts"), "test(1);\n");
     writeFileSync(join(repo, "src", "b.test.ts"), "test(2);\n");
-    execSync(`git -C ${repo} init -q`);
-    const d = decideTestGovernance({ tool: "Write", filePath: join(repo, "src", "new.test.ts"), cwd: repo });
+    const reason = denyReason(join(repo, "src", "new.test.ts"));
+    expect(reason).toContain("Extend one of: src/a.test.ts, src/b.test.ts");
+  });
+  it("walks up to the repo root but no further (a test file above the root is not named)", () => {
+    writeFileSync(join(base, "outer.test.ts"), "test(1);\n"); // above the repo root: never named
+    writeFileSync(join(repo, "root.test.ts"), "test(2);\n"); // in the repo root itself: named
+    const reason = denyReason(join(repo, "src", "deep", "new.test.ts"));
+    expect(reason).toContain("Extend one of: root.test.ts");
+    expect(reason).not.toContain("outer.test.ts");
+  });
+  it("caps the hint list and keeps same-directory files first", () => {
+    for (const n of ["a", "b", "c", "d"]) writeFileSync(join(repo, "src", `${n}.test.ts`), "test();\n");
+    writeFileSync(join(repo, "m1.test.ts"), "test();\n");
+    writeFileSync(join(repo, "m2.test.ts"), "test();\n");
+    const listed = denyReason(join(repo, "src", "sub", "new.test.ts")).match(/Extend one of: (.*?)\.?$/m)?.[1].split(", ") ?? [];
+    expect(listed).toEqual(["src/a.test.ts", "src/b.test.ts", "src/c.test.ts", "src/d.test.ts", "m1.test.ts"]);
+  });
+  it("says no existing test file was found when the walk names none", () => {
+    const reason = denyReason(join(repo, "src", "new.test.ts"));
+    expect(reason).not.toContain("Extend one of:");
+    expect(reason).toContain("No existing test file found near it to extend.");
+  });
+  it("names the nearby files on a Bash write denial too", () => {
+    writeFileSync(join(repo, "src", "a.test.ts"), "test(1);\n");
+    const d = decideTestGovernance({ tool: "Bash", command: `echo x > ${join(repo, "src", "new.test.ts")}`, cwd: repo });
     expect(d.decision).toBe("deny");
-    const reason = (d as { reason?: string }).reason ?? "";
-    expect(reason).toContain("Extend one of:");
-    expect(reason).toContain("a.test.ts");
-    expect(reason).toContain("b.test.ts");
+    expect((d as { reason?: string }).reason).toContain("Extend one of: src/a.test.ts");
   });
 });
