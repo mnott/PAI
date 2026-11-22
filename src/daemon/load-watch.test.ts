@@ -832,7 +832,7 @@ describe("exclusive runtime groups", () => {
   const exCommands: Record<string, { start: string; stop: string; ready: string; exclusive?: string }> = {
     "gyro-l": { start: "start gyro-l", stop: "stop gyro-l", ready: "http://127.0.0.1:8035/v1/models", exclusive: "heavy" },
     "hy4-flash": { start: "start hy4-flash", stop: "stop hy4-flash", ready: "http://127.0.0.1:8036/v1/models", exclusive: "heavy" },
-    ollama: { start: "ollama serve", stop: "pkill ollama", ready: "http://127.0.0.1:11434/api/tags" },
+    ollama: { start: "start ollama", stop: "stop ollama", ready: "http://127.0.0.1:11434/api/tags" },
   };
 
   const exHome = mkdtempSync(join(tmpdir(), "exgroup-"));
@@ -885,7 +885,7 @@ describe("exclusive runtime groups", () => {
     // a runtime outside the group is unaffected
     const o = await runtimeStartStop("ollama", "start", exDeps(up, calls));
     expect(o.ok).toBe(true);
-    expect(calls).toEqual(["ollama serve"]);
+    expect(calls).toEqual(["start ollama"]);
   });
 
   it("autostart starts nothing behind an up peer: no actions, no start, exactly one exclusive-group log line over two ticks", async () => {
