@@ -610,7 +610,7 @@ export interface CapacityOpts {
   holdOf?: () => string | undefined;
   /** A run the hold does not apply to (benchmark-labelled): it ignores the hold and passes the held runs waiting ahead of it. */
   holdExempt?: boolean;
-  /** Re-read on every poll: a cap raised (or lowered) in the config while the run waits applies at once. Lowering never evicts a holder. */
+  /** Re-read on every poll: a cap raised, lowered or cleared (undefined = unlimited) while the run waits applies at once. Lowering never evicts a holder. */
   capOf?: () => number | undefined;
   config: Partial<CapacityConfig>;
   disabled?: boolean;
@@ -812,7 +812,8 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
         await new Promise<never>(() => undefined);
       }
       const fresh = o.capOf?.();
-      if (fresh !== undefined && fresh > 0) cap = fresh;
+      // capOf is authoritative: undefined / 0 = unlimited (a cleared max_parallel), never "keep the cap frozen at enqueue time"
+      if (o.capOf) cap = fresh !== undefined && fresh > 0 ? fresh : Number.MAX_SAFE_INTEGER;
       held = holdReason();
       if (o.priority !== "front" && !madeUrgent && o.urgent?.()) {
         madeUrgent = true;

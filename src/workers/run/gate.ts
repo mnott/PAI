@@ -737,17 +737,18 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
     saveStatus(logDir, status);
   }
   inheritUrgency(logDir, wid, status, process.env);
+  const gateCap = admitCap(target.provider.maxConcurrent, target.provider.conversationSlots, isLocalProvider(target.provider.baseUrl));
   const gate: CapacityOpts = {
     logDir,
     self: { id: wid, provider: target.providerName },
-    cap: admitCap(target.provider.maxConcurrent, target.provider.conversationSlots, isLocalProvider(target.provider.baseUrl)),
+    cap: gateCap,
     // a saved config change reaches a run that is already waiting
     capOf: () => {
       try {
         const p = readWorkersCached().providers[target.providerName] ?? target.provider;
         return admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
       } catch {
-        return undefined;
+        return gateCap;
       }
     },
     // a hold queues new work; a benchmark-labelled run (the bench harness itself) passes it
@@ -818,7 +819,8 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
   const max = status.sessionKey ? getProfile(status.sessionKey)?.max_parallel : undefined;
   if (status.sessionKey && max) {
     const key = status.sessionKey;
-    await capacityGate({ ...gate, capOf: undefined, holdOf: undefined, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
+    // the cap is re-read from the profile on every poll: a cleared max_parallel (undefined = unlimited) releases the waiter
+    await capacityGate({ ...gate, capOf: () => getProfile(key)?.max_parallel, holdOf: undefined, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
   }
   await capacityGate(gate);
   await staggerGate({
