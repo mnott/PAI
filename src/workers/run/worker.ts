@@ -31,6 +31,7 @@ import {
   getProfile,
   isBatchEnv,
   liveResolveCtx,
+  namesTarget,
   resolveWorkers,
 } from "../session-profile.js";
 import { budgetCache } from "../budget.js";
@@ -239,7 +240,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   }
   // The session's profile (workers, budget fallback) comes before routing; an explicit provider/--local skipped it above.
   let profileModel: string | undefined;
-  if (!providerFlag && !capability && !route && (await detectSessionName())) {
+  if (!providerFlag && !capability && !route && !namesTarget(opts) && (await detectSessionName())) {
     const r = resolveWorkers(
       { explicit: { model: opts.modelFlag ?? (opts.modelFast ? "fast" : opts.modelDefault ? "default" : undefined) }, batch: isBatchEnv() },
       await liveResolveCtx()

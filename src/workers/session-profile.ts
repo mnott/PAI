@@ -89,6 +89,16 @@ export function capOf(cfg: ResolveCtx["cfg"], name: string): number {
   return resolveCap(p.maxConcurrent, isLoopbackProvider(p)) ?? Infinity;
 }
 
+/**
+ * True when the command line itself names where the run goes (--provider,
+ * --local, --cloud, --where): such a run never asks the session profile, at
+ * start or while it waits in the queue. Decided once, in runWorker, from the
+ * flags — a profile change after the start cannot re-route it.
+ */
+export function namesTarget(o: { providerFlag?: string; localFlag?: boolean; cloud?: boolean; whereFlag?: string }): boolean {
+  return !!(o.providerFlag || o.localFlag || o.cloud || o.whereFlag);
+}
+
 export function resolveWorkers(args: ResolveArgs, ctx: ResolveCtx): WorkersResolution {
   const ex = args.explicit;
   if (ex?.provider) return { source: "explicit", provider: ex.provider, model: ex.model, description: `${label(ex.provider, ex.model)} (explicit)` };
