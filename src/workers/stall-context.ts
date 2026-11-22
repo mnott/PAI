@@ -15,6 +15,8 @@ export interface StallContext {
 }
 
 export const ENGINE_FRESH_MS = 10_000;
+/** An answer past this many tokens is flagged so a runaway is visible. */
+export const LONG_ANSWER_TOKENS = 8_000;
 const TAIL = 256 * 1024;
 
 function tail(file: string, bytes = TAIL): string {
@@ -56,8 +58,13 @@ export function parseEngine(text: string): { text: string; busy: boolean } | und
     if (m) return { text: `reading prompt ${n(m[1])}/${n(m[2])} (${m[3]} s)`, busy: true };
     m = /\[strata\] thinking: ([\d,]+) of budget [\d,]+ tokens, ([\d.]+) tok\/s, (\d+) s/.exec(l);
     if (m) return { text: `thinking ${n(m[1])} tok at ${m[2]} tok/s (${m[3]} s)`, busy: true };
-    m = /\[strata\] writing a tool call: (.*?): ([\d,]+) of max [\d,]+ tokens, ([\d.]+) tok\/s, (\d+) s/.exec(l);
-    if (m) return { text: `writing a ${m[1]} call ${n(m[2])} tok at ${m[3]} tok/s (${m[4]} s)`, busy: true };
+    m = /\[strata\] answering: ([\d,]+) of max ([\d,]+) tokens, ([\d.]+) tok\/s, (\d+) s/.exec(l);
+    if (m) {
+      const long = Number(m[1].replace(/,/g, "")) > LONG_ANSWER_TOKENS ? " — long answer" : "";
+      return { text: `answering ${n(m[1])} of max ${n(m[2])} tok at ${m[3]} tok/s (${m[4]} s)${long}`, busy: true };
+    }
+    m = /\[strata\] writing a tool call: (.*?): ([\d,]+) of max ([\d,]+) tokens, ([\d.]+) tok\/s, (\d+) s/.exec(l);
+    if (m) return { text: `writing a ${m[1]} call ${n(m[2])} of max ${n(m[3])} tok at ${m[4]} tok/s (${m[5]} s)`, busy: true };
     if (/\[strata\] done:/.test(l)) return { text: "idle (last request done)", busy: false };
   }
   return undefined;
