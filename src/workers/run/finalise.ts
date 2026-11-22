@@ -13,6 +13,7 @@ import { takeLoopStop } from "../loop-stop.js";
 import { readFileSync } from "node:fs";
 import { eventsPath } from "../paths.js";
 import { sumRunUsage } from "../usage.js";
+import { usageLogFile } from "../../router/usage.js";
 import { type WorkerStatus, saveStatus, UNLABELED } from "../status.js";
 import { committedFallThrough, invalidCloudReport } from "../policy.js";
 import { checkOrphanedChildren, isWorkerId } from "../tree.js";
@@ -401,18 +402,53 @@ export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
  * The result a loop-stopped run prints when the killed claude never emitted one: the stop reason with the usage
  * (summed from the run's event log), turns and duration so far, so `--output-format json` is not empty.
  */
-export function loopStopResult(logDir: string, wid: string, reason: string, turns: number, secs: number): StreamEvent {
+export function loopStopResult(logDir: string, wid: string, reason: string, turns: number, secs: number, routerLog: string = usageLogFile()): StreamEvent {
   let usage: StreamEvent["usage"];
   try {
-    const t = [...sumRunUsage(readFileSync(eventsPath(logDir, wid), "utf8")).byModel.values()].reduce(
+    const events = readFileSync(eventsPath(logDir, wid), "utf8");
+    const t = [...sumRunUsage(events).byModel.values()].reduce(
       (a, m) => ({ i: a.i + m.input, r: a.r + m.cacheRead, w: a.w + m.cacheWrite5m + m.cacheWrite1h, o: a.o + m.output }),
       { i: 0, r: 0, w: 0, o: 0 }
     );
+    // A streamed assistant event carries the message_start usage (output 0); the real output arrives in the final
+    // result, which a killed run never emits. The router's per-request ledger has it, keyed by the claude session.
+    if (t.o === 0) {
+      const sid = /"session_id":"([^"]+)"/.exec(events)?.[1];
+      const routed = sid ? routerSessionTotals(routerLog, sid) : null;
+      if (routed) Object.assign(t, routed);
+    }
     usage = { input_tokens: t.i, output_tokens: t.o, cache_read_input_tokens: t.r, cache_creation_input_tokens: t.w };
   } catch {
     // no event log: usage stays absent
   }
   return { type: "result", subtype: "loop-stopped", is_error: true, result: `loop-stopped: ${reason}`, num_turns: turns, duration_ms: secs * 1000, ...(usage ? { usage } : {}) };
+}
+
+/** Summed router-ledger usage of one claude session (successful rows only); null when the session has none. */
+function routerSessionTotals(file: string, sessionId: string): { i: number; r: number; w: number; o: number } | null {
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  const t = { i: 0, r: 0, w: 0, o: 0 };
+  let rows = 0;
+  for (const line of raw.split("\n")) {
+    if (!line.includes(sessionId)) continue;
+    try {
+      const row = JSON.parse(line) as { session_id?: string; status?: number; input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+      if (row.session_id !== sessionId || (row.status ?? 200) >= 400) continue;
+      t.i += row.input_tokens ?? 0;
+      t.o += row.output_tokens ?? 0;
+      t.r += row.cache_read_input_tokens ?? 0;
+      t.w += row.cache_creation_input_tokens ?? 0;
+      rows++;
+    } catch {
+      // a torn line is not a row
+    }
+  }
+  return rows ? t : null;
 }
 
 export function printResult(
