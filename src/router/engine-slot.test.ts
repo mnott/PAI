@@ -30,6 +30,7 @@ const until = async (f: () => boolean, ms = 800): Promise<void> => {
 };
 
 async function rig(engine: (req: http.IncomingMessage, res: http.ServerResponse, n: number) => void) {
+  const logs: string[] = [];
   let n = 0;
   const upstreamClosed: number[] = [];
   const up = http.createServer((req, res) => {
@@ -41,7 +42,7 @@ async function rig(engine: (req: http.IncomingMessage, res: http.ServerResponse,
   const upPort = await listen(up);
   const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: `http://127.0.0.1:${upPort}`, models: { default: "gyro-m" } } } }).providers;
   const released: Array<{ reason: string; worker: string }> = [];
-  const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, undefined, undefined, { instances: () => [], onSlotReleased: (i) => released.push(i) });
+  const r = createRouter(() => prov, "http://127.0.0.1:1", (l: string) => logs.push(l), undefined, undefined, { instances: () => [], onSlotReleased: (i) => released.push(i) });
   const port = await listen(r);
   const body = JSON.stringify({ model: "gyro-m", stream: true, messages: [{ role: "user", content: "hi" }] });
   const post = (worker: string) => {
@@ -56,7 +57,20 @@ async function rig(engine: (req: http.IncomingMessage, res: http.ServerResponse,
     q.end(body);
     return { q, out };
   };
-  return { post, released, upstreamClosed, calls: () => n };
+  const postMessages = () => {
+    const out = { status: 0, text: "", done: false };
+    const b = JSON.stringify({ model: "gyro-m", stream: true, max_tokens: 10, messages: [{ role: "user", content: "hi" }], tools: [{ name: "Bash", input_schema: { type: "object", properties: { command: { type: "string" } } } }] });
+    const q = http.request({ port, host: "127.0.0.1", path: "/p/gyro/v1/messages", method: "POST", headers: { "content-type": "application/json", "x-pai-worker": "wM", "x-pai-session": "s" } }, (x) => {
+      out.status = x.statusCode ?? 0;
+      x.on("data", (c) => (out.text += c));
+      x.on("end", () => (out.done = true));
+      x.on("error", () => (out.done = true));
+    });
+    q.on("error", () => (out.done = true));
+    q.end(b);
+    return { q, out };
+  };
+  return { post, postMessages, logs, released, upstreamClosed, calls: () => n };
 }
 
 const inflight = () => Object.values(sharedScheduler().snapshot().engines).map((e) => e.inflight?.worker ?? null);
@@ -400,5 +414,40 @@ describe("stable prompt prefix for local requests", () => {
     const r = prepare("/v1/messages", {}, raw, {}, "https://api.anthropic.com");
     expect(r.ok && r.up.body.toString()).toContain("Today's date is 2026-11-20");
     expect(r.ok && r.up.body.toString()).not.toContain("context:");
+  });
+
+  it("a large held answer passes the fixer chain whole: no mid-answer cut, slot released once", async () => {
+    const ev = (n: string, d: unknown) => `event: ${n}\ndata: ${JSON.stringify(d)}\n\n`;
+    let sse = ev("message_start", { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "gyro-m", content: [], usage: { input_tokens: 1, output_tokens: 1 } } });
+    sse += ev("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    for (let i = 0; i < 1500; i++) sse += ev("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x".repeat(50) } });
+    sse += ev("content_block_stop", { type: "content_block_stop", index: 0 });
+    sse += ev("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1500 } });
+    sse += ev("message_stop", { type: "message_stop" });
+    expect(sse.length).toBeGreaterThan(65536);
+    const t = await rig((_q, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(sse);
+    });
+    const a = t.postMessages();
+    await until(() => a.out.done, 3000);
+    expect(a.out.text.length).toBeGreaterThanOrEqual(sse.length);
+    expect(a.out.text).toContain("message_stop");
+    await until(() => inflight().every((w) => w === null));
+    expect(t.logs.filter((l) => l.includes("closed mid-answer"))).toEqual([]);
+    expect(t.released).toEqual([]);
+  });
+
+  it("a real upstream that closes before the end still logs and cuts the client", async () => {
+    const t = await rig((_q, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream", "content-length": "100000" });
+      res.write("event: message_start\ndata: {}\n\n");
+      setTimeout(() => res.destroy(), 30);
+    });
+    const a = t.postMessages();
+    await until(() => a.out.done, 3000);
+    expect(a.out.text).not.toContain("message_stop");
+    expect(t.logs.filter((l) => l.includes("closed mid-answer")).length).toBe(1);
+    await until(() => inflight().every((w) => w === null));
   });
 });
