@@ -671,6 +671,17 @@ describe("ps/watch show the model that served the last turn", () => {
     expect(out.every((l) => l.startsWith("BUSY"))).toBe(true);
   });
 
+  it("watch reads the answering and tool-call phases and flags a long answer", async () => {
+    const { parseEngine } = await import("./stall-context.js");
+    expect(parseEngine("[strata] answering: 18318 of max 32768 tokens, 73.2 tok/s, 252 s")).toEqual({
+      text: "answering 18,318 of max 32,768 tok at 73.2 tok/s (252 s) — long answer",
+      busy: true,
+    });
+    expect(parseEngine("[strata] answering: 800 of max 32768 tokens, 70.0 tok/s, 11 s")?.text).toBe("answering 800 of max 32,768 tok at 70.0 tok/s (11 s)");
+    expect(parseEngine("[strata] writing a tool call: Write: 1200 of max 8192 tokens, 60.1 tok/s, 20 s")?.text).toBe("writing a Write call 1,200 of max 8,192 tok at 60.1 tok/s (20 s)");
+    expect(parseEngine("[strata] answering: 5 of max 9 tokens, 1.0 tok/s, 1 s\n[strata] done: 5 tokens in 1 s (5 tok/s) (stop)")?.busy).toBe(false);
+  });
+
   it("watch parses prompt reading and survives unknown engine output", async () => {
     const { parseEngine } = await import("./stall-context.js");
     expect(parseEngine("x\n[strata] reading the prompt: 61,440 of 65,232 tokens, 59 s so far")?.text).toBe("reading prompt 61,440/65,232 (59 s)");
