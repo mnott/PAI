@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultSpawn, endContinuedOrigins, escalationReason, escalationHeldNote, providerPinned, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
+import { escalationMessage, rerunFromEnv, defaultSpawn, endContinuedOrigins, escalationReason, escalationHeldNote, providerPinned, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { getProfile, lastProfileWriteLogError, profilesPath, setProfileLedger, updateProfile, nextClockTime } from "./session-profile-store.js";
 import { namesTarget, resolveWorkers } from "./session-profile.js";
@@ -327,6 +327,55 @@ describe("rerouteWorker", () => {
     expect(done.map((e) => e.id)).toEqual(["w1"]);
     expect(loadStatus(dir, "w1")!.rerouted).toBe("fakeB: queued 16m (operator priority)"); // the marker names where and why it moved
     expect(loadStatus(dir, "w2")!.rerouted).toBeUndefined();
+  });
+});
+
+describe("an escalated child worker (2026-11-22)", () => {
+  const child = (over: Partial<WorkerStatus> = {}) => queued({ promptFile: join(dir, "spec.txt"), state: "running", parent: "p1", cwd: dir, ...over });
+  const pol0 = { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 };
+
+  it("a restart queued at the target's cap announces its id; the reroute records the continuation, parent link kept", async () => {
+    saveStatus(dir, child());
+    const order: string[] = [];
+    const fakeStart = ((_bin: string, _args: string[], o: { env: NodeJS.ProcessEnv }) => {
+      // the full cap: the run is only queued, and still announces (gateStart) with the status saved as queued
+      saveStatus(dir, queued({ id: "w2", state: "queued", parent: "p1", capacity: { provider: "fakeB", cap: 1, total: 3, position: 2, elapsedSec: 0, sinceMs: Date.now() } }));
+      const run = { providerFlag: "fakeB" } as never;
+      rerunFromEnv(run, dir, { ...o.env });
+      (run as { onWorkerStart: (id: string) => void }).onWorkerStart("w2");
+      writeFileSync(o.env[RERUN_ID_FILE_ENV]!, "w2");
+      return process.pid;
+    }) as typeof import("./reroute.js").spawnSession;
+    const r = await rerouteWorker("w1", "cloud", {
+      logDir: dir,
+      announceMs: 0,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async (id) => { order.push("kill"); const st = loadStatus(dir, id)!; st.state = "killed"; saveStatus(dir, st, new Date(), true); return []; },
+      spawn: (s: SpawnSpec) => { order.push("spawn"); return defaultSpawn(dir, fakeStart)(s); },
+    });
+    expect(order).toEqual(["kill", "spawn"]); // stop-first kept: the salvage lands before the continuation reads the branch
+    expect(r.queuedAtTarget).toEqual({ position: 2, queued: 3 });
+    expect(loadStatus(dir, "w1")!.fallThroughTo).toBe("w2");
+    const { launchParent } = await import("./tree.js");
+    expect(launchParent(undefined, { [RERUN_OF_ENV]: "w1" }, dir)).toBe("p1");
+  });
+
+  it("the gate announces a restart at the queue (no PAI_RERUN_ID_FILE exception)", () => {
+    expect(readFileSync(join(__dirname, "run", "gate.ts"), "utf8")).not.toContain("RERUN_ID_FILE_ENV");
+  });
+
+  it("a start failure after the stop raises the orphan report naming the branch", async () => {
+    saveStatus(dir, child({ branch: "worker/w1", progressAt: new Date(NOW - 30 * 60_000).toISOString() } as never));
+    const done = await escalateOverdue([loadStatus(dir, "w1")!], {
+      logDir: dir,
+      announceMs: 0,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async (id) => { const st = loadStatus(dir, id)!; st.state = "killed"; saveStatus(dir, st, new Date(), true); return []; },
+      spawn: () => { throw new Error("the restart on fakeB did not start"); },
+    }, NOW, pol0);
+    expect(done).toHaveLength(1);
+    expect(done[0]!.orphaned).toEqual({ branch: "worker/w1" });
+    expect(escalationMessage(done[0]!)).toMatch(/ORPHANED.*branch worker\/w1/);
   });
 });
 
