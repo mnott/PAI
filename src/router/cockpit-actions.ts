@@ -448,6 +448,7 @@ export async function runtimeSwitch(
   const notes: string[] = [];
   const parked: Record<string, string[]> = readSwitchParked(deps.home);
   const parkedNow: string[] = [];
+  const stoppedPeers: string[] = [];
   for (const peer of exclusivePeers(runtime, commands)) {
     if (!(await runtimeIsUp(peer, commands, deps))) continue;
     const ids: string[] = parked[peer] ?? [];
@@ -472,9 +473,35 @@ export async function runtimeSwitch(
       writeSwitchParked(deps.home, parked);
       return { ok: false, message: `switch to ${runtime} stopped at ${peer}: ${stopped.message}` };
     }
+    stoppedPeers.push(peer);
   }
   const started = await runtimeStartStop(runtime, "start", deps);
-  if (!started.ok) return { ok: false, message: `${started.message}${parkedNow.length ? `; parked: ${parkedNow.join(", ")}` : ""}` };
+  if (!started.ok) {
+    if (!stoppedPeers.length) return { ok: false, message: started.message };
+    // roll back: clear any half-started target, bring the stopped peers back, resume exactly the workers this switch parked
+    await runtimeStartStop(runtime, "stop", deps).catch(() => undefined);
+    const restarted: string[] = [];
+    const failedBack: string[] = [];
+    for (const peer of stoppedPeers) {
+      const r = await runtimeStartStop(peer, "start", deps);
+      (r.ok ? restarted : failedBack).push(r.ok ? peer : `${peer}: ${r.message}`);
+    }
+    const parkedList = parkedNow.length ? `; parked: ${parkedNow.join(", ")}` : "";
+    if (failedBack.length) {
+      appendLedger(deps.ledger, "RUNTIME-SWITCH", { runtime, group, result: "failed, rollback failed" });
+      return { ok: false, message: `switch to ${runtime} failed (${started.message}); rollback failed (${failedBack.join("; ")}); workers stay parked${parkedList}` };
+    }
+    const resumedBack: string[] = [];
+    for (const w of parkedNow) {
+      const id = w.split(" ")[0]!;
+      try { if (unpark(id)) resumedBack.push(id); } catch { /* ended meanwhile */ }
+    }
+    for (const peer of stoppedPeers) parked[peer] = (parked[peer] ?? []).filter((id) => !resumedBack.includes(id));
+    for (const peer of stoppedPeers) if (!parked[peer]?.length) delete parked[peer];
+    writeSwitchParked(deps.home, parked);
+    appendLedger(deps.ledger, "RUNTIME-SWITCH", { runtime, group, result: "failed, rolled back", resumed: resumedBack.length });
+    return { ok: false, message: `switch to ${runtime} failed (${started.message}); rolled back to ${restarted.join(", ")}, resumed: ${resumedBack.join(", ") || "none"}` };
+  }
   const back: string[] = [];
   for (const id of parked[runtime] ?? []) {
     try { if (unpark(id)) back.push(id); } catch { /* ended meanwhile */ }

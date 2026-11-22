@@ -937,4 +937,43 @@ describe("exclusive runtime groups", () => {
     expect(r2.message).toContain("resumed: w1, w2");
     expect(readSwitchParked(exHome)).toEqual({ "hy4-flash": ["h1"] });
   });
+
+  it("a target that fails to start rolls back: the stopped peer restarts, exactly the parked workers resume, the message names both", async () => {
+    const { runtimeSwitch } = await import("../router/cockpit-actions.js");
+    const { readSwitchParked, writeSwitchParked } = await import("../workers/model-runtimes.js");
+    writeSwitchParked(exHome, {});
+    const up = new Set(["gyro-l"]);
+    const calls: string[] = [];
+    const base = exOps(up, calls);
+    const ops = {
+      ...base,
+      spawnDetached: (cmd: string) => {
+        if (cmd.includes("start hy4-flash")) {
+          calls.push(cmd);
+          return { exit: Promise.resolve({ code: 1 as number | null }) };
+        }
+        return base.spawnDetached(cmd);
+      },
+    };
+    const resumed: string[] = [];
+    const deps = exDeps(up, calls, {
+      runtimeOps: ops,
+      workersOn: (rt: string) => (rt === "gyro-l" ? [{ id: "w1", model: "qwen-gyro" }] : []),
+      runtimeInflight: () => 0,
+      pauseWorker: () => true,
+      unparkWorker: (id: string) => {
+        resumed.push(id);
+        return true;
+      },
+    });
+    const r = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("switch to hy4-flash failed");
+    expect(r.message).toContain("rolled back to gyro-l");
+    expect(r.message).toContain("resumed: w1");
+    expect(calls).toContain("start gyro-l");
+    expect(up.has("gyro-l")).toBe(true);
+    expect(resumed).toEqual(["w1"]);
+    expect(readSwitchParked(exHome)).toEqual({});
+  });
 });
