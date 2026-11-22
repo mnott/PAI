@@ -481,6 +481,11 @@ models:
   # shipped true: only your own config.yaml sets it (e.g. for gyro-l). A workers.yaml
   # local_tiers model (provider or tier name) needs no start command here: the flag
   # alone starts it as that tier (models.runtimes.<name>.autostart: true).
+  # exclusive: <group> (e.g. heavy) keeps runtimes of one group from running together:
+  # start and autostart are refused while another of the group is up, and
+  # `pai models switch <runtime>` (MCP model_runtime action=switch) parks the workers
+  # served by the other one, stops it, starts this one and resumes the workers a
+  # former switch parked on it. Never shipped; set it on the big local models.
   runtimes:
     ollama:
       start: ollama serve

@@ -75,7 +75,7 @@ export async function routerService(args: RouterServiceArgs): Promise<WorkerTool
 
 export interface ModelRuntimeArgs {
   runtime?: string;
-  action?: "status" | "start" | "stop";
+  action?: "status" | "start" | "stop" | "switch";
   /** start/stop: the model to load or unload (docker model run|unload). */
   model?: string;
 }
@@ -89,12 +89,14 @@ export async function modelRuntime(args: ModelRuntimeArgs): Promise<WorkerToolRe
       const inv = await currentInventory();
       const rows = args.runtime ? inv.runtimes.filter((r) => r.name === args.runtime) : inv.runtimes;
       if (args.runtime && !rows.length) return error(new Error(`no runtime "${args.runtime}" (known: ${inv.runtimes.map((r) => r.name).join(", ") || "none"})`));
-      return text(rows.map((r) => `${r.name}: ${r.status}${r.port != null ? ` port ${r.port}` : ""}; models ${r.models.map((m) => `${m.model}${m.loaded ? "*" : ""}`).join(", ") || "none"}`).join("\n") || "no runtimes");
+      const { readRuntimeCommands } = await import("../../workers/model-runtimes.js");
+      const cmds = readRuntimeCommands();
+      return text(rows.map((r) => `${r.name}: ${r.status}${cmds[r.name]?.exclusive ? ` [exclusive ${cmds[r.name]!.exclusive}]` : ""}${r.port != null ? ` port ${r.port}` : ""}; models ${r.models.map((m) => `${m.model}${m.loaded ? "*" : ""}`).join(", ") || "none"}`).join("\n") || "no runtimes");
     }
-    if (action !== "start" && action !== "stop") return error(new Error(`unknown action "${String(action)}" (expected: status, start, stop)`));
+    if (action !== "start" && action !== "stop" && action !== "switch") return error(new Error(`unknown action "${String(action)}" (expected: status, start, stop, switch)`));
     if (!args.runtime) return error(new Error(`runtime is required for action "${action}"`));
-    const { defaultDeps, runtimeStartStop } = await import("../../router/cockpit-actions.js");
-    const r = await runtimeStartStop(args.runtime, action, defaultDeps(), { model: args.model });
+    const { defaultDeps, runtimeStartStop, runtimeSwitch } = await import("../../router/cockpit-actions.js");
+    const r = action === "switch" ? await runtimeSwitch(args.runtime, defaultDeps()) : await runtimeStartStop(args.runtime, action, defaultDeps(), { model: args.model });
     return r.ok ? text(r.message) : error(new Error(r.message));
   } catch (e) {
     return error(e);

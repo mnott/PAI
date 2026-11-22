@@ -51,7 +51,7 @@ import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { readLocalConfig, healthUrl, type LocalTier } from "../workers/local-tiers.js";
 import { paiHomeDir } from "../config/pai-home.js";
-import { isRuntimeStopped, readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommands } from "../workers/model-runtimes.js";
+import { exclusivePeers, isRuntimeStopped, readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommands } from "../workers/model-runtimes.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { freeMemoryGb } from "../workers/local-memory.js";
 import { isFrozen } from "../workers/freeze.js";
@@ -130,6 +130,8 @@ export interface AutostartRuntimeState {
   alerted: boolean;
   /** epoch ms of the first liveness probe that found the port refusing; absent = alive (or never probed). Down needs a second refusal DOWN_CONFIRM_MS later. */
   suspectedDownAt?: number;
+  /** The exclusive-group skip was logged (once per blocking episode). */
+  exclusiveLogged?: boolean;
 }
 
 /** The autostart state of every configured runtime, including the ones that never needed a pass (up). */
@@ -160,6 +162,8 @@ export interface AutostartDeps {
   alive: (runtime: string) => Promise<boolean>;
   /** The runtime was stopped on purpose (`pai models stop`) and not started since: autostart must not bring it back. */
   stopped?: (runtime: string) => boolean;
+  /** The name of an up runtime in `runtime`'s exclusive group (autostart then starts nothing), else null. */
+  exclusivePeerUp?: (runtime: string) => Promise<string | null>;
   /** True while the machine is frozen (`pai freeze`): nothing starts. */
   frozen: () => boolean;
   /** Available memory (reclaimable counted) after the reserve, GB; undefined = unmeasurable (a short-memory skip cannot be made). */
@@ -230,6 +234,13 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
       d.log(`autostart ${runtime}: stopped on purpose (pai models stop), not starting; \`pai models start ${runtime}\` lifts it`);
       continue;
     }
+    const blocker = await d.exclusivePeerUp?.(runtime).catch(() => null);
+    if (blocker) {
+      if (!st.exclusiveLogged) d.log(`autostart ${runtime}: not starting, ${blocker} is running in exclusive group ${cmd.exclusive}; use switch`);
+      st.exclusiveLogged = true;
+      continue;
+    }
+    st.exclusiveLogged = false;
     const needGb = cfg.memoryGb[runtime] ?? 0;
     if (needGb > 0 && avail === undefined) avail = await d.freeGb();
     if (avail !== undefined && avail < needGb) {
@@ -301,6 +312,14 @@ export function liveAutostartDeps(): AutostartDeps {
     },
     alive: (runtime) => liveRuntimeAlive(runtime),
     stopped: (runtime) => isRuntimeStopped(paiHomeDir(), runtime),
+    async exclusivePeerUp(runtime) {
+      const all = readRuntimeCommands();
+      for (const peer of exclusivePeers(runtime, all)) {
+        const ready = all[peer]?.ready;
+        if (ready && (readyIsUrl(ready) ? await liveRuntimeOpDeps.getUrl(ready) : (await liveRuntimeOpDeps.runCmd(ready)) === 0)) return peer;
+      }
+      return null;
+    },
     frozen: () => isFrozen() || deepfreezeHold(),
     // no reserve here: the skip compares the measured AVAILABLE (reclaimable counted) against the tier's memoryGb as the brief demands
     freeGb: () => freeMemoryGb(0),
