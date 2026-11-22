@@ -63,7 +63,6 @@ import { runWorker } from "./worker-ref.js";
 import { UNLABELED } from "../status.js";
 import { handoffLimit } from "./handoff.js";
 import { guardQueuedRun } from "./follow-reroute.js";
-import { RERUN_ID_FILE_ENV } from "../reroute.js";
 import { followCommand } from "../pane.js";
 import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../worktree.js";
 import { promptTrailer } from "../report.js";
@@ -906,13 +905,12 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   // runs — whether the run starts or queues at the provider's cap (2026-11-17: a capped provider held
   // --detach past 60s and the coordinator retried, queueing the same package three times). The status
   // may read "queued" by the time it is read: runGates' first onWait saves it.
-  // One exception: a reroute's restart (PAI_RERUN_ID_FILE set) keeps its announce for its real start —
-  // the waiting reroute stops the old run the moment this file is written, and a restart parked at the
-  // target's cap must not get its predecessor killed while it never started.
-  if (!process.env[RERUN_ID_FILE_ENV]) {
-    a.announced = true;
-    a.onWorkerStart?.(wid);
-  }
+  // A reroute's restart announces here too (PAI_RERUN_ID_FILE): a restart parked at the target's cap used to skip it, so
+  // the waiting reroute timed out after 60 s and killed it (2026-11-22). The stop-first reroute has stopped its origin
+  // already (a queued origin is stopped once the restart announced, and the continuation waits in line, never lost).
+  a.announced = true;
+  a.onWorkerStart?.(wid);
+
   // the follow pane opens now, not after the queue (a run parked at a cap shows
   // its place in line there, runGates onWait) — and beside admission and the
   // claim, never in front of them: whoever needs the pane settled awaits paneOpening

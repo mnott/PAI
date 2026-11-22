@@ -294,9 +294,8 @@ export const RERUN_ID_FILE_ENV = "PAI_RERUN_ID_FILE";
 
 /**
  * Called by the CLI run verb for a restart (no-op without the env): record this run's id for the waiting reroute.
- * A restart announces here only at its real start — rerunFromEnv wires this to onWorkerStart, and gateStart's
- * queue announce skips it when PAI_RERUN_ID_FILE is set: a reroute keeps holding the old (queued) run until the
- * new provider really started, so a restart that queues at the target's cap never gets its predecessor killed.
+ * A restart announces at the queue too (gateStart): one parked at the target's cap reports its id and its queued
+ * state at once, the reroute records the continuation and defaultSpawn returns the position.
  */
 export function announceRerunId(id: string, env: NodeJS.ProcessEnv = process.env): void {
   const f = env[RERUN_ID_FILE_ENV];
@@ -549,7 +548,8 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
       q = await start();
     } catch (e) {
       appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 200) });
-      throw e;
+      // the origin is gone: its salvaged work sits on the branch and nobody continues it — the caller must report it
+      throw Object.assign(e instanceof Error ? e : new Error(String(e)), { orphaned: { branch: branch ?? null } });
     }
     // the continuation queued at a full target: it waits there (never lost); the stopped origin's work stays on its branch.
     if (q) appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });
@@ -584,6 +584,8 @@ export interface Escalation {
   provider: string;
   reason: string;
   session: string | null;
+  /** The restart failed after the origin was stopped: the work is orphaned on this branch (null: no branch kept). */
+  orphaned?: { branch: string | null };
 }
 
 /**
@@ -620,6 +622,8 @@ export async function escalateOverdue(
       const r = await rerouteWorker(s.id, "cloud", { ...d, by: "escalation", reason });
       done.push({ id: s.id, label: s.label, provider: r.provider, reason, session: s.spawnerSession ?? s.session?.id ?? null });
     } catch (e) {
+      const orphaned = (e as { orphaned?: { branch: string | null } }).orphaned;
+      if (orphaned) done.push({ id: s.id, label: s.label, provider: "cloud", reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 160), session: s.spawnerSession ?? s.session?.id ?? null, orphaned });
       // already on the fallback or no task copy: marked so the next tick does not try again
       const st = (d.load ?? ((x: string) => loadStatus(d.logDir, x)))(s.id);
       if (st && !st.rerouted) {
@@ -632,7 +636,10 @@ export async function escalateOverdue(
 }
 
 /** The orchestrator's AG2 S message for one escalation. */
-export const escalationMessage = (e: Escalation): string => `S|i=${e.id}|z=${e.label}: escalated to ${e.provider}: ${e.reason}`;
+export const escalationMessage = (e: Escalation): string =>
+  e.orphaned
+    ? `S|i=${e.id}|z=${e.label}: ORPHANED, stopped for escalation but the continuation did not start (${e.reason}); work is on ${e.orphaned.branch ? `branch ${e.orphaned.branch}` : "no kept branch"} - restart it with pai worker run`
+    : `S|i=${e.id}|z=${e.label}: escalated to ${e.provider}: ${e.reason}`;
 
 /** The pane's one line for an escalation. */
 export const escalationLine = (rerouted: string): string => `» escalated to ${rerouted}`;
