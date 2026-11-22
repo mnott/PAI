@@ -4,7 +4,8 @@
  * shows (reconcileStatuses + loadStatuses); keeps no state of its own on disk.
  *
  *   STATE <id> [provider] <old> -> <new> (turns N)   every state change
- *   STALL <id> ...                                    turns did not grow for --stall
+ *   STALL <id> ... — <what the engine/retries show>    turns did not grow for --stall, nothing moving
+ *   BUSY <id> ...                                     same, but the engine is visibly working (repeats every 2 min)
  *   DENIED <id> ...                                   guard denials grew
  *   SERVER DOWN <provider> <url>                      the provider's health URL stopped answering
  *   MODEL <id> [provider] <old> -> <new>              the model serving the last turn changed (router failover)
@@ -14,6 +15,7 @@
 
 import { readWorkersSection } from "./config.js";
 import { probeEndpointUrl } from "./endpoint-health.js";
+import { describeContext, gatherStallContext, type StallContext } from "./stall-context.js";
 import { servedModelOf } from "./served-model.js";
 import { isTerminal, loadStatuses, reconcileStatuses, type WorkerStatus } from "./status.js";
 
@@ -33,6 +35,8 @@ export interface WatchDeps {
   probe(url: string): Promise<boolean>;
   /** Model that served the worker's last turn (transcript); absent: not checked. */
   served?(s: WorkerStatus): string | null;
+  /** What is happening behind a stalled worker (retries, engine progress, router errors); absent: nothing added. */
+  context?(s: WorkerStatus, now: number): StallContext | undefined;
   emit(line: string): void;
 }
 
@@ -42,6 +46,9 @@ interface Seen {
   turnsAt: number;
   denials: number;
   stalled: boolean;
+  /** Kind and time of the last STALL/BUSY line (BUSY repeats every 2 min). */
+  flag?: "STALL" | "BUSY";
+  flagAt?: number;
   model: string | null;
 }
 
@@ -76,17 +83,29 @@ export async function watchWorkers(o: WatchOptions, d: WatchDeps): Promise<numbe
       if (!prev || prev.state !== s.state) {
         d.emit(`STATE ${id} [${s.provider}] ${prev?.state ?? "?"} -> ${s.state} (turns ${turns})`);
       }
-      const cur: Seen = { state: s.state, turns, turnsAt: prev && prev.turns === turns ? prev.turnsAt : now, denials: denials(s), stalled: prev?.stalled ?? false, model: prev?.model ?? null };
+      const cur: Seen = { state: s.state, turns, turnsAt: prev && prev.turns === turns ? prev.turnsAt : now, denials: denials(s), stalled: prev?.stalled ?? false, flag: prev?.flag, flagAt: prev?.flagAt, model: prev?.model ?? null };
       const served = d.served?.(s) ?? null;
       if (served) {
         if (prev?.model && prev.model !== served) d.emit(`MODEL ${id} [${s.provider}] ${prev.model} -> ${served}`);
         cur.model = served;
       }
       if (prev && cur.denials > prev.denials) d.emit(`DENIED ${id} [${s.provider}] denials ${prev.denials} -> ${cur.denials}`);
-      if (prev && turns !== prev.turns) cur.stalled = false;
-      if (s.state === "running" && !cur.stalled && now - cur.turnsAt >= o.stallMs) {
-        cur.stalled = true;
-        d.emit(`STALL ${id} [${s.provider}] turns ${turns} unchanged for ${Math.round((now - cur.turnsAt) / 1000)}s`);
+      if (prev && turns !== prev.turns) {
+        cur.stalled = false;
+        cur.flag = undefined;
+      }
+      if (s.state === "running" && now - cur.turnsAt >= o.stallMs) {
+        const ctx = d.context?.(s, now);
+        const kind = ctx?.engine?.busy ? "BUSY" : "STALL";
+        // STALL once per stall; BUSY when it starts (or the engine went quiet and back), then every 2 min
+        const emitIt = kind === "STALL" ? !cur.stalled : cur.flag !== "BUSY" || now - (cur.flagAt ?? 0) >= 120_000;
+        if (emitIt) {
+          cur.flag = kind;
+          cur.flagAt = now;
+          d.emit(`${kind} ${id} [${s.provider}] turns ${turns} unchanged for ${Math.round((now - cur.turnsAt) / 1000)}s${describeContext(ctx)}`);
+        }
+        if (kind === "STALL") cur.stalled = true;
+        else if (cur.flag === "BUSY") cur.stalled = false;
       }
       seen.set(id, cur);
     }
@@ -131,6 +150,7 @@ export function realWatchDeps(logDir: string, emit: (l: string) => void): WatchD
     },
     probe: (u) => probeEndpointUrl(u, 3000),
     served: (s) => (isTerminal(s.state) ? null : servedModelOf(s)),
+    context: (s, now) => gatherStallContext({ id: s.id, provider: s.provider, model: s.model }, logDir, now),
     emit,
   };
 }

@@ -190,7 +190,7 @@ Stream evidence about workers, one line per event (for a monitor)
 pai worker watch [ID...] [options]
 ```
 
-Polls the worker statuses `pai worker ps` shows and prints a line only on evidence: STATE on every state change (queued->running and each terminal state), STALL when the turn count has not grown for --stall, DENIED when guard denials grow, SERVER DOWN when a worker's provider stops answering, PROGRESS turns every --beat, and ALL TERMINAL (exit 0) once every id has finished.
+Polls the worker statuses `pai worker ps` shows and prints a line only on evidence: STATE on every state change (queued->running and each terminal state), STALL when the turn count has not grown for --stall and nothing moves (the line adds client retries, the engine's live progress and router errors when known), BUSY when the engine is visibly working, DENIED when guard denials grow, SERVER DOWN when a worker's provider stops answering, PROGRESS turns every --beat, and ALL TERMINAL (exit 0) once every id has finished.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -271,7 +271,7 @@ Stream evidence about workers, one line per event (for a monitor)
 pai worker watch [ID...] [options]
 ```
 
-Polls the worker statuses `pai worker ps` shows and prints a line only on evidence: STATE on every state change (queued->running and each terminal state), STALL when the turn count has not grown for --stall, DENIED when guard denials grow, SERVER DOWN when a worker's provider stops answering, PROGRESS turns every --beat, and ALL TERMINAL (exit 0) once every id has finished.
+Polls the worker statuses `pai worker ps` shows and prints a line only on evidence: STATE on every state change (queued->running and each terminal state), STALL when the turn count has not grown for --stall and nothing moves (the line adds client retries, the engine's live progress and router errors when known), BUSY when the engine is visibly working, DENIED when guard denials grow, SERVER DOWN when a worker's provider stops answering, PROGRESS turns every --beat, and ALL TERMINAL (exit 0) once every id has finished.
 
 | Argument | Required | Description |
 |---|---|---|

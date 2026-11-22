@@ -639,4 +639,56 @@ describe("ps/watch show the model that served the last turn", () => {
     );
     expect(lines.filter((l) => l.startsWith("MODEL"))).toEqual(["MODEL w1 [anthropic] claude-sonnet-5-5 -> qwen3.8-flash-next-gyro-l"]);
   });
+
+  async function stallRun(context: (now: number) => import("./stall-context.js").StallContext | undefined, polls = 3, stepMs = 100_000) {
+    const { watchWorkers } = await import("./watch.js");
+    const lines: string[] = [];
+    let t = 0;
+    let i = 0;
+    await watchWorkers(
+      { ids: ["w1"], stallMs: 200_000, beatMs: 1e12, pollMs: 1 },
+      {
+        now: () => t,
+        sleep: async () => {
+          t += stepMs;
+        },
+        statuses: () => [{ id: "w1", provider: "hy4-flash", model: "m", state: ++i > polls ? "done" : "running", turns: 24, cwd: "/x" } as unknown as WorkerStatus],
+        urls: () => ({}),
+        probe: async () => true,
+        context: (_s, now) => context(now),
+        emit: (l) => lines.push(l),
+      }
+    );
+    return lines.filter((l) => /^(STALL|BUSY)/.test(l));
+  }
+
+  it("watch says BUSY with engine numbers when the engine is thinking, repeating only every 2 min", async () => {
+    const { parseEngine } = await import("./stall-context.js");
+    const engine = parseEngine("[strata] thinking: 18349 of budget 24576 tokens, 71.9 tok/s, 257 s")!;
+    const out = await stallRun(() => ({ engine }), 8);
+    expect(out[0]).toBe("BUSY w1 [hy4-flash] turns 24 unchanged for 200s — engine: thinking 18,349 tok at 71.9 tok/s (257 s)");
+    expect(out.length).toBe(3);
+    expect(out.every((l) => l.startsWith("BUSY"))).toBe(true);
+  });
+
+  it("watch parses prompt reading and survives unknown engine output", async () => {
+    const { parseEngine } = await import("./stall-context.js");
+    expect(parseEngine("x\n[strata] reading the prompt: 61,440 of 65,232 tokens, 59 s so far")?.text).toBe("reading prompt 61,440/65,232 (59 s)");
+    expect(parseEngine("some other engine: working\n")).toBeUndefined();
+  });
+
+  it("watch says STALL with retrying when the transcript has api_retry events after the last turn", async () => {
+    const { parseRetry } = await import("./stall-context.js");
+    const ev = (a: number) => JSON.stringify({ type: "system", subtype: "api_retry", attempt: a, max_retries: 10, error_status: null, error: "unknown" });
+    const asst = JSON.stringify({ type: "assistant" });
+    const retry = parseRetry([ev(1), asst, ev(2), ev(3)].join("\n"))!;
+    expect(retry).toEqual({ attempt: 3, max: 10, error: "unknown" });
+    const out = await stallRun(() => ({ retry, router: ["upstream closed mid-answer"] }));
+    expect(out).toEqual(["STALL w1 [hy4-flash] turns 24 unchanged for 200s — retrying (attempt 3 of 10, error unknown); router: upstream closed mid-answer"]);
+  });
+
+  it("watch says plain STALL once when nothing moves anywhere", async () => {
+    const out = await stallRun(() => ({}), 8);
+    expect(out).toEqual(["STALL w1 [hy4-flash] turns 24 unchanged for 200s"]);
+  });
 });
