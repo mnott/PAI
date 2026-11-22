@@ -527,15 +527,24 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
   }
   if (old.state === "running") {
-    // a running origin is stopped FIRST (its commits are salvaged onto the branch): a continuation never runs beside it.
-    // A stop that fails starts nothing and leaves the origin as it is.
+    // the restart first, the stop after: a restart that cannot start (2026-11-22: an escalated child's restart sat
+    // 60 s without announcing after its origin was already killed, so the job was lost) leaves the origin running.
+    // The restart announces only once it really holds a slot; then the origin is stopped (its commits are salvaged
+    // onto the branch). A stop that fails leaves both visible for `pai worker kill`.
+    let q: NonNullable<RerouteResult["queuedAtTarget"]> | undefined;
+    try {
+      q = await start();
+    } catch (e) {
+      unmark();
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed, the origin keeps running: ${(e as Error).message}`.slice(0, 200) });
+      throw e;
+    }
     const wait0 = d.announceMs ?? (old.pane ? 1500 : 0);
     if (wait0 > 0) await new Promise((r) => setTimeout(r, wait0));
     try {
       await stop();
     } catch (e) {
-      unmark();
-      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `stop failed, no continuation started: ${(e as Error).message}`.slice(0, 200) });
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `stop failed after the restart: ${(e as Error).message}`.slice(0, 200) });
       throw e;
     }
     // the origin's own exit may have rewritten its status without the marker: record the hand-over on the final state
@@ -543,13 +552,6 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     if (end && end.rerouted !== old.rerouted) {
       end.rerouted = old.rerouted;
       saveStatus(d.logDir, end, new Date(), true);
-    }
-    let q: NonNullable<RerouteResult["queuedAtTarget"]> | undefined;
-    try {
-      q = await start();
-    } catch (e) {
-      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 200) });
-      throw e;
     }
     // the continuation queued at a full target: it waits there (never lost); the stopped origin's work stays on its branch.
     if (q) appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });

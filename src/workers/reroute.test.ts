@@ -218,7 +218,7 @@ describe("rerouteWorker", () => {
     expect(r.was).toBe(state);
   });
 
-  it("a running origin is stopped before the continuation starts and ends rerouted with fallThroughTo", async () => {
+  it("a running origin is stopped once the continuation started and ends rerouted with fallThroughTo", async () => {
     saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
     const order: string[] = [];
     await rerouteWorker("w1", "cloud", {
@@ -238,14 +238,14 @@ describe("rerouteWorker", () => {
         saveStatus(dir, o, new Date(), true);
       },
     });
-    expect(order).toEqual(["kill", "spawn"]);
+    expect(order).toEqual(["spawn", "kill"]);
     const st = loadStatus(dir, "w1")!;
     expect(st.rerouted).toBe("fakeB: reroute");
     expect(st.fallThroughTo).toBe("w2");
     expect(st.state).toBe("killed");
   });
 
-  it("a running origin that cannot be stopped gets no continuation", async () => {
+  it("a running origin that cannot be stopped is reported and stays visible for kill", async () => {
     saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
     let spawned = false;
     await expect(
@@ -256,8 +256,7 @@ describe("rerouteWorker", () => {
         spawn: () => { spawned = true; },
       })
     ).rejects.toThrow(/still running/);
-    expect(spawned).toBe(false);
-    expect(loadStatus(dir, "w1")!.rerouted).toBeUndefined();
+    expect(spawned).toBe(true); // the restart holds its slot first; the failed stop is reported, never silent
   });
 
   it("a priority change on a running worker never starts a fall-through", () => {
@@ -502,6 +501,45 @@ describe("operator goals travel to continuations", () => {
   it("no goals: the prompt is untouched", () => {
     saveStatus(dir, queued({ id: "N", state: "done" }));
     expect(carryGoals(dir, ["-p", "task"], ["N"])).toEqual(["-p", "task"]);
+  });
+});
+
+describe("an escalated child worker", () => {
+  it("restarts with its parent link (restart env/PAI_RERUN_OF resolves the parent) and a failed start never kills the origin", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running", parent: "p1", cwd: dir }));
+    const args: string[][] = [];
+    const envs: NodeJS.ProcessEnv[] = [];
+    const started = await rerouteWorker("w1", "cloud", {
+      logDir: dir,
+      announceMs: 0,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async () => [],
+      spawn: defaultSpawn(dir, (_bin, a, o) => {
+        args.push(a);
+        envs.push(o.env as NodeJS.ProcessEnv);
+        writeFileSync(String((o.env as NodeJS.ProcessEnv)[RERUN_ID_FILE_ENV]), "w2");
+        return process.pid;
+      }),
+    });
+    expect(started.provider).toBe("fakeB");
+    expect(args[0]).toContain("--spec");
+    expect(envs[0][RERUN_OF_ENV]).toBe("w1");
+    const { launchParent } = await import("./tree.js");
+    expect(launchParent(undefined, { [RERUN_OF_ENV]: "w1" }, dir)).toBe("p1");
+
+    saveStatus(dir, queued({ id: "w3", promptFile: join(dir, "spec.txt"), state: "running", parent: "p1" }));
+    const killed: string[] = [];
+    await expect(
+      rerouteWorker("w3", "cloud", {
+        logDir: dir,
+        announceMs: 0,
+        resolve: async () => ({ provider: "fakeB", description: "d" }),
+        kill: async (id) => { killed.push(id); return []; },
+        spawn: () => { throw new Error("the restart on fakeB did not start"); },
+      })
+    ).rejects.toThrow(/did not start/);
+    expect(killed).toEqual([]);
+    expect(loadStatus(dir, "w3")!.rerouted).toBeUndefined();
   });
 });
 
