@@ -392,6 +392,54 @@ describe("large tool-call arguments", () => {
     expect(out).toContain('"stop_reason":"max_tokens"');
   });
 
+  const events = (out: string): any[] => out.split(/\n\n/).map((m) => m.split("\n").find((l) => l.startsWith("data:"))).filter((l): l is string => !!l).map((l) => JSON.parse(l.slice(5)));
+  const readSchemas = () => anth.schemas(bodyFor("anthropic" as WireId));
+
+  it("anthropic stream: concatenated objects in one block become separate tool_use blocks, later blocks renumbered", async () => {
+    const ev = (type: string, o: object) => ({ type, ...o });
+    const raw = '{"file_path":"/a"} {"file_path":"/b"}';
+    const text = sse(
+      [
+        ev("message_start", { message: { id: "m", role: "assistant", content: [] } }),
+        ev("content_block_start", { index: 0, content_block: { type: "tool_use", id: "t1", name: "Read", input: {} } }),
+        ...(raw.match(/[\s\S]{1,5}/g) ?? []).map((f) => ev("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: f } })),
+        ev("content_block_stop", { index: 0 }),
+        ev("content_block_start", { index: 1, content_block: { type: "text", text: "" } }),
+        ev("content_block_stop", { index: 1 }),
+        ev("message_delta", { delta: { stop_reason: "tool_use" }, usage: { output_tokens: 9 } }),
+        ev("message_stop", {}),
+      ],
+      true
+    );
+    const out = events(await through(anth, readSchemas(), text, 7));
+    const starts = out.filter((e) => e.type === "content_block_start");
+    expect(starts.map((e) => [e.index, e.content_block.type])).toEqual([[0, "tool_use"], [1, "tool_use"], [2, "text"]]);
+    expect(starts[0].content_block.id).not.toBe(starts[1].content_block.id);
+    expect(starts[1].content_block.id).toMatch(/^toolu_/);
+    const inputs = out.filter((e) => e.delta?.type === "input_json_delta").map((e) => [e.index, JSON.parse(e.delta.partial_json)]);
+    expect(inputs).toEqual([[0, { file_path: "/a" }], [1, { file_path: "/b" }]]);
+    expect(out.filter((e) => e.type === "content_block_stop").map((e) => e.index)).toEqual([0, 1, 2]);
+    expect(out.find((e) => e.type === "message_delta").delta.stop_reason).toBe("tool_use");
+  });
+
+  it("anthropic JSON reply: concatenated objects become separate tool_use blocks", () => {
+    const reply = JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "t1", name: "Read", input: '{"file_path":"/a"}{"file_path":"/b"}' }] });
+    const j = JSON.parse(anth.rewriteJson(reply, readSchemas(), rulesFn, () => {}));
+    expect(j.content.map((c: any) => c.input)).toEqual([{ file_path: "/a" }, { file_path: "/b" }]);
+    expect(j.content[0].id).not.toBe(j.content[1].id);
+    expect(j.content.every((c: any) => c.type === "tool_use" && c.name === "Read")).toBe(true);
+  });
+
+  it("anthropic stream: truncated object with max_tokens keeps the output-limit note; invalid JSON with tool_use says not valid JSON", async () => {
+    const cut = await through(anth, aSchemas, aStream('{"file_path":"/a","content":"abc', "max_tokens", 9), 11);
+    expect(cut).toContain("output limit");
+    expect(cut).not.toContain('"type":"tool_use"');
+    const bad = await through(anth, aSchemas, aStream('{"file_path":"/a"} {"file_', "tool_use", 9), 11);
+    expect(bad).toContain("not valid JSON");
+    expect(bad).not.toContain("output limit");
+    expect(bad).not.toContain('"type":"tool_use"');
+  });
+
   it("chat stream: 30 KB Write identical; a length cut gives a note", async () => {
     const a = adapterFor("POST", "/v1/chat/completions")!;
     const schemas = a.schemas(bodyFor("chat"));
