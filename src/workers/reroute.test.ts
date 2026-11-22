@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultSpawn, endContinuedOrigins, escalationReason, escalationHeldNote, providerPinned, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { getProfile, lastProfileWriteLogError, profilesPath, setProfileLedger, updateProfile, nextClockTime } from "./session-profile-store.js";
-import { resolveWorkers } from "./session-profile.js";
+import { namesTarget, resolveWorkers } from "./session-profile.js";
 import { resolveTarget, type TargetDeps } from "./target.js";
 import { sessionProfileSet, type SessionProfileDeps } from "../daemon-mcp/tools/session-profile.js";
 import { parseLedger } from "./ledger.js";
@@ -77,6 +77,27 @@ describe("session profile workers pin writers", () => {
     expect(t.provider).toBe("anthropic"); // cloud resolves with no loopback server up
     expect(getProfile("Sess", store)).toEqual(before);
     expect(profileLedgerWrites(store).filter((l) => l.fields.session === "Sess")).toHaveLength(1); // only the setup's own set
+  });
+
+  it("an explicit --cloud with a profile provider set names its target: the profile is not asked", () => {
+    const store = otherStore();
+    updateProfile("Sess", { workers: { provider: "hy4-flash" } }, store);
+    expect(getProfile("Sess", store)!.workers?.provider).toBe("hy4-flash");
+    expect(namesTarget({ cloud: true })).toBe(true);
+    expect(namesTarget({ localFlag: true })).toBe(true);
+    expect(namesTarget({ providerFlag: "x" })).toBe(true);
+    expect(namesTarget({ whereFlag: "cloud" })).toBe(true);
+    expect(namesTarget({})).toBe(false); // a run without flags still follows the profile
+  });
+
+  it("an explicit --cloud, profile set while the run is queued: the decision was made at start and stays cloud", async () => {
+    const store = otherStore();
+    const opts = { cloud: true };
+    const decide = () => (namesTarget(opts) ? "cloud" : (getProfile("Sess", store)?.workers?.provider ?? "global"));
+    const atStart = decide(); // no profile provider yet
+    updateProfile("Sess", { workers: { provider: "hy4-flash" } }, store); // the profile changes while queued
+    expect(atStart).toBe("cloud");
+    expect(decide()).toBe("cloud");
   });
 
   it("reroute --where cloud leaves the profile unchanged and logs no write", async () => {
