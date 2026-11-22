@@ -703,3 +703,32 @@ describe("ps/watch show the model that served the last turn", () => {
     expect(out).toEqual(["STALL w1 [hy4-flash] turns 24 unchanged for 200s"]);
   });
 });
+
+// 2026-11-22: a session queued behind max_parallel 1 stayed queued after max_parallel was cleared, and ps said "0 running".
+describe("session max_parallel gate", () => {
+  const sessGate = (id: string, o: { cap: number | undefined; capOf?: () => number | undefined; load: () => WorkerStatus[] }) =>
+    capacityGate({
+      logDir: dir, self: { id, provider: "cloud" }, cap: o.cap, capOf: o.capOf, config: {}, isAlive: () => true, load: o.load, now: () => QNOW,
+      sleep: () => new Promise((x) => setTimeout(x, 5)),
+      scope: { key: "session~PAI", label: "session PAI", holds: (s) => s.sessionKey === "PAI" },
+    });
+  const runner = (id: string, provider: string): WorkerStatus => ({ id, label: `task ${id}`, provider, model: "m", state: "running", started: "2026-11-22 07:49:19", updated: "", cwd: "/x", pid: process.pid, sessionKey: "PAI" }) as WorkerStatus;
+  const race = (g: Promise<unknown>) => Promise.race([g.then(() => "admitted"), new Promise((x) => setTimeout(() => x("waiting"), 150))]);
+
+  it("a session worker on a newly added local provider counts as running (holds the cap)", async () => {
+    const g = sessGate("q1", { cap: 1, load: () => [runner("r1", "inkling-locals")] });
+    expect(await race(g)).toBe("waiting");
+  });
+
+  it("clearing max_parallel admits the queued run on the next tick", async () => {
+    let cap: number | undefined = 1;
+    const g = sessGate("q2", { cap: 1, capOf: () => cap, load: () => [runner("r2", "inkling-locals")] });
+    expect(await race(g)).toBe("waiting");
+    cap = undefined;
+    expect(await race(g)).toBe("admitted");
+  });
+
+  it("0 running with cap 1 admits", async () => {
+    expect(await race(sessGate("q3", { cap: 1, load: () => [] }))).toBe("admitted");
+  });
+});

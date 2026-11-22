@@ -643,9 +643,11 @@ export function renderTable(
     }
     // per session on the queued providers: who runs, who waits (the fair share the scheduler works from)
     const provs = new Set(queued.map((s) => s.provider));
+    // a session-capped waiter counts its session's workers on every provider (the cap is per session, not per provider)
+    const capped = new Set(queued.filter((s) => s.capacity?.provider.startsWith("session ") && s.sessionKey).map((s) => s.sessionKey));
     const per = new Map<string, { name: string; run: number; wait: number }>();
     for (const s of statuses) {
-      if (!provs.has(s.provider) || (s.state !== "running" && s.state !== "queued")) continue;
+      if ((!provs.has(s.provider) && !(s.sessionKey && capped.has(s.sessionKey))) || (s.state !== "running" && s.state !== "queued")) continue;
       const k = sessionOf(s);
       const e = per.get(k) ?? { name: s.sessionKey || s.session?.name || k.slice(0, 8), run: 0, wait: 0 };
       if (s.state === "queued") e.wait++;
