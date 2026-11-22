@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loopStopResult } from "./finalise.js";
 import { createResultFold, finalResultEvent, type StreamEventLike } from "./event-fold.js";
 
 // The resumed worker's stream (20261119-045451-23508): the replayed task notification and its num_turns-0 result
@@ -75,5 +79,34 @@ describe("finalResultEvent", () => {
   });
   it("keeps a replayed empty result when the transcript truly ends on it (nothing ran after it)", () => {
     expect(finalResultEvent(lines([EV.init, EV.replayedResult]))).toEqual(EV.replayedResult);
+  });
+});
+
+describe("loopStopResult usage", () => {
+  const setup = (events: object[], router: object[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "loopstop-"));
+    writeFileSync(join(dir, "w1.jsonl"), events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const log = join(dir, "router.jsonl");
+    writeFileSync(log, router.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    return { dir, log };
+  };
+  const turn = (id: string, out: number) => ({ type: "assistant", session_id: "s1", message: { id, model: "m", usage: { input_tokens: 100, output_tokens: out, cache_read_input_tokens: 10 } } });
+
+  it("sums output and cache usage over the assistant turns", () => {
+    const { dir, log } = setup([turn("a", 7), turn("b", 5), turn("c", 3)], []);
+    const u = loopStopResult(dir, "w1", "x", 3, 1, log).usage;
+    expect(u).toMatchObject({ input_tokens: 300, output_tokens: 15, cache_read_input_tokens: 30 });
+  });
+
+  it("takes output from the router ledger when the streamed turns carry output 0", () => {
+    const { dir, log } = setup(
+      [turn("a", 0), turn("b", 0)],
+      [
+        { session_id: "s1", status: 200, input_tokens: 1, output_tokens: 60, cache_read_input_tokens: 4, cache_creation_input_tokens: 9 },
+        { session_id: "s1", status: 200, input_tokens: 1, output_tokens: 40, cache_read_input_tokens: 5, cache_creation_input_tokens: 0 },
+        { session_id: "other", status: 200, input_tokens: 1, output_tokens: 999 },
+      ]
+    );
+    expect(loopStopResult(dir, "w1", "x", 2, 1, log).usage).toEqual({ input_tokens: 2, output_tokens: 100, cache_read_input_tokens: 9, cache_creation_input_tokens: 9 });
   });
 });
