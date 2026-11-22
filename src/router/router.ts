@@ -1003,9 +1003,10 @@ export function routerHandler(
         res.on("close", () => q.destroy());
         q.end(b);
       };
-      // A provider whose engine leaves tool calls as text: the router parses them (tool-args.ts).
+      // A provider whose engine leaves tool calls as text: the router parses them (tool-args.ts). On the messages wire every
+      // local provider is parsed first (no per-provider flag needed); the one-shot retry only follows when that fails.
       const parseOn =
-        target.kind === "provider" && !isCount && isLocal(up.url) && (options?.toolParsing ? options.toolParsing(prov) : target.provider.toolParsing === "router");
+        target.kind === "provider" && !isCount && isLocal(up.url) && (retryOn || (options?.toolParsing ? options.toolParsing(prov) : target.provider.toolParsing === "router"));
       const argsFix = (info: { tool: string; rules: string[] }): void =>
         (options?.onToolArgsFix ?? defaultToolArgsFix(log))({ ...info, model: target.model, provider: prov, session, wire: wire!.id });
       const rulesNow = (): readonly import("./tool-call-rules.js").Rule[] =>
