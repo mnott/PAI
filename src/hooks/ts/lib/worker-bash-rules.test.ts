@@ -5,6 +5,7 @@ import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
+import { decideTestGovernance } from "./test-governance.js";
 
 describe("nodeOnTypeScriptReason", () => {
   it("should deny node with .ts file", () => {
@@ -652,5 +653,24 @@ describe("worker guard local tracked-file delete and the prune-plan exception", 
   });
   it("an anthropic (non-local) worker is never touched by this rule", () => {
     expect(denied("git rm tests/KEPT.md", { PAI_WORKER: "1", PAI_WORKER_PROVIDER: "anthropic", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" })).toBe(false);
+  });
+});
+
+// the new-test-file denial names the existing test files to extend (same directory first, then parents)
+describe("test-governance denial names existing test files to extend", () => {
+  it("names the nearest existing *.test.ts files in the denial reason", () => {
+    // a bare /tmp base: tmpdir() here is the worker's pai-scratch dir, which the guard treats as scratch
+    const base = mkdtempSync(join("/tmp", "gov-"));
+    const repo = join(base, "repo");
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src", "a.test.ts"), "test(1);\n");
+    writeFileSync(join(repo, "src", "b.test.ts"), "test(2);\n");
+    execSync(`git -C ${repo} init -q`);
+    const d = decideTestGovernance({ tool: "Write", filePath: join(repo, "src", "new.test.ts"), cwd: repo });
+    expect(d.decision).toBe("deny");
+    const reason = (d as { reason?: string }).reason ?? "";
+    expect(reason).toContain("Extend one of:");
+    expect(reason).toContain("a.test.ts");
+    expect(reason).toContain("b.test.ts");
   });
 });

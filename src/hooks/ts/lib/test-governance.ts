@@ -34,9 +34,9 @@
  * hook entry (pre-tool-use/test-file-governance.ts) only does stdin I/O.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { ensureScratchExcluded, isGitRepo } from "../../../workers/worktree.js";
 import { isTestPath as auditIsTestPath } from "../../../testgov/audit.js";
 import { parseKept } from "../../../testgov/kept.js";
@@ -52,6 +52,38 @@ export const KEPT_LEDGER = join("tests", "KEPT.md");
 const DENY_TEXT =
   `No new test files (operator rule). One-time checks go under ${SCRATCH_DIR}/ (never committed, removed when the worker lands); ` +
   `a kept test needs an entry in ${KEPT_LEDGER} with its evidence.`;
+
+/**
+ * Existing *.test.ts files closest to the target: same directory first, then
+ * parent directories, up to `limit`. Paths are relative to `cwd` when they
+ * stay inside it (absolute otherwise).
+ */
+function nearestTestFiles(abs: string, cwd: string, limit = 3): string[] {
+  const found: string[] = [];
+  let dir = dirname(abs);
+  for (;;) {
+    try {
+      for (const f of readdirSync(dir).filter((f) => f.endsWith(".test.ts")).sort()) {
+        const full = join(dir, f);
+        const rel = relative(cwd, full);
+        found.push(rel.startsWith("..") ? full : rel);
+        if (found.length >= limit) return found;
+      }
+    } catch {
+      // unreadable directory: keep walking up
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return found;
+    dir = parent;
+  }
+}
+
+/** The denial reason: the base text plus the existing test files to extend. */
+function denyText(target: string, cwd: string): string {
+  const files = nearestTestFiles(target, cwd);
+  if (!files.length) return DENY_TEXT;
+  return `${DENY_TEXT} Extend one of: ${files.join(", ")}`;
+}
 
 /** Test-file shapes (names, tests/ dirs, UI targets, snapshot baselines): the audit's classification. */
 export function isTestPath(p: string): boolean {
@@ -251,13 +283,13 @@ function interpreterScriptTexts(command: string, readFile: (path: string) => str
 /** Why this Bash command creates a new test file outside scratch, or null. */
 export function bashCreatesNewTest(command: string, cwd: string): string | null {
   const vars = simpleAssignments(command);
-  const consider = (raw: string, at: number): boolean => {
+  const consider = (raw: string, at: number): string | null => {
     const t = resolveVars(raw.replace(/^["']|["']$/g, ""), vars);
-    if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return false;
+    if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return null;
     const here = cwdAfterCds(command.slice(0, at), cwd);
     const base = t.startsWith("/") || t.startsWith("$") || t.startsWith("~") ? t : join(here, t);
-    if (!looksLikeTest(base)) return false;
-    return !promoted(base, here); // a KEPT.md-promoted path is not an unkept new test
+    if (!looksLikeTest(base)) return null;
+    return !promoted(base, here) ? base : null; // a KEPT.md-promoted path is not an unkept new test
   };
   // heredoc bodies are data, not commands: a `cat > f <<EOF` start line writes f
   let pos = 0;
@@ -265,7 +297,8 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
     const h = line.match(HEREDOC_START);
     if (h && HEREDOC_SINK.test(line)) {
       const target = /(?<![>&\d])>>?\s*([^\s;&|)]+)/.exec(line)?.[1] ?? /\btee\s+(?:-\w+\s+)*([^\s;&|<>-])/.exec(line)?.[1] ?? /(?<![>&\d])>\s*([^\s;&|)]+)/.exec(line)?.[1];
-      if (target && consider(target, pos)) return DENY_TEXT;
+      const t = target ? consider(target, pos) : null;
+      if (t) return denyText(t, cwd);
     }
     pos += line.length + 1;
   }
@@ -275,8 +308,8 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
   // raw text, so blank `<>` inside quoted scripts (offsets preserved) before
   // looking for targets.
   const quotable = scan.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, (q) => q.replace(/[<>]/g, " "));
-  for (const m of quotable.matchAll(ANY_REDIRECT)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
-  for (const m of quotable.matchAll(ANY_TEE)) if (consider(m[1], m.index ?? 0)) return DENY_TEXT;
+  for (const m of quotable.matchAll(ANY_REDIRECT)) { const t = consider(m[1], m.index ?? 0); if (t) return denyText(t, cwd); }
+  for (const m of quotable.matchAll(ANY_TEE)) { const t = consider(m[1], m.index ?? 0); if (t) return denyText(t, cwd); }
   for (const seg of parseCommand(scan)) {
     const words = [...seg.words];
     // an in-place editor rewrites its file arguments: existing files are edits
@@ -286,9 +319,9 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
       // the file arguments sit after the interpreter word: resolve them with the
       // segment's own cd state (`cd test; sed -i '' f` edits test/f)
       const at = scan.indexOf(words[0]) + words[0].length;
-      for (const t of inPlaceEditTargets(words)) if (consider(t, at)) return DENY_TEXT;
+      for (const t of inPlaceEditTargets(words)) { const r = consider(t, at); if (r) return denyText(r, cwd); }
     }
-    for (const t of toolWriteTargets(words)) if (consider(t, 0)) return DENY_TEXT;
+    for (const t of toolWriteTargets(words)) { const r = consider(t, 0); if (r) return denyText(r, cwd); }
   }
   // an interpreter script (inline -c/-e, or a /tmp script) that writes repo code:
   // it counts as a new-test write when the code names a test path outside scratch.
@@ -315,7 +348,7 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
       for (const s of quotedLiterals(text)) {
         if (!(s.includes("/") || /\.\w{1,5}$/.test(s))) continue;
         if (looksLikeCode(s)) continue;
-        for (const at of interpAt.length ? interpAt : [0]) if (consider(s, at)) return DENY_TEXT;
+        for (const at of interpAt.length ? interpAt : [0]) { const r = consider(s, at); if (r) return denyText(r, cwd); }
       }
     }
   }
@@ -376,7 +409,7 @@ export function decideTestGovernance(input: TestGovernanceInput): TestGovernance
   if (isScratchPath(abs) || isTmpPath(abs) || outsideGovernedRepos(abs)) return { decision: "allow" };
   if (existsSync(abs)) return { decision: "allow" }; // an edit of an existing test file
   if (promoted(abs, input.cwd)) return { decision: "allow" };
-  return { decision: "deny", reason: DENY_TEXT };
+  return { decision: "deny", reason: denyText(abs, input.cwd) };
 }
 
 /**
