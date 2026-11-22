@@ -12,6 +12,7 @@
  * a value no rule matches stays byte for byte, file content included.
  */
 
+import { randomBytes } from "node:crypto";
 import { Transform, type TransformCallback } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { correctToolName } from "./tool-case.js";
@@ -367,8 +368,28 @@ export function parseToolCallText(text: string, schemas: ToolSchemas, rules: rea
 // SSE and JSON wiring
 
 /** Text the client sees in place of a tool call whose arguments were cut off (output limit) or are not JSON. */
-export const cutOffNote = (tool: string): string =>
-  `[The ${tool} call was cut off before its arguments were complete (output limit reached). Nothing was executed. Write large files in several smaller parts.]`;
+export const cutOffNote = (tool: string, stopReason?: string): string =>
+  stopReason === undefined || stopReason === "max_tokens" || stopReason === "length"
+    ? `[The ${tool} call was cut off before its arguments were complete (output limit reached). Nothing was executed. Write large files in several smaller parts.]`
+    : `[The ${tool} call was dropped: its arguments were not valid JSON. Nothing was executed. Send the call again with well-formed arguments.]`;
+
+const newToolId = (): string => `toolu_${randomBytes(12).toString("hex")}`;
+
+/** The top-level JSON objects of `s` when it is 2+ of them back to back (whitespace between), else null. */
+export function splitJsonObjects(s: string): string[] | null {
+  const out: string[] = [];
+  let i = 0;
+  for (;;) {
+    while (i < s.length && /\s/.test(s[i])) i++;
+    if (i >= s.length) break;
+    if (s[i] !== "{") return null;
+    const o = jsonObjectAt(s, i);
+    if (!o || !o.value || typeof o.value !== "object" || Array.isArray(o.value)) return null;
+    out.push(s.slice(i, o.end));
+    i = o.end;
+  }
+  return out.length >= 2 ? out : null;
+}
 
 /** True when a tool call's assembled arguments are not a complete JSON value (an empty string means no arguments). */
 export function argsInvalid(json: string): boolean {
@@ -400,13 +421,27 @@ export function repairJson(json: string, tool: string, schemas: ToolSchemas, rul
 
 /** Rewrites tool_use inputs of a non-streaming JSON reply; unchanged text when nothing needed repair. */
 export function repairJsonReplyArgs(text: string, schemas: ToolSchemas, rules: () => readonly Rule[], onFix: ToolArgsFix): string {
-  if (!schemas.size || !text.includes('"tool_use"')) return text;
+  if (!text.includes('"tool_use"')) return text;
   try {
-    const j = JSON.parse(text) as { content?: unknown };
+    const j = JSON.parse(text) as { content?: unknown; stop_reason?: unknown };
     if (!Array.isArray(j.content)) return text;
     let changed = false;
-    for (const c of j.content as Array<{ type?: unknown; name?: unknown; input?: unknown }>) {
-      if (c?.type !== "tool_use" || typeof c.name !== "string" || !c.input || typeof c.input !== "object") continue;
+    const out: unknown[] = [];
+    for (const c of j.content as Array<{ type?: unknown; id?: unknown; name?: unknown; input?: unknown }>) {
+      if (c?.type === "tool_use" && typeof c.name === "string" && typeof c.input === "string" && c.input) {
+        // raw argument text the engine could not parse: concatenated objects become separate calls
+        const parts = splitJsonObjects(c.input);
+        if (parts) {
+          parts.forEach((p, k) => out.push({ ...c, id: k === 0 ? c.id : newToolId(), input: JSON.parse(repairJson(p, c.name as string, schemas, rules, onFix)) }));
+          changed = true;
+        } else if (argsInvalid(c.input)) {
+          out.push({ type: "text", text: cutOffNote(c.name, String(j.stop_reason ?? "")) });
+          changed = true;
+        } else out.push({ ...c, input: JSON.parse(c.input) });
+        continue;
+      }
+      out.push(c);
+      if (!schemas.size || c?.type !== "tool_use" || typeof c.name !== "string" || !c.input || typeof c.input !== "object") continue;
       const before = JSON.stringify(c.input);
       const after = repairJson(before, c.name, schemas, rules, onFix);
       if (after !== before) {
@@ -414,6 +449,7 @@ export function repairJsonReplyArgs(text: string, schemas: ToolSchemas, rules: (
         changed = true;
       }
     }
+    if (changed) j.content = out;
     return changed ? JSON.stringify(j) : text;
   } catch {
     return text;
@@ -431,6 +467,10 @@ export class ToolArgsSse extends Transform {
   private readonly calls = new Map<number, { name: string; json: string; start: string }>();
   private keptTools = 0;
   private droppedTools = 0;
+  /** extra blocks emitted so far by splitting: every later index moves up by this */
+  private shift = 0;
+  /** a dropped call's note, held until the stop_reason (message_delta) is known */
+  private pending: { idx: number; name: string; stop: string } | null = null;
 
   constructor(
     private readonly schemas: ToolSchemas,
@@ -440,52 +480,106 @@ export class ToolArgsSse extends Transform {
     super();
   }
 
+  private noteBlock(idx: number, name: string, stopReason?: string): string {
+    const start = { type: "content_block_start", index: idx, content_block: { type: "text", text: "" } };
+    const delta = { type: "content_block_delta", index: idx, delta: { type: "text_delta", text: cutOffNote(name, stopReason) } };
+    return `event: content_block_start\ndata: ${JSON.stringify(start)}\n\nevent: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`;
+  }
+
+  private static withData(msg: string, ev: unknown): string {
+    return msg.split("\n").map((l) => (l.startsWith("data:") ? `data: ${JSON.stringify(ev)}` : l)).join("\n");
+  }
+
   /** Output for one complete SSE message (without its blank-line separator); null drops it. */
   private message(msg: string): string | null {
-    if (!msg.includes('"tool_use"') && !this.calls.size && !msg.includes('"message_delta"')) return msg;
+    if (!msg.includes('"tool_use"') && !this.calls.size && !msg.includes('"message_delta"') && !this.shift && !this.pending) return msg;
     const line = msg.split("\n").find((l) => l.startsWith("data:"));
     if (!line) return msg;
     try {
       const ev = JSON.parse(line.slice(5)) as {
         type?: unknown;
         index?: number;
-        content_block?: { type?: unknown; name?: unknown; input?: unknown };
-        delta?: { type?: unknown; partial_json?: unknown };
+        content_block?: { type?: unknown; id?: unknown; name?: unknown; input?: unknown };
+        delta?: { type?: unknown; partial_json?: unknown; stop_reason?: unknown };
       };
-      const idx = ev.index as number;
-      if (ev.type === "content_block_start" && ev.content_block?.type === "tool_use" && typeof ev.content_block.name === "string") {
-        const init = ev.content_block.input && Object.keys(ev.content_block.input as object).length ? JSON.stringify(ev.content_block.input) : "";
-        // the start is held with the arguments: a call that turns out cut off is replaced, not announced
-        this.calls.set(idx, { name: ev.content_block.name, json: init, start: msg });
-        return null;
+      let pre = "";
+      if (this.pending) {
+        const pd = this.pending;
+        this.pending = null;
+        const isDelta = ev.type === "message_delta";
+        pre = this.noteBlock(pd.idx, pd.name, isDelta ? String(ev.delta?.stop_reason ?? "") : "") + pd.stop + "\n\n";
       }
-      if (ev.type === "message_delta" && this.droppedTools && !this.keptTools && (ev as { delta?: { stop_reason?: unknown } }).delta?.stop_reason === "tool_use") {
-        (ev as { delta: { stop_reason: string } }).delta.stop_reason = "end_turn";
-        return msg.split("\n").map((l) => (l.startsWith("data:") ? `data: ${JSON.stringify(ev)}` : l)).join("\n");
-      }
-      const call = this.calls.get(idx);
-      if (!call) return msg;
-      if (ev.type === "content_block_delta" && ev.delta?.type === "input_json_delta") {
-        call.json += String(ev.delta.partial_json ?? "");
-        return null;
-      }
-      if (ev.type === "content_block_stop") {
-        this.calls.delete(idx);
-        if (argsInvalid(call.json)) {
-          // cut off mid-arguments (max_tokens): never forward half a JSON value, say so as text
-          this.droppedTools++;
-          const start = { type: "content_block_start", index: idx, content_block: { type: "text", text: "" } };
-          const delta = { type: "content_block_delta", index: idx, delta: { type: "text_delta", text: cutOffNote(call.name) } };
-          return `event: content_block_start\ndata: ${JSON.stringify(start)}\n\nevent: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n${msg}`;
-        }
-        this.keptTools++;
-        if (!call.json) return `${call.start}\n\n${msg}`;
-        const json = repairJson(call.json, call.name, this.schemas, this.rules, this.onFix);
-        const delta = { type: "content_block_delta", index: idx, delta: { type: "input_json_delta", partial_json: json } };
-        return `${call.start}\n\n` + `event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n${msg}`;
-      }
+      const out = this.event(msg, ev);
+      return out === null ? (pre ? pre.replace(/\n\n$/, "") : null) : pre + out;
     } catch {
       /* not JSON: pass through */
+    }
+    return msg;
+  }
+
+  private event(
+    msg: string,
+    ev: {
+      type?: unknown;
+      index?: number;
+      content_block?: { type?: unknown; id?: unknown; name?: unknown; input?: unknown };
+      delta?: { type?: unknown; partial_json?: unknown; stop_reason?: unknown };
+    }
+  ): string | null {
+    const rawIdx = ev.index as number;
+    const idx = rawIdx + this.shift;
+    if (ev.type === "content_block_start" && ev.content_block?.type === "tool_use" && typeof ev.content_block.name === "string") {
+      const init = ev.content_block.input && Object.keys(ev.content_block.input as object).length ? JSON.stringify(ev.content_block.input) : "";
+      // the start is held with the arguments: a call that turns out cut off is replaced, not announced
+      this.calls.set(rawIdx, { name: ev.content_block.name, json: init, start: msg });
+      return null;
+    }
+    if (ev.type === "message_delta" && this.droppedTools && !this.keptTools && ev.delta?.stop_reason === "tool_use") {
+      ev.delta.stop_reason = "end_turn";
+      return ToolArgsSse.withData(msg, ev);
+    }
+    const call = this.calls.get(rawIdx);
+    if (!call) {
+      if (!this.shift || typeof ev.index !== "number") return msg;
+      return ToolArgsSse.withData(msg, { ...ev, index: idx });
+    }
+    if (ev.type === "content_block_delta" && ev.delta?.type === "input_json_delta") {
+      call.json += String(ev.delta.partial_json ?? "");
+      return null;
+    }
+    if (ev.type === "content_block_stop") {
+      this.calls.delete(rawIdx);
+      const stopMsg = `event: content_block_stop\ndata: ${JSON.stringify({ ...ev, index: idx })}`;
+      const parts = splitJsonObjects(call.json);
+      if (parts) {
+        // several complete objects in one block (parallel calls): one tool_use block per object
+        const startEv = JSON.parse((call.start.split("\n").find((l) => l.startsWith("data:")) as string).slice(5)) as { content_block: Record<string, unknown> };
+        let out = "";
+        parts.forEach((p, k) => {
+          const bi = idx + k;
+          const cb = { ...startEv.content_block, id: k === 0 ? startEv.content_block.id : newToolId(), input: {} };
+          const json = repairJson(p, call.name, this.schemas, this.rules, this.onFix);
+          const d = { type: "content_block_delta", index: bi, delta: { type: "input_json_delta", partial_json: json } };
+          out += `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: bi, content_block: cb })}\n\n`;
+          out += `event: content_block_delta\ndata: ${JSON.stringify(d)}\n\n`;
+          out += `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: bi })}` + (k < parts.length - 1 ? "\n\n" : "");
+        });
+        this.keptTools += parts.length;
+        this.shift += parts.length - 1;
+        return out;
+      }
+      if (argsInvalid(call.json)) {
+        // cut off mid-arguments or not JSON: never forward half a JSON value, say so as text once stop_reason is known
+        this.droppedTools++;
+        this.pending = { idx, name: call.name, stop: stopMsg };
+        return null;
+      }
+      this.keptTools++;
+      const start = this.shift ? ToolArgsSse.withData(call.start, { ...(JSON.parse((call.start.split("\n").find((l) => l.startsWith("data:")) as string).slice(5)) as object), index: idx }) : call.start;
+      if (!call.json) return `${start}\n\n${stopMsg}`;
+      const json = repairJson(call.json, call.name, this.schemas, this.rules, this.onFix);
+      const delta = { type: "content_block_delta", index: idx, delta: { type: "input_json_delta", partial_json: json } };
+      return `${start}\n\n` + `event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n${stopMsg}`;
     }
     return msg;
   }
@@ -517,6 +611,11 @@ export class ToolArgsSse extends Transform {
       this.buf = "";
       const o = this.message(tail);
       if (o !== null) this.push(o);
+    }
+    if (this.pending) {
+      const pd = this.pending;
+      this.pending = null;
+      this.push(this.noteBlock(pd.idx, pd.name, "") + pd.stop + "\n\n");
     }
     cb();
   }
