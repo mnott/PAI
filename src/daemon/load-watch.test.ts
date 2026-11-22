@@ -820,3 +820,121 @@ describe("the daemon's scheduled index pass and the marker", () => {
     expect(await memoryRunRefusal(deps)).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Exclusive runtime groups (models.runtimes.<name>.exclusive) — runtimes of
+// one group never run together: `pai models start` refuses while a peer is up,
+// the daemon's autostart starts nothing behind an up peer, and `switch` parks
+// the peer's workers, swaps the runtimes and resumes exactly the parked ones.
+// ---------------------------------------------------------------------------
+
+describe("exclusive runtime groups", () => {
+  const exCommands: Record<string, { start: string; stop: string; ready: string; exclusive?: string }> = {
+    "gyro-l": { start: "start gyro-l", stop: "stop gyro-l", ready: "http://127.0.0.1:8035/v1/models", exclusive: "heavy" },
+    "hy4-flash": { start: "start hy4-flash", stop: "stop hy4-flash", ready: "http://127.0.0.1:8036/v1/models", exclusive: "heavy" },
+    ollama: { start: "ollama serve", stop: "pkill ollama", ready: "http://127.0.0.1:11434/api/tags" },
+  };
+
+  const exHome = mkdtempSync(join(tmpdir(), "exgroup-"));
+  afterAll(() => rmSync(exHome, { recursive: true, force: true }));
+
+  /** Fake runtime ops over an `up` set: start/stop flip it, the ready URL reads it; no sleeps. */
+  const exOps = (up: Set<string>, calls: string[]) => ({
+    runShell: async (cmd: string) => {
+      calls.push(cmd);
+      const m = /stop (\S+)/.exec(cmd);
+      if (m) up.delete(m[1]!);
+      return { code: 0 };
+    },
+    spawnDetached: (cmd: string) => {
+      calls.push(cmd);
+      const m = /start (\S+)/.exec(cmd);
+      if (m) up.add(m[1]!);
+      return { exit: new Promise<{ code: number | null }>(() => undefined) };
+    },
+    getUrl: async (url: string) => {
+      const r = Object.keys(exCommands).find((n) => exCommands[n]!.ready === url);
+      return r !== undefined && up.has(r);
+    },
+    runCmd: async () => 1,
+    now: () => 0,
+    sleep: async () => undefined,
+  });
+
+  type ActionDepsArg = Parameters<typeof import("../router/cockpit-actions.js").runtimeStartStop>[2];
+  const exDeps = (up: Set<string>, calls: string[], over: Record<string, unknown> = {}): ActionDepsArg =>
+    ({
+      home: exHome,
+      ledger: join(exHome, "ledger.log"),
+      runtimeCommands: exCommands,
+      runtimeOps: exOps(up, calls),
+      workers: { logDir: exHome, providers: {} },
+      ...over,
+    }) as unknown as ActionDepsArg;
+
+  it("start is refused while a group peer is up; the message names the peer and the group; no start command ran; a runtime outside the group still starts", async () => {
+    const { runtimeStartStop } = await import("../router/cockpit-actions.js");
+    const up = new Set(["gyro-l"]);
+    const calls: string[] = [];
+    const r = await runtimeStartStop("hy4-flash", "start", exDeps(up, calls));
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("gyro-l");
+    expect(r.message).toContain("exclusive group heavy");
+    expect(calls).toEqual([]); // nothing ran at all
+    expect(up.has("hy4-flash")).toBe(false);
+    // a runtime outside the group is unaffected
+    const o = await runtimeStartStop("ollama", "start", exDeps(up, calls));
+    expect(o.ok).toBe(true);
+    expect(calls).toEqual(["ollama serve"]);
+  });
+
+  it("autostart starts nothing behind an up peer: no actions, no start, exactly one exclusive-group log line over two ticks", async () => {
+    const cfg = runtimeAutostartConfig({ "hy4-flash": { start: "start hy4-flash", ready: exCommands["hy4-flash"]!.ready, autostart: true, exclusive: "heavy" } }, []);
+    const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
+    const states = freshAutostartStates();
+    const d = autostartDeps(log, { exclusivePeerUp: async () => "gyro-l" });
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, states, d)).toEqual([]);
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, states, d)).toEqual([]);
+    expect(log.starts).toEqual([]);
+    expect(log.lines.filter((l) => l.includes("exclusive group"))).toHaveLength(1);
+    expect(log.lines.some((l) => l.includes("gyro-l") && l.includes("heavy"))).toBe(true);
+  });
+
+  it("switch parks the peer's workers, stops the peer then starts the target; a switch back resumes exactly those and parks the target's own", async () => {
+    const { runtimeSwitch } = await import("../router/cockpit-actions.js");
+    const { readSwitchParked } = await import("../workers/model-runtimes.js");
+    const up = new Set(["gyro-l"]);
+    const calls: string[] = [];
+    const paused: string[] = [];
+    const resumed: string[] = [];
+    const workersOn = (rt: string) =>
+      rt === "gyro-l" ? [{ id: "w1", model: "qwen-gyro" }, { id: "w2", model: "qwen-gyro" }] : rt === "hy4-flash" ? [{ id: "h1", model: "hy4" }] : [];
+    const deps = exDeps(up, calls, {
+      workersOn,
+      runtimeInflight: () => 0,
+      pauseWorker: (id: string) => {
+        paused.push(id);
+        return true;
+      },
+      unparkWorker: (id: string) => {
+        resumed.push(id);
+        return true;
+      },
+    });
+    const r1 = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined });
+    expect(r1.ok).toBe(true);
+    expect(paused).toEqual(["w1", "w2"]); // both gyro-l workers parked through the seam
+    expect(calls).toEqual(["stop gyro-l", "start hy4-flash"]); // stop the peer first, then start the target
+    expect(resumed).toEqual([]);
+    expect(r1.message).toContain("parked: w1 (qwen-gyro on gyro-l), w2 (qwen-gyro on gyro-l)"); // the message lists them with their model
+    expect(readSwitchParked(exHome)).toEqual({ "gyro-l": ["w1", "w2"] });
+    // switch back: hy4-flash stops, gyro-l starts, exactly the two parked workers resume, hy4's own worker parks
+    const r2 = await runtimeSwitch("gyro-l", deps, { sleep: async () => undefined });
+    expect(r2.ok).toBe(true);
+    expect(calls).toEqual(["stop gyro-l", "start hy4-flash", "stop hy4-flash", "start gyro-l"]);
+    expect(resumed).toEqual(["w1", "w2"]);
+    expect(paused).toEqual(["w1", "w2", "h1"]);
+    expect(r2.message).toContain("resumed: w1, w2");
+    expect(readSwitchParked(exHome)).toEqual({ "hy4-flash": ["h1"] });
+  });
+});
