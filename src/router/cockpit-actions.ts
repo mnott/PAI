@@ -41,6 +41,7 @@ import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
 import type { JobRunProgress } from "../memory/job-progress.js";
 import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
 import { cockpitLayout } from "./cockpit-layout.js";
+import { connect as netConnect } from "node:net";
 import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, exclusivePeers, exclusiveRefusalText, readSwitchParked, writeSwitchParked, markRuntimeStopped, clearRuntimeStopped, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
@@ -428,13 +429,29 @@ function providerInflight(runtime: string): number {
 }
 
 export const SWITCH_WAIT_MS = 120_000;
+export const SWITCH_DOWN_WAIT_MS = 60_000;
+
+/** Does anything listen on the port of a ready URL (fresh TCP connect, no cache). Non-URL readies have no port: false. */
+export function portListening(ready: string | undefined): Promise<boolean> {
+  if (!ready || !readyIsUrl(ready)) return Promise.resolve(false);
+  let port = 0;
+  let host = "127.0.0.1";
+  try { const u = new URL(ready); port = Number(u.port) || (u.protocol === "https:" ? 443 : 80); host = u.hostname; } catch { return Promise.resolve(false); }
+  return new Promise((res) => {
+    const sock = netConnect({ port, host });
+    const done = (v: boolean) => { sock.destroy(); res(v); };
+    sock.setTimeout(1500, () => done(false));
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+}
 
 /** `switch <runtime>`: park the workers served by the running peers of its exclusive group, wait for the peers' engines to drain
  *  (bounded), stop them the normal way, start <runtime>, resume the workers an earlier switch parked on <runtime>. */
 export async function runtimeSwitch(
   runtime: string,
   deps: ActionDeps,
-  opts: { waitMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void> } = {}
+  opts: { waitMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void>; downWaitMs?: number; portListening?: (ready: string | undefined) => Promise<boolean> } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
   const group = commands[runtime]?.exclusive;
@@ -474,8 +491,28 @@ export async function runtimeSwitch(
       return { ok: false, message: `switch to ${runtime} stopped at ${peer}: ${stopped.message}` };
     }
     stoppedPeers.push(peer);
+    // the stop command returned; the process may still hold its port / answer its ready URL: wait on fresh probes until it is really down
+    const downMs = opts.downWaitMs ?? SWITCH_DOWN_WAIT_MS;
+    const downPoll = opts.pollMs ?? 1_000;
+    const listening = opts.portListening ?? portListening;
+    const probe = async (): Promise<string | null> => {
+      if (await runtimeIsUp(peer, commands, deps)) return "its ready URL still answers";
+      if (await listening(commands[peer]?.ready)) return "its port still has a listener";
+      return null;
+    };
+    let still = await probe();
+    for (let w = 0; still && w < downMs; w += downPoll) { await sleep(downPoll); still = await probe(); }
+    if (still) {
+      // the peer never went down: starting the target would collide; nothing swapped, give the parked workers back
+      for (const id of parkedNow) { try { unpark(id.split(" ")[0]!); } catch { /* ended */ } }
+      parked[peer] = (parked[peer] ?? []).filter((id) => !parkedNow.some((p) => p.startsWith(id + " ")));
+      if (!parked[peer]?.length) delete parked[peer];
+      writeSwitchParked(deps.home, parked);
+      appendLedger(deps.ledger, "RUNTIME-SWITCH", { runtime, group, result: `failed, ${peer} did not go down` });
+      return { ok: false, message: `switch to ${runtime} failed: ${peer} is still up ${Math.round(downMs / 1000)} s after its stop (${still}); ${runtime} not started; workers resumed` };
+    }
   }
-  const started = await runtimeStartStop(runtime, "start", deps);
+  const started = await runtimeStartStop(runtime, "start", deps, { exclude: stoppedPeers });
   if (!started.ok) {
     if (!stoppedPeers.length) return { ok: false, message: started.message };
     // roll back: clear any half-started target, bring the stopped peers back, resume exactly the workers this switch parked
@@ -483,7 +520,7 @@ export async function runtimeSwitch(
     const restarted: string[] = [];
     const failedBack: string[] = [];
     for (const peer of stoppedPeers) {
-      const r = await runtimeStartStop(peer, "start", deps);
+      const r = await runtimeStartStop(peer, "start", deps, { exclude: [runtime] });
       (r.ok ? restarted : failedBack).push(r.ok ? peer : `${peer}: ${r.message}`);
     }
     const parkedList = parkedNow.length ? `; parked: ${parkedNow.join(", ")}` : "";
@@ -521,14 +558,15 @@ export async function runtimeStartStop(
   runtime: string,
   op: "start" | "stop",
   deps: ActionDeps,
-  opts: { model?: string; jobId?: string } = {}
+    /** `exclude`: runtimes a switch itself stopped (or is replacing); the exclusivity check ignores them. */
+  opts: { model?: string; jobId?: string; exclude?: string[] } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
   const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime]);
   if (refused) return { ok: false, message: refused };
   if (op === "start") {
     const up = new Set<string>();
-    for (const peer of exclusivePeers(runtime, commands)) if (await runtimeIsUp(peer, commands, deps)) up.add(peer);
+    for (const peer of exclusivePeers(runtime, commands)) if (!opts.exclude?.includes(peer) && await runtimeIsUp(peer, commands, deps)) up.add(peer);
     const group = exclusiveRefusalText(runtime, commands, (n) => up.has(n));
     if (group) return { ok: false, message: group };
   }
