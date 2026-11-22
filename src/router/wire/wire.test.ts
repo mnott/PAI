@@ -690,3 +690,51 @@ describe("text tool call for an undeclared tool (anthropic answer)", () => {
     expect(convertTextAnswer(jsonAnswer('<tool_call>\n{"name": "Bash"}\n</tool_call>'), "application/json", schemas, rules)).toBeNull();
   });
 });
+
+describe("messages wire, local provider without toolParsing (2026-11-23)", () => {
+  it("fragmented SSE text call for an undeclared tool reaches the client as tool_use", async () => {
+    const text = '<tool_call>\n{"name": "Bash", "arguments": {"command": "ls; mkdir -p out"}}\n</tool_call>';
+    const frags = text.match(/.{1,3}/gs)!;
+    const upBody = sse(
+      [
+        { type: "message_start", message: { id: "m", type: "message", role: "assistant", content: [], usage: { input_tokens: 1, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        ...frags.map((t) => ({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } })),
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 9 } },
+        { type: "message_stop" },
+      ],
+      true
+    );
+    const up = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": SSE_CT });
+        res.end(upBody);
+      });
+    });
+    const upPort = await listen(up);
+    const prov = parseWorkersConfig({ providers: { strata: { baseUrl: `http://127.0.0.1:${upPort}`, models: { default: "strata-m" } } } }).providers;
+    const home = mkdtempSync(join(tmpdir(), "wire-router-"));
+    const store = new RulesStore({ config: () => undefined, homeDir: () => home, log: () => {} });
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, undefined, undefined, { instances: () => [], toolCallRules: store, onToolArgsFix: () => {} });
+    const port = await listen(r);
+    const tools = [
+      { name: "Read", description: "r", input_schema: { type: "object", properties: { file_path: { type: "string" } }, required: ["file_path"] } },
+      { name: "Write", description: "w", input_schema: { type: "object", properties: { file_path: { type: "string" }, content: { type: "string" } }, required: ["file_path", "content"] } },
+    ];
+    const out = await new Promise<string>((resolve) => {
+      const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "x-pai-provider": "strata" } }, (x) => {
+        const bits: Buffer[] = [];
+        x.on("data", (c) => bits.push(c));
+        x.on("end", () => resolve(Buffer.concat(bits).toString()));
+      });
+      q.end(JSON.stringify({ model: "strata-m", max_tokens: 100, stream: true, tools, messages: [{ role: "user", content: "go" }] }));
+    });
+    r.close();
+    up.close();
+    expect(out).toContain('"type":"tool_use"');
+    expect(out).toContain('"name":"Bash"');
+    expect(out).toContain('"stop_reason":"tool_use"');
+  });
+});
