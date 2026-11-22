@@ -921,7 +921,7 @@ describe("exclusive runtime groups", () => {
         return true;
       },
     });
-    const r1 = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined });
+    const r1 = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined, portListening: async () => false });
     expect(r1.ok).toBe(true);
     expect(paused).toEqual(["w1", "w2"]); // both gyro-l workers parked through the seam
     expect(calls).toEqual(["stop gyro-l", "start hy4-flash"]); // stop the peer first, then start the target
@@ -929,7 +929,7 @@ describe("exclusive runtime groups", () => {
     expect(r1.message).toContain("parked: w1 (qwen-gyro on gyro-l), w2 (qwen-gyro on gyro-l)"); // the message lists them with their model
     expect(readSwitchParked(exHome)).toEqual({ "gyro-l": ["w1", "w2"] });
     // switch back: hy4-flash stops, gyro-l starts, exactly the two parked workers resume, hy4's own worker parks
-    const r2 = await runtimeSwitch("gyro-l", deps, { sleep: async () => undefined });
+    const r2 = await runtimeSwitch("gyro-l", deps, { sleep: async () => undefined, portListening: async () => false });
     expect(r2.ok).toBe(true);
     expect(calls).toEqual(["stop gyro-l", "start hy4-flash", "stop hy4-flash", "start gyro-l"]);
     expect(resumed).toEqual(["w1", "w2"]);
@@ -966,7 +966,7 @@ describe("exclusive runtime groups", () => {
         return true;
       },
     });
-    const r = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined });
+    const r = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined, portListening: async () => false });
     expect(r.ok).toBe(false);
     expect(r.message).toContain("switch to hy4-flash failed");
     expect(r.message).toContain("rolled back to gyro-l");
@@ -975,5 +975,62 @@ describe("exclusive runtime groups", () => {
     expect(up.has("gyro-l")).toBe(true);
     expect(resumed).toEqual(["w1"]);
     expect(readSwitchParked(exHome)).toEqual({});
+  });
+
+  it("a stopped peer whose ready URL keeps answering for a while does not fail the switch; the start ignores the peer the switch stopped", async () => {
+    const { runtimeSwitch } = await import("../router/cockpit-actions.js");
+    const { writeSwitchParked } = await import("../workers/model-runtimes.js");
+    writeSwitchParked(exHome, {});
+    const up = new Set(["gyro-l"]);
+    const calls: string[] = [];
+    const base = exOps(up, calls);
+    let lingering = 3; // the ready URL answers for 3 more probes after the stop command
+    let stopped = false;
+    const ops = {
+      ...base,
+      runShell: async (cmd: string) => {
+        calls.push(cmd);
+        if (cmd.includes("stop gyro-l")) stopped = true;
+        return { code: 0 };
+      },
+      getUrl: async (url: string) => {
+        if (stopped && url === exCommands["gyro-l"]!.ready) {
+          if (lingering-- > 0) return true;
+          up.delete("gyro-l");
+          return false;
+        }
+        return base.getUrl(url);
+      },
+    };
+    const deps = exDeps(up, calls, { runtimeOps: ops, workersOn: () => [], runtimeInflight: () => 0, pauseWorker: () => true, unparkWorker: () => true });
+    const r = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined, portListening: async () => false });
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual(["stop gyro-l", "start hy4-flash"]);
+    expect(lingering).toBeLessThan(0); // it was polled until it went down
+  });
+
+  it("a peer that never goes down fails the switch with a message saying what is still up; the target is not started, parked workers resume", async () => {
+    const { runtimeSwitch } = await import("../router/cockpit-actions.js");
+    const { writeSwitchParked } = await import("../workers/model-runtimes.js");
+    writeSwitchParked(exHome, {});
+    const up = new Set(["gyro-l"]);
+    const calls: string[] = [];
+    const base = exOps(up, calls);
+    const ops = { ...base, runShell: async (cmd: string) => { calls.push(cmd); return { code: 0 }; } }; // stop does nothing
+    const resumed: string[] = [];
+    const deps = exDeps(up, calls, {
+      runtimeOps: ops,
+      workersOn: (rt: string) => (rt === "gyro-l" ? [{ id: "w1", model: "qwen-gyro" }] : []),
+      runtimeInflight: () => 0,
+      pauseWorker: () => true,
+      unparkWorker: (id: string) => { resumed.push(id); return true; },
+    });
+    const r = await runtimeSwitch("hy4-flash", deps, { sleep: async () => undefined, pollMs: 1000, downWaitMs: 3000, portListening: async () => false });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("gyro-l is still up");
+    expect(r.message).toContain("ready URL still answers");
+    expect(r.message).not.toContain("use switch");
+    expect(calls).toEqual(["stop gyro-l"]); // hy4-flash never started
+    expect(resumed).toEqual(["w1"]);
   });
 });
