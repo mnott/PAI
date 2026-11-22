@@ -8,6 +8,7 @@ import { createRouter, prepare } from "../router.js";
 import { claudeCodeToolsArray } from "../tool-args-schemas.js";
 import { activeRules, loadRules, RulesStore, shippedRulesPath } from "../tool-call-rules.js";
 import { bindWhenUp, isDeferrableBind } from "../tail-bind.js";
+import { convertTextAnswer } from "../tool-args-convert.js";
 import { adapterFor, splitProviderPrefix } from "./index.js";
 import type { WireAdapter, WireId } from "./types.js";
 
@@ -645,4 +646,47 @@ describe("router vs engine resets and concurrency (2026-11-18)", () => {
     expect(statuses).toEqual(Array(20).fill(200));
     expect(maxLag).toBeLessThan(100);
   }, 30000);
+});
+
+describe("text tool call for an undeclared tool (anthropic answer)", () => {
+  const schemas = new Map([
+    ["Read", { required: ["file_path"], properties: { file_path: { type: "string" } } }],
+    ["Write", { required: ["file_path", "content"], properties: { file_path: { type: "string" }, content: { type: "string" } } }],
+  ]) as any;
+  const call = (name: string, args = '{"command": "mkdir -p out"}') => `<tool_call>\n{"name": "${name}", "arguments": ${args}}\n</tool_call>`;
+  const jsonAnswer = (text: string) => JSON.stringify({ id: "m", type: "message", role: "assistant", content: [{ type: "text", text }], stop_reason: "end_turn" });
+  const sseAnswer = (text: string) =>
+    sse([
+      { type: "message_start", message: { id: "m", type: "message", role: "assistant", content: [] } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: text } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "end_turn" } },
+      { type: "message_stop" },
+    ]);
+
+  it("JSON: becomes a tool_use block, stop_reason tool_use", () => {
+    const c = convertTextAnswer(jsonAnswer(call("Bash")), "application/json", schemas, rules)!;
+    const j = JSON.parse(c.body);
+    expect(j.stop_reason).toBe("tool_use");
+    expect(j.content.filter((b: any) => b.type === "tool_use").map((b: any) => [b.name, b.input])).toEqual([["Bash", { command: "mkdir -p out" }]]);
+  });
+
+  it("SSE: becomes a tool_use block, stop_reason tool_use", () => {
+    const c = convertTextAnswer(sseAnswer(call("Bash")), SSE_CT, schemas, rules)!;
+    expect(c.calls.map((x) => x.name)).toEqual(["Bash"]);
+    expect(c.body).toContain('"type":"tool_use"');
+    expect(c.body).toContain('"name":"Bash"');
+    expect(c.body).toContain('"stop_reason":"tool_use"');
+  });
+
+  it("declared tool markup is unchanged", () => {
+    const c = convertTextAnswer(jsonAnswer(call("Read", '{"file_path": "/a"}')), "application/json", schemas, rules)!;
+    expect(JSON.parse(c.body).content.find((b: any) => b.type === "tool_use")).toMatchObject({ name: "Read", input: { file_path: "/a" } });
+  });
+
+  it("malformed markup stays text", () => {
+    expect(convertTextAnswer(jsonAnswer('<tool_call>\n{"name": "Bash", "arguments": {"command": \n</tool_call>'), "application/json", schemas, rules)).toBeNull();
+    expect(convertTextAnswer(jsonAnswer('<tool_call>\n{"name": "Bash"}\n</tool_call>'), "application/json", schemas, rules)).toBeNull();
+  });
 });

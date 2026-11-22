@@ -352,7 +352,15 @@ export function parseToolCallText(text: string, schemas: ToolSchemas, rules: rea
       }
     }
     const exact = names.includes(name) ? name : correctToolName(name, names);
-    if (!exact) return null;
+    if (!exact) {
+      // well-formed JSON call to an undeclared tool: pass it on as tool_use so the client answers "no such tool"
+      const j = t.json as { arguments?: unknown; parameters?: unknown; input?: unknown } | undefined;
+      if (j !== undefined && names.length && (j.arguments ?? j.parameters ?? j.input) !== undefined) {
+        calls.push({ name, input, hits });
+        continue;
+      }
+      return null;
+    }
     const schema = schemas.get(exact) as ToolSchema;
     const fixed = repairToolInput(input, schema, active, { text: true });
     const final = { ...fixed.input };
