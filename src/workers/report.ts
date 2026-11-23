@@ -252,6 +252,10 @@ export const ORCHESTRATOR_CONTRACT =
 export const CODE_EXPLORE_LINE =
   "Find code with `pai code explore <symbol>` / `pai code search <words>` before grep: they return definitions, source, callers and blast radius in one answer and index the repo on first use.";
 
+/** One guidance line: state the test-file rule up front so workers are not denied learning it (2026-11-23: 4 workers blocked up to 3x each). */
+export const TEST_GOVERNANCE_LINE =
+  "Tests: extend an existing test file next to the code you change; new test files are blocked (operator rule); one-off checks go under .pai-scratch/ and are never committed.";
+
 /** Added when the run's repo is already indexed: the graph is current, so ask it before grepping. */
 export const CODE_GRAPH_FIRST_LINE = [
   "This repo is indexed in the code graph: locate code with `pai code explore \"<what you look for>\"`,",
@@ -286,6 +290,7 @@ export function workerContractPrompt(
   const planner = !short && (PLANNER_CLASSES.has(cls ?? "") || Boolean(orchestrate));
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
   base += `\n${CODE_EXPLORE_LINE}`;
+  base += `\n${TEST_GOVERNANCE_LINE}`;
   if (graphIndexed) base += `\n${CODE_GRAPH_FIRST_LINE}`;
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;
