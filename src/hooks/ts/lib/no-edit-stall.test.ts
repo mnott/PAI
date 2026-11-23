@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { workerCanEdit } from "../../../workers/run/argv.js";
-import { bashWritesRepoFile, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
+import { bashWritesRepoFile, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stallStep, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
 import { activeAntipattern, resetAntipatternCache, shippedAntipattern } from "./antipatterns.js";
 import { paramsForModel, perModelEntry } from "./antipattern-lifecycle.js";
 
@@ -65,6 +65,8 @@ describe("bashWritesRepoFile", () => {
     ["cp $TMPDIR/fixed.mjs scripts/prune-dist.mjs", true],
     ["mv build/x.js src/x.js", true],
     ["git apply fix.patch", true],
+    ["mkdir -p .pai-scratch && cat > .pai-scratch/repro.mjs <<'EOF'\nimport {writeFileSync} from 'fs'; writeFileSync('src/a.ts','x')\nEOF", false],
+    ["python3 - <<'EOF'\nopen('/tmp/x','w').write('x')\nopen('src/a.ts','w').write('y')\nEOF", true],
     ["cat > $TMPDIR/x <<'EOF'\nx\nEOF", false],
     ["cat > .pai-scratch/p.mjs <<'EOF'\nx\nEOF", false],
     ["echo x > /tmp/x", false],
@@ -114,13 +116,13 @@ describe("no-edit-stall in stepLoopGuard", () => {
     expect(run([...base, ["Bash", "sed -i s/a/b/ src/a.ts"]])[41].deny).toBe(false);
     expect(run([...base, ["Bash", "git log -3"]])[41].deny).toBe(true);
   });
-  it("time-only trigger: 5 calls over 4 min give note1", () => {
-    const steps = run(reads(5), [0, MIN, 2 * MIN, 3 * MIN, 4 * MIN]);
-    expect(stalls(steps)).toEqual([4]);
-    expect(steps[4].note).toContain("4 min");
+  it("time-only trigger: 6 calls over 5 min give note1", () => {
+    const steps = run(reads(6), [0, MIN, 2 * MIN, 3 * MIN, 4 * MIN, 5 * MIN]);
+    expect(stalls(steps)).toEqual([5]);
+    expect(steps[5].note).toContain("5 min");
   });
   it("time-only deny at 12 min", () => {
-    expect(run(reads(3), [0, MIN, 12 * MIN])[2].deny).toBe(true);
+    expect(run(reads(6), [0, MIN, 2 * MIN, 3 * MIN, 4 * MIN, 12 * MIN])[5].deny).toBe(true);
   });
   it("scratch-only writes do not reset", () => {
     const scratch: Call[] = [
@@ -275,4 +277,38 @@ describe("growing-command unedited / edited texts", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+});
+
+describe("no-edit-stall: scratch work after the first repo edit", () => {
+  const scratch: [string, Record<string, unknown>] = ["Write", { file_path: ".pai-scratch/t.test.ts" }];
+  const runs = (n: number, from = 0): [string, string][] => Array.from({ length: n }, (_, i) => ["Bash", `npx vitest run ${from + i}`]);
+  const fire = (calls: [string, Record<string, unknown> | string][], stepMs: number): (string | undefined)[] => {
+    let st: LoopState["stall"];
+    return calls.map(([t, i], k) => {
+      const r = stallStep(st, t, i, k * stepMs, params);
+      st = r.stall;
+      return r.kind;
+    });
+  };
+  const edit: [string, Record<string, unknown>] = ["Edit", { file_path: "src/a.ts" }];
+  it("a scratch write after a repo edit resets the stall counter", () => {
+    const calls = [edit, ...Array.from({ length: 11 }, (): [string, Record<string, unknown>] => ["Read", { file_path: "src/a.ts" }]), scratch, ["Read", { file_path: "src/a.ts" }]] as [string, Record<string, unknown>][];
+    expect(fire(calls, 1000).includes("note1")).toBe(false);
+  });
+  it("a scratch write before any repo edit does not reset", () => {
+    const calls = Array.from({ length: 12 }, (_, i): [string, Record<string, unknown>] => (i === 5 ? scratch : ["Read", { file_path: "src/a.ts" }]));
+    expect(fire(calls, 1000)[11]).toBe("note1");
+  });
+  it("the time trigger needs at least 6 counted calls", () => {
+    const calls: [string, Record<string, unknown>][] = [["Read", { file_path: "a" }], ["Read", { file_path: "b" }]];
+    expect(fire(calls, 10 * MIN).every((k) => k === undefined)).toBe(true);
+    const six = Array.from({ length: 6 }, (): [string, Record<string, unknown>] => ["Read", { file_path: "a" }]);
+    expect(fire(six, 1 * MIN).some((k) => k === "note1")).toBe(true);
+  });
+  it("test runs plus scratch edits after a repo edit never note", () => {
+    const calls: [string, Record<string, unknown> | string][] = [edit];
+    for (let i = 0; i < 10; i++) calls.push(["Bash", "npx vitest run x"], ["Edit", { file_path: ".pai-scratch/w.test.ts" }]);
+    expect(fire(calls, 30_000).every((k) => k === undefined)).toBe(true);
+  });
+  void runs;
 });
