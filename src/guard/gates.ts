@@ -12,7 +12,7 @@ import { ORCHESTRATOR_START_BLOCK, QUEUED_CHILD_RULE } from "../workers/report.j
 import { detectUnsafePlutil, plutilGuardMessage } from "../hooks/ts/lib/plutil-guard.js";
 import { decideWorkerGitGuard, workerGitGuardMessage } from "../hooks/ts/lib/worker-git-guard.js";
 import { mainSessionBashReason } from "../hooks/ts/lib/main-session-git-gate.js";
-import { buildGateReason } from "../hooks/ts/lib/build-gate.js";
+import { buildGateReason, buildGateRewrite } from "../hooks/ts/lib/build-gate.js";
 import { memoryBashRules } from "../hooks/ts/lib/memory-bash-gate.js";
 import { modelServerReason } from "../hooks/ts/lib/model-server-guard.js";
 import { apiKeySetMatch, API_KEY_SET_REASON } from "../hooks/ts/lib/api-key-gate.js";
@@ -154,11 +154,13 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
   let memoNote: string | undefined;
   if (g.bash) {
     const ti = c.input as { run_in_background?: boolean; command?: string; timeout?: number } | undefined;
+    // a plain build invocation is routed through the queue instead of denied
+    const buildRewrite = isBash && typeof ti?.command === "string" && ti.command === (command ?? ti.command) ? buildGateRewrite(ti.command, c.cwd) : null;
     const why = !isBash
       ? null
       : (typeof ti?.command === "string"
         ? (c.env.PAI_WORKER !== "1" ? mainSessionBashReason(command ?? ti.command, c.cwd) : null) ??
-          buildGateReason(command ?? ti.command, c.cwd) ??
+          (buildRewrite ? null : buildGateReason(command ?? ti.command, c.cwd)) ??
           headlessReason(command ?? ti.command, c.env, c.cwd) ??
           modelServerReason(command ?? ti.command, c.env, g.bash.localAnswer())
         : null) ?? backgroundReason(ti, c.env);
@@ -170,6 +172,7 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
     }
     const sp = decideSleepPollGate({ tool_name: c.tool, tool_input: ti }, c.env);
     if (sp.decision === "deny") return deny(sp.reason, "sleep-poll-gate");
+    if (buildRewrite) return { action: "allow", updatedInput: { ...ti, command: buildRewrite.command }, message: [buildRewrite.note, memoNote].filter(Boolean).join("; ") };
     if (c.env.PAI_WORKER !== "1") {
       const raised = raiseWaitTimeout(ti);
       if (raised) return { action: "allow", updatedInput: raised, message: memoNote };
