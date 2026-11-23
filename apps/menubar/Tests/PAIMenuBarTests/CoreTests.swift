@@ -368,6 +368,36 @@ final class ANEAndModeTests: XCTestCase {
         XCTAssertNil(energyToWatts(delta: -5, unit: "mJ", seconds: 1))
     }
 
+    func testWattsFromChannelsPerChannelUnits() {
+        // Aggregate channel wins alone (it already sums the per-core channels).
+        let agg = wattsFromChannels([
+            (name: "GPU Energy", delta: 1500, unit: "mJ"),
+            (name: "GPU0 Energy", delta: 1000, unit: "mJ"),
+            (name: "GPU1 Energy", delta: 500, unit: "mJ"),
+        ], prefix: "GPU", seconds: 1.0)!
+        XCTAssertEqual(agg, 1.5, accuracy: 1e-9)
+        // No aggregate: sum of matching channels, each converted by its own unit.
+        let sum = wattsFromChannels([
+            (name: "CPU0 Energy", delta: 1_000_000, unit: "uJ"),
+            (name: "CPU1 Energy", delta: 2_000_000_000, unit: "nJ"),
+            (name: "ANE Energy", delta: 999, unit: "mJ"),
+        ], prefix: "CPU", seconds: 2.0)!
+        XCTAssertEqual(sum, 1.0, accuracy: 1e-9) // (1e-3 + 2e-3) / 2
+        // Unknown unit on a channel is skipped; the rest still count.
+        let partial = wattsFromChannels([
+            (name: "GPU0 Energy", delta: 1000, unit: "mJ"),
+            (name: "GPU1 Energy", delta: 1000, unit: "furlong"),
+        ], prefix: "GPU", seconds: 1.0)!
+        XCTAssertEqual(partial, 1.0, accuracy: 1e-9)
+        // Unknown unit on the aggregate yields nil rather than a bogus scale.
+        XCTAssertNil(wattsFromChannels([(name: "GPU Energy", delta: 1000, unit: "furlong")], prefix: "GPU", seconds: 1.0))
+        XCTAssertNil(wattsFromChannels([(name: "ANE Energy", delta: 1000, unit: "mJ")], prefix: "GPU", seconds: 1.0))
+        XCTAssertNil(wattsFromChannels([], prefix: "GPU", seconds: 1.0))
+        XCTAssertNil(wattsFromChannels([(name: "GPU Energy", delta: 1000, unit: "mJ")], prefix: "GPU", seconds: 0))
+        XCTAssertTrue(isAggregateChannel("CPU Energy", prefix: "CPU"))
+        XCTAssertFalse(isAggregateChannel("CPU0 Energy", prefix: "CPU"))
+    }
+
     func testChannelPrefixMatch() {
         XCTAssertTrue(channelMatches("ANE Energy", prefix: "ANE"))
         XCTAssertTrue(channelMatches("GPU Energy", prefix: "GPU"))

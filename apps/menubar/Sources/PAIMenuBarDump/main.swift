@@ -17,11 +17,20 @@ func aneSampleSeconds(_ args: [String]) -> Double? {
 if let secs = aneSampleSeconds(Array(args)) {
     let reader = ANEReader()
     print("channels: \(reader.available ? reader.matchedChannels.joined(separator: ", ") : "none (IOReport unavailable)")")
-    reader.read() // prime
+    // Units are per channel (the Energy Model group mixes mJ/uJ/nJ), printed once at start.
+    let unitLine = reader.units.sorted { $0.key < $1.key }
+        .map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+    print("units: \(unitLine.isEmpty ? "none" : unitLine)")
+    _ = reader.sample() // prime
+    func fmt(_ v: Double?) -> String { v.map { String(format: "%.2f", $0) } ?? "n/a" }
+    func raw(_ s: ANEReader.PowerSample, _ prefix: String) -> String {
+        let parts = s.raw.filter { $0.key.hasPrefix(prefix) }.sorted { $0.key < $1.key }
+        return parts.isEmpty ? "n/a" : parts.map { "\($0.key)=\(String(format: "%.0f", $0.value))" }.joined(separator: " ")
+    }
     for _ in 0..<Int(secs.rounded(.down)) {
         Thread.sleep(forTimeInterval: 1)
-        let w = reader.read()
-        print("ane_w=\(w.map { String(format: "%.2f", $0) } ?? "n/a")")
+        guard let s = reader.sample() else { print("ane_w=n/a gpu_w=n/a cpu_w=n/a"); continue }
+        print("ane_w=\(fmt(s.aneWatts)) gpu_w=\(fmt(s.gpuWatts)) cpu_w=\(fmt(s.cpuWatts)) ane_raw=\(raw(s, "ANE"))")
     }
     exit(0)
 }
