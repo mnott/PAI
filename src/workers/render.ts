@@ -28,7 +28,7 @@ import { endLabel } from "./endreason.js";
 import { parseWorkerReport, renderReport } from "./report.js";
 import { scanLine } from "./scan.js";
 import { activityOf, levelOf, type RequestState } from "./queue-table.js";
-import { readSchedFile } from "../router/scheduler.js";
+import { readSchedFile, instanceLabel } from "../router/scheduler.js";
 import { servedMismatch, servedModelOf } from "./served-model.js";
 
 export type ColorEnabled = boolean;
@@ -508,7 +508,11 @@ export function renderTable(
   /** The worker log dir: the router's scheduler snapshot (the activity word's source) is read from here. */
   logDir = ""
 ): string {
-  const provTag = (s: WorkerStatus) => providerTag(s, workers, isLive(s) ? servedModelOf(s) : null);
+  const schedSnap = logDir ? readSchedFile(logDir, now.getTime()) : null;
+  const provTag = (s: WorkerStatus) => {
+    const eng = s.state === "running" ? schedSnap?.workers[s.id]?.engine : undefined;
+    return providerTag(s, workers, isLive(s) ? servedModelOf(s) : null, eng ? instanceLabel(eng, schedSnap) : undefined);
+  };
   const queued: WorkerStatus[] = [];
   const running: WorkerStatus[] = [];
   const done: WorkerStatus[] = [];
@@ -756,11 +760,15 @@ export function providerTag(
   s: WorkerStatus,
   workers: Pick<WorkersConfig, "providers" | "nativeModels">,
   /** Model that served the last turn (transcript); a different one is marked. */
-  served?: string | null
+  served?: string | null,
+  /** The instance serving the run ("signal-2 #2", from the router's ticket engine): replaces the provider name and drops the served-by note. */
+  instance?: string
 ): string {
   const model = shortModel(s.model);
   const dflt = getProviderOrNative(workers, s.provider)?.models.default;
-  const base = !model || (dflt && shortModel(dflt) === model) ? `[${s.provider}]` : `[${s.provider}/${model}]`;
+  const name = instance ?? s.provider;
+  const base = !model || (dflt && shortModel(dflt) === model) ? `[${name}]` : `[${name}/${model}]`;
+  if (instance) return base;
   if (servedMismatch(s.model || dflt, served)) return `${base.slice(0, -1)} -> served by ${shortModel(served)}]`;
   return base;
 }

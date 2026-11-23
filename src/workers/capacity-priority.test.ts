@@ -620,6 +620,17 @@ describe("ps/watch show the model that served the last turn", () => {
     expect(providerTag(st, cfg, "qwen3.8-flash-next-gyro-l")).toBe("[anthropic/sonnet-5.5 -> served by qwen3.8-flash-next-gyro-l]");
     expect(providerTag(st, cfg, "claude-sonnet-5-5-20261001")).toBe("[anthropic/sonnet-5.5]");
     expect(providerTag(st, cfg, null)).toBe("[anthropic/sonnet-5.5]");
+    expect(providerTag(st, cfg, "qwen3.8-flash-next-gyro-l", "anthropic #2")).toBe("[anthropic #2/sonnet-5.5]");
+  });
+  it("instanceLabel names the copy by the router engine key; schedLine lists #n busy/cap", async () => {
+    const { instanceLabel, schedLine } = await import("../router/scheduler.js");
+    const e = (n: number) => ({ inflight: n ? { session: "aaaaaaaa", worker: "w", sinceMs: 1 } : null, flights: n ? [{ session: "aaaaaaaa", worker: "w", sinceMs: 1 }] : [], slots: 2, queued: {}, counters: {} });
+    const two = { at: Date.now(), workers: {}, engines: { "signal-2": e(1), "signal-2#2": e(1) } } as never;
+    const one = { at: Date.now(), workers: {}, engines: { "signal-2": e(1) } } as never;
+    expect(instanceLabel("signal-2", two)).toBe("signal-2 #1");
+    expect(instanceLabel("signal-2#2", two)).toBe("signal-2 #2");
+    expect(instanceLabel("signal-2", one)).toBe("signal-2");
+    expect(schedLine(two)).toContain("[#1 1/2 · #2 1/2]");
   });
   it("watch emits a MODEL line when the serving model changes", async () => {
     const { watchWorkers } = await import("./watch.js");
