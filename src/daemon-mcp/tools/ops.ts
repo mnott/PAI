@@ -326,6 +326,9 @@ export async function updateCheck(args: UpdateCheckArgs): Promise<WorkerToolResu
 export interface TestsArgs {
   repo?: string;
   apply?: boolean;
+  file?: string;
+  kind?: string;
+  evidence?: string;
 }
 
 /** pai tests audit: classify a repo's test files (read-only; git and file reads). */
@@ -345,6 +348,25 @@ export async function testsPrune(args: TestsArgs): Promise<WorkerToolResult> {
     const { prune } = await import("../../testgov/prune.js");
     const { resolve } = await import("node:path");
     return text(prune(resolve(args.repo ?? process.cwd()), args.apply === true, { cmd: process.execPath, args: [cliEntry()] }).lines.join("\n"));
+  } catch (e) {
+    return error(e);
+  }
+}
+
+/** pai tests keep: append exactly one evidence row to the repo's tests/KEPT.md ledger. */
+export async function testsKeep(args: TestsArgs): Promise<WorkerToolResult> {
+  try {
+    const { appendKept } = await import("../../testgov/kept.js");
+    const { resolve } = await import("node:path");
+    if (!args.file) return error(new Error("file is required"));
+    if (!/^[abc]$/.test(args.kind ?? "")) return error(new Error("kind must be a, b or c"));
+    if (!args.evidence?.trim()) return error(new Error("evidence is required"));
+    const r = appendKept(resolve(args.repo ?? process.cwd()), args.file, [args.kind!], args.evidence.trim());
+    return text(
+      r.added
+        ? `Added to ${r.path}: | ${r.row!.file} | ${r.row!.classes.join(",")} | ${r.row!.evidence} |`
+        : `Already registered: | ${r.existing!.file} | ${r.existing!.classes.join(",")} | ${r.existing!.evidence} |`
+    );
   } catch (e) {
     return error(e);
   }

@@ -737,4 +737,8 @@ describe("test-governance denial names existing test files to extend", () => {
     expect(d.decision).toBe("deny");
     expect((d as { reason?: string }).reason).toContain("Extend one of: src/a.test.ts");
   });
+  it("names `pai tests keep` as the way to add the ledger entry", () => {
+    const reason = denyReason(join(repo, "src", "new.test.ts"));
+    expect(reason).toContain('`pai tests keep <file> --kind <a|b|c> --evidence "<why>"`');
+  });
 });

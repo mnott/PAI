@@ -254,7 +254,7 @@ export const CODE_EXPLORE_LINE =
 
 /** One guidance line: state the test-file rule up front so workers are not denied learning it (2026-11-23: 4 workers blocked up to 3x each). */
 export const TEST_GOVERNANCE_LINE =
-  "Tests: extend an existing test file next to the code you change first; a new test file only with a tests/KEPT.md entry (file + evidence) written BEFORE creating it; one-off checks go under .pai-scratch/ and are never committed.";
+  "Tests: extend an existing test file next to the code you change first; a new test file only with a tests/KEPT.md entry written BEFORE creating it — add the entry with `pai tests keep <file> --kind <a|b|c> --evidence \"<why>\"` (never rewrite the ledger by hand); one-off checks go under .pai-scratch/ and are never committed.";
 
 /** One guidance line: live services run main, so workers must not poll them for their own change (2026-11-23 22:11: worker 20261123-213527-68342 curled the live router 7x waiting for its cockpit change). */
 export const LIVE_RUNS_MAIN_LINE =

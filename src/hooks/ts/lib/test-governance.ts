@@ -51,7 +51,7 @@ export const KEPT_LEDGER = join("tests", "KEPT.md");
 
 const DENY_TEXT =
   `No new test files (operator rule). One-time checks go under ${SCRATCH_DIR}/ (never committed, removed when the worker lands); ` +
-  `a kept test needs an entry in ${KEPT_LEDGER} with its evidence.`;
+  `a kept test needs an entry in ${KEPT_LEDGER} with its evidence — add it with \`pai tests keep <file> --kind <a|b|c> --evidence "<why>"\` before creating the file.`;
 
 /** How many existing test files a denial may name. */
 const HINT_LIMIT = 5;
