@@ -69,3 +69,5 @@ __pycache__/
 # menu bar app build output
 apps/menubar/.build/
 apps/menubar/build/
+# Swift package build output, at any depth (covers every Swift package)
+.build/
