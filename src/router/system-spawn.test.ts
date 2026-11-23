@@ -305,6 +305,27 @@ describe("cockpit page script", () => {
       for (const r of rules) expect(r, `${sel}: ${r}`).not.toMatch(/min-height:\s*(?!0)|100vh|flex-grow|height:\s*100%/);
     }
   });
+  it("phone: row actions live only in the opened detail, pause/stop confirm inline; session is L0; instance per job", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({ document: { documentElement: { classList: { contains: () => true } } }, Date, setTimeout, clearTimeout, WQ: { table: [], sessions: [] }, localStorage: { getItem: () => null, setItem: () => {} } });
+    vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\nfunction fitTables(){}\n` + WIN_WORKERS_JS, ctx);
+    const mk = (id: string, session: string) => ({ slot: "running", kind: "job", id: `w-1-${id}`, sid: id, state: "running", stateText: "running", priority: "normal", session, model: "signal-2", local: true, level: 2, task: "t" + id, seconds: 5, turns: 1, tools: 2, activity: "", now: "", detail: "", actions: ["pause", "stop"], instance: "signal-2#2" });
+    (ctx as Record<string, unknown>).__rows = [mk("1", "PAI"), mk("2", "other"), mk("3", "PAI"), mk("4", "Paperfull")];
+    vm.runInContext("WK_OPEN[__rows[0].id]=1", ctx);
+    const t = vm.runInContext("wkQTable(wkByOwner(__rows))", ctx) as string;
+    expect(t.match(/wq-l0"/g)).toHaveLength(2);
+    expect(t.indexOf("PAI</button>")).toBeLessThan(t.indexOf("t3"));
+    // the row (first tr) carries the pause button only in the hidden actions cell; the detail carries the spaced buttons and the instance
+    expect(t).toContain('class="wq-da"');
+    expect(t).toContain("instance: signal-2#2");
+    expect(t).toContain("· signal-2#2</div>");
+    const css = readFileSync("src/router/cockpit-page/css.ts", "utf8");
+    expect(css).toContain("table.wq td.wq-ac{display:none}}");
+    // pause asks a second tap on a phone
+    expect(vm.runInContext("wkArm('k','pause',function(){})", ctx)).toBe(false);
+    expect(vm.runInContext("wkArm('k','pause',function(){})", ctx)).toBe(true);
+  });
   it("the spec? marker has a real tooltip: the guard's count and the first conflicting reason, shortened", async () => {
     const { denialMark, specMarkTip } = await import("../workers/denials.js");
     const s = {

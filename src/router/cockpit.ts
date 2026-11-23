@@ -1158,6 +1158,8 @@ export interface QueueProvider {
   cap?: number;
   /** Engine conversation-cache slots, when configured (slots used = running.length). */
   conversationSlots?: number;
+  /** Per engine instance (router scheduler snapshot): busy slots of cap, e.g. signal-2 and signal-2#2. */
+  instances?: Array<{ engine: string; busy: number; cap: number }>;
   running: Array<{ id: string; label: string; ageSec: number; now?: string; session: string; model: string; priority?: string; paused?: boolean; engineWaitSec?: number }>;
   waiting: Array<{ id: string; label: string; waitedSec: number; position: number; session: string; model: string; priority?: string }>;
 }
@@ -1278,6 +1280,17 @@ export function cockpitQueue(
       const since = snap?.workers[r.id]?.waitingSince;
       if (since) r.engineWaitSec = Math.max(0, Math.floor((now - since) / 1000));
     }
+  }
+  // which instance serves each running job (the ticket's engine), and busy/cap per instance in its provider's line
+  for (const r of table) {
+    const eng = r.state === "running" ? snap?.workers[r.id]?.engine : undefined;
+    if (eng) r.instance = eng;
+  }
+  for (const [eng, e] of Object.entries(snap?.engines ?? {})) {
+    const prov = eng.split("#")[0]!;
+    if (!(prov in workers.providers)) continue;
+    const busy = e.flights?.length ?? (e.inflight ? 1 : 0);
+    (row(prov).instances ??= []).push({ engine: eng, busy, cap: e.slots ?? 1 });
   }
   // the scheduler line resolves through the display-name order: the agent-sessions
   // registry gives every session a project slug, and a session's own background-job

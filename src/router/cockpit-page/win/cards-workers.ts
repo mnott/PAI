@@ -27,7 +27,7 @@ function wkOne(){return WK_FILTERS.length===1?WK_FILTERS[0]:null}
 /** The short id (last dash-part) in grey under the task; computed here so every view has it.
  *  WK_OPEN: the ids of the rows whose inline detail is open (a tap on a row or its ▸ opens it, a tap again closes). */
 var WK_OPEN={};
-/** Narrow mode (the html.narrow class, the 900 px break): the detail rides inside the task cell and shows only there; in wide mode it is never drawn (the columns carry everything). */
+/** Narrow mode (the html.narrow class, the 900 px break): the detail is its own full-width table row under the job row (the task cell is too narrow on a phone) and shows only there; in wide mode it is never drawn (the columns carry everything). */
 function wkNarrow(){return typeof document!=="undefined"&&!!document.documentElement&&document.documentElement.classList.contains("narrow")}
 function wkSid(r){r.sid=String(r.id).slice(String(r.id).lastIndexOf("-")+1);return r}
 /** "12m left" / "3m over" from the deadline (seconds to the stop; negative = past it); "" without one. */
@@ -51,7 +51,7 @@ function wkSort(rows){
 var WK_LBL={"next":["run next","goes to the front of the waiting jobs and takes the next free slot"],"up":["move up","one place earlier in the waiting order"],"down":["move down","one place later in the waiting order"],"pause":["pause","stops taking model time, frees its slot for the next job, keeps its work"],"resume":["resume","goes back into the queue at the front of the line and continues"],"back-to-queue":["back to queue","stops taking model time, frees its slot, waits first in line, keeps its work"],"start-now":["start now","runs now even if all slots are busy (over the cap, up to the hard ceiling)"],"freeze":["freeze","stops its processes in memory (lost on reboot)"],"thaw":["thaw","continues the frozen processes"],"deep-freeze":["deep-freeze","saves its work and stops it; survives a reboot"],"deep-resume":["resume","continues from the saved stop"],"to-local":["move to local","restarts the job on the local model and continues its branch"],"to-cloud":["move to cloud","restarts the job on a cloud provider and continues its branch"],"stop":["stop","ends this command for good; its work stays on its branch"]};
 var WK_SURE={"deep-freeze":1,"to-local":1,"to-cloud":1,"stop":1},WK_CONF=null,WK_CT=null;
 /** One-click inline confirm: the first click arms the button ("confirm?") for 3 s, the second runs it. True = run now. */
-function wkArm(key,a,rd){if(!WK_SURE[a]||WK_CONF===key){WK_CONF=null;return true}WK_CONF=key;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_CONF=null;rd()},3000);rd();return false}
+function wkArm(key,a,rd){if(!(WK_SURE[a]||(a==="pause"&&wkNarrow()))||WK_CONF===key){WK_CONF=null;return true}WK_CONF=key;if(WK_CT)clearTimeout(WK_CT);WK_CT=setTimeout(function(){WK_CONF=null;rd()},3000);rd();return false}
 /** 12 clearly distinct hues (readable on the dark background). A name takes the hue of its stable hash; sessions visible together never share one (wkAssign). */
 var WK_PAL=[5,28,48,85,140,170,190,210,240,270,300,330],WK_SH={};
 function wkHash(n){var h=0,i;for(i=0;i<n.length;i++)h=(h*31+n.charCodeAt(i))%9973;return h}
@@ -68,7 +68,7 @@ function wkTopic(r,on){if(!r.topic)return"";var t=r.topic,s=t.length>16?t.slice(
 /** Model as a chip: each local provider its own stable hue, cloud: violet (sonnet), amber (opus), other cloud families their own. */
 function wkModelHue(r){var m=r.model||"";if(r.local)return wkHue(m);return/opus/.test(m)?40:/sonnet/.test(m)?270:/haiku/.test(m)?200:/fable/.test(m)?320:290}
 /** A cloud job carries "↑" on its model chip and says why it is not local in the tooltip (cloudWhy: route / reroute / escalation fields). */
-function wkModel(r){if(!r.model)return'<span class="dim">–</span>';var up=!r.local&&r.cloudWhy;return'<span class="wq-chip wq-mc" style="--h:'+wkModelHue(r)+'" title="'+esc((up?r.cloudWhy+"\n":"")+(r.modelFull||r.model))+'">'+(up?'↑ ':'')+esc(r.model)+'</span>'}
+function wkModel(r){if(!r.model)return'<span class="dim">–</span>';var up=!r.local&&r.cloudWhy;return'<span class="wq-chip wq-mc" style="--h:'+wkModelHue(r)+'" title="'+esc((up?r.cloudWhy+"\n":"")+(r.modelFull||r.model))+'">'+(up?'↑ ':'')+esc(r.model)+'</span>'+(r.instance&&r.instance!==r.model?' <span class="dim wq-inst" title="the instance serving this job">'+esc(r.instance)+'</span>':'')}
 var WK_LTIP={1:"L1 coordinates: splits the work, starts L2 workers, checks their results",2:"L2 does the work"};
 /** The level badge before the task text; an L2 under an L1 row of the table gets a "└" prefix. */
 function wkLevel(r,kid){return(kid?'<span class="wq-kid" aria-hidden="true">└</span>':'')+'<span class="wq-lv wq-l'+(r.level===1?1:2)+'" title="'+esc(WK_LTIP[r.level===1?1:2])+'">L'+(r.level===1?1:2)+'</span>'}
@@ -82,11 +82,12 @@ function wkCopyId(id){var done=function(){WK_COPY=id;if(WK_CT)clearTimeout(WK_CT
 function wkDetail(r){
  var x='<div class="wq-x" data-x="'+esc(r.id)+'">';
  // compact panel directly under the row: task, TL;DR, id, engine/provider, age / own time / budget left, turns and tools, "now:", last error, queue position
- x+='<div class="wq-dt">'+wkLevel(r,false)+esc(r.task)+'</div>';
+ x+='<button type="button" class="wq-xc" data-wqx="'+esc(r.id)+'" aria-label="close detail" title="close">✕</button><div class="wq-dt">'+wkLevel(r,false)+esc(r.task)+'</div>';
  if(r.summary)x+='<div class="dim wq-sum">'+esc(r.summary)+'</div>';
  x+='<div class="dim wq-id2" title="'+esc("tap the row again to copy the full worker id")+'">worker: '+esc(r.sid||r.id)+'</div>';
  var meta=[],eng=r.modelFull?r.modelFull+(r.cloudWhy?" ("+r.cloudWhy+")":""):r.model;
  if(eng)meta.push("engine: "+esc(eng));
+ if(r.instance)meta.push("instance: "+esc(r.instance));
  meta.push("priority: "+esc(r.priority));
  var t="age: "+wkDur(r.seconds);
  if(typeof r.activeSeconds==="number")t+=" · own: "+wkDur(r.activeSeconds);
@@ -98,8 +99,20 @@ function wkDetail(r){
  if(r.activity||r.now)x+='<div class="wq-nowline"><b>now:</b>'+(r.now?' <span class="wq-now" title="'+esc(r.activityTip||r.now)+'">'+esc(r.now)+'</span>':" "+esc(r.activity))+'</div>';
  if(r.lastError)x+='<div class="wq-err">last error: '+esc(r.lastError)+'</div>';else if(r.specTip)x+='<div class="wq-err">guard: '+esc(r.specTip)+'</div>';
  if(r.waits&&r.waits.length)r.waits.forEach(function(w){x+='<div class="dim">a session waits: '+esc(w.label)+'</div>'});
+ x+=wkDtActs(r);
  x+='</div>';
  return x;
+}
+/** Phone detail only: the row actions live here, spaced apart; pause and stop need a second tap (inline "tap again to confirm"). */
+function wkDtBtn(r,a,label,why){var k=r.id+":"+a,arm=WK_CONF===k;return'<button type="button" class="wq-db'+(arm?' arm':'')+'" data-qa="'+a+'" data-id="'+esc(r.id)+'"'+(why?' disabled aria-disabled="true"':'')+' title="'+esc(why||(WK_LBL[a]||[a,a])[1])+'">'+(arm?'tap again to confirm':esc(label))+'</button>'}
+function wkDtActs(r){
+ var has=function(a){return r.actions.indexOf(a)>=0},b="";
+ if(r.state==="running")b=wkDtBtn(r,"pause","pause");
+ else if(r.state==="waiting")b=wkDtBtn(r,"start-now","start now",has("start-now")?"":(r.startNowWhy||"the limit of started jobs is reached"))+wkDtBtn(r,"pause","pause");
+ else b=has("deep-resume")?wkDtBtn(r,"deep-resume","resume"):wkDtBtn(r,"resume","resume",has("resume")?"":"this job cannot resume right now");
+ if(has("stop"))b+=wkDtBtn(r,"stop","stop");
+ var pr='<select class="wq-sel wq-dsel" data-qp="'+esc(r.id)+'" aria-label="priority">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
+ return'<div class="wq-da">'+b+pr+wkMenuBtn("row:"+r.id,"more actions for "+r.task)+'</div>';
 }
 function wkTRow(r){
  var has=function(a){return r.actions.indexOf(a)>=0};
@@ -115,12 +128,12 @@ function wkTRow(r){
  tip+="\n\nmodel: "+(r.modelFull||r.model||"-")+(r.cloudWhy?" ("+r.cloudWhy+")":"")+"\npriority: "+r.priority+"\ntime: "+wkDur(r.seconds);
  var op=!!WK_OPEN[r.id];
  // the narrow second line (always there): the task ellipsised to one line, then the runtime "12m · own 8m · 32m left" and the short id
- var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,kid)+'<div class="wq-nl"><span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span><div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(wkRuntime(r))+" · "+esc(r.sid||r.id)+'</div></div>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"");
+ var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,kid)+'<div class="wq-nl"><span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span><div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(wkRuntime(r))+" · "+esc(r.sid||r.id)+(r.instance?" · "+esc(r.instance):"")+'</div></div>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"");
  // the tap detail: a compact panel directly below the row's first line (narrow mode only; wide mode hides it by CSS — the columns carry everything there)
- if(op&&wkNarrow())task+=wkDetail(r).replace('class="wq-x"','class="wq-x on"');
+ var dtl=op&&wkNarrow()?'<tr class="wq-xr" data-xr="'+esc(r.id)+'"><td colspan="'+WK_COLS.length+'">'+wkDetail(r).replace('class="wq-x"','class="wq-x on"')+'</td></tr>':"";
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
- return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
+ return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>'+dtl;
 }
 /** Interactive local sessions: state (generating / idle Nm) + failover badge, session chip, engine, last request age, tokens served; the second line (narrow pattern) carries tokens and request age. */
 function wkTok(n){n=n||0;return n<1000?String(n):n<1e6?(n/1000).toFixed(1)+"k":(n/1e6).toFixed(1)+"M"}
@@ -135,6 +148,10 @@ function wkSessHtml(ss){
  ss.forEach(function(s){out+=wkSessRow(s)});
  return out;
 }
+/** L0 of the worker tree: the owning session's name, its L1 / L2 jobs fold below it the way L2 folds under L1. */
+function wkL0(name,n){return'<tr class="wq-g wq-l0"><td colspan="'+WK_COLS.length+'"><span class="wq-lv wq-l0b" title="the session that owns these jobs">L0</span> '+wkChip(name,WK_FILTERS.indexOf(name)>=0)+' <span class="dim">'+n+' job'+(n===1?'':'s')+'</span></td></tr>'}
+/** Rows of one state group clustered by owning session (first appearance order, stable); jobs without a session stay where they are. */
+function wkByOwner(rows){var out=[],seen={},i,j;for(i=0;i<rows.length;i++){var r=rows[i],k=wkGroupOf(r);if(!r.session||r.session==="other"){out.push(r);continue}var key=k+"|"+r.session;if(seen[key])continue;seen[key]=1;for(j=i;j<rows.length;j++)if(wkGroupOf(rows[j])===k&&rows[j].session===r.session)out.push(rows[j])}return out}
 function wkGroupOf(r){return r.state==="running"?0:r.state==="waiting"?1:2}
 /** The one table: fixed layout, one line per job. A group's label appears ONCE, above its rows — never after a row and never more than once per group (an empty group still shows "(none)"). */
 function wkQTable(rows){
@@ -146,7 +163,7 @@ function wkQTable(rows){
   var vis=[0,0,0];rows.forEach(function(r){vis[g0(r)]++});
   if(bs){var sg=null;rows.forEach(function(r){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}out+=wkTRow(r)})}
   // the group's own position, not a shared loop counter: the header is emitted exactly once per group, before its first row (the old "while(++g&lt;k)" advanced g past k and let every following row re-emit it)
-  else{var last=-1;rows.forEach(function(r){var k=g0(r);if(k!==last){last=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+(vis[k]?'':' <span class="dim">(none)</span>')+'</td></tr>'}out+=wkTRow(r)});[0,1,2].forEach(function(k){if(!vis[k])out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+' <span class="dim">(none)</span></td></tr>'})}
+  else{var last=-1,l0=null;rows=wkByOwner(rows);rows.forEach(function(r){var k=g0(r);if(k!==last){last=k;l0=null;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+(vis[k]?'':' <span class="dim">(none)</span>')+'</td></tr>'}if(r.session&&r.session!=="other"&&r.session!==l0){l0=r.session;out+=wkL0(r.session,rows.filter(function(x){return g0(x)===k&&x.session===l0}).length)}out+=wkTRow(r)});[0,1,2].forEach(function(k){if(!vis[k])out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+' <span class="dim">(none)</span></td></tr>'})}
  }
  return out+'</tbody></table>';
 }
@@ -179,6 +196,7 @@ function wkSpan(t){return' <span title="'+esc(t)+'">'+esc(t)+'</span>'}
 function wkCmp(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}
 function wkBuildRow(b,i){var l=wkSpan(b.label+(b.mode==="full"?" [full]":"")+(b.key?" ["+b.key+"]":""));return[b.state==="running"?"":String(i+1),l,wkSpan(b.session),b.state==="running"?"running":"waiting"+(b.why?" ("+esc(b.why)+")":""),b.chip?wkChip(b.chip,WK_FILTERS.indexOf(b.chip)>=0):'<span class="dim">–</span>',wkDur(b.state==="running"?b.ageSec:b.waitedSec)]}
 /** The queue payload as blocks: [{id, title (plain text), head, rows}] in page order. */
+function wkInst(q){var p=(q.providers||[]).filter(function(x){return x.instances&&x.instances.length}).map(function(x){return x.provider+": "+x.instances.map(function(i){return i.engine+" "+i.busy+"/"+i.cap}).join(", ")});return p.length?" · "+p.join(" · "):""}
 function wkBlocks(q){
  var out=[],sess={},pl=q.plans||[],pv=q.paneViolations||[],bq=q.builds;
  if(pl.length)out.push({id:"plans",title:"plans",head:["plan .txt","parts","phase .txt","in phase","running .txt","workers .txt"],rows:pl.map(function(p){return[wkSpan(p.job),p.merged+'/'+p.total,wkSpan(p.phase),wkDur(p.phaseSec),wkDur(p.ageSec),wkSpan((p.running||[]).join(", "))]})});
@@ -188,7 +206,7 @@ function wkBlocks(q){
   if(!run.length&&!wt.length)return;
   out.push({id:P[1],title:P[1]+" ("+P[2]+" slot"+(P[2]===1?"":"s")+")",head:["pos","build .txt","session .txt","state","session chip","waited"],rows:run.concat(wt).map(wkBuildRow)});
  });
- if((q.table||[]).length||!out.length)out.unshift({id:"queue",title:"worker queue — "+(q.table||[]).length+" job(s)",head:[],rows:[],table:true});
+ if((q.table||[]).length||!out.length)out.unshift({id:"queue",title:"worker queue — "+(q.table||[]).length+" job(s)"+wkInst(q),head:[],rows:[],table:true});
  return out;
 }
 function wkBlockOf(id){return WK_BLOCKS[id]||null}

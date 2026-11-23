@@ -90,6 +90,8 @@ export interface TableRow {
   cloudWhy?: string;
   /** Short name: "<provider>" for a local model / "cloud: <short model>". */
   model: string;
+  /** The instance serving this running job (the router ticket's engine: "signal-2", "signal-2#2"); set by the cockpit from the scheduler snapshot. */
+  instance?: string;
   /** Full "local: <model id>" / "cloud: <provider> <model id>" for a tooltip. */
   modelFull?: string;
   local: boolean;
