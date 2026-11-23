@@ -127,10 +127,10 @@ final class CoreTests: XCTestCase {
     }
 
     func testSessionHuesStableAndDistinct() throws {
-        XCTAssertEqual(nameHash("PAI"), nameHash("PAI"))
+        XCTAssertEqual(nameHash("alpha"), nameHash("alpha"))
         let hues = try queue().sessionHues()
         XCTAssertEqual(Set(hues.values).count, hues.count)
-        XCTAssertEqual(hues["PAI"], assignHues(["PAI"])["PAI"].map { _ in hues["PAI"]! })
+        XCTAssertEqual(hues["alpha"], assignHues(["alpha"])["alpha"].map { _ in hues["alpha"]! })
         XCTAssertTrue(sessionHuePalette.contains(hue(for: "anything")))
     }
 
@@ -184,5 +184,59 @@ final class CoreTests: XCTestCase {
     func testTailSeriesKeepsLastSixMinutes() {
         let s = (0..<20).map { SystemResponse.Sample(t: Double($0) * 60_000, cpu: 1) }
         XCTAssertEqual(tailSeries(s).count, 7)
+    }
+}
+
+@MainActor
+final class StoreHistoryTests: XCTestCase {
+    func sys(now: Double, cpu: Double, buckets: [Double] = []) -> SystemResponse {
+        SystemResponse(now: now,
+                       current: .init(cpu: cpu, gpu: cpu / 2, socTemp: 60, systemW: 30, memTotal: 100, memUsed: 50),
+                       series: .init(series: buckets.map { .init(t: $0, cpu: 10) }))
+    }
+
+    func testSuccessiveSamplesGrowChartSeries() {
+        let store = Store()
+        store.ingest(system: sys(now: 1_000_000, cpu: 10, buckets: [400_000, 700_000]))
+        let first = tailSeries(store.history)
+        XCTAssertEqual(store.history.count, 3) // 2 seed buckets + 1 live
+        store.ingest(system: sys(now: 1_002_500, cpu: 20, buckets: [400_000, 700_000]))
+        let second = tailSeries(store.history)
+        XCTAssertEqual(store.history.count, 4)
+        XCTAssertEqual(second.count, first.count + 1)
+        XCTAssertEqual(second.compactMap(\.cpu).last, 20)
+        XCTAssertEqual(store.history.last?.memPct, 50)
+    }
+
+    func testHistoryCapped() {
+        let store = Store()
+        for i in 0..<(Store.historyCap + 50) { store.ingest(system: sys(now: 1_000_000 + Double(i) * 1000, cpu: 1)) }
+        XCTAssertEqual(store.history.count, Store.historyCap)
+    }
+}
+
+@MainActor
+final class StoreLiveTests: XCTestCase {
+    func testSeedDroppedOnceLiveSamplesExist() {
+        let store = Store()
+        for i in 0..<Store.liveMin {
+            store.ingest(system: SystemResponse(now: 1_000_000 + Double(i) * 2500,
+                current: .init(cpu: Double(i * 7 % 13)), series: .init(series: [.init(t: 1, cpu: 1), .init(t: 2, cpu: 1)])))
+        }
+        XCTAssertEqual(store.history.count, Store.liveMin)
+        XCTAssertGreaterThan(Set(store.history.compactMap(\.cpu)).count, 2)
+    }
+
+    func testLastSpeedSurvivesZeroReading() throws {
+        let store = Store()
+        let live = try JSONDecoder().decode(LimitsResponse.self, from: fixture("limits"))
+        store.ingest(limits: live)
+        XCTAssertEqual(store.lastSpeed["signal-2"]?.decodeTps, 40.2)
+        var zero = live
+        for i in zero.limits!.indices where zero.limits![i].provider == "signal-2" { zero.limits![i].speed = .init(prefillTps: 0, decodeTps: nil) }
+        store.ingest(limits: zero)
+        XCTAssertEqual(store.lastSpeed["signal-2"]?.decodeTps, 40.2)
+        XCTAssertEqual(speedText("decode", live: nil, last: 40.2), "decode 40 t/s")
+        XCTAssertEqual(speedText("decode", live: nil, last: nil), "decode —")
     }
 }

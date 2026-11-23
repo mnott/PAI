@@ -100,9 +100,9 @@ struct Area: Shape {
 }
 
 struct AreaChart: View {
-    var sys: SystemResponse?
+    var history: [SystemResponse.Sample]
     var body: some View {
-        let s = tailSeries(sys?.series?.series ?? [])
+        let s = tailSeries(history)
         let span = (s.compactMap(\.t).max() ?? 0) - (s.compactMap(\.t).min() ?? 0)
         let mins = Int((span / 60_000).rounded())
         VStack(spacing: 2) {
@@ -170,10 +170,11 @@ struct MetricRow: View {
 
 struct SystemCard: View {
     var sys: SystemResponse?
+    var history: [SystemResponse.Sample]
     var body: some View {
         Card {
             if let c = sys?.current {
-                let s = tailSeries(sys?.series?.series ?? [])
+                let s = tailSeries(history)
                 let memPct = (c.memTotal ?? 0) > 0 ? (c.memUsed ?? 0) / (c.memTotal ?? 1) * 100 : 0
                 MetricRow(label: "CPU", value: "\(Int(c.cpu ?? 0))%", tint: Palette.cpu, fraction: c.cpu, spark: s.compactMap(\.cpu))
                 MetricRow(label: "GPU", value: "\(Int(c.gpu ?? 0))%", tint: Palette.gpu, fraction: c.gpu, spark: s.compactMap(\.gpu))
@@ -181,7 +182,7 @@ struct SystemCard: View {
                 MetricRow(label: "Power", value: String(format: "%.0f W", c.systemW ?? c.totalW ?? 0), tint: Palette.power, spark: s.compactMap(\.systemW))
                 MetricRow(label: "Mem", value: "\(Int((c.memUsed ?? 0) / 1e9))/\(Int((c.memTotal ?? 0) / 1e9)) GB · L\(Int(c.pressureLevel ?? 0))", tint: Palette.mem, fraction: memPct, spark: s.compactMap(\.memPct))
                 MetricRow(label: "Swap", value: "\(Int((c.swapUsed ?? 0) / 1e9))/\(Int((c.swapTotal ?? 0) / 1e9)) GB", tint: Palette.swap)
-                AreaChart(sys: sys)
+                AreaChart(history: history)
             } else {
                 Text("no system data").font(.caption).foregroundStyle(.secondary)
             }
@@ -195,6 +196,7 @@ struct LimitsCard: View {
     var limits: LimitsResponse?
     var queue: QueueResponse?
     var data: DataResponse?
+    var speeds: [String: LimitsResponse.Speed] = [:]
     var body: some View {
         Card {
             if let limits {
@@ -214,7 +216,7 @@ struct LimitsCard: View {
                     }
                 }
                 ForEach(limits.localUp(), id: \.provider) { l in
-                    LocalEngine(limit: l, queue: queue, data: data)
+                    LocalEngine(limit: l, queue: queue, data: data, speeds: speeds)
                 }
             } else {
                 Text("no limits data").font(.caption).foregroundStyle(.secondary)
@@ -227,6 +229,7 @@ struct LocalEngine: View {
     var limit: LimitsResponse.Limit
     var queue: QueueResponse?
     var data: DataResponse?
+    var speeds: [String: LimitsResponse.Speed] = [:]
     var body: some View {
         let provider = limit.provider ?? ""
         let name = limit.served?.first ?? provider
@@ -242,8 +245,8 @@ struct LocalEngine: View {
                 Text("idle").font(.caption2).foregroundStyle(Color(Palette.dim))
             } else {
                 HStack(spacing: 8) {
-                    Text("prefill \(Int(limit.speed?.prefillTps ?? 0)) t/s").font(.caption2.monospacedDigit())
-                    Text("decode \(Int(limit.speed?.decodeTps ?? 0)) t/s").font(.caption2.monospacedDigit())
+                    Text(speedText("prefill", live: limit.speed?.prefillTps, last: speeds[provider]?.prefillTps)).font(.caption2.monospacedDigit())
+                    Text(speedText("decode", live: limit.speed?.decodeTps, last: speeds[provider]?.decodeTps)).font(.caption2.monospacedDigit())
                     Text("ttft \(formatTTFT(ms: ttft.0))").font(.caption2).foregroundStyle(.secondary)
                 }
             }
@@ -437,7 +440,7 @@ struct MachineBar: View {
 // MARK: popover
 
 struct PopoverContent: View {
-    var store: Store
+    @ObservedObject var store: Store
     @ObservedObject var endpoints: EndpointManager
     @State private var expandedId: String?
     @State private var message: String?
@@ -470,8 +473,8 @@ struct PopoverContent: View {
                 Text(err).font(.caption).foregroundStyle(Color(Palette.bad))
             }
             Card { MachineBar(machine: store.queue?.machine, baseURL: base, message: $message) }
-            LimitsCard(limits: store.limits, queue: store.queue, data: store.data)
-            SystemCard(sys: store.system)
+            LimitsCard(limits: store.limits, queue: store.queue, data: store.data, speeds: store.lastSpeed)
+            SystemCard(sys: store.system, history: store.history)
             QueueCard(queue: store.queue, search: search, baseURL: base, expandedId: $expandedId, message: $message)
             if let message { Text(message).font(.caption2).foregroundStyle(.secondary).lineLimit(2) }
             Divider()

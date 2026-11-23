@@ -252,6 +252,13 @@ public func modelChipText(_ r: QueueResponse.Row) -> String {
 
 public func topicChipText(_ t: String) -> String { t.count > 16 ? String(t.prefix(15)) + "…" : t }
 
+/// "decode 39 t/s" from the live reading, else the last non-zero one, else "—".
+public func speedText(_ label: String, live: Double?, last: Double?) -> String {
+    if let live, live > 0 { return "\(label) \(Int(live)) t/s" }
+    if let last, last > 0 { return "\(label) \(Int(last)) t/s" }
+    return "\(label) —"
+}
+
 /// A local engine is idle when nothing runs on its instances.
 public func localIdle(limit: LimitsResponse.Limit, busy: Int?) -> Bool {
     if let busy { return busy == 0 }
