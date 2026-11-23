@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { RequestScheduler } from "../router/scheduler.js";
 import { readFileSync } from "node:fs";
-import { DEFAULT_HELPER, HELPER_CALLS_FILE, helperComplete, helperConfig, helperStats, resetHelperState, truncateInput, type HelperCall, type HelperDeps, type WireRequest } from "./helper.js";
+import { DEFAULT_HELPER, HELPER_CALLS_FILE, resolveHelperSpecs, helperSetupWarning, helperReport, helperComplete, helperConfig, helperStats, resetHelperState, truncateInput, type HelperCall, type HelperDeps, type WireRequest } from "./helper.js";
 import { classifyRouteAssisted } from "./route-classifier.js";
 import { parseProofVerdict, proofIsEmpty, routeSecondOpinion, cachedTldr, classifyAlert, cleanGateSummary, cleanTldr, parseAlertVerdict, resetTldrState, trimTldrInput } from "./helper-uses.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -15,7 +15,7 @@ const ollama = (text: string): string => JSON.stringify({ message: { content: te
 
 function deps(fetch: HelperDeps["fetch"], over: Partial<HelperDeps> = {}): HelperDeps {
   return {
-    config: { ...DEFAULT_HELPER },
+    config: { ...DEFAULT_HELPER, models: ["apple-fm", "ollama:qwen3:8b"] },
     logDir: mkdtempSync(join(tmpdir(), "helper-")),
     routerUrl: "http://127.0.0.1:1",
     routerModel: (n) => (n === "apple-fm" ? "apple-fm" : null),
@@ -273,7 +273,7 @@ describe("uses fall back to rules", () => {
   });
 
   it("config defaults", () => {
-    expect(helperConfig({}).models).toEqual(["apple-fm", "ollama:qwen3:8b"]);
+    expect(helperConfig({}).models).toEqual(["apple-fm", "@helper"]);
     expect(helperConfig({ uses: { tldr: false } }).uses.tldr).toBe(false);
   });
 });
@@ -457,5 +457,65 @@ describe("route classifier and report check on apple-fm", () => {
     expect(proofIsEmpty("git diff HEAD", { config: { ...DEFAULT_HELPER, uses: { ...DEFAULT_HELPER.uses, reportCheck: false } } })).toBe(false);
     // no config under test: the helper is off, the check stays silent
     expect(proofIsEmpty("git diff HEAD")).toBe(false);
+  });
+});
+
+describe("helper model resolution (small side-job model)", () => {
+  const cfg = (o: Record<string, unknown> = {}) => helperConfig(o);
+  const roles = (r: Record<string, "main" | "helper">): Partial<HelperDeps> => ({ providerRoles: () => r });
+
+  it("default order: apple-fm, then role: helper providers; main models never", () => {
+    const r = resolveHelperSpecs("route", cfg(), roles({ "apple-fm": "main", small: "helper", big: "main" }));
+    expect(r.specs).toEqual(["apple-fm", "small"]);
+  });
+
+  it("apple-fm absent + role helper: the helper provider serves", async () => {
+    const d = deps(async () => msg("ok"), { config: cfg(), ...roles({ small: "helper", big: "main" }), routerModel: (n) => (n === "small" ? "qwen-0.6b" : null) });
+    expect(await helperComplete({ task: "t", input: "i", label: "route" }, d)).toBe("ok");
+    expect(callsOf(d)[0].model).toBe("small");
+  });
+
+  it("apple-fm absent + none: skip (null), the main model is not asked", async () => {
+    let asked = 0;
+    const d = deps(async () => (asked++, msg("x")), { config: cfg(), ...roles({ big: "main" }), routerModel: (n) => (n === "big" ? "big-model" : null) });
+    expect(await helperComplete({ task: "t", input: "i", label: "tldr" }, d)).toBeNull();
+    expect(asked).toBe(0);
+  });
+
+  it("a main provider named in models is refused unless allowMain", () => {
+    const o = { models: ["big"] };
+    expect(resolveHelperSpecs("tldr", cfg(o), roles({ big: "main" }))).toEqual({ specs: [], refused: ["big"] });
+    expect(resolveHelperSpecs("tldr", cfg({ ...o, allowMain: true }), roles({ big: "main" })).specs).toEqual(["big"]);
+  });
+
+  it("per-use override wins over helper.models", () => {
+    const c = cfg({ models: ["apple-fm"], uses: { tldr: { models: ["ollama:qwen3:1.7b"] }, routeClass: false } });
+    expect(resolveHelperSpecs("tldr", c, roles({})).specs).toEqual(["ollama:qwen3:1.7b"]);
+    expect(resolveHelperSpecs("route", c, roles({})).specs).toEqual(["apple-fm"]);
+    expect(c.uses.routeClass).toBe(false);
+  });
+
+  it("a busy or down helper is skipped at once and the next one answers", async () => {
+    const c = cfg({ models: ["apple-fm", "small", "ollama:tiny"] });
+    const d = deps(async () => msg("small"), { config: c, ...roles({ small: "helper" }), routerModel: (n) => n, busy: (n) => n === "apple-fm" });
+    expect(await helperComplete({ task: "t", input: "i", label: "gate" }, d)).toBe("small");
+    expect(callsOf(d).map((x) => [x.model, x.kind ?? "ok"])).toEqual([["apple-fm", "busy-fallback"], ["small", "ok"]]);
+    resetHelperState();
+    const d2 = deps(async (w) => { if (w.kind === "messages") throw new Error("down"); return ollama("tiny"); }, { config: c, ...roles({ small: "helper" }), routerModel: (n) => n });
+    expect(await helperComplete({ task: "t", input: "i", label: "gate" }, d2)).toBe("tiny");
+  });
+});
+
+describe("helper report and setup warning", () => {
+  const roles = (r: Record<string, "main" | "helper">): Partial<HelperDeps> => ({ providerRoles: () => r });
+  it("warns with no apple-fm and no role: helper; silent with either", () => {
+    expect(helperSetupWarning(helperConfig({}), roles({ big: "main" }))).toMatch(/no helper model/);
+    expect(helperSetupWarning(helperConfig({}), roles({ small: "helper" }))).toBeNull();
+    expect(helperSetupWarning(helperConfig({}), roles({ "apple-fm": "main" }))).toBeNull();
+  });
+  it("report names the model per use", () => {
+    const r = helperReport(helperConfig({ uses: { tldr: { models: ["ollama:q"] } } }), roles({ small: "helper" })).join("\n");
+    expect(r).toMatch(/tldr\s+ollama:q/);
+    expect(r).toMatch(/route\s+small/);
   });
 });
