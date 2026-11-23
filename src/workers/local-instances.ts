@@ -325,3 +325,30 @@ export function endpointRegistry(
   const ids = new Set(managed.map((i) => i.id));
   return [...managed, ...registeredInstances(declared, cfg).filter((i) => !ids.has(i.id))];
 }
+
+/** session (per provider) -> the engine key it last ran on (scheduler-side affinity). */
+const stickyEngineOf = new Map<string, string>();
+
+/**
+ * The engine a request queues at first among `engines` (all instances of one provider): its session's last engine while that
+ * has a free slot (prompt cache), else the least loaded one with a free slot, else the least loaded. The scheduler still
+ * lets the request run on any instance whose slot frees first.
+ */
+export function stickyEngine(model: string, session: string, engines: string[], hasFree: (engine: string) => boolean, load: (engine: string) => number): string {
+  const prior = session ? stickyEngineOf.get(`${model}\u0000${session}`) : undefined;
+  if (prior && engines.includes(prior) && hasFree(prior)) return prior;
+  const room = engines.filter(hasFree);
+  const pool = room.length ? room : engines;
+  const min = minOf(pool.map(load));
+  const tied = pool.filter((e) => load(e) === min);
+  const n = rrCounters.get(model) ?? 0;
+  rrCounters.set(model, n + 1);
+  return tied[n % tied.length];
+}
+
+/** Records where a session just ran (affinity for its next request). */
+export function rememberEngine(model: string, session: string, engine: string): void {
+  if (!session) return;
+  if (stickyEngineOf.size > 2000) stickyEngineOf.delete(stickyEngineOf.keys().next().value as string);
+  stickyEngineOf.set(`${model}\u0000${session}`, engine);
+}

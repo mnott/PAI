@@ -72,7 +72,7 @@ import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_
 import { tierProviderNames, withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
 import type { EndpointHealth } from "../workers/endpoint-health.js";
-import { endpointRegistry, instanceEngineKey, instanceNumber, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
+import { endpointRegistry, instanceEngineKey, instanceNumber, pickInstance, readInstances, rememberEngine, stickyEngine, type LocalInstance } from "../workers/local-instances.js";
 import type { LocalConfig } from "../workers/local-tiers.js";
 import { resolveSelector } from "../workers/route-table.js";
 import { refuseUnlessLoopback, isTailnetOrLocalName } from "../utils/loopback-guard.js";
@@ -807,11 +807,16 @@ export function routerHandler(
       let engine = prov;
       let instanceTag: string | undefined;
       let host: string | undefined;
+      /** healthy instances of a multi-instance provider: the scheduler picks among them when a slot frees */
+      let siblings: LocalInstance[] = [];
+      let releaseHeld: () => void = () => {};
       if (target.kind === "provider") {
         // every row resolves against the registry (managed + registered), then the least busy endpoint serves
         const registry = endpointRegistry(instancesOf(), providers, launched());
         if (health) void Promise.all([health.refresh(registry), health.refreshManaged(registry)]);
-        const picked = pickInstance(prov, resolveSelector(target.name, registry).filter(healthy), (k) => held.get(k) ?? 0, {
+        const live = resolveSelector(target.name, registry).filter(healthy);
+        if (target.provider.instances) siblings = live;
+        const picked = pickInstance(prov, live, (k) => held.get(k) ?? 0, {
           ...(target.provider.instances ? { cap: target.provider.maxConcurrent, session: headerValue(req.headers["x-pai-session"], 80) || headerValue(req.headers["x-claude-code-session-id"], 64) || "" } : {}),
         });
         if (picked) {
@@ -828,6 +833,7 @@ export function routerHandler(
             freed = true;
             held.set(engine, Math.max(0, (held.get(engine) ?? 1) - 1));
           };
+          releaseHeld = free;
           res.on("close", free);
         }
       }
@@ -1400,6 +1406,14 @@ export function routerHandler(
           sharedParker().noteEngine(engine, up.url.origin);
           sched.idleHook ??= (e, w, n) => sharedParker().maybePark(e, w, n);
           const sess = headerValue(req.headers["x-pai-session"], 80) || "anon";
+          // several instances: the request waits on all of them and runs on the first with a free slot (no job waits while another instance is idle)
+          const alts = siblings.length > 1 ? siblings.map((i) => instanceEngineKey(i)) : [];
+          if (alts.length) {
+            releaseHeld(); // the scheduler counts this request from here on
+            for (const k of alts) sched.setSlots(k, target.provider.maxConcurrent ?? 1);
+            sharedParker().noteEngine(engine, up.url.origin);
+          }
+          const stickKey = alts.length ? sess : "";
           const worker = headerValue(req.headers["x-pai-worker"], 80) || `conn:${sessionId?.slice(0, 8) ?? req.socket.remotePort ?? "?"}`;
           const hint = ["high", "normal", "low"].find((l) => l === headerValue(req.headers["x-pai-priority"], 10)) as "high" | "normal" | "low" | undefined;
           const streaming = safeBody(up.body)?.stream === true;
@@ -1431,11 +1445,26 @@ export function routerHandler(
           sched.onEngineIdle = (e, w, _s, ms) => slotReleased({ reason: "engine-idle", worker: w, engine: e, idleSec: Math.round(ms / 1000) });
           const queue = (): void => {
             startPings();
+            // conversation affinity (prompt cache) only while that instance has a free slot
+            const home = alts.length ? stickyEngine(prov, stickKey, alts, (k) => sched.free(k) > 0, (k) => sched.load(k)) : engine;
             sched
-              .acquire(engine, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint, req.headers["x-pai-interactive"] === "1" || req.headers["x-pai-failover"] === "1" ? { failover: req.headers["x-pai-failover"] === "1" } : undefined)
+              .acquire(home, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint, req.headers["x-pai-interactive"] === "1" || req.headers["x-pai-failover"] === "1" ? { failover: req.headers["x-pai-failover"] === "1" } : undefined, alts)
               .then(
                 (ticket) => {
                   stopPings();
+                  if (alts.length && ticket.engine !== engine) {
+                    const at = siblings.find((i) => instanceEngineKey(i) === ticket.engine);
+                    if (at) {
+                      const u = new URL(at.url);
+                      up.url.protocol = u.protocol;
+                      up.url.host = u.host;
+                      host = u.host;
+                      instanceTag = at.origin === "managed" ? `#${instanceNumber(at.id)}` : undefined;
+                    }
+                  }
+                  engine = ticket.engine;
+                  if (alts.length) sharedParker().noteEngine(engine, up.url.origin);
+                  if (alts.length) rememberEngine(prov, stickKey, engine);
                   touchHold = () => ticket.touch();
                   ticket.setPromptTokens(Math.ceil(up.body.length / 4));
                   ticket.onReap = () => endRetryable(res, "engine idle, retry the request");

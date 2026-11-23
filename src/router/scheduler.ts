@@ -80,6 +80,8 @@ export interface Served {
 export interface Ticket {
   /** ms spent queued (0 when granted at once) */
   waitedMs: number;
+  /** the engine (instance) that granted the slot: with alternatives it is the first one with a free slot */
+  engine: string;
   /** Free the engine. Idempotent; the first call's `served` is what the session is charged. */
   release(served?: Served, opts?: ReleaseOpts): void;
   /** Upstream bytes arrived: the holder is alive (resets the stale clock). */
@@ -113,6 +115,8 @@ interface Waiter {
   interactive?: SessionOpts;
   grant: (t: Ticket) => void;
   fail: (e: Error) => void;
+  /** engines this request may run on (it waits in all of them; the first free slot takes it) */
+  engines?: string[];
 }
 
 interface Flight {
@@ -133,7 +137,10 @@ interface Flight {
 }
 
 interface Engine {
-  inflight: Flight | null;
+  /** requests holding a slot of this engine (at most `slots`) */
+  flights: Flight[];
+  /** concurrent requests the engine serves (1 unless the provider declares more) */
+  slots: number;
   /** worker whose conversation the engine holds (its last response) */
   lastWorker?: string;
   waiting: Waiter[];
@@ -188,7 +195,7 @@ export const SESSION_TTL_MS = 30 * 60_000;
 
 export interface SchedSnapshot {
   at: number;
-  engines: Record<string, { inflight: { session: string; worker: string; sinceMs: number } | null; queued: Record<string, number>; counters: Record<string, number> }>;
+  engines: Record<string, { inflight: { session: string; worker: string; sinceMs: number } | null; /** every request holding a slot, and the slot count (absent in older snapshots) */ flights?: Array<{ session: string; worker: string; sinceMs: number }>; slots?: number; queued: Record<string, number>; counters: Record<string, number> }>;
   workers: Record<string, WorkerAcct>;
   /** interactive sessions by name (absent in snapshots written by older routers) */
   sessions?: Record<string, SessionAcct>;
@@ -234,8 +241,29 @@ export class RequestScheduler {
 
   private engine(name: string): Engine {
     let e = this.engines.get(name);
-    if (!e) this.engines.set(name, (e = { inflight: null, waiting: [] }));
+    if (!e) this.engines.set(name, (e = { flights: [], slots: 1, waiting: [] }));
     return e;
+  }
+
+  /** Concurrent requests an engine serves (a multi-instance provider's per-instance maxConcurrent). */
+  setSlots(name: string, n: number): void {
+    const e = this.engine(name);
+    const slots = Math.max(1, Math.floor(n) || 1);
+    if (e.slots === slots) return;
+    e.slots = slots;
+    this.dispatch(name);
+  }
+
+  /** Requests holding a slot of the engine plus those queued on it (what a router balances by). */
+  load(name: string): number {
+    const e = this.engines.get(name);
+    return e ? e.flights.length + e.waiting.length : 0;
+  }
+
+  /** Free slots of the engine. */
+  free(name: string): number {
+    const e = this.engines.get(name);
+    return e ? Math.max(0, e.slots - e.flights.length) : 1;
   }
 
   private ctr(name: string): Map<string, number> {
@@ -262,16 +290,17 @@ export class RequestScheduler {
     const now = this.now();
     let n = 0;
     for (const [name, e] of this.engines) {
-      const f = e.inflight;
-      const limit = f ? staleLimitMs(staleMs, f) : staleMs;
-      if (!f || f.parking || !f.release || now - f.lastByte <= limit) continue;
-      n++;
-      try {
-        this.onStale?.(name, f.worker, f.session, now - f.lastByte);
-      } catch {
-        /* logging is best effort */
+      for (const f of [...e.flights]) {
+        const limit = staleLimitMs(staleMs, f);
+        if (f.parking || !f.release || now - f.lastByte <= limit) continue;
+        n++;
+        try {
+          this.onStale?.(name, f.worker, f.session, now - f.lastByte);
+        } catch {
+          /* logging is best effort */
+        }
+        f.release();
       }
-      f.release();
     }
     return n;
   }
@@ -297,21 +326,22 @@ export class RequestScheduler {
         continue;
       }
       if (!this.idleSince.has(name)) this.idleSince.set(name, now);
-      const f = e.inflight;
-      if (!f || f.parking || !f.release) continue;
-      if (now - this.idleSince.get(name)! < limit || now - f.since < limit || now - f.lastByte < limit) continue;
-      n++;
-      try {
-        this.onEngineIdle?.(name, f.worker, f.session, now - f.since);
-      } catch {
-        /* logging is best effort */
+      for (const f of [...e.flights]) {
+        if (f.parking || !f.release) continue;
+        if (now - this.idleSince.get(name)! < limit || now - f.since < limit || now - f.lastByte < limit) continue;
+        n++;
+        try {
+          this.onEngineIdle?.(name, f.worker, f.session, now - f.since);
+        } catch {
+          /* logging is best effort */
+        }
+        try {
+          f.reap?.();
+        } catch {
+          /* the slot is freed below regardless */
+        }
+        f.release();
       }
-      try {
-        f.reap?.();
-      } catch {
-        /* the slot is freed below regardless */
-      }
-      f.release();
     }
     return n;
   }
@@ -321,7 +351,7 @@ export class RequestScheduler {
     this.reaper = setInterval(() => {
       this.reapStale();
       this.reapEngineIdle();
-      if (![...this.engines.values()].some((e) => e.inflight)) {
+      if (![...this.engines.values()].some((e) => e.flights.length)) {
         clearInterval(this.reaper);
         this.reaper = undefined;
       }
@@ -345,13 +375,15 @@ export class RequestScheduler {
   }
 
   /** Wait for the engine. Resolves with a ticket; rejects only when cancelled. */
-  acquire(engineName: string, session: string, worker: string, signal?: { onAbort(cb: () => void): void }, hint?: Priority, interactive?: SessionOpts): Promise<Ticket> {
+  acquire(engineName: string, session: string, worker: string, signal?: { onAbort(cb: () => void): void }, hint?: Priority, interactive?: SessionOpts, alts?: string[]): Promise<Ticket> {
     const eng = this.engine(engineName);
+    // with alternatives the request waits on every engine and runs on the first with a free slot (its own engine first when free)
+    const group = alts && alts.length ? [engineName, ...alts.filter((a) => a !== engineName)] : undefined;
     const now = this.now();
     const ctr = this.ctr(engineName);
     // re-backlog lift: a session with nothing queued or running starts level with the backlogged ones
     const backlogged = new Set<string>(eng.waiting.map((w) => w.session));
-    if (eng.inflight) backlogged.add(eng.inflight.session);
+    for (const f of eng.flights) backlogged.add(f.session);
     if (!backlogged.has(session)) {
       const others = [...backlogged].map((s) => ctr.get(s) ?? 0);
       const floor = others.length ? minOf(others) : 0;
@@ -363,19 +395,29 @@ export class RequestScheduler {
       this.sessions.set(session, { session, engine: engineName, requests: prev?.requests ?? 0, waitMsTotal: prev?.waitMsTotal ?? 0, lastWaitMs: prev?.lastWaitMs ?? 0, serviceMsTotal: prev?.serviceMsTotal ?? 0, lastServiceMs: prev?.lastServiceMs ?? 0, lastRequest: now, inflight: prev?.inflight ?? false, tokens: prev?.tokens ?? 0, ...(interactive.failover || (prev?.failover && now - prev.lastRequest < SESSION_TTL_MS) ? { failover: true } : {}) });
     }
     return new Promise<Ticket>((resolve, reject) => {
-      const w: Waiter = { seq: ++this.seq, hint, session, worker, at: now, interactive, grant: resolve, fail: reject };
-      eng.waiting.push(w);
+      const w: Waiter = { seq: ++this.seq, hint, session, worker, at: now, interactive, grant: resolve, fail: reject, ...(group ? { engines: group } : {}) };
+      for (const n of group ?? [engineName]) this.engine(n).waiting.push(w);
       if (!acct.waitingSince) acct.waitingSince = now;
       signal?.onAbort(() => {
-        const i = eng.waiting.indexOf(w);
-        if (i < 0) return;
-        eng.waiting.splice(i, 1);
+        if (!eng.waiting.includes(w)) return;
+        this.unqueue(w, engineName);
         this.refreshWaiting(worker);
         w.fail(new Error("cancelled while queued"));
         this.changed();
       });
-      this.dispatch(engineName);
+      // the engine with the most free slots first, so a free instance never idles while the request waits on a busy one
+      const order = (group ?? [engineName]).map((n, k) => ({ n, k, free: this.free(n) })).sort((a, b) => b.free - a.free || a.k - b.k);
+      for (const o of order) this.dispatch(o.n);
     });
+  }
+
+  /** Takes a waiter out of every engine queue it sits in. */
+  private unqueue(w: Waiter, engineName: string): void {
+    for (const n of w.engines ?? [engineName]) {
+      const q = this.engines.get(n)?.waiting;
+      const i = q ? q.indexOf(w) : -1;
+      if (q && i >= 0) q.splice(i, 1);
+    }
   }
 
   private refreshWaiting(worker: string): void {
@@ -453,14 +495,15 @@ export class RequestScheduler {
 
   private dispatch(engineName: string): void {
     const eng = this.engine(engineName);
-    while (!eng.inflight) {
+    while (eng.flights.length < eng.slots) {
       const w = this.pick(engineName);
       if (!w) break;
-      eng.waiting.splice(eng.waiting.indexOf(w), 1);
+      this.unqueue(w, engineName);
       const start = this.now();
       if (this.ctl(w).priority === "low") eng.lastLowAt = start;
       const waitedMs = start - w.at;
-      eng.inflight = { session: w.session, worker: w.worker, since: start, lastByte: start };
+      const flight: Flight = { session: w.session, worker: w.worker, since: start, lastByte: start };
+      eng.flights.push(flight);
       this.armReaper();
       const a = this.acct(w.worker, w.session, engineName);
       a.requests++;
@@ -476,17 +519,17 @@ export class RequestScheduler {
       }
       this.refreshWaiting(w.worker);
       let done = false;
-      const flight = eng.inflight;
       const ticket: Ticket = {
         waitedMs,
+        engine: engineName,
         touch: () => {
-          if (eng.inflight === flight) {
+          if (eng.flights.includes(flight)) {
             flight.lastByte = this.now();
             flight.gotByte = true;
           }
         },
         setPromptTokens: (n) => {
-          if (eng.inflight === flight) flight.promptTokens = n;
+          if (eng.flights.includes(flight)) flight.promptTokens = n;
         },
         release: (served, opts) => {
           if (done) return;
@@ -495,12 +538,14 @@ export class RequestScheduler {
           eng.lastWorker = w.worker;
           const hook = opts?.gate ? this.idleHook : undefined;
           let parking: Promise<void> | undefined;
-          if (hook && eng.inflight === flight) {
+          let parkFlight: Flight | undefined;
+          const at = eng.flights.indexOf(flight);
+          if (hook && at >= 0) {
             // keep the engine held while the conversation is saved, then admit the next worker
             parking = hook(engineName, w.worker, eng.waiting.length).catch(() => undefined);
-            eng.inflight = { session: w.session, worker: w.worker, since: end, lastByte: end, parking: true };
-          } else if (eng.inflight === flight) eng.inflight = null;
-          const parkFlight = eng.inflight;
+            parkFlight = { session: w.session, worker: w.worker, since: end, lastByte: end, parking: true };
+            eng.flights[at] = parkFlight;
+          } else if (at >= 0) eng.flights.splice(at, 1);
           a.activeSince = 0;
           a.lastServiceMs = end - start;
           a.serviceMsTotal += end - start;
@@ -520,7 +565,8 @@ export class RequestScheduler {
           }
           if (parking) {
             void parking.then(() => {
-              if (eng.inflight === parkFlight) eng.inflight = null;
+              const k = parkFlight ? eng.flights.indexOf(parkFlight) : -1;
+              if (k >= 0) eng.flights.splice(k, 1);
               this.dispatch(engineName);
             });
           } else this.dispatch(engineName);
@@ -555,9 +601,11 @@ export class RequestScheduler {
     const engines: SchedSnapshot["engines"] = {};
     for (const [name, e] of this.engines) {
       const queued: Record<string, number> = {};
-      for (const w of e.waiting) queued[w.session] = (queued[w.session] ?? 0) + 1;
+      for (const w of e.waiting.filter((x) => !x.engines || x.engines[0] === name)) queued[w.session] = (queued[w.session] ?? 0) + 1;
       engines[name] = {
-        inflight: e.inflight ? { session: e.inflight.session, worker: e.inflight.worker, sinceMs: now - e.inflight.since } : null,
+        inflight: e.flights[0] ? { session: e.flights[0].session, worker: e.flights[0].worker, sinceMs: now - e.flights[0].since } : null,
+        flights: e.flights.map((f) => ({ session: f.session, worker: f.worker, sinceMs: now - f.since })),
+        slots: e.slots,
         queued,
         counters: Object.fromEntries([...(this.counters.get(name) ?? [])].map(([k, v]) => [k, Math.round(v)])),
       };
@@ -650,14 +698,20 @@ export function schedLine(s: SchedSnapshot | null, names?: Record<string, string
   const label = (sid: string): string => names?.[sid] ?? sid.slice(0, 8);
   // copies of one model (`gyro-m`, `gyro-m#2`) read as one engine: `gyro-m x2`
   const groups = new Map<string, Array<SchedSnapshot["engines"][string]>>();
+  const active = new Set<string>();
+  for (const [name, e] of Object.entries(s.engines)) if (e.inflight || Object.keys(e.queued).length) active.add(name.replace(/#\d+$/, ""));
+  const perInstance = new Map<string, string[]>();
   for (const [name, e] of Object.entries(s.engines)) {
-    if (!e.inflight && !Object.keys(e.queued).length) continue;
     const base = name.replace(/#\d+$/, "");
+    if (!active.has(base)) continue;
     groups.set(base, [...(groups.get(base) ?? []), e]);
+    perInstance.set(base, [...(perInstance.get(base) ?? []), `${name} ${e.flights?.length ?? (e.inflight ? 1 : 0)}/${e.slots ?? 1}`]);
   }
   const parts: string[] = [];
   for (const [base, es] of groups) {
-    const inflight = es.filter((e) => e.inflight).map((e) => label(e.inflight!.session));
+    const inflight = es.flatMap((e) => (e.flights ?? (e.inflight ? [e.inflight] : [])).map((f) => label(f.session)));
+    const busy = es.reduce((n, e) => n + (e.flights?.length ?? (e.inflight ? 1 : 0)), 0);
+    const cap = es.reduce((n, e) => n + (e.slots ?? 1), 0);
     const queued: Record<string, number> = {};
     const counters: Record<string, number> = {};
     for (const e of es) {
@@ -667,7 +721,7 @@ export function schedLine(s: SchedSnapshot | null, names?: Record<string, string
     const q = Object.entries(queued);
     const c = Object.entries(counters).map(([k, v]) => `${label(k)} ${v} tokens served`);
     parts.push(
-      `${base}${es.length > 1 ? ` x${es.length}` : ""} ${inflight.length ? `in flight (${inflight.join(", ")})` : "idle"}` +
+      `${base}${es.length > 1 ? ` x${es.length}` : ""} ${inflight.length ? `in flight ${busy}/${cap} (${inflight.join(", ")})` : "idle"}${es.length > 1 ? ` [${perInstance.get(base)!.join(", ")}]` : ""}` +
         (q.length ? `, queued ${q.map(([k, n]) => `${label(k)} ${n}`).join(" ")}` : "") +
         (c.length ? `, ${c.join(", ")}` : "")
     );

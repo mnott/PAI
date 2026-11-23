@@ -39,6 +39,7 @@ import {
 } from "./config.js";
 import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
+import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { admitCap, resolveCap } from "./capacity.js";
@@ -185,7 +186,7 @@ export function capText(p: WorkerProvider): string {
   const slots = p.conversationSlots;
   const admit = admitCap(p.maxConcurrent, slots, isLoopbackProvider(p));
   return (
-    `cap ${cap ?? "unlimited"} (${source}), conversation slots ${slots ?? `${cap ?? "unlimited"} (default)`}` +
+    `cap ${cap ?? "unlimited"}${p.instances?.length && cap !== undefined ? ` per instance, ${cap * p.instances.length} total` : ""} (${source}), conversation slots ${slots ?? `${cap ?? "unlimited"} (default)`}` +
     (slots !== undefined ? ` — admits ${admit ?? "unlimited"}` : "")
   );
 }
@@ -490,6 +491,27 @@ function classesForProvider(workers: WorkersConfig, name: string): string[] {
  * short timeout, so a model reading the list cannot mistake an
  * enabled-but-down server for a usable one.
  */
+/** One line per instance of a multi-instance provider: its url and busy/cap (busy from the router's scheduler snapshot), then the total. */
+export function instanceLines(name: string, p: WorkerProvider, workers: WorkersConfig, snap?: SchedSnapshot | null): string[] {
+  const urls = p.instances ?? [];
+  const per = describeCap(p).cap;
+  let sn: SchedSnapshot | null = null;
+  try {
+    sn = snap === undefined ? readSchedFile(workersLogDir(workers)) : snap;
+  } catch {
+    sn = null;
+  }
+  let busy = 0;
+  const out = urls.map((u, k) => {
+    const e = sn?.engines[k === 0 ? name : `${name}#${k + 1}`];
+    const b = e?.flights?.length ?? (e?.inflight ? 1 : 0);
+    busy += b;
+    return `    instance ${k + 1}  ${u}  busy ${b}/${per ?? "unlimited"}`;
+  });
+  out.push(`    total busy ${busy}/${per === undefined ? "unlimited" : per * urls.length}`);
+  return out;
+}
+
 export function describeProviders(
   workers: WorkersConfig,
   configPath: string = CONFIG_FILE,
@@ -526,7 +548,8 @@ export function describeProviders(
     const quotaNote = quota === null ? "" : `  quota ${quota}% (skip at ${quotaSkipThreshold(p)})`;
     const tierTags = [`tier ${providerCostTier(p)}`, ...(p.tags ?? [])].join(", ");
     if (running && isLoopbackProvider(p)) flags.push(running[name] ? "running" : "not running");
-    lines.push(`${name}  [${flags.join(", ")}]  ${p.baseUrl}`);
+    lines.push(`${name}  [${flags.join(", ")}]  ${p.instances?.length ? `${p.instances.length} instances` : p.baseUrl}`);
+    if (p.instances?.length) lines.push(...instanceLines(name, p, workers));
     lines.push(`    ${modelPrefsText(p)}${quotaNote}`);
     lines.push(`    ${tierTags}`);
     if (p.key) lines.push(`    key ${maskKey(p.key)}`);

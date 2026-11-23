@@ -777,3 +777,16 @@ describe("providers with several instances", () => {
     expect(new Set(ids)).toEqual(new Set(["sig#2"]));
   });
 });
+
+describe("stickyEngine: affinity only while the instance has a free slot", () => {
+  it("keeps the session's engine while free, moves when it is full and another is free", async () => {
+    const { stickyEngine, rememberEngine } = await import("./local-instances.js");
+    const keys = ["m", "m#2", "m#3"];
+    const load: Record<string, number> = { m: 0, "m#2": 0, "m#3": 0 };
+    rememberEngine("m", "sess", "m#2");
+    expect(stickyEngine("m", "sess", keys, (k) => load[k] < 2, (k) => load[k])).toBe("m#2");
+    load["m#2"] = 2;
+    load.m = 1;
+    expect(stickyEngine("m", "sess", keys, (k) => load[k] < 2, (k) => load[k])).toBe("m#3");
+  });
+});
