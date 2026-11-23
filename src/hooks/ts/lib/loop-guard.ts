@@ -827,7 +827,8 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
   const maxRepeats = gc.max_repeats as number;
   const lastN = idx.slice(-maxRepeats);
   const outs = state.outs ?? [];
-  const stalled = lastN.length >= maxRepeats && lastN.every((i, n) => n === 0 || resultsSimilar(outs[lastN[n - 1]], outs[i]));
+  // a denial needs the results of the repeats: an unrecorded result is unknown, and commands that differ only in numbers (sed -n 1,80p vs 245,400p) share a key
+  const stalled = lastN.length >= maxRepeats && lastN.every((i, n) => n === 0 || (outs[lastN[n - 1]] != null && outs[i] != null && resultsSimilar(outs[lastN[n - 1]], outs[i])));
   if (stalled) {
     const head = state.window[idx[0]];
     const denials = { ...(state.denials ?? {}) };
