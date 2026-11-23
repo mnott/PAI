@@ -217,7 +217,8 @@ describe("uses fall back to rules", () => {
   });
 
   it("cleanTldr keeps a short answer with no final period (guardrail refusals and plain one-liners)", () => {
-    expect(cleanTldr("I cannot summarize this text")).toBe("I cannot summarize this text");
+    expect(cleanTldr("Fixes the typo.")).toBe("Fixes the typo.");
+    expect(cleanTldr("Renames snake_case_name to camelCase.")).toBe("Renames snake_case_name to camelCase.");
     expect(cleanTldr("Adds the chip. It lands in the status file")).toBe("Adds the chip. It lands in the status file");
     expect(cleanTldr("too short")).toBeNull();
     expect(cleanTldr("   ")).toBeNull();
@@ -369,6 +370,40 @@ describe("apple-fm summaries stop failing", () => {
     });
     await helperComplete({ task: "t", input: "i", timeoutMs: 12_000 }, d);
     expect(seen[0]).toBeGreaterThanOrEqual(7000);
+  });
+});
+
+describe("apple-fm rejections and contention (#31)", () => {
+  it("a guardrail refusal is a rejection with its reason and excerpt on the log line", async () => {
+    const d = deps(async () => msg("May contain unsafe content"));
+    cachedTldr(d.logDir!, "guard1", "spec text", d);
+    await new Promise((r) => setTimeout(r, 50));
+    const rej = callsOf(d).filter((c) => c.kind === "rejected");
+    expect(rej.length).toBe(2);
+    expect(rej[0]).toMatchObject({ reason: "guardrail", sample: "May contain unsafe content" });
+  });
+
+  it("a too-short answer logs why", async () => {
+    const d = deps(async () => msg("ok."));
+    cachedTldr(d.logDir!, "short1", "spec text", d);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(callsOf(d).find((c) => c.kind === "rejected")).toMatchObject({ reason: "too-short", sample: "ok." });
+  });
+
+  it("a busy apple-fm is skipped at once (busy-fallback) and the next model answers", async () => {
+    const urls: string[] = [];
+    const d = deps(async (w) => {
+      urls.push(w.kind);
+      return JSON.stringify({ message: { content: "from ollama" } });
+    }, { busy: (n) => n === "apple-fm" });
+    expect(await helperComplete({ task: "t", input: "i", label: "tldr" }, d)).toBe("from ollama");
+    expect(urls).toEqual(["ollama"]);
+    expect(callsOf(d)[0]).toMatchObject({ model: "apple-fm", ok: false, kind: "busy-fallback", ms: 0 });
+  });
+
+  it("an idle apple-fm is asked as before", async () => {
+    const d = deps(async () => msg("answer"), { busy: () => false });
+    expect(await helperComplete({ task: "t", input: "i" }, d)).toBe("answer");
   });
 });
 
