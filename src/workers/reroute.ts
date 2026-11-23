@@ -105,7 +105,7 @@ function overdueReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, sched: 
   const ownMin = ownMsOf(s.id, last ?? nowMs, nowMs, lineNow, s.lineAtProgressMs ?? 0, pause) / 60_000;
   const lineMs = Math.min(wallMs, inLineMs(lineNow, s.lineAtProgressMs ?? 0));
   if (ownMin < p.stallMaxMin) return null;
-  const what = s.readOnly ? "no successful tool call" : "no edit or commit";
+  const what = s.readOnly ? "no successful tool call" : s.deliverable === "findings" ? "no write or report output" : "no edit or commit";
   return lineMs > 0 ? `${what} for ${Math.floor(ownMin)}m of own time (${Math.floor(wallMs / 60_000)}m wall, ${Math.floor(lineMs / 60_000)}m in line)` : `${what} for ${Math.floor(ownMin)}m`;
 }
 

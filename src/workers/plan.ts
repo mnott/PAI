@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { DELIVERABLES, isDeliverable, type Deliverable } from "./deliverable.js";
 
 export interface PlanPart {
   id: string;
@@ -23,6 +24,8 @@ export interface PlanPart {
   kind?: string;
   /** Orchestrator-marked: may start its worker while the previous part's worker has ended but its gate/merge still runs. */
   overlap?: boolean;
+  /** Resolved part > unit > plan; absent = change. findings: the result is a report, no commit expected. */
+  deliverable?: Deliverable;
 }
 
 export interface PlanUnit {
@@ -54,6 +57,7 @@ export const PLAN_SCHEMA = {
     provider: "string — local provider the parts run on (--class implement)",
     max_parallel: "integer >= 1 — parts running at once (default: the provider's maxConcurrent, else 3)",
     preamble: "string — text or file path prepended to every part spec",
+    deliverable: "change|findings — default for all parts (absent = change); findings = the result is a report, no commit or merge expected",
     units: {
       type: "array",
       minItems: 1,
@@ -62,6 +66,7 @@ export const PLAN_SCHEMA = {
         properties: {
           id: "string — unit name",
           preamble: "string — text or file path prepended to this unit's part specs (after the plan preamble)",
+          deliverable: "change|findings — default for this unit's parts (overrides the plan)",
           unit_check: "string — command run after the unit's last part merged; failure = needs-decision",
           parts: {
             type: "array",
@@ -75,6 +80,7 @@ export const PLAN_SCHEMA = {
                 proof: "string — command the worker must run and show passing",
                 depends_on: "string[] — part ids (any unit) that must be merged first",
                 kind: "string — infra|install|device|external|redesign (cloud) or code|test (local); routes the part when the plan runs on a local provider",
+                deliverable: "change|findings — overrides the unit and plan default; findings = the result is a report, a worker ending ok without a commit is done, nothing is merged",
                 risky: "boolean — documented intent for review; shown in the schedule",
                 overlap: "boolean — default false; the part is independent of the part before it, so its worker may start as soon as that part's worker has ended, while its gate and merge still run (its merge waits for it). Rejected when it depends on that part",
               },
@@ -156,6 +162,13 @@ export function parsePlan(text: string, baseDir: string): Plan {
       problems.push("max_parallel: must be an integer >= 1");
     } else maxParallel = raw.max_parallel;
   }
+  const delivProblem = (v: unknown, where: string): Deliverable | undefined => {
+    if (v === undefined) return undefined;
+    if (isDeliverable(v)) return v;
+    problems.push(`${where}deliverable: must be one of ${DELIVERABLES.join(", ")}`);
+    return undefined;
+  };
+  const planDeliv = delivProblem(raw.deliverable, "");
   const planPre = typeof raw.preamble === "string" ? raw.preamble : undefined;
   if (raw.preamble !== undefined && planPre === undefined) problems.push("preamble: must be a string");
   if (planPre && missingFile(planPre, baseDir)) problems.push(`preamble: file not found: ${planPre}`);
@@ -168,6 +181,7 @@ export function parsePlan(text: string, baseDir: string): Plan {
       const uw = `units[${ui}].`;
       if (!isObj(u)) return void problems.push(`units[${ui}]: must be a mapping`);
       const uid = reqStr(u, "id", uw);
+      const unitDeliv = delivProblem(u.deliverable, uw);
       const unitPre = typeof u.preamble === "string" ? u.preamble : undefined;
       if (u.preamble !== undefined && unitPre === undefined) problems.push(`${uw}preamble: must be a string`);
       if (unitPre && missingFile(unitPre, baseDir)) problems.push(`${uw}preamble: file not found: ${unitPre}`);
@@ -189,6 +203,7 @@ export function parsePlan(text: string, baseDir: string): Plan {
           if (p.overlap !== undefined && typeof p.overlap !== "boolean") problems.push(`${pw}overlap: must be a boolean`);
           if (p.risky !== undefined && typeof p.risky !== "boolean") problems.push(`${pw}risky: must be a boolean`);
           if (p.kind !== undefined && !["infra", "install", "device", "external", "redesign", "code", "test"].includes(String(p.kind))) problems.push(`${pw}kind: must be one of infra, install, device, external, redesign, code, test`);
+          const partDeliv = delivProblem(p.deliverable, pw) ?? unitDeliv ?? planDeliv;
           const pieces = [planPre, unitPre, spec].filter((x): x is string => !!x).map((x) => textOrFile(x, baseDir));
           parts.push({
             id,
@@ -200,6 +215,7 @@ export function parsePlan(text: string, baseDir: string): Plan {
             risky: p.risky === true,
             ...(typeof p.kind === "string" ? { kind: p.kind } : {}),
             ...(p.overlap === true ? { overlap: true } : {}),
+            ...(partDeliv ? { deliverable: partDeliv } : {}),
           });
         });
       }
@@ -307,6 +323,14 @@ export function mentionsRepoPath(text: string, repo: string): boolean {
 
 /** Fixed footer of every composed spec: keeps the worker in its worktree and makes it commit. */
 export function specFooter(part: PlanPart, job: string): string {
+  if (part.deliverable === "findings") {
+    return [
+      "---",
+      "Rules for this task:",
+      "- The result of this task is a report, not a commit. You may write scratch files and code anywhere; nothing is merged.",
+      "- Report the findings in your R message.",
+    ].join("\n");
+  }
   return [
     "---",
     "Rules for this task:",

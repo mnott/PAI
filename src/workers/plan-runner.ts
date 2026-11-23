@@ -13,6 +13,7 @@ import { classifyRoute, routeLine } from "./route-classifier.js";
 import { withRunLock, type LockDeps } from "./run-lock.js";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { gatePhaseName } from "./plan-status.js";
+import type { Deliverable } from "./deliverable.js";
 import { composeSpec, filesOverlap, type Plan, type PlanPart } from "./plan.js";
 
 export interface WorkerOutcome {
@@ -50,6 +51,8 @@ export interface StartRequest {
   noPool?: boolean;
   /** `--topic` of the worker (a queue item's own topic). */
   topic?: string;
+  /** `--deliverable` of the worker; absent = change. */
+  deliverable?: Deliverable;
 }
 
 export interface MergeOutcome {
@@ -349,7 +352,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
       await granted;
       let out: WorkerOutcome;
       try {
-        out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}), ...(opts.noPool ? { noPool: true } : {}) });
+        out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}), ...(opts.noPool ? { noPool: true } : {}), ...(p.deliverable ? { deliverable: p.deliverable } : {}) });
       } finally {
         release(p, provider);
       }
@@ -370,6 +373,15 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
       if (!out.ok) {
         failure = out.failure || "the worker ended without a valid passing report";
         continue;
+      }
+      if (p.deliverable === "findings") {
+        // the result is the report: nothing to merge, gate or check for a commit
+        deps.log({ event: "merge", part: p.id, unit: p.unit, worker: out.id, attempt: i + 1, ok: true, status: "findings" });
+        deps.note?.(`${p.id} findings reported, nothing to merge`);
+        state.set(p.id, "merged");
+        progress();
+        await checkUnit(p.unit);
+        return;
       }
       const gateObserver = (): ((e: GateEvent) => void) => {
         let cmds: Array<{ cmd: string; ms?: number; ok?: boolean }> = [];

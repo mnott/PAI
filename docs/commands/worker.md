@@ -79,6 +79,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--no-browser` | flag | — | Remove every browser tool from this worker |
 | `--allow-tests` | flag | — | Let this worker run tests even when the project has `.pai/checks.yaml` `tests: operator`; use only when the operator asked for tests |
 | `--allow-db-writes` | flag | — | Allow writes to live databases and containers (PAI_ALLOW_DB_WRITES=1): let this worker's SQL clients write databases and lift the live-container cp/exec rule (workers.guard.liveContainers); by default every INSERT/UPDATE/DELETE/DDL through psql/mysql/sqlite3/… is denied unless the statement is read-only or the target matches workers guard.dbWriteAllow; use only for briefs that really need writes |
+| `--deliverable change|findings` | string | — | What this job hands back (PAI_WORKER_DELIVERABLE): change = a repo commit (default for code classes), findings = a report or answer (scratch files are fine, no commit expected, no-edit-stall off). Without it the class decides |
 | `--prune-file PATH` | string | — | Internal (`pai tests prune --apply` only): one tracked file this worker's delete guard (PAI_WORKER_PRUNE_FILES) allows it to remove; every other tracked-file deletion stays blocked |
 | `--print-cmd` | flag | — | Print the claude command as JSON and exit without starting anything |
 | `--report FORMAT` | string | — | Final report format: json or ag2 (default ag2) |

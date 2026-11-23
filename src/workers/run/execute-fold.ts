@@ -4,6 +4,7 @@
  * lives on one RunState (see execute-prepare.ts).
  */
 
+import { parseDeliverable } from "../deliverable.js";
 import { spawnOrigin } from "../pane-waiver.js";
 import { grantedToolNames, recordToolError } from "../tool-errors.js";
 import { createToolFold, runProofCheck, proofNote } from "./tool-fold.js";
@@ -69,6 +70,7 @@ import {
   isCompactBoundary,
   bashCommand,
   isProgressTool,
+  isFindingsProgressTool,
   isReadOnlyJob,
   toolResultText,
   toolResultFailed,
@@ -142,6 +144,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
     ...(a.noEscalate ? { noEscalate: true } : {}),
     ...(a.className ? { className: a.className } : {}),
+    ...(headless && env.PAI_WORKER_DELIVERABLE ? { deliverable: parseDeliverable(env.PAI_WORKER_DELIVERABLE) } : {}),
     ...(a.topic ? { topic: a.topic } : {}),
     ...(target.via === "auto" && target.switchReason ? { switchReason: target.switchReason } : {}),
     ...(a.fallThroughOf ? { fallThroughOf: a.fallThroughOf } : {}),
@@ -556,7 +559,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           if (!toolResultFailed(block)) toolsOk += 1;
           toolFold.onToolResult(block);
           const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
-          if (use && !toolResultFailed(block) && (isProgressTool(use.name, use.input) || readOnly)) {
+          // progress clock: a "change" job counts edits/commits; a "findings" job counts any write it makes
+          const progressed = !!use && (status.deliverable === "findings" ? isFindingsProgressTool(use.name, use.input) : isProgressTool(use.name, use.input));
+          if (use && !toolResultFailed(block) && (progressed || readOnly)) {
             status.progressAt = nowStamp();
             const sched = readSchedFile(logDir);
             const a = sched?.workers[wid];

@@ -4,6 +4,7 @@
  * existing import path keeps working.
  */
 
+import { type Deliverable } from "../deliverable.js";
 import { type SystemJob } from "../pane-waiver.js";
 import { parseRunnerArgs } from "../args.js";
 import { readWorkersSection, type QueuePriority } from "../config.js";
@@ -84,6 +85,8 @@ export interface RunOptions {
   allowTests?: boolean;
   /** --allow-db-writes: this worker's SQL clients may write databases (PAI_ALLOW_DB_WRITES=1); only for briefs that really need writes. */
   allowDbWrites?: boolean;
+  /** --deliverable change|findings: what this run's result IS — a repo commit ("change") or a report ("findings"). Without it the class gate decides (PAI_WORKER_DELIVERABLE is inherited). */
+  deliverable?: Deliverable;
   /** Set by `pai tests prune --apply` only: the plan's file list (PAI_WORKER_PRUNE_FILES), the tracked files this local worker's guard lets it delete. */
   pruneFiles?: string[];
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */
@@ -299,6 +302,8 @@ export interface ExecuteArgs {
   allowTests?: boolean;
   /** --allow-db-writes: PAI_ALLOW_DB_WRITES=1 in the env; the guard then allows SQL-client writes to databases. */
   allowDbWrites?: boolean;
+  /** The run's declared deliverable (change|findings); recorded on the status and exported as PAI_WORKER_DELIVERABLE for the hooks. */
+  deliverable?: Deliverable;
   /** `pai tests prune --apply` only: PAI_WORKER_PRUNE_FILES holds these paths; the local-worker delete guard allows deleting exactly them. */
   pruneFiles?: string[];
   /** The options this run was launched with; a relaunch starts from these (see relaunchOptions). */

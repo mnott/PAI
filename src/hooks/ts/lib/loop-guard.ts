@@ -997,7 +997,7 @@ export function stallStep(prev: LoopState["stall"], tool: string, input: string 
   return { stall: cur, n, min };
 }
 
-/** The stall detector is active only in a code-change worker. */
+/** The stall detector is active only in a code-change worker (class implement/complex/simple/draft, brief not read-only). */
 export const stallActive = (): boolean => process.env.PAI_WORKER_CAN_EDIT === "1";
 
 /** Fold the no-edit-stall result for this call into the step of the other rules. */

@@ -27,6 +27,7 @@ import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
 import { reportOriginWithHost, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
 import type { RunOrigin, RunRecord } from "../../workers/run-events.js";
 import { error, text, type WorkerToolResult } from "./tool-result.js";
+import type { Deliverable } from "../../workers/deliverable.js";
 import { normalizeTopic } from "../../workers/topic.js";
 
 export type { WorkerToolResult };
@@ -373,14 +374,14 @@ async function openQueue(project: string, deps: DelegationDeps): Promise<{ repo:
   return { repo, store: new QueueStore(queueStatePath(repo)), settings: loadSettings(repo) };
 }
 
-export async function queueAdd(args: { project: string; sentence: string; files?: string[]; image?: string; topic?: string } & WhereArgs, deps: DelegationDeps): Promise<WorkerToolResult> {
+export async function queueAdd(args: { project: string; sentence: string; files?: string[]; image?: string; topic?: string; deliverable?: Deliverable } & WhereArgs, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
     if (!args.sentence?.trim()) return fail("sentence is empty; describe the change in one sentence");
     const image = args.image ? resolve(args.image) : undefined;
     if (image && !existsSync(image)) return fail(`No such image: ${image}`);
     const target = await resolveWhere({ ...args, task: args.sentence }, deps);
     const { repo, store } = await openQueue(args.project, deps);
-    const it = store.add(args.sentence.trim(), repo, { files: (args.files ?? []).map((f) => f.trim()).filter(Boolean), image, topic: normalizeTopic(args.topic) });
+    const it = store.add(args.sentence.trim(), repo, { files: (args.files ?? []).map((f) => f.trim()).filter(Boolean), image, topic: normalizeTopic(args.topic), deliverable: args.deliverable });
     return text(withTarget(target, `Queued as ${it.id}. Call queue_run to start the pending items${target ? " (pass the same where / model / now)" : ""}.`));
   } catch (e) {
     return error(e);

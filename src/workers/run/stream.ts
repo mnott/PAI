@@ -5,6 +5,7 @@
  */
 
 import { join } from "node:path";
+import { isTestRun } from "../../hooks/ts/lib/loop-guard.js";
 import { type WorkerStatus } from "../status.js";
 import { OPERATOR_MARK } from "../report.js";
 import { inputSideTokens, type UsageBlock } from "../../utils/input-side-tokens.js";
@@ -100,6 +101,27 @@ export function bashCommand(input: unknown): string {
 export function isProgressTool(name: string, input: unknown): boolean {
   if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit") return true;
   return name === "Bash" && /\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(bashCommand(input));
+}
+
+/**
+ * A command that writes something somewhere: a shell redirect (>, >>, or a
+ * `cmd > file` pipe), tee, `git commit`, or a file-moving utility. Running a
+ * script is not a write — the script's own output only counts through these.
+ */
+export function bashWrites(command: string): boolean {
+  return />>?/.test(command) || /\btee\b/.test(command) || /\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(command) || /\b(?:mkdir|cp|mv|touch)\b/.test(command);
+}
+
+/**
+ * Progress for a "findings" job: the job answers with a report, so any write it
+ * makes — an edit, a scratch file, a redirect, a build or test run — counts. A pure read (Read, Grep,
+ * a listing) never does; that is exactly the idle loop the escalation catches.
+ */
+export function isFindingsProgressTool(name: string, input: unknown): boolean {
+  if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit") return true;
+  if (name !== "Bash") return false;
+  const c = bashCommand(input);
+  return bashWrites(c) || isTestRun(c);
 }
 
 /**

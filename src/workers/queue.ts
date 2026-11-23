@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmdirSyn
 import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { breakStaleMutex } from "../builds/queue.js";
+import type { Deliverable } from "./deliverable.js";
 import { paiHomePath } from "../config/pai-home.js";
 
 export type ItemState = "pending" | "running" | "ready" | "too-big" | "needs-decision" | "cloud" | "accepted" | "rejected";
@@ -28,6 +29,8 @@ export interface QueueItem {
   image?: string;
   /** `--topic` the item's worker runs under. */
   topic?: string;
+  /** change (default): the result is a commit. findings: the result is the report; no commit expected. */
+  deliverable?: Deliverable;
   created: string;
   state: ItemState;
   /** `again` rounds so far. */
@@ -177,7 +180,7 @@ export class QueueStore {
     return this.list().find((i) => i.id === id);
   }
 
-  add(text: string, repo: string, opts: { files?: string[]; image?: string; topic?: string } = {}): QueueItem {
+  add(text: string, repo: string, opts: { files?: string[]; image?: string; topic?: string; deliverable?: Deliverable } = {}): QueueItem {
     return this.mutate((s) => {
       const item: QueueItem = {
         id: `q${s.next}`,
@@ -186,6 +189,7 @@ export class QueueStore {
         files: opts.files ?? [],
         ...(opts.image ? { image: opts.image } : {}),
         ...(opts.topic ? { topic: opts.topic } : {}),
+        ...(opts.deliverable === "findings" ? { deliverable: opts.deliverable } : {}),
         created: new Date(this.now()).toISOString(),
         state: "pending",
         rounds: 0,
@@ -272,6 +276,15 @@ export function parseNumstat(text: string): Pick<DiffInfo, "files" | "lines"> {
 // spec
 
 export function queueFooter(it: QueueItem, s: QueueSettings): string {
+  if (it.deliverable === "findings") {
+    return [
+      "---",
+      "Rules for this task:",
+      "- The result of this task is a report, not a commit. You may write scratch files and code anywhere; nothing is merged.",
+      "- Report the findings in your R message.",
+      ...(s.rules ? ["", "Project rules:", s.rules] : []),
+    ].join("\n");
+  }
   return [
     "---",
     "Rules for this task:",
