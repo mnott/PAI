@@ -117,6 +117,9 @@ const WORKER_MISTAKE: Array<{ test: (r: ToolErrorRecord) => boolean; hint: strin
   { test: (r) => /Unmatched [)(\[\]{}]|unterminated (?:s||tr|y|[qQ])|[Bb]ad (?:replacement|\?\? operator|quantifier)|syntax error in regular expression|invalid regex|Invalid \w+ expression|(?:SyntaxError|ParseError|parse error|Unexpected .* while parsing|not compiled|failed to parse|command not found: -c)/.test(r.raw), hint: "syntax error in the worker's own one-off command", loopAt: 5 },
   // "No such file" for a path the worker invented (its own interpreter/run, not a tool's structured answer).
   { test: (r) => /No such file or directory|can't open file|No such file/i.test(r.raw) && r.tool !== "Read", hint: "worker used a path that does not exist", loopAt: 5 },
+  // ERR_MODULE_NOT_FOUND naming a module the worker's own command runs or imports (its scratch script, a relative/scratch import): the model wrote the wrong path. A missing module inside PAI's own install — an absolute PAI-install path beside the error, or `import 'pai'` itself — is no match: the harness rules keep that one.
+  // The install paths are matched case-sensitively on purpose: a scratch dir named pai-scratch must not read as PAI's install.
+  { test: (r) => /ERR_MODULE_NOT_FOUND|Cannot find module/i.test(r.raw) && !/\/PAI[/-]|\/(?:bin|lib)\/(?:pai|pai-daemon|pai-router)\b|Cannot find module ['"]?pai\b/.test(r.raw), hint: "missing module the worker's own script imports (its scratch path)", loopAt: 5 },
   // An Edit whose old_string is not in the file.
   { test: (r) => /String to replace not found/i.test(r.raw), hint: "Edit with a wrong old_string", loopAt: 5 },
 ];
@@ -287,6 +290,8 @@ function markProbeLoops(records: readonly ToolErrorRecord[]): void {
 }
 
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | ((r: ToolErrorRecord, isLocal: (provider: string) => boolean) => Classification) }> = [
+  // Worker mistakes are [model] deterministically, first in the table — before the scratch-probe benign and every harness rule (see WORKER_MISTAKE; a scratch probe's ERR_MODULE_NOT_FOUND is the model's wrong import path, not it iterating).
+  ...WORKER_MISTAKE.map((m) => ({ test: m.test, c: { cls: "model" as ErrorClass, hint: m.hint, loopAt: m.loopAt } })),
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: (r) => /Permission to use \S+ with command .* has been denied/s.test(r.raw), c: { cls: "model", hint: "command refused by the permission layer", loopAt: 3 } },
   { test: (r) => probeLoops.has(r), c: { cls: "model", hint: "probe loop: the same scratch probe failed 5 times unchanged", loopAt: Infinity } },
@@ -297,8 +302,6 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | 
   { test: (r) => /^loop guard:/i.test(r.raw), c: { cls: "model", hint: "loop: same command repeated without a change", loopAt: Infinity } },
   { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
   { test: (r) => r.raw.includes(GUARD_MARKER), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
-  // Worker mistakes are [model] deterministically, before any harness rule (see WORKER_MISTAKE).
-  ...WORKER_MISTAKE.map((m) => ({ test: m.test, c: { cls: "model" as ErrorClass, hint: m.hint, loopAt: m.loopAt } })),
   // The harness's own argument schema rejected the call. A local provider's
   // tool-call parser is ours to fix; a cloud provider's is the model's to blame.
   {
