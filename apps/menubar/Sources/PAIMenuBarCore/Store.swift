@@ -41,8 +41,16 @@ public final class Store: ObservableObject {
         return true
     }
 
+    private var inFlight = false
+    public static let openInterval: TimeInterval = 1
+    public static let closedInterval: TimeInterval = 15
+
+    /// One poll at a time: a tick that finds the previous poll still running is skipped.
     public func refresh(baseURL: URL, forceData: Bool = false) async {
+        guard !inFlight else { return }
+        inFlight = true
         lastPoll = Date()
+        defer { inFlight = false; lastPoll = Date() }
         let heavyDue = forceData || Date().timeIntervalSince(lastDataFetch) > 15
         if heavyDue { lastDataFetch = Date() }
         do {
@@ -93,6 +101,13 @@ public final class Store: ObservableObject {
         guard error != nil, let t = lastSuccess else { return nil }
         let s = max(0, Int(now.timeIntervalSince(t)))
         return s < 60 ? "updated \(s) s ago" : "updated \(s / 60) min ago"
+    }
+
+    /// Secondary text under the battery row: state and runtime at the current draw.
+    public func batteryDetail() -> String? {
+        guard let b = battery else { return nil }
+        if let rt = runtimeText(info: b, remainingWh: remainingWh, watts: smoothedWatts(history)) { return rt }
+        return b.state == "ac" ? "on AC" : b.state
     }
 
     /// Text under the battery graph: state, draw, runtime at current usage.
