@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
-import { assertWorkerEnded, mergeWorker, ownedTree, worktreePath, WorkerRunningError } from "./worktree.js";
+import { addWorktree, assertWorkerEnded, mergeWorker, ownedTree, recordWorktree, worktreePath, WorkerRunningError } from "./worktree.js";
 import { asMergeReverted, MergeRevertedError, mergeExitCode } from "./merge-reverted.js";
 
 /** A sleep alive for the whole suite: its pid is the fake worker's live pid. */
@@ -472,5 +472,43 @@ describe("a reverted merge gate exits non-zero with MERGE REVERTED last", () => 
       if (prev === undefined) delete process.env.PAI_MERGE_KEEP_ON_FAIL;
       else process.env.PAI_MERGE_KEEP_ON_FAIL = prev;
     }
+  });
+});
+
+describe("merge targets the checkout the worker started in", () => {
+  /** A worker started in a user's linked worktree of `repo`, recorded the way a real start leaves it. */
+  function startInLinked(repo: string, logDir: string, id: string): { linked: string } {
+    const linked = join(dirname(repo), "linked");
+    git(repo, ["worktree", "add", "-q", "-b", "port/x", linked]);
+    const info = addWorktree(logDir, id, linked);
+    writeFileSync(join(info.dir, "w.txt"), "worker work\n");
+    git(info.dir, ["add", "-A"]);
+    git(info.dir, ["commit", "-qm", "worker commit"]);
+    const st: WorkerStatus = {
+      id, pid: DEAD_PID, label: id, cwd: linked, term: "", provider: "p", model: "m", state: "done",
+      started: "2026-11-17 00:00:00", updated: "2026-11-17 00:00:00", turns: 1, tools: 0, last: "", rc: 0, secs: 1,
+    };
+    recordWorktree(logDir, st, info, true);
+    return { linked };
+  }
+
+  it("a worker started in a linked worktree merges into it, not the main checkout", async () => {
+    const { repo, logDir } = fixture();
+    const { linked } = startInLinked(repo, logDir, "linked-ok");
+    expect(loadStatus(logDir, "linked-ok")?.cwd).toBe(linked);
+    await mergeWorker(logDir, "linked-ok", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(existsSync(join(linked, "w.txt"))).toBe(true);
+    expect(existsSync(join(repo, "w.txt"))).toBe(false);
+    expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("1");
+  });
+
+  it("refuses when the start checkout has another branch checked out now", async () => {
+    const { repo, logDir } = fixture();
+    const { linked } = startInLinked(repo, logDir, "linked-moved");
+    git(linked, ["checkout", "-q", "-b", "other"]);
+    await expect(mergeWorker(logDir, "linked-moved", { verifyTests: false, rebuild: false, cliRoot: null })).rejects.toThrow(
+      /had branch port\/x when the worker started but has other now/
+    );
+    expect(existsSync(join(linked, "w.txt"))).toBe(false);
   });
 });

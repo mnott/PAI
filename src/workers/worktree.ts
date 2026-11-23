@@ -167,6 +167,8 @@ export interface WorktreeInfo {
   base: string;
   /** `base` is a snapshot commit of uncommitted checkout state, not HEAD itself. */
   snapshot: boolean;
+  /** Branch checked out in the start checkout when the worktree was cut (absent when detached). */
+  startBranch?: string;
   /** Set when a dirty checkout was NOT snapshotted, and why (a running in-place worker is editing it). */
   snapshotSkipped?: string;
 }
@@ -327,7 +329,9 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   git(cwd, ["worktree", "add", "-B", branch, dir, base]);
   ensureScratchDir(dir);
   provisionDeps(logDir, id, cwd, dir);
-  return { dir, branch, base, snapshot: dirty, ...(snapshotSkipped ? { snapshotSkipped } : {}) };
+  let startBranch = "";
+  try { startBranch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"]); } catch { /* detached */ }
+  return { dir, branch, base, snapshot: dirty, ...(startBranch ? { startBranch } : {}), ...(snapshotSkipped ? { snapshotSkipped } : {}) };
 }
 
 /**
@@ -400,6 +404,12 @@ export function commitLines(dir: string, base: string): string[] {
  * that worktree as cwd; the orchestrator's empty-result cleanup removes it, so the child's record
  * must name the repo itself or merge/discard/gc lose track of the child's branch.
  */
+function isUnder(parent: string, dir: string): boolean {
+  const p = realpathOr(parent);
+  const d = realpathOr(dir);
+  return d === p || d.startsWith(p.endsWith("/") ? p : `${p}/`);
+}
+
 export function repoCheckoutOf(dir: string): string {
   const common = commonDir(dir);
   if (!common) return dir;
@@ -417,7 +427,10 @@ export function recordWorktree(
   ok: boolean
 ): WorkerStatus {
   const s = { ...status };
-  if (isRealWorktree(s.cwd) && !isSlotWorktree(s.cwd)) s.cwd = repoCheckoutOf(s.cwd);
+  // Only a PAI-owned worktree (an orchestrator's, removed when it ends) maps back to the repo checkout;
+  // a user's linked worktree is itself the checkout the worker started in and merge must land there.
+  if (isRealWorktree(s.cwd) && !isSlotWorktree(s.cwd) && isUnder(worktreesDir(logDir), s.cwd)) s.cwd = repoCheckoutOf(s.cwd);
+  if (info.startBranch) s.startBranch = info.startBranch;
   if (ok) {
     s.branch = info.branch;
     s.commits = commitsSince(info.dir, info.base);
@@ -1579,6 +1592,16 @@ async function mergeWorkerInner(
     }
   } else if (target) {
     repointChildStatus(logDir, st, target);
+  }
+  if (st.startBranch && existsSync(st.cwd)) {
+    let now = "";
+    try { now = git(st.cwd, ["symbolic-ref", "-q", "--short", "HEAD"]); } catch { /* detached */ }
+    if (now !== st.startBranch) {
+      throw new Error(
+        `worker ${id}: the checkout ${st.cwd} had branch ${st.startBranch} when the worker started but has ${now || "a detached HEAD"} now; ` +
+          `merging would land on the wrong branch. Check out ${st.startBranch} there again, then merge.`
+      );
+    }
   }
   if (st.escalatedTo && escalationState(logDir, st) === "running") {
     throw new Error(
