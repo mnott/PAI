@@ -66,6 +66,7 @@ describe("workerContractPrompt — code graph lines", () => {
     for (const cls of ["implement", "simple", "spotcheck", undefined]) {
       const p = workerContractPrompt(cls, "ag2");
       expect(p).toContain("Find code with `pai code explore <symbol>` / `pai code search <words>` before grep");
+      expect(p).toContain("Tests: extend an existing test file next to the code you change; new test files are blocked (operator rule); one-off checks go under .pai-scratch/ and are never committed.");
     }
   });
 
