@@ -510,7 +510,7 @@ export function renderTable(
 ): string {
   const schedSnap = logDir ? readSchedFile(logDir, now.getTime()) : null;
   const provTag = (s: WorkerStatus) => {
-    const eng = s.state === "running" ? schedSnap?.workers[s.id]?.engine : undefined;
+    const eng = schedSnap?.workers[s.id]?.engine;
     return providerTag(s, workers, isLive(s) ? servedModelOf(s) : null, eng ? instanceLabel(eng, schedSnap) : undefined);
   };
   const queued: WorkerStatus[] = [];
@@ -769,8 +769,22 @@ export function providerTag(
   const name = instance ?? s.provider;
   const base = !model || (dflt && shortModel(dflt) === model) ? `[${name}]` : `[${name}/${model}]`;
   if (instance) return base;
+  const alt = servedInstance(s.provider, served, workers);
+  if (alt) return `[${alt}${!model || (dflt && shortModel(dflt) === model) ? "" : "/" + model}]`;
   if (servedMismatch(s.model || dflt, served)) return `${base.slice(0, -1)} -> served by ${shortModel(served)}]`;
   return base;
+}
+
+/** The instance label ("signal-2 #2") when the served model is the own model of another provider entry that points at one of this provider's urls; null otherwise. */
+export function servedInstance(provider: string, served: string | null | undefined, workers: Pick<WorkersConfig, "providers" | "nativeModels">): string | null {
+  const me = workers.providers?.[provider];
+  if (!me || !served || (me.instances?.length ?? 0) < 2) return null;
+  for (const [name, o] of Object.entries(workers.providers)) {
+    if (name === provider || servedMismatch(o.models.default, served)) continue;
+    const k = me.instances!.indexOf(o.baseUrl);
+    if (k >= 0) return `${provider} #${k + 1}`;
+  }
+  return null;
 }
 
 export function shortModel(model: string | null | undefined): string {

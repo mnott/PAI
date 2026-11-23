@@ -622,6 +622,14 @@ describe("ps/watch show the model that served the last turn", () => {
     expect(providerTag(st, cfg, null)).toBe("[anthropic/sonnet-5.5]");
     expect(providerTag(st, cfg, "qwen3.8-flash-next-gyro-l", "anthropic #2")).toBe("[anthropic #2/sonnet-5.5]");
   });
+  it("providerTag maps a served model that is another instance's own model to that instance, keeps served-by for a real fallback", async () => {
+    const { providerTag } = await import("./render.js");
+    const mk = (baseUrl: string, def: string, instances?: string[]) => ({ baseUrl, instances, models: { default: def, fast: def } });
+    const c = { nativeModels: {}, providers: { "signal-2": mk("http://a", "signal-2-flash", ["http://a", "http://b"]), "signal-2b": mk("http://b", "signal-2b-flash") } } as never;
+    const w = { id: "w2", provider: "signal-2", model: "signal-2-flash", state: "done", cwd: "/x" } as unknown as WorkerStatus;
+    expect(providerTag(w, c, "signal-2b-flash")).toBe("[signal-2 #2]");
+    expect(providerTag(w, c, "qwen3.8-flash-next-gyro-l")).toBe("[signal-2 -> served by qwen3.8-flash-next-gyro-l]");
+  });
   it("instanceLabel names the copy by the router engine key; schedLine lists #n busy/cap", async () => {
     const { instanceLabel, schedLine } = await import("../router/scheduler.js");
     const e = (n: number) => ({ inflight: n ? { session: "aaaaaaaa", worker: "w", sinceMs: 1 } : null, flights: n ? [{ session: "aaaaaaaa", worker: "w", sinceMs: 1 }] : [], slots: 2, queued: {}, counters: {} });
