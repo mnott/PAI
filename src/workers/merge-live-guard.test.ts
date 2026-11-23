@@ -534,6 +534,96 @@ describe("merge targets the checkout the worker started in", () => {
   });
 });
 
+/** A worker started from a dirty checkout, recorded the way addWorktree leaves it: base is a snapshot commit. */
+function makeSnapshotWorker(
+  repo: string,
+  logDir: string,
+  id: string,
+  ownCommits: { subject: string; body?: string }[]
+): void {
+  const dir = worktreePath(logDir, id);
+  mkdirSync(dirname(dir), { recursive: true });
+  // the merge salvages from the worktree dir itself: it must be a real repo checkout
+  // the snapshot commit and the worker's own commits live in a throwaway repo
+  // (the merge only reads them from `repo` via fetch; their content is irrelevant to the message)
+  const snapRepo = mkdtempSync(join(tmpdir(), "snap-src-"));
+  git(snapRepo, ["init", "-q", "-b", "main"]);
+  git(snapRepo, ["config", "user.email", "t@t"]);
+  git(snapRepo, ["config", "user.name", "t"]);
+  // the snapshot's content must match the checkout's HEAD: a snapshot merge
+  // refuses when the checkout drifted in paths the branch touches
+  writeFileSync(join(snapRepo, "f.txt"), "base\n");
+  git(snapRepo, ["add", "-A"]);
+  git(snapRepo, ["commit", "-qm", `worker ${id}: snapshot of uncommitted checkout`]);
+  const snapshot = git(snapRepo, ["rev-parse", "HEAD"]);
+  // the worker's own commits on top of the snapshot, in order
+  for (const c of ownCommits) {
+    writeFileSync(join(snapRepo, `${c.subject.replace(/[^a-z0-9]/gi, "-")}.txt`), c.subject + "\n");
+    git(snapRepo, ["add", "-A"]);
+    git(snapRepo, ["commit", "-qm", c.body ? `${c.subject}\n\n${c.body}` : c.subject]);
+  }
+  const branch = `worker/${id}`;
+  // graft the snapshot + own commits into `repo` so the merge's diff can read them
+  git(repo, ["fetch", "-q", snapRepo, `HEAD:${branch}`]);
+  git(repo, ["worktree", "add", "-q", "--detach", dir, git(snapRepo, ["rev-parse", "HEAD"])]);
+  const st: WorkerStatus = {
+    id, pid: DEAD_PID, label: id, cwd: repo, term: "", provider: "p", model: "m", state: "done",
+    started: "2026-11-17 00:00:00", updated: "2026-11-17 00:00:00", turns: 1, tools: 0, last: "", rc: 0, secs: 1,
+    branch, worktreeDir: dir, worktreeBase: snapshot, worktreeSnapshot: true, commits: ownCommits.length,
+  };
+  saveStatus(logDir, st);
+}
+
+describe("snapshot merge keeps the worker's commit message", () => {
+  it("one own commit lands as its subject plus the Worker trailer", async () => {
+    const { repo, logDir } = fixture();
+    makeSnapshotWorker(repo, logDir, "snap-one", [{ subject: "fix: IPC retries only read-only calls after an accepted request is dropped" }]);
+    await mergeWorker(logDir, "snap-one", { verifyTests: false, rebuild: false, cliRoot: null });
+    const msg = git(repo, ["log", "-1", "--format=%B"]);
+    expect(msg).toContain("fix: IPC retries only read-only calls after an accepted request is dropped");
+    expect(msg).toContain(`Worker: snap-one`);
+    expect(msg).not.toContain("wip: uncommitted changes");
+  });
+
+  it("several own commits land as the first subject with the rest as bullets", async () => {
+    const { repo, logDir } = fixture();
+    makeSnapshotWorker(repo, logDir, "snap-two", [
+      { subject: "fix: pace marker is one red tick on the ring" },
+      { subject: "fix: IPC retries only read-only calls after an accepted request is dropped" },
+    ]);
+    await mergeWorker(logDir, "snap-two", { verifyTests: false, rebuild: false, cliRoot: null });
+    const msg = git(repo, ["log", "-1", "--format=%B"]);
+    expect(msg.split("\n")[0]).toBe("fix: pace marker is one red tick on the ring");
+    expect(msg).toContain("- fix: IPC retries only read-only calls after an accepted request is dropped");
+    expect(msg).toContain(`Worker: snap-two`);
+    expect(msg).not.toContain("wip: uncommitted changes");
+  });
+
+  it("a pure-salvage branch (no own commits) falls back to the wip text", async () => {
+    const { repo, logDir } = fixture();
+    makeSnapshotWorker(repo, logDir, "snap-none", []);
+    // only a salvage commit sits on top of the snapshot: no own work to keep
+    const dir = worktreePath(logDir, "snap-none");
+    // the salvage carries a real edit (its content differs from HEAD): only then does the merge commit anything
+    writeFileSync(join(dir, "salvaged.txt"), "only salvage\n");
+    git(dir, ["add", "-A"]);
+    git(dir, ["commit", "-q", "-m", "salvaged: snap-none"]);
+    // the branch tip is now snapshot + salvaged; no own commits remain
+    git(repo, ["update-ref", "refs/heads/worker/snap-none", git(dir, ["rev-parse", "HEAD"])]);
+    await mergeWorker(logDir, "snap-none", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(git(repo, ["log", "-1", "--format=%s"])).toBe(`wip: uncommitted changes of snap-none at merge`);
+  }, 30000);
+
+  it("a snapshot commit's own subject is never kept as the merge title", async () => {
+    const { repo, logDir } = fixture();
+    makeSnapshotWorker(repo, logDir, "snap-subj", [{ subject: "feat: ring shows the pace marker" }]);
+    await mergeWorker(logDir, "snap-subj", { verifyTests: false, rebuild: false, cliRoot: null });
+    const msg = git(repo, ["log", "-1", "--format=%B"]);
+    expect(msg).toContain("feat: ring shows the pace marker");
+    expect(msg).not.toContain("snapshot of uncommitted checkout");
+  });
+});
+
 describe("addWorktree snapshot content", () => {
   it("skips untracked build output, carries tracked edits and small untracked sources", () => {
     const { repo, logDir } = fixture();

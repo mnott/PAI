@@ -1088,11 +1088,15 @@ function assertNoSnapshotDrift(cwd: string, snapshot: string, paths: string[], i
  * diff is applied to files, not merged into a tree. The gate (verify, stub
  * and test-loss scans) runs on the applied change before anything is made
  * final — a failure reverts the applied diff and keeps the branch; a pass
- * commits the merge on the checkout's branch ("wip: uncommitted changes of
- * <id> at merge", author as for worker commits), so code never lands in the
- * checkout uncommitted (live 2026-11-18: an uncommitted apply skipped the
- * whole gate and the daemon restart, and the L0 had to test and commit by
- * hand). `--no-commit` keeps the old shape: applied uncommitted, no gate,
+ * commits the merge on the checkout's branch (author as for worker commits),
+ * so code never lands in the checkout uncommitted (live 2026-11-18: an
+ * uncommitted apply skipped the whole gate and the daemon restart, and the
+ * L0 had to test and commit by hand). The commit message keeps the worker's
+ * own subjects from <snapshot>..<branch> (see `snapshotMergeMessage`), so
+ * main's history and the release notes say what changed; only a pure-salvage
+ * branch with no own commits falls back to "wip: uncommitted changes of <id>
+ * at merge" (live 2026-11-23: two real fix subjects were lost to that wip
+ * text). `--no-commit` keeps the old shape: applied uncommitted, no gate,
  * branch and worktree kept for a manual review + commit.
  */
 function mergeSnapshotWorker(
@@ -1246,6 +1250,7 @@ function mergeSnapshotWorker(
   // A worker merge never leaves code uncommitted in the checkout — an
   // uncommitted apply skipped the whole gate and the daemon restart
   // (live 2026-11-18), and left the L0 to test and commit by hand.
+  const msg = snapshotMergeMessage(st.cwd, snapshot, branch, id) ?? `wip: uncommitted changes of ${id} at merge`;
   if (diff.length > 0) {
     git(st.cwd, ["add", "-A", "--", ...changedPaths]);
     const author = workerCommitAuthor(worktreeDir, branch);
@@ -1253,7 +1258,7 @@ function mergeSnapshotWorker(
       ...(author ? ["-c", `user.name=${author.name}`, "-c", `user.email=${author.email}`] : []),
       "commit",
       "-m",
-      `wip: uncommitted changes of ${id} at merge`,
+      msg,
     ]);
   }
   if (!keepLive) {
@@ -1269,7 +1274,7 @@ function mergeSnapshotWorker(
   saveStatus(logDir, s);
   const base =
     diff.length > 0
-      ? `merged worker ${id}'s changes (branch ${branch}) into ${st.cwd} as commit "wip: uncommitted changes of ${id} at merge": ` +
+      ? `merged worker ${id}'s changes (branch ${branch}) into ${st.cwd} as commit "${msg}": ` +
         `${changedPaths.join(", ")}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed, branch deleted)"}`
       : `applied worker ${id}'s changes (branch ${branch}) to ${st.cwd} as uncommitted changes: ` +
         `${changedPaths.join(", ")}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed, branch deleted)"}`;
@@ -1283,6 +1288,49 @@ function mergeSnapshotWorker(
     notes.push(`skipped ${salvage.skipped.join(", ")}`);
   }
   return withGate(gate, notes.length ? `${base}; ${notes.join("; ")}` : base);
+}
+
+/**
+ * The commit message for a snapshot merge: built from the worker's own
+ * commits on `branch` since `snapshot`, excluding the auto-generated ones —
+ * the "worker <id>: snapshot of uncommitted checkout" base, "salvaged:"
+ * commits and merge commits. One own commit → its subject (and body);
+ * several → the first conventional subject as the title with the others as
+ * bullet lines; always a trailing "Worker: <id>" trailer. Returns null when
+ * the branch has no own commits (pure salvage), so the caller falls back to
+ * the old "wip: ..." text. Losing the subjects is what broke release notes
+ * live 2026-11-23: two real fix commits landed on main as one "wip: ...".
+ */
+function snapshotMergeMessage(cwd: string, snapshot: string, branch: string, id: string): string | null {
+  let own: { subject: string; body: string }[] = [];
+  try {
+    const raw = git(cwd, ["log", "--reverse", "--no-merges", "--format=%x01%s%x00%b", `${snapshot}..${branch}`]);
+    own = raw
+      .split("\x01")
+      .filter((r) => r.trim())
+      .map((rec) => {
+        const [subject = "", body = ""] = rec.split("\0");
+        return { subject: subject.trim(), body: body.trim() };
+      })
+      .filter(
+        (c) =>
+          c.subject !== "" &&
+          !/^worker \S+: snapshot of uncommitted checkout\b/.test(c.subject) &&
+          !/^salvaged:/i.test(c.subject)
+      );
+  } catch {
+    return null; // branch unreadable: fall back to the wip text rather than fail the merge
+  }
+  if (own.length === 0) return null;
+  const conv = /^[a-z]+(\([^)]*\))?!?: \S/;
+  const ti = Math.max(0, own.findIndex((c) => conv.test(c.subject)));
+  const title = own[ti];
+  const rest = own.filter((_, i) => i !== ti).map((c) => `- ${c.subject}`);
+  const parts: string[] = [title.subject];
+  if (own.length === 1 && title.body) parts.push(title.body);
+  if (rest.length) parts.push(rest.join("\n"));
+  parts.push(`Worker: ${id}`);
+  return parts.join("\n\n");
 }
 
 /**
