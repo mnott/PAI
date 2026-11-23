@@ -55,6 +55,31 @@ describe("worker mistakes are never harness", () => {
   it("String to replace not found is model", () => {
     expect(classifyToolError(rec({ tool: "Edit", raw: "String to replace not found in file." })).cls).toBe("model");
   });
+  // 2026-11-21/22 workers 20261121-130242-69295, 20261122-074919-22041: their own
+  // scratch script imported a path that does not exist; node's ERR_MODULE_NOT_FOUND
+  // was labelled [harness] and reached the L0.
+  it("a scratch script's missing import is model", () => {
+    const c = classifyToolError(rec({
+      raw: "node:internal/modules/esm/resolve:270\nExit code 1 Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/x/.pai-scratch/w1/lib/helper.ts' imported from /Users/x/.pai-scratch/w1/probe.ts",
+      input: "mkdir -p .pai-scratch && node .pai-scratch/probe.ts",
+    }));
+    expect(c.cls).toBe("model");
+    expect(harnessEvidence(c.hint)).toBe(false);
+  });
+  it("a relative import the worker's own script names is model", () => {
+    const c = classifyToolError(rec({
+      raw: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/x/work/probe/missing.js' imported from /Users/x/work/probe/run.ts",
+      input: "node probe/run.ts",
+    }));
+    expect(c.cls).toBe("model");
+  });
+  // A missing module inside PAI's own install stays harness: the worker never wrote that path.
+  it("a missing module inside PAI's install is not a worker mistake", () => {
+    const r = rec({ raw: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/x/dev/ai/PAI/dist/hooks/report.js' imported from /Users/x/dev/ai/PAI/src/cli/main.ts" });
+    expect(classifyToolError(r).cls).toBe("unknown");
+    const r2 = rec({ raw: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'pai' imported from /Users/x/work/probe/run.ts" });
+    expect(classifyToolError(r2).cls).toBe("unknown");
+  });
 });
 
 describe("harnessEvidence", () => {
