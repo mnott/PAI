@@ -442,6 +442,14 @@ const PATTERN_KILL_REASON =
 const SED_INPLACE_REASON =
   "`sed -i` without an explicit suffix argument is blocked on macOS: BSD sed takes the next word as the backup suffix and leaves a stray copy (e.g. file.ts-e); use `sed -i '' -e …` or the Edit tool";
 
+const SED_INPLACE_NOTE = "rewrote sed -i to sed -i '' for BSD sed";
+
+/** The word after a bare `-i` that is unmistakably a sed script or option: `-e`, `-E`, `-n`, `s/a/b/`, `y/a/b/`, `5d`, `1,3p`, `$d`. */
+const CLEAR_SED_SCRIPT = /^-[a-zA-Z]+$|^[sy]([/|#,]).+\1.*\1|^(\d+|\$)(,(\d+|\$))?[a-zA-Z]/;
+
+/** True when `-i` is its own word (not `-i.bak`, not combined) and the next word exists. */
+const sedHasBareI = (args: string[]): boolean => args.includes("-i");
+
 const GNU_SED_RANGE_REASON =
   "BSD sed has no GNU `,+N` range: use the Read tool with offset/limit, `sed -n 'X,Yp'` with an absolute end line, or `grep -n -A N pattern file`.";
 
@@ -634,7 +642,7 @@ function rootWalkReason(cmd: string, args: string[], cwd: string, home: string):
 let FENCE_ENV: Record<string, string | undefined> = {};
 
 /** Decide one segment; `st.cwd` is the tracked working directory. The segments come from parseCommand (heredoc bodies blanked), and `st.raw` — what a git commit message check reads — has them blanked too: heredoc text is data, not commands. */
-function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
+function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: string; note?: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
   const words = stripPrefix(seg.words);
   const [cmd, ...args] = words;
   const boundary = ctx.worktreeRoot ?? ctx.cwd;
@@ -686,7 +694,25 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string; rewrite?: s
       st.rewrite = spliced;
       return { decision: "allow", context: `rewrote sed X,+N to BSD form: ${spliced}` };
     }
-    if (next !== undefined && next !== "" && (isFlag(next) || /^[sy]$/.test(next) || /^[a-zA-Z][/|#,]/.test(next) || /^[\d$/\\]/.test(next) || /[;\s/{]/.test(next))) return deny(SED_INPLACE_REASON);
+    // GNU-style `sed -i <script>` / `sed -i -e …` (no suffix word): when the word after -i is clearly a script or an option,
+    // insert the empty suffix BSD sed wants instead of denying. Anything less clear keeps the deny below.
+    if (next !== undefined && next !== "--" && CLEAR_SED_SCRIPT.test(next) && sedHasBareI(args)) {
+      const rawSeg = st.raw.slice(seg.start, seg.end);
+      const m = /(^|\s)-i(?=\s)/.exec(rawSeg);
+      if (m) {
+        const at = m.index + m[0].length;
+        const spliced = st.raw.slice(0, seg.start) + rawSeg.slice(0, at) + " ''" + rawSeg.slice(at) + st.raw.slice(seg.end);
+        // the splice must read back as `-i ''` on this sed call, else keep the deny (and never loop on a bad splice)
+        const back = parseCommand(spliced).find((x) => x.start === seg.start);
+        const bw = back ? stripPrefix(back.words) : [];
+        if (bw[0] === "sed" && bw[bw.indexOf("-i") + 1] === "") {
+          st.rewrite = spliced;
+          st.note = SED_INPLACE_NOTE;
+          return ALLOW;
+        }
+      }
+    }
+    if (next !== undefined && next !== "" && next !== "--" && (isFlag(next) || /^[sy]$/.test(next) || /^[a-zA-Z][/|#,]/.test(next) || /^[\d$/\\]/.test(next) || /[;\s/{]/.test(next))) return deny(SED_INPLACE_REASON);
   }
 
   const chrome = chromeStartReason(cmd, args);
@@ -877,7 +903,7 @@ function longWaitReason(command: string, segs: Segment[]): string | null {
 
 function decideCommand(command: string, ctx: WorkerGuardContext, detached = false): GateDecision {
   // one pass over the text: heredoc bodies blanked for every rule below (parseCommand segments, the sleep scan, the commit message)
-  const st: { cwd: string; raw: string; rewrite?: string } = { cwd: ctx.cwd, raw: blankHeredocBodies(command) };
+  const st: { cwd: string; raw: string; rewrite?: string; note?: string } = { cwd: ctx.cwd, raw: blankHeredocBodies(command) };
   const segs = parseCommand(command);
   // the busy-loop check reads raw text (parseCommand's `&` splitting loses which loop was backgrounded),
   // and runs at every depth including inside `nohup … &` / `bash -c '…' &` payloads
@@ -894,7 +920,8 @@ function decideCommand(command: string, ctx: WorkerGuardContext, detached = fals
     const redone = decideCommand(st.rewrite, ctx, detached);
     if (redone.decision !== "allow") return redone;
     // one note only, on the decision that carries the new command: a nested rewrite's note already names the final command
-    return { decision: "allow", updatedInput: { command: st.rewrite }, ...(redone.context ? {} : { context: `rewrote sed X,+N to BSD form: ${st.rewrite}` }) };
+    const note = st.note ?? `rewrote sed X,+N to BSD form: ${st.rewrite}`;
+    return { decision: "allow", updatedInput: { command: (redone.updatedInput?.command as string | undefined) ?? st.rewrite }, context: [note, redone.context].filter(Boolean).join("; ") };
   }
   return ALLOW;
 }
