@@ -22,7 +22,7 @@
  * state. That is the bug, not this file.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { withBunOnPath } from "../src/bun-path.js";
@@ -181,3 +181,68 @@ if (liveUrl) {
     // unparseable URL: nothing to protect or derive from
   }
 }
+
+/**
+ * Git identity isolation. The repo's own .git/config user.name/user.email are
+ * what `git commit` uses when no `-c` override is passed, so a test (or a bench
+ * setup step) that runs `git config user.name X` without an explicit temp dir —
+ * cwd defaulting to process.cwd(), the repo itself — rewrites the operator's
+ * identity and every later commit on main is authored by the fixture.
+ *
+ * On 2026-11-19 21:55 the real checkout picked up user.name "bench" /
+ * user.email "b@b"; from ff6eb6b5 onward, 148 merge commits on main were
+ * authored "bench <b@b>" until the config was restored by hand on 2026-11-23.
+ * The leak is invisible: the commits land, the tests pass.
+ *
+ * Snapshot .git/config before any module loads and fail loudly at teardown if
+ * it changed. GIT_DIR/GIT_WORK_TREE are stripped so a stray inherited value
+ * cannot point a child's git commands at the real repo; a test that needs them
+ * sets them explicitly on its own spawn env.
+ */
+const repoConfig = join(process.cwd(), ".git", "config");
+let configSnapshot: string | null = null;
+try {
+  configSnapshot = readFileSync(repoConfig, "utf8");
+} catch {
+  // not a git repo (or no .git/config): nothing to protect
+}
+delete process.env.GIT_DIR;
+delete process.env.GIT_WORK_TREE;
+
+if (configSnapshot !== null) {
+  const snapshot = configSnapshot;
+  let reported = false;
+  const failIfConfigChanged = (): void => {
+    if (reported) return;
+    reported = true;
+    let now: string | null = null;
+    try {
+      now = readFileSync(repoConfig, "utf8");
+    } catch {
+      // config vanished mid-run: that is itself the corruption
+    }
+    if (now !== snapshot) {
+      throw new Error(
+        `git identity guard: ${repoConfig} changed during the test run.\n` +
+          "A test wrote git config into the real repo (cwd defaulted to process.cwd()). " +
+          "Pass an explicit temp dir or `-C <tmp>`; never let a fixture write the operator's identity.",
+      );
+    }
+  };
+  process.on("exit", failIfConfigChanged);
+  process.on("beforeExit", failIfConfigChanged);
+}
+
+/**
+ * The bench harness (bench/lib.sh mktree) is the leak itself: it clones with
+ * `--shared`, so the clone's config writes land in the SOURCE repo's .git/config,
+ * and a run whose REPO defaulted to the checkout rewrote the operator's identity.
+ * A test that spawns the harness must not be able to hit the real repo either:
+ * BENCH_REPO is pointed at a throwaway bare repo (no commits — mktree fails fast)
+ * so the harness cannot reach this checkout, and it is removed at teardown.
+ */
+const benchRepo = mkdtempSync(join(tmpdir(), "pai-test-bench-repo-"));
+process.env.BENCH_REPO = benchRepo;
+process.on("exit", () => {
+  rmSync(benchRepo, { recursive: true, force: true });
+});
