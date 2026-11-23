@@ -8,6 +8,8 @@ import { basename } from "node:path";
 import { endProcesses, findWorktreeOrphans } from "./reap.js";
 import { gcMcpConfigs } from "./mcp.js";
 import { gcSettingsFiles } from "./settings-file.js";
+import { applyClean, scanClean } from "./clean.js";
+import { readWorkersSection } from "./config.js";
 import { formatKnowledge, gcPoolWorktrees, gcWorktrees, isPoolHostCmd, keepMarker } from "./worktree.js";
 
 export interface WorkerGcOptions {
@@ -21,6 +23,8 @@ export interface WorkerGcOptions {
   repo?: string;
   killOrphans?: boolean;
   dryRun?: boolean;
+  /** Archive the log files of workers finished longer ago than this (default workers.archiveAfterDays, 14). */
+  archiveAfterDays?: number;
 }
 
 export async function runWorkerGc(logDir: string, o: WorkerGcOptions, out: (s: string) => void): Promise<void> {
@@ -83,6 +87,7 @@ export async function runWorkerGc(logDir: string, o: WorkerGcOptions, out: (s: s
       for (const l of k.length ? k : ["carries nothing"]) out(`  ${l}`);
     }
   }
+  archiveWorkerFiles(logDir, o.archiveAfterDays ?? readWorkersSection().workers.archiveAfterDays, dryRun, out);
   const done = res.filter((r) => r.archive);
   const kept = res.filter((r) => r.skipped);
   const files = done.reduce((n, r) => n + (r.salvaged?.filter((l) => l.startsWith("salvaged ")).length ?? 0), 0);
@@ -90,4 +95,15 @@ export async function runWorkerGc(logDir: string, o: WorkerGcOptions, out: (s: s
     `${done.length} ${dryRun ? "would be archived" : "archived"}, salvaged ${files} file(s), kept ${kept.length}` +
       (kept.length ? ` (${kept.map((r) => `${r.id}${r.repoName ? ` [${r.repoName}]` : ""}: ${r.skipped}`).join("; ")})` : "")
   );
+}
+
+/** Move the files of long-finished workers into logDir/archive/YYYY-MM; never deletes. */
+export function archiveWorkerFiles(logDir: string, days: number, dryRun: boolean, out: (s: string) => void, now = Date.now()): number {
+  if (!Number.isFinite(days) || days <= 0) throw new Error(`bad archiveAfterDays "${days}"`);
+  const opts = { archiveAfterDays: days, only: ["worker-files" as const], now };
+  const scan = scanClean(logDir, opts);
+  const moved = dryRun ? scan.items : applyClean(logDir, scan, opts).done;
+  for (const it of moved) out(`${dryRun ? "would move" : "moved"} ${it.owner} (${it.paths.length} file(s)) -> ${it.note}`);
+  out(`${moved.length} worker(s) ${dryRun ? "would be moved" : "moved"} to archive (finished > ${days} d)`);
+  return moved.length;
 }

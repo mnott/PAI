@@ -18,7 +18,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { applyUrgency, listUrgency, readUrgency } from "../../workers/urgency.js";
 import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersCached, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
-import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
+import { eventsPath, workerFilePath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { specPathsWarning } from "../../workers/spec-paths.js";
 import { longInlinePromptHint,parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
@@ -1141,7 +1141,7 @@ const discardCommand: CommandDef = {
 const gcCommand: CommandDef = {
   name: "gc",
   summary: "Archive leftover worker worktrees",
-  description: "Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktree is removed, gitignored knowledge files (Notes/ and the like — text notes by extension: .md, .markdown, .txt, .org, .rst; never node_modules, dist, or any other build product) are copied into the main checkout; a worktree that cannot be salvaged is kept. --dry-run prints what each worktree carries.",
+  description: "Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktree is removed, gitignored knowledge files (Notes/ and the like — text notes by extension: .md, .markdown, .txt, .org, .rst; never node_modules, dist, or any other build product) are copied into the main checkout; a worktree that cannot be salvaged is kept. Log files of workers finished longer than workers.archiveAfterDays (14) days ago move to archive/YYYY-MM (never deleted; lookups by id fall back there). --dry-run prints what each worktree carries and what would move.",
   options: [
     { name: "older-than", type: "string", value: "HOURS", default: "24", summary: "Minimum age of a finished worker, in hours" },
     { name: "all-finished", type: "boolean", summary: "Any finished worker, regardless of age" },
@@ -1240,7 +1240,7 @@ const extendCommand: CommandDef = {
       if (st.state !== "review") throw new Error(`worker ${id} is ${st.state}; extend acts on a running worker or one stopped for review`);
       const cap = readWorkersCached().timeBudget.cap;
       const m = Math.max(1, Math.min(minutes, cap));
-      const file = [st.promptFile, st.spec, join(dir, `${id}.prompt`)].find((f): f is string => !!f && f !== "-" && existsSync(f));
+      const file = [st.promptFile, st.spec, workerFilePath(dir, id, ".prompt")].find((f): f is string => !!f && f !== "-" && existsSync(f));
       if (!file) throw new Error(`worker ${id} kept no copy of its task — nothing to restart; resume it with a note instead: pai worker resume ${id} '<note>'`);
       const ranMs = Date.now() - Date.parse(st.started.replace(" ", "T"));
       // with a budget history the allowance counts from the job's start (the

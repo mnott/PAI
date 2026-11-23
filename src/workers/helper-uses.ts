@@ -5,6 +5,7 @@
  * path then stands unchanged.
  */
 
+import { workerFilePath } from "./paths.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { helperComplete, helperCompleteSync, helperConfig, helperRejected, type HelperDeps } from "./helper.js";
@@ -65,7 +66,7 @@ const TLDR_RETRY_MS = 10 * 60_000;
 /** Chars of a spec a TL;DR is worth making from: the task body's first lines. */
 const TLDR_INPUT_CHARS = 1200;
 
-const tldrPath = (logDir: string, id: string): string => join(logDir, `${id}.tldr`);
+const tldrPath = (logDir: string, id: string): string => workerFilePath(logDir, id, ".tldr");
 
 /** The worker-rules block every PAI-spawned local spec starts with: boilerplate, never the task. */
 const BOILERPLATE_RE = /^local worker rules:/i;

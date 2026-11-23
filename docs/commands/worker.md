@@ -712,7 +712,7 @@ Archive leftover worker worktrees
 pai worker gc [options]
 ```
 
-Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktree is removed, gitignored knowledge files (Notes/ and the like — text notes by extension: .md, .markdown, .txt, .org, .rst; never node_modules, dist, or any other build product) are copied into the main checkout; a worktree that cannot be salvaged is kept. --dry-run prints what each worktree carries.
+Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktree is removed, gitignored knowledge files (Notes/ and the like — text notes by extension: .md, .markdown, .txt, .org, .rst; never node_modules, dist, or any other build product) are copied into the main checkout; a worktree that cannot be salvaged is kept. Log files of workers finished longer than workers.archiveAfterDays (14) days ago move to archive/YYYY-MM (never deleted; lookups by id fall back there). --dry-run prints what each worktree carries and what would move.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

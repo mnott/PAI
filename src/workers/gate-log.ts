@@ -13,6 +13,7 @@
 
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { archiveRoot } from "./paths.js";
 
 export const MERGE_GATE_KEEP = 20;
 
@@ -146,14 +147,27 @@ export function mergeGateLogPath(logDir: string, id: string, at: Date): string {
 
 /** Newest first; null when there is none. */
 export function latestMergeGateLog(logDir: string, id: string): string | null {
+  const newestIn = (dir: string): string | null => {
+    try {
+      const mine = readdirSync(dir)
+        .filter((f) => f.startsWith(`${id}.merge-gate-`) && f.endsWith(".log"))
+        .sort();
+      return mine.length ? join(dir, mine[mine.length - 1]!) : null;
+    } catch {
+      return null;
+    }
+  };
+  const top = newestIn(logDir);
+  if (top) return top;
   try {
-    const mine = readdirSync(logDir)
-      .filter((f) => f.startsWith(`${id}.merge-gate-`) && f.endsWith(".log"))
-      .sort();
-    return mine.length ? join(logDir, mine[mine.length - 1]) : null;
+    for (const month of readdirSync(archiveRoot(logDir)).sort().reverse()) {
+      const p = newestIn(join(archiveRoot(logDir), month));
+      if (p) return p;
+    }
   } catch {
-    return null;
+    /* no archive */
   }
+  return null;
 }
 
 /**

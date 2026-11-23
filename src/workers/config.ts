@@ -687,6 +687,8 @@ export interface WorkersConfig {
   noBrowserByDefault: boolean;
   /** Hourly gc archives finished workers' worktrees older than this many hours (workers.gcOlderThanHours). */
   gcOlderThanHours: number;
+  /** `pai worker gc` moves the log files of workers finished longer ago than this many days into logDir/archive/YYYY-MM (workers.archiveAfterDays). */
+  archiveAfterDays: number;
   /** Size cap in GB of the worktrees dir; over it, gc archives the oldest finished ones (workers.worktreesMaxGb). */
   worktreesMaxGb: number;
   /** Daemon reaper for orphaned worker processes (workers.reaper, default on). */
@@ -828,6 +830,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     unparsedCallContinuations: num(w.unparsedCallContinuations, 1),
     noBrowserByDefault: bool(w.noBrowserByDefault, false),
     gcOlderThanHours: num(w.gcOlderThanHours, 6),
+    archiveAfterDays: num(w.archiveAfterDays, 14),
     worktreesMaxGb: num(w.worktreesMaxGb, 20),
     reaper: bool(w.reaper, true),
     fallback: null,
@@ -1707,6 +1710,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     return v as number;
   };
   const gcOlderThanHours = positive("gcOlderThanHours", w.gcOlderThanHours, d.gcOlderThanHours);
+  const archiveAfterDays = positive("archiveAfterDays", w.archiveAfterDays, d.archiveAfterDays);
   const worktreesMaxGb = positive("worktreesMaxGb", w.worktreesMaxGb, d.worktreesMaxGb);
   if (w.reaper !== undefined && typeof w.reaper !== "boolean") {
     bad(".reaper", "must be true or false");
@@ -1796,6 +1800,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     unparsedCallContinuations: (w.unparsedCallContinuations as number | undefined) ?? d.unparsedCallContinuations,
     noBrowserByDefault,
     gcOlderThanHours,
+    archiveAfterDays,
     worktreesMaxGb,
     reaper,
     fallback,
@@ -2023,6 +2028,7 @@ export function writeWorkersSection(
         tiers: workers.tiers,
         noBrowserByDefault: workers.noBrowserByDefault,
         gcOlderThanHours: workers.gcOlderThanHours,
+        archiveAfterDays: workers.archiveAfterDays,
         worktreesMaxGb: workers.worktreesMaxGb,
         reaper: workers.reaper,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),

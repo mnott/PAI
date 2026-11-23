@@ -9,6 +9,7 @@
  * waits on a worker id (`pai worker wait <id>`) shows as an eye on that job's row instead. A moved job (rerouted /
  * fall-through) is ONE row: the continuation, with "continues <old id>" as detail; the old row disappears.
  */
+import { workerFilePath } from "./paths.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { blockedMsOf } from "./active-time.js";
@@ -41,7 +42,7 @@ export function taskSummary(text: string, max = 300): string {
 
 /** Read the task text a run kept (its --spec file or the <id>.prompt copy): "" when there is none. */
 export function readTaskText(logDir: string, s: Pick<WorkerStatus, "id" | "promptFile" | "spec">): string {
-  const f = [s.promptFile, s.spec, join(logDir, `${s.id}.prompt`)].find((x): x is string => !!x && x !== "-");
+  const f = [s.promptFile, s.spec, workerFilePath(logDir, s.id, ".prompt")].find((x): x is string => !!x && x !== "-");
   if (!f) return "";
   try {
     return readFileSync(f, "utf8");
