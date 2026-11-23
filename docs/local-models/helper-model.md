@@ -32,13 +32,13 @@ Config (the PAI config file):
 
 ```json
 { "helper": {
-    "models": ["apple-fm", "@helper"],
+    "models": ["apple-fm", "@helper", "@legacy"],
     "allowMain": false,
     "uses": { "tldr": { "models": ["ollama:qwen3:0.6b"] }, "routeClass": false }
 } }
 ```
 
-- `helper.models`: ordered list, first usable wins. Entries: `apple-fm`; `@helper` (every enabled local provider with `role: helper`); a provider name (accepted only with `role: helper`); `ollama:<model>` (a direct Ollama model you name). Default: `["apple-fm", "@helper"]`. When nothing is available the side job is skipped and the caller uses its rules.
+- `helper.models`: ordered list, first usable wins. Entries: `apple-fm`; `@helper` (every enabled local provider with `role: helper`); a provider name (accepted only with `role: helper`); `ollama:<model>` (a direct Ollama model you name). `@legacy` is `ollama:qwen3:8b`, the earlier default, kept for existing setups: it counts only when that model is installed in Ollama (a small separate model, not your main worker model). Default: `["apple-fm", "@helper", "@legacy"]`. When nothing is available the side job is skipped and the caller uses its rules.
 - `helper.allowMain`: default `false`. A provider without `role: helper` is a main worker model and is never used for side jobs; set `true` to opt in.
 - `helper.uses.<use>.models`: per-use list replacing `helper.models`. Use keys: `alert`/`toolErrors`, `tldr`, `gate`/`gateSummary`, `route`/`routeClass`, `report`/`reportCheck`, `topic`. `helper.uses.<use>: false` still switches a use off; `{ enabled: false }` works too.
 

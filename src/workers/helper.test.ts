@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { RequestScheduler } from "../router/scheduler.js";
 import { readFileSync } from "node:fs";
-import { DEFAULT_HELPER, HELPER_CALLS_FILE, resolveHelperSpecs, helperSetupWarning, helperReport, helperComplete, helperConfig, helperStats, resetHelperState, truncateInput, type HelperCall, type HelperDeps, type WireRequest } from "./helper.js";
+import { DEFAULT_HELPER, HELPER_CALLS_FILE, resolveHelperSpecs, configuredHelperSpecs, helperSetupWarning, helperReport, helperComplete, helperConfig, helperStats, resetHelperState, truncateInput, type HelperCall, type HelperDeps, type WireRequest } from "./helper.js";
 import { classifyRouteAssisted } from "./route-classifier.js";
 import { parseProofVerdict, proofIsEmpty, routeSecondOpinion, cachedTldr, classifyAlert, cleanGateSummary, cleanTldr, parseAlertVerdict, resetTldrState, trimTldrInput } from "./helper-uses.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -273,7 +273,7 @@ describe("uses fall back to rules", () => {
   });
 
   it("config defaults", () => {
-    expect(helperConfig({}).models).toEqual(["apple-fm", "@helper"]);
+    expect(helperConfig({}).models).toEqual(["apple-fm", "@helper", "@legacy"]);
     expect(helperConfig({ uses: { tldr: false } }).uses.tldr).toBe(false);
   });
 });
@@ -466,7 +466,8 @@ describe("helper model resolution (small side-job model)", () => {
 
   it("default order: apple-fm, then role: helper providers; main models never", () => {
     const r = resolveHelperSpecs("route", cfg(), roles({ "apple-fm": "main", small: "helper", big: "main" }));
-    expect(r.specs).toEqual(["apple-fm", "small"]);
+    expect(r.specs).toEqual(["apple-fm", "small"]); // qwen3:8b not installed here: no legacy entry
+    expect(resolveHelperSpecs("route", cfg(), { ...roles({ small: "helper" }), ollamaInstalled: (t) => t === "qwen3:8b" }).specs).toEqual(["apple-fm", "small", "ollama:qwen3:8b"]);
   });
 
   it("apple-fm absent + role helper: the helper provider serves", async () => {
@@ -517,5 +518,20 @@ describe("helper report and setup warning", () => {
     const r = helperReport(helperConfig({ uses: { tldr: { models: ["ollama:q"] } } }), roles({ small: "helper" })).join("\n");
     expect(r).toMatch(/tldr\s+ollama:q/);
     expect(r).toMatch(/route\s+small/);
+  });
+});
+
+describe("legacy ollama:qwen3:8b default", () => {
+  it("no helper config, qwen3:8b installed: a failed apple-fm falls back to it", async () => {
+    const d = deps(async (w) => { if (w.kind === "messages") throw new Error("aborted"); return ollama("legacy ok"); }, {
+      config: helperConfig({}), providerRoles: () => ({ "apple-fm": "main" }), ollamaInstalled: (t) => t === "qwen3:8b",
+    });
+    expect(await helperComplete({ task: "t", input: "i", label: "tldr" }, d)).toBe("legacy ok");
+    expect(callsOf(d).map((x) => [x.model, x.ok])).toEqual([["apple-fm", false], ["ollama:qwen3:8b", true]]);
+  });
+  it("not installed: skipped, and the setup warning stays", () => {
+    const d: Partial<HelperDeps> = { providerRoles: () => ({}), ollamaInstalled: () => false };
+    expect(configuredHelperSpecs("tldr", helperConfig({}), d)).toEqual([]);
+    expect(helperSetupWarning(helperConfig({}), d)).toMatch(/no helper model/);
   });
 });

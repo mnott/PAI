@@ -18,6 +18,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { Worker, receiveMessageOnPort, MessageChannel } from "node:worker_threads";
 import { loadConfig } from "../daemon/config.js";
@@ -42,12 +43,24 @@ export interface HelperConfig {
 
 /** In a models list: every enabled local provider of workers.yaml marked `role: helper`. */
 export const HELPER_ROLE = "@helper";
+/** In a models list: the legacy small default ollama:qwen3:8b, only when that Ollama model is installed here. */
+export const HELPER_LEGACY = "@legacy";
+const LEGACY_SPEC = "ollama:qwen3:8b";
+
+function legacyInstalled(deps: HelperDeps): boolean {
+  if (deps.ollamaInstalled) return deps.ollamaInstalled("qwen3:8b");
+  try {
+    return existsSync(join(process.env.OLLAMA_MODELS ?? join(homedir(), ".ollama", "models"), "manifests", "registry.ollama.ai", "library", "qwen3", "8b"));
+  } catch {
+    return false;
+  }
+}
 /** Use label of a helper call -> its `helper.uses` switch name. */
 const USE_KEY: Record<string, string> = { alert: "toolErrors", tldr: "tldr", gate: "gateSummary", route: "routeClass", report: "reportCheck", topic: "topic" };
 
 export const DEFAULT_HELPER: HelperConfig = {
   enabled: true,
-  models: ["apple-fm", HELPER_ROLE],
+  models: ["apple-fm", HELPER_ROLE, HELPER_LEGACY],
   allowMain: false,
   useModels: {},
   timeoutMs: 20_000,
@@ -127,6 +140,8 @@ export interface HelperDeps {
   /** Whether a router-served model is busy with a foreign request (default: the router's scheduler snapshot). */
   busy?: (name: string) => boolean;
   /** workers.yaml providers as name -> role (default: the workers config). */
+  /** Whether an Ollama model tag is installed (default: its manifest exists under ~/.ollama). */
+  ollamaInstalled?: (tag: string) => boolean;
   providerRoles?: () => Record<string, "main" | "helper">;
 }
 
@@ -392,6 +407,8 @@ export function resolveHelperSpecs(label: string, cfg: HelperConfig, deps: Helpe
   for (const m of list) {
     if (m === HELPER_ROLE) {
       for (const [n, r] of Object.entries(roles)) if (r === "helper") add(n);
+    } else if (m === HELPER_LEGACY) {
+      if (legacyInstalled(deps)) add(LEGACY_SPEC);
     } else if (m.startsWith("ollama:") || m === "apple-fm" || roles[m] === "helper" || cfg.allowMain) add(m);
     else refused.push(m);
   }
