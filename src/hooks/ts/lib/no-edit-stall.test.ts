@@ -496,3 +496,46 @@ describe("announced-no-action.yaml tests block", () => {
     expect(announcedActionDecision("I'll read the file.", 0, false)).toBeNull();
   });
 });
+
+// ---- result-fingerprint: counts, keys, regex captures, the three monitor-mode loop patterns ----
+
+describe("result-fingerprint", () => {
+  const SAMPLE: Record<string, [string, (n: number) => string]> = {
+    "disabled-tool-retry": ["Bash", () => "No such tool available: Bash. Bash is disabled for this session"],
+    "hook-block-streak": ["Bash", (n) => `PreToolUse:Bash hook error: [guard]: Blocked by PAI security validator: rule number ${n}.`],
+    "edit-noop-repeat": ["Edit", () => "No changes to make: old_string and new_string are exactly the same"],
+  };
+  // a fixture token: Fn = one matching result with fingerprint n; anything else = an unrelated result
+  const replay = (id: string, seq: string): LoopStep => {
+    const [tool, text] = SAMPLE[id];
+    let state = emptyLoopState();
+    for (const t of seq.split(/\s+/)) {
+      const f = /^F(\d+)$/.exec(t);
+      state = recordLoopResult(state, tool, tool === "Bash" ? `ls ${t}` : { file_path: "src/a.ts", old_string: "x", new_string: "x" }, f ? text(Number(f[1])) : "ok", 1_000_000);
+    }
+    return stepLoopGuard(state, tool, tool === "Bash" ? "ls last" : { file_path: "src/a.ts", old_string: "y", new_string: "y" }, null, 1_000_001, process.cwd());
+  };
+  for (const id of Object.keys(SAMPLE)) {
+    const doc = parse(readFileSync(`antipatterns/tool-loop/${id}.yaml`, "utf8"));
+    it(`${id}: monitor mode, experimental`, () => {
+      expect(doc.mode).toBe("monitor");
+      expect(doc.status).toBe("experimental");
+    });
+    for (const seq of doc.tests.match as string[]) it(`${id} match: ${seq}`, () => {
+      const r = replay(id, seq);
+      expect(r.deny).toBe(false); // monitor: no action
+      expect(r.monitored?.action).toBe("deny");
+      expect(r.id).toBe(id);
+    });
+    for (const seq of doc.tests.no_match as string[]) it(`${id} no_match: ${seq}`, () => expect(replay(id, seq).monitored).toBeUndefined());
+  }
+  it("key captures: the same capture counts together, another does not", () => {
+    expect(replay("hook-block-streak", "F1 F1 F1").monitored).toBeDefined();
+    expect(replay("hook-block-streak", "F1 F2 F1").monitored).toBeUndefined();
+  });
+  it("counts survive and are keyed per tool", () => {
+    const s = recordLoopResult(recordLoopResult(emptyLoopState(), "Edit", { file_path: "a" }, "No changes to make: old_string and new_string are exactly the same"), "Edit", { file_path: "a" }, "No changes to make: old_string and new_string are exactly the same");
+    expect(Object.values(s.results ?? {})).toEqual([{ tool: "Edit", n: 2, d: 0 }]);
+    expect(stepLoopGuard(s, "Read", { file_path: FILES[0] }, null, 1_000_000, process.cwd()).monitored).toBeUndefined();
+  });
+});

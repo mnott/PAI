@@ -214,6 +214,44 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "paths/spec-paths-missing.yaml"
   },
   {
+    "id": "disabled-tool-retry",
+    "layer": "behaviour",
+    "status": "experimental",
+    "mode": "monitor",
+    "version": 1,
+    "created": "2026-11-23",
+    "category": "tool-loop",
+    "title": "Calling a tool the session has disabled, again and again",
+    "description": "A run kept calling Bash after \"No such tool available: Bash. Bash is disabled for this session\": 200+ calls (tail -n, tail -c, ls, true, pwd) with different commands, so the repeat guards never saw the same call.\n",
+    "detector": {
+      "kind": "result-fingerprint",
+      "params": {
+        "match": "No such tool available: (\\w+)\\. \\1 is disabled",
+        "key": "{tool}:disabled",
+        "deny_at": 2,
+        "stop_after": 2
+      }
+    },
+    "action": "deny",
+    "message": "loop guard: {tool} is disabled in this session ({n} calls refused). Do not retry it with another command. Use Read/Grep/Glob/Edit/Write, or report the blocker in R x=.",
+    "tests": {
+      "match": [
+        "F1 F1"
+      ],
+      "no_match": [
+        "F1",
+        "F1 W"
+      ]
+    },
+    "provenance": {
+      "date": "2026-11-22",
+      "model": "session",
+      "observed": "cand-9d2d93a1, 8bb29848, a66aaf4d, 417c0e72, 7a830299 (workers 20261122-143502-45060 and 20261122-143951-52725, 200+ refused Bash calls)"
+    },
+    "proxy": "monitor",
+    "source": "tool-loop/disabled-tool-retry.yaml"
+  },
+  {
     "id": "distinct-rewrites",
     "layer": "behaviour",
     "status": "stable",
@@ -262,6 +300,43 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "tool-loop/distinct-rewrites.yaml"
   },
   {
+    "id": "edit-noop-repeat",
+    "layer": "behaviour",
+    "status": "experimental",
+    "mode": "monitor",
+    "version": 1,
+    "created": "2026-11-23",
+    "category": "tool-loop",
+    "title": "Edit with old_string equal to new_string, repeated",
+    "description": "\"No changes to make: old_string and new_string are exactly the same\": the model believes its edit did not apply, or already applied, and sends the same Edit again; 4 workers, 3 files.\n",
+    "detector": {
+      "kind": "result-fingerprint",
+      "params": {
+        "match": "No changes to make: old_string and new_string are exactly the same",
+        "key": "{tool}:noop",
+        "deny_at": 2,
+        "stop_after": 3
+      }
+    },
+    "action": "deny",
+    "message": "loop guard: this Edit changes nothing ({n} times): old_string equals new_string. The change is probably already in the file; Read it to check, then move on.",
+    "tests": {
+      "match": [
+        "F1 F1"
+      ],
+      "no_match": [
+        "F1"
+      ]
+    },
+    "provenance": {
+      "date": "2026-11-20",
+      "model": "session",
+      "observed": "cand-f1a4a20b, 6cc69ed0, 50385abc (capacity.ts, alarm.ts, merge-live-guard.test.ts)"
+    },
+    "proxy": "monitor",
+    "source": "tool-loop/edit-noop-repeat.yaml"
+  },
+  {
     "id": "growing-command",
     "layer": "behaviour",
     "status": "stable",
@@ -302,6 +377,44 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     },
     "proxy": "monitor",
     "source": "tool-loop/growing-command.yaml"
+  },
+  {
+    "id": "hook-block-streak",
+    "layer": "behaviour",
+    "status": "experimental",
+    "mode": "monitor",
+    "version": 1,
+    "created": "2026-11-23",
+    "category": "tool-loop",
+    "title": "The same security-validator block hit again with a reworded command",
+    "description": "PreToolUse hook denials (no new test files, git write outside the worktree, in-place edits) repeated 3+ times by the same worker with only the command reworded; 10 literal candidates, 5+ workers.\n",
+    "detector": {
+      "kind": "result-fingerprint",
+      "params": {
+        "match": "PreToolUse:\\w+ hook error: \\[[^\\]]+\\]: Blocked by PAI security validator: ([^.\\n]{0,60})",
+        "key": "{tool}:hookblock:{1}",
+        "deny_at": 3,
+        "stop_after": 2
+      }
+    },
+    "action": "deny",
+    "message": "loop guard: the security validator blocked this {n} times ({key}). Rewording the command will not change the rule. Read the block message, do it the allowed way, or report the blocker in R x=.",
+    "tests": {
+      "match": [
+        "F1 F1 F1"
+      ],
+      "no_match": [
+        "F1 F1",
+        "F1 F2 F3"
+      ]
+    },
+    "provenance": {
+      "date": "2026-11-22",
+      "model": "session",
+      "observed": "cand-20f02c2e, 31adc23b, 654cde3e, e952e27f, 6c7a78f3, 180d553a, 4ae9bbda, 544f2597, 859399be, 1a370388"
+    },
+    "proxy": "monitor",
+    "source": "tool-loop/hook-block-streak.yaml"
   },
   {
     "id": "hook-source-read",

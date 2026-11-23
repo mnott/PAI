@@ -1,0 +1,30 @@
+id: disabled-tool-retry
+layer: behaviour
+status: experimental
+mode: monitor
+version: 1
+created: 2026-11-23
+category: tool-loop
+title: Calling a tool the session has disabled, again and again
+description: >
+  A run kept calling Bash after "No such tool available: Bash. Bash is disabled for this session": 200+ calls
+  (tail -n, tail -c, ls, true, pwd) with different commands, so the repeat guards never saw the same call.
+detector:
+  kind: result-fingerprint
+  params:
+    match: "No such tool available: (\\w+)\\. \\1 is disabled"
+    key: "{tool}:disabled"
+    deny_at: 2
+    stop_after: 2
+action: deny
+message: "loop guard: {tool} is disabled in this session ({n} calls refused). Do not retry it with another command. Use Read/Grep/Glob/Edit/Write, or report the blocker in R x=."
+tests:
+  match:
+    - "F1 F1"
+  no_match:
+    - "F1"
+    - "F1 W"
+provenance:
+  date: 2026-11-22
+  model: session
+  observed: cand-9d2d93a1, 8bb29848, a66aaf4d, 417c0e72, 7a830299 (workers 20261122-143502-45060 and 20261122-143951-52725, 200+ refused Bash calls)

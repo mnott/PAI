@@ -24,7 +24,7 @@ import { join, resolve } from "node:path";
 import { dropDataHeredocBodies, dropHeredocBodies } from "./heredoc.js";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
-import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
+import { activeAntipattern, fillMessage, loadAntipatterns, shippedAntipattern } from "./antipatterns.js";
 import { dispositionOf, modelOf, paramsForModel } from "./antipattern-lifecycle.js";
 import { ledgerResult, ledgerStep, type FailLedgerState } from "./fail-ledger.js";
 import { isPollCommand } from "./wait-poll.js";
@@ -134,6 +134,8 @@ export interface LoopState {
   reads?: { key: string; files: string; print: string | null; n: number; denials: number };
   /** Failure fingerprint -> times seen (they survive edits), and Bash calls denied for it (see repeated-error). */
   fails?: { counts: Record<string, number>; denials: number };
+  /** result-fingerprint: "<pattern id>\t<key>" -> tool, results seen (they survive edits) and calls denied for it. */
+  results?: Record<string, { tool: string; n: number; d: number }>;
   /** no-edit-stall: calls and start time (ms) since the start or the last edit of a repo file, and the notes already given. */
   stall?: { calls: number; since: number; fired1?: boolean; fired2?: boolean; edited?: boolean };
   /** Per-run FAIL ledger (workers.failLedger); absent while the experiment is off. */
@@ -519,7 +521,61 @@ export function failureFingerprint(response: unknown): string | null {
   return `exit ${code}: ${line.replace(/(?:~|\.{0,2})?\/[^\s'"():,]+/g, "<path>").replace(/\d+/g, "#").slice(0, 160)}`;
 }
 
+/** The active result-fingerprint patterns, with their compiled `match`. */
+function resultPatterns(): { id: string; re: RegExp; key: string; params: Record<string, unknown>; message: string }[] {
+  const out: { id: string; re: RegExp; key: string; params: Record<string, unknown>; message: string }[] = [];
+  for (const ap of loadAntipatterns()) {
+    if (ap.detector.kind !== "result-fingerprint") continue;
+    try {
+      out.push({ id: ap.id, re: new RegExp(String(ap.detector.params.match)), key: String(ap.detector.params.key ?? "{tool}"), params: ap.detector.params, message: ap.message });
+    } catch {
+      /* an invalid regex never loads (validator) */
+    }
+  }
+  return out;
+}
+
+/** result-fingerprint: counts a tool result (any tool, errors and hook denials included) whose raw text matches a pattern's `match`, under its `key` ({tool}, {1}..{9} = capture groups). */
+function countResults(state: LoopState, tool: string, response: unknown): LoopState {
+  const pats = resultPatterns();
+  if (!pats.length) return state;
+  const text = rawText(response);
+  let results = state.results;
+  for (const p of pats) {
+    const m = p.re.exec(text);
+    if (!m) continue;
+    const key = fillMessage(p.key, { tool, ...Object.fromEntries(m.slice(1, 10).map((g, i) => [String(i + 1), g ?? ""])) });
+    const k = `${p.id}\t${key}`;
+    const prev = results?.[k];
+    results = { ...(results ?? {}), [k]: { tool, n: (prev?.n ?? 0) + 1, d: prev?.d ?? 0 } };
+  }
+  return results === state.results ? state : { ...state, results };
+}
+
+/** result-fingerprint: once a fingerprint was seen deny_at times, calls of its tool are denied; the stop_after-th denial after the first stops the run. */
+function resultDeny(state: LoopState, tool: string): LoopStep | null {
+  if (!state.results) return null;
+  for (const p of resultPatterns()) {
+    for (const [k, e] of Object.entries(state.results)) {
+      const [id, key] = k.split("\t");
+      if (id !== p.id || e.tool !== tool || e.n < (p.params.deny_at as number)) continue;
+      const d = e.d + 1;
+      return {
+        state: { ...state, results: { ...state.results, [k]: { ...e, d } } },
+        deny: true,
+        stop: d > (p.params.stop_after as number),
+        id: p.id,
+        key,
+        count: e.n,
+        reason: fillMessage(p.message, { n: e.n, key, tool }),
+      };
+    }
+  }
+  return null;
+}
+
 function countFailure(state: LoopState, tool: string, response: unknown): LoopState {
+  state = countResults(state, tool, response);
   const fp = tool === "Bash" ? failureFingerprint(response) : null;
   if (fp === null) return state;
   const counts = { ...(state.fails?.counts ?? {}) };
@@ -542,7 +598,7 @@ export function recordLoopResult(state: LoopState, tool: string, input: string |
   input = preInput(tool, input);
   const counted = trackBaseRed(typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response), tool, input, response);
   // an edit resets the window and drops everything not carried over by hand: the failure counts survive
-  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.seen ? { seen: counted.seen } : {}), ...(counted.baseRed ? { baseRed: counted.baseRed } : {}), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.stall ? { stall: counted.stall } : {}), ...(counted.edited ? { edited: true } : {}) };
+  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.seen ? { seen: counted.seen } : {}), ...(counted.baseRed ? { baseRed: counted.baseRed } : {}), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.results ? { results: counted.results } : {}), ...(counted.stall ? { stall: counted.stall } : {}), ...(counted.edited ? { edited: true } : {}) };
   if (!ledger) return core;
   // an edit resets the window and drops everything not carried over by hand: the ledger survives
   const next = core.fail === state.fail ? core : { ...core, fail: state.fail };
@@ -891,8 +947,9 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
 }
 
 function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, source: "hook" | "proxy" = "hook"): LoopStep {
-  let r = failureDeny(state, tool) ?? stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
+  let r = resultDeny(state, tool) ?? failureDeny(state, tool) ?? stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
   if (state.fails && !r.state.fails) r = { ...r, state: { ...r.state, fails: state.fails } };
+  if (state.results && !r.state.results) r = { ...r, state: { ...r.state, results: state.results } };
   const command = tool === "Bash" ? bashCommand(input) : undefined;
   const bashWrites = command !== undefined ? bashWriteTargets(command) : null;
   // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file; a bare Bash write does not, it is a write

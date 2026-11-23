@@ -328,3 +328,18 @@ describe("antipattern candidates are keyed by signature", () => {
     expect(migrateCandidates(d)).toMatchObject({ before: 3, after: 3, removed: [] });
   });
 });
+
+describe("router notices and no-op edits", () => {
+  it("router| signatures are never candidates", () => {
+    const now = Date.now();
+    const r = (ts: number): ToolErrorRecord => ({ ts, worker: "w1", provider: "p", label: "t", tool: "bash", signature: "router|tool name case corrected", raw: "tool name case corrected" });
+    expect(recordToolErrorCandidates([r(now), r(now + 1), r(now + 2)], now + 3)).toEqual([]);
+  });
+  it("Edit with old_string equal to new_string gets the no-op note", () => {
+    const ev = [
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "n1", name: "Edit", input: { file_path: "/w/a.ts", old_string: "x", new_string: "x" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "n1", is_error: true, content: "No changes to make: old_string and new_string are exactly the same" }] } },
+    ];
+    expect(editMissNote(detectEditMiss(ev)!, "x")).toContain("changed nothing");
+  });
+});
