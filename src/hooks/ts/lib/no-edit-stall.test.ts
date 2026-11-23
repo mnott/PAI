@@ -133,13 +133,9 @@ describe("no-edit-stall in stepLoopGuard", () => {
     expect(run([...base, ["Bash", "sed -i s/a/b/ src/a.ts"]])[41].deny).toBe(false);
     expect(run([...base, ["Bash", "git log -3"]])[41].deny).toBe(true);
   });
-  it("time-only trigger: 6 calls over 5 min give note1", () => {
-    const steps = run(reads(6), [0, MIN, 2 * MIN, 3 * MIN, 4 * MIN, 5 * MIN]);
-    expect(stalls(steps)).toEqual([5]);
-    expect(steps[5].note).toContain("5 min");
-  });
-  it("time-only deny at 12 min", () => {
-    expect(run(reads(6), [0, MIN, 2 * MIN, 3 * MIN, 4 * MIN, 12 * MIN])[5].deny).toBe(true);
+  it("minutes never trigger: 6 calls over 5 min and a 12-min gap give nothing (slow machine, same work)", () => {
+    expect(stalls(run(reads(6), [0, MIN, 2 * MIN, 3 * MIN, 4 * MIN, 5 * MIN]))).toEqual([]);
+    expect(run(reads(6), [0, MIN, 2 * MIN, 3 * MIN, 4 * MIN, 12 * MIN])[5].deny).toBe(false);
   });
   it("scratch-only writes do not reset", () => {
     const scratch: Call[] = [
@@ -330,11 +326,11 @@ describe("no-edit-stall: scratch work after the first repo edit", () => {
     const calls = Array.from({ length: 12 }, (_, i): [string, Record<string, unknown>] => (i === 5 ? scratch : ["Read", { file_path: "src/a.ts" }]));
     expect(fire(calls, 1000)[11]).toBe("note1");
   });
-  it("the time trigger needs at least 6 counted calls", () => {
-    const calls: [string, Record<string, unknown>][] = [["Read", { file_path: "a" }], ["Read", { file_path: "b" }]];
-    expect(fire(calls, 10 * MIN).every((k) => k === undefined)).toBe(true);
-    const six = Array.from({ length: 6 }, (): [string, Record<string, unknown>] => ["Read", { file_path: "a" }]);
-    expect(fire(six, 1 * MIN).some((k) => k === "note1")).toBe(true);
+  it("the same call counts note at any speed (counts only)", () => {
+    const twelve = Array.from({ length: 12 }, (): [string, Record<string, unknown>] => ["Read", { file_path: "a" }]);
+    expect(fire(twelve, 1 * MIN)[11]).toBe("note1");
+    expect(fire(twelve, 30 * MIN)[11]).toBe("note1");
+    expect(fire(twelve.slice(0, 6), 30 * MIN).every((k) => k === undefined)).toBe(true);
   });
   it("test runs plus scratch edits after a repo edit never note", () => {
     const calls: [string, Record<string, unknown> | string][] = [edit];

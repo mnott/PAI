@@ -42,7 +42,11 @@ export interface EscalateConfig {
   /** Time-bound escalation (reroute.ts): minutes a job may wait for a slot before it goes to the fallback provider. */
   queuedMaxMin: number;
   /** Minutes a running job may go without a successful Edit/Write/commit. */
-  stallMaxMin: number;
+  stallCalls: number;
+  /** Scale the one outer time limit (max-minutes) by the measured local slowdown (speed-scale.ts). */
+  scaleWithSpeed: boolean;
+  /** Ceiling of that slowdown factor. */
+  maxScale: number;
   /** Failed tool calls in a row that count as a stall. */
   stallFailedCalls: number;
 }
@@ -56,7 +60,7 @@ export interface CloudTarget {
 const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure", "loop-stop", "deadline"];
 
 /** Fallbacks of the escalate block when workers.yaml omits a key; the shipped defaults file carries the policy values. */
-export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" }, queuedMaxMin: 0, stallMaxMin: 10, stallFailedCalls: 6 };
+export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" }, queuedMaxMin: 0, stallCalls: 60, stallFailedCalls: 6, scaleWithSpeed: true, maxScale: 4 };
 
 /** Failed local attempts that escalate a task (the route classifier's rule, now this one). */
 export const ESCALATE_FAILURES = DEFAULT_ESCALATE.failures;
@@ -250,7 +254,11 @@ export function parseEscalate(v: unknown, bad: Bad): EscalateConfig {
     }
     out.triggers = t.triggers as TriggerKind[];
   }
-  for (const k of ["queuedMaxMin", "stallMaxMin", "stallFailedCalls"] as const) {
+  if (t.scaleWithSpeed !== undefined) {
+    if (typeof t.scaleWithSpeed !== "boolean") bad(".escalate.scaleWithSpeed", "must be true or false");
+    out.scaleWithSpeed = t.scaleWithSpeed;
+  }
+  for (const k of ["queuedMaxMin", "stallCalls", "stallFailedCalls", "maxScale"] as const) {
     if (t[k] === undefined) continue;
     const min = k === "queuedMaxMin" ? 0 : 1e-9; // queuedMaxMin 0 = a queued job waits unless the operator gave priority
     if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) < min) bad(`.escalate.${k}`, k === "queuedMaxMin" ? "must be a number >= 0 (0 = off)" : "must be a positive number");

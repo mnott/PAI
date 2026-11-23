@@ -46,6 +46,8 @@ export interface LowPowerOpts {
   active?: () => Promise<boolean>;
   /** The stretch factor (power.lowPower.factor). */
   factor?: () => number;
+  /** Measured local slowdown of the model serving the run (speed-scale.ts, 1..maxScale); above 1 it stretches the deadline instead of the fixed low-power factor. */
+  speed?: () => number;
 }
 
 /** Local HH:MM → epoch ms: today, or tomorrow when already past. */
@@ -191,7 +193,11 @@ export function armDeadline(
       try {
         const active = await (lp.active ?? lowPowerActive)();
         const at = now();
-        if (active && lastActive) {
+        const measured = lp.speed ? lp.speed() : 1;
+        if (measured > 1) {
+          // the model really runs slower than its reference: stretch by the measured factor, power mode or not
+          cur = stretchDeadline(cur, true, measured, at - lastAt, at);
+        } else if (active && lastActive) {
           cur = stretchDeadline(cur, true, (lp.factor ?? lowPowerFactor)(), at - lastAt, at);
         }
         lastAt = at;

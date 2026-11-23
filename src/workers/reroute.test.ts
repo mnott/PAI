@@ -151,7 +151,7 @@ describe("session profile workers pin writers", () => {
 });
 
 const NOW = Date.parse("2026-11-16T12:00:00Z");
-const pol = (queuedMaxMin: number): ReroutePolicy => ({ queuedMaxMin, stallMaxMin: 10, stallFailedCalls: 6 });
+const pol = (queuedMaxMin: number): ReroutePolicy => ({ queuedMaxMin, stallCalls: 60, stallFailedCalls: 6 });
 const job = (o: Partial<WorkerStatus>): WorkerStatus => ({ id: "w1", state: "queued", spec: "/x", routeWhy: "auto", started: "", capacity: { sinceMs: NOW - 60 * 60_000 }, ...o }) as unknown as WorkerStatus;
 
 describe("escalationReason queued", () => {
@@ -168,8 +168,8 @@ describe("escalationReason queued", () => {
     expect(escalationReason(job({ now: true, capacity: { sinceMs: NOW - 5 * 60_000 } } as never), NOW, pol(15))).toBeNull();
     expect(escalationReason(job({}), NOW, pol(15))).toBeNull();
   });
-  it("running stall is unchanged", () => {
-    const r = job({ state: "running", progressAt: new Date(NOW - 11 * 60_000).toISOString() } as never);
+  it("running stall counts turns, not minutes", () => {
+    const r = job({ state: "running", turns: 60, turnsAtProgress: 0 } as never);
     expect(escalationReason(r, NOW, pol(0))).toContain("no edit or commit");
     expect(escalationReason(job({ state: "running", consecFails: 6 } as never), NOW, pol(0))).toContain("failed tool calls");
   });
@@ -179,9 +179,9 @@ describe("escalationReason", () => {
   it("an overdue queued job moves; a fresh one and an already rerouted one do not", () => {
     const now = Date.now();
     const held = (sinceMs: number): Partial<WorkerStatus> => ({ capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs } });
-    expect(escalationReason(queued({ ...held(now - 16 * 60_000), now: true }), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toContain("queued 16m");
-    expect(escalationReason(queued(held(now - 60_000)), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toBeNull();
-    expect(escalationReason(queued({ ...held(now - 16 * 60_000), now: true, rerouted: "x" }), now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 })).toBeNull();
+    expect(escalationReason(queued({ ...held(now - 16 * 60_000), now: true }), now, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 })).toContain("queued 16m");
+    expect(escalationReason(queued(held(now - 60_000)), now, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 })).toBeNull();
+    expect(escalationReason(queued({ ...held(now - 16 * 60_000), now: true, rerouted: "x" }), now, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 })).toBeNull();
   });
 });
 
@@ -323,7 +323,7 @@ describe("rerouteWorker", () => {
       resolve: async () => ({ provider: "fakeB", description: "fake fakeB" }),
       kill: async () => [],
       spawn: () => undefined,
-    }, now, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+    }, now, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 });
     expect(done.map((e) => e.id)).toEqual(["w1"]);
     expect(loadStatus(dir, "w1")!.rerouted).toBe("fakeB: queued 16m (operator priority)"); // the marker names where and why it moved
     expect(loadStatus(dir, "w2")!.rerouted).toBeUndefined();
@@ -332,7 +332,7 @@ describe("rerouteWorker", () => {
 
 describe("an escalated child worker (2026-11-22)", () => {
   const child = (over: Partial<WorkerStatus> = {}) => queued({ promptFile: join(dir, "spec.txt"), state: "running", parent: "p1", cwd: dir, ...over });
-  const pol0 = { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 };
+  const pol0 = { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 };
 
   it("a restart queued at the target's cap announces its id; the reroute records the continuation, parent link kept", async () => {
     saveStatus(dir, child());
@@ -365,7 +365,7 @@ describe("an escalated child worker (2026-11-22)", () => {
   });
 
   it("a start failure after the stop raises the orphan report naming the branch", async () => {
-    saveStatus(dir, child({ branch: "worker/w1", progressAt: new Date(NOW - 30 * 60_000).toISOString() } as never));
+    saveStatus(dir, child({ branch: "worker/w1", progressAt: new Date(NOW - 30 * 60_000).toISOString(), turns: 70, turnsAtProgress: 0 } as never));
     const done = await escalateOverdue([loadStatus(dir, "w1")!], {
       logDir: dir,
       announceMs: 0,
@@ -381,7 +381,7 @@ describe("an escalated child worker (2026-11-22)", () => {
 
 describe("one live fall-through per origin", () => {
   const run = async (stale: WorkerStatus[], spawned: string[]) =>
-    escalateOverdue(stale, { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now(), { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+    escalateOverdue(stale, { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now(), { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 });
   const origin = () => queued({ promptFile: join(dir, "spec.txt"), now: true, capacity: { provider: "fakeA", cap: 1, total: 1, position: 1, elapsedSec: 0, sinceMs: Date.now() - 16 * 60_000 } });
 
   it("three ticks on a stale cached view produce one fall-through", async () => {
@@ -440,11 +440,11 @@ describe("a finished fall-through ends its queued origin", () => {
     expect(loadStatus(dir, "w1")!.state).toBe("queued"); // still waiting for its next chance
     const spawned: string[] = [];
     const late = Date.now() + 6 * 60_000; // w2's end (6 min ago) is now past the recent window
-    const done = await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, late, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+    const done = await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, late, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 });
     expect(spawned).toEqual(["w1"]); // the failed fall-through aged out of its recent window: one more try
     expect(done.map((e) => e.id)).toEqual(["w1"]);
     // and the marker now stands: a third tick never spawns again, recent or not
-    await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, late + 6 * 60_000, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+    await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, late + 6 * 60_000, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 });
     expect(spawned).toEqual(["w1"]);
   });
 
@@ -454,7 +454,7 @@ describe("a finished fall-through ends its queued origin", () => {
     saveStatus(dir, f); // `updated` now: inside the recent window
     expect(endContinuedOrigins([loadStatus(dir, "w1")!], dir)).toEqual([]);
     const spawned: string[] = [];
-    await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now() + 6 * 60_000, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+    await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now() + 6 * 60_000, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 });
     expect(spawned).toEqual([]); // the rerouted marker holds it: no second fall-through while w2 is recent
   });
 
@@ -463,13 +463,13 @@ describe("a finished fall-through ends its queued origin", () => {
     saveStatus(dir, ft("done", 0)); // finished moments ago (saveStatus stamps `updated` now): the follower still owns the hand-off
     expect(endContinuedOrigins([loadStatus(dir, "w1")!], dir)).toEqual([]);
     const spawned: string[] = [];
-    await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now(), { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+    await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now(), { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 });
     expect(spawned).toEqual([]); // inside the recent window: no reroute
     // past the window the daemon pass ends it; later ticks do nothing, ever
     const late = Date.now() + 6 * 60_000;
     expect(endContinuedOrigins([loadStatus(dir, "w1")!], dir, late)).toEqual(["w1"]);
     for (let i = 0; i < 3; i++) {
-      await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, late + (i + 1) * 60_000, { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 });
+      await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, late + (i + 1) * 60_000, { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 });
       expect(endContinuedOrigins([loadStatus(dir, "w1")!], dir, late + (i + 1) * 60_000)).toEqual([]);
     }
     expect(spawned).toEqual([]); // never rerouted again
@@ -571,38 +571,23 @@ describe("no continuation while its origin lives", () => {
   });
 });
 
-describe("escalationReason: time in line at the local model", () => {
-  const min = (n: number): string => new Date(NOW - n * 60_000).toISOString();
-  const sched = (waitMin: number) => ({ at: NOW, engines: {}, workers: { w1: { waitMsTotal: waitMin * 60_000, waitingSince: 0 } } }) as never;
-  const run = (o: object) => job({ state: "running", started: min(60), ...o } as never);
-  it("12 wall minutes, 9 in line: not escalated", () => {
-    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(9))).toBeNull();
+describe("escalationReason counts turns since progress, never minutes", () => {
+  const run = (o: object) => job({ state: "running", started: new Date(NOW - 600 * 60_000).toISOString(), progressAt: new Date(NOW - 500 * 60_000).toISOString(), ...o } as never);
+  it("hours of wall time but few turns: a slow machine is not stalled", () => {
+    expect(escalationReason(run({ turns: 20, turnsAtProgress: 0 }), NOW, pol(0))).toBeNull();
   });
-  it("12 wall minutes, 1 in line: escalated with both numbers", () => {
-    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(1))).toBe("no edit or commit for 11m of own time (12m wall, 1m in line)");
+  it("stallCalls turns since the last progress: escalated, worded by deliverable", () => {
+    expect(escalationReason(run({ turns: 70, turnsAtProgress: 10 }), NOW, pol(0))).toBe("no edit or commit for 60 turns");
+    expect(escalationReason(run({ turns: 70, turnsAtProgress: 10, deliverable: "findings" }), NOW, pol(0))).toBe("no write or report output for 60 turns");
+    expect(escalationReason(run({ turns: 70, turnsAtProgress: 10, readOnly: true }), NOW, pol(0))).toBe("no successful tool call for 60 turns");
   });
-  it("in line before the last progress does not count", () => {
-    expect(escalationReason(run({ progressAt: min(12), lineAtProgressMs: 9 * 60_000 }), NOW, pol(0), sched(9))).toContain("no edit or commit for 12m");
+  it("progress resets the count", () => {
+    expect(escalationReason(run({ turns: 70, turnsAtProgress: 65 }), NOW, pol(0))).toBeNull();
   });
-  it("cloud worker (no scheduler entry) unchanged", () => {
-    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), sched(0))).toBe("no edit or commit for 12m");
-    expect(escalationReason(run({ progressAt: min(12) }), NOW, pol(0), null)).toBe("no edit or commit for 12m");
-  });
-  it("read-only worker with steady successful calls is not escalated; silent one is", () => {
-    expect(escalationReason(run({ readOnly: true, progressAt: min(1) }), NOW, pol(0))).toBeNull();
-    expect(escalationReason(run({ readOnly: true, progressAt: min(12) }), NOW, pol(0))).toBe("no successful tool call for 12m");
-  });
-});
-
-describe("escalationReason follows the deliverable", () => {
-  const min = (n: number): string => new Date(NOW - n * 60_000).toISOString();
-  const run = (o: object) => job({ state: "running", started: min(60), ...o } as never);
-  it("change job: no edit or commit for 12m", () => {
-    expect(escalationReason(run({ deliverable: "change", progressAt: min(12) }), NOW, pol(0))).toBe("no edit or commit for 12m");
-  });
-  it("findings job: worded as write/report output, never as a missing commit", () => {
-    expect(escalationReason(run({ deliverable: "findings", progressAt: min(12) }), NOW, pol(0))).toBe("no write or report output for 12m");
-    expect(escalationReason(run({ deliverable: "findings", progressAt: min(3) }), NOW, pol(0))).toBeNull();
+  it("time in line at the model changes nothing", () => {
+    const sched = { at: NOW, engines: {}, workers: { w1: { waitMsTotal: 9 * 60_000, waitingSince: 0 } } } as never;
+    expect(escalationReason(run({ turns: 20, turnsAtProgress: 0 }), NOW, pol(0), sched)).toBeNull();
+    expect(escalationReason(run({ turns: 70, turnsAtProgress: 0 }), NOW, pol(0), sched)).toBe("no edit or commit for 70 turns");
   });
 });
 
@@ -623,12 +608,12 @@ describe("isReadOnlyJob: the tool set, never the spec text", () => {
 });
 
 describe("escalation switch: per session, per run, pinned local", () => {
-  const stalled = (o: object = {}) => job({ state: "running", started: new Date(NOW - 60 * 60_000).toISOString(), progressAt: new Date(NOW - 12 * 60_000).toISOString(), ...o } as never);
+  const stalled = (o: object = {}) => job({ state: "running", started: new Date(NOW - 60 * 60_000).toISOString(), turns: 70, turnsAtProgress: 0, ...o } as never);
   it("session escalate off: no escalation for that session, still for others", () => {
     updateProfile("Quiet", { escalate: "off" });
     expect(escalationReason(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toBeNull();
     expect(escalationReason(stalled({ sessionKey: "Loud" }), NOW, pol(0))).toContain("no edit or commit");
-    expect(escalationHeldNote(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toBe("stalled 12m, escalation off for this session");
+    expect(escalationHeldNote(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toBe("stalled no edit or commit for 70 turns, escalation off for this session");
     expect(escalationHeldNote(stalled({ sessionKey: "Loud" }), NOW, pol(0))).toBeNull();
     updateProfile("Quiet", { escalate: null });
     expect(escalationReason(stalled({ sessionKey: "Quiet" }), NOW, pol(0))).toContain("no edit or commit");
@@ -715,5 +700,44 @@ describe("progress-based time budget", () => {
     expect(parseExtendMinutes("1h")).toBe(60);
     expect(parseExtendMinutes("zzz")).toBeNull();
     expect(parseBudget("20m")).toBe(20);
+  });
+});
+
+describe("speed-scaled backstop (speed-scale.ts + deadline.ts)", () => {
+  // 100 tok/s reference rows, then a slowed window
+  const row = (tsMs: number, tps: number, provider = "loc"): never => ({ ts: new Date(tsMs).toISOString(), provider, model: "m", status: 200, output_tokens: 1000, decodeMs: (1000 / tps) * 1000 }) as never;
+  const NOW2 = Date.parse("2026-11-23T15:00:00Z");
+  const fast = row(NOW2 - 5 * 3600_000, 100);
+  const opts = { nowMs: NOW2, isLocal: (p: string) => p === "loc" };
+  it("slowdown 2x: factor 2 and it doubles the backstop", async () => {
+    const { speedFactor } = await import("./speed-scale.js");
+    const { stretchDeadline } = await import("./deadline.js");
+    const f = speedFactor("loc", "m", { ...opts, rows: [fast, row(NOW2 - 60_000, 50)] });
+    expect(f).toBeCloseTo(2, 1);
+    // 10 min of wall time at factor 2 pushes a 60 min limit by 5 min (counts as 5 own minutes)
+    const lim = { deadlineAt: NOW2 + 60 * 60_000, minutes: 60 };
+    expect(stretchDeadline(lim, true, f, 10 * 60_000, NOW2).deadlineAt - lim.deadlineAt).toBeCloseTo(5 * 60_000, -2);
+    // a full-limit stretch: elapsed == whole limit doubles it
+    expect(stretchDeadline(lim, true, 2, 60 * 60_000, NOW2).deadlineAt - lim.deadlineAt).toBe(30 * 60_000);
+  });
+  it("clamped at maxScale 4 (and at the default)", async () => {
+    const { speedFactor, clampScale } = await import("./speed-scale.js");
+    expect(speedFactor("loc", "m", { ...opts, rows: [fast, row(NOW2 - 60_000, 5)] })).toBe(4);
+    expect(speedFactor("loc", "m", { ...opts, maxScale: 3, rows: [fast, row(NOW2 - 60_000, 5)] })).toBe(3);
+    expect(clampScale(0.5)).toBe(1);
+    expect(clampScale(NaN)).toBe(1);
+  });
+  it("cloud provider unchanged", async () => {
+    const { speedFactor } = await import("./speed-scale.js");
+    expect(speedFactor("cloud", "m", { ...opts, rows: [row(NOW2 - 5 * 3600_000, 100, "cloud"), row(NOW2 - 60_000, 10, "cloud")] })).toBe(1);
+  });
+  it("missing measurement = factor 1", async () => {
+    const { speedFactor } = await import("./speed-scale.js");
+    expect(speedFactor("loc", "m", { ...opts, rows: [] })).toBe(1);
+    expect(speedFactor("loc", "m", { ...opts, rows: [fast] })).toBe(1); // nothing in the recent window
+  });
+  it("escalation is speed-independent: the same turns decide at any factor", () => {
+    const s = { state: "running", turns: 70, turnsAtProgress: 10 } as never;
+    expect(escalationReason(job(s), NOW, pol(0))).toBe("no edit or commit for 60 turns");
   });
 });
