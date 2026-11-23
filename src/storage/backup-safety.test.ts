@@ -1,10 +1,13 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { vi, describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import BetterSqlite3 from "better-sqlite3";
 import type { PaiDaemonConfig } from "../daemon/config.js";
 import { restoreStorageFiles } from "./backup.js";
+
+// Real git repos / spawned process trees: sized for a loaded machine (load 50 seen), not the 5 s default.
+vi.setConfig({ testTimeout: 120_000 });
 
 const tmps: string[] = [];
 function tmpDir(prefix: string): string {
