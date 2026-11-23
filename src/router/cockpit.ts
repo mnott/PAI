@@ -243,7 +243,7 @@ function configuredLocal(): string | null {
 
 /** readLocalConfig(workers.yaml) parsed once and reused until the file's mtime/size changes (one stat per request at most). */
 function localConfigCached(): ReturnType<typeof readLocalConfig> {
-  return cachedParseRaw(workersYamlPath(), () => localConfigCached(), "cockpit-local");
+  return cachedParseRaw(workersYamlPath(), () => readLocalConfig(workersYamlPath()), "cockpit-local");
 }
 
 /** Every local tier provider whose server answers: the set of running models, in limits order. */

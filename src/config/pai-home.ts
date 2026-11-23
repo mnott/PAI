@@ -70,11 +70,20 @@ export function defaultPaiHomeDir(): string {
  */
 export function paiHomeDir(): string {
   if (process.env.PAI_HOME) return process.env.PAI_HOME;
+  const key = homedir();
+  const now = Date.now();
+  if (homeMemo && homeMemo.key === key && now - homeMemo.at >= 0 && now - homeMemo.at < PATH_MEMO_MS) return homeMemo.value;
   const fresh = defaultPaiHomeDir();
   const legacy = legacyPaiHomeDir();
-  if (!existsSync(join(fresh, "config.yaml")) && existsSync(join(legacy, "config.yaml"))) return legacy;
-  return fresh;
+  const value = !existsSync(join(fresh, "config.yaml")) && existsSync(join(legacy, "config.yaml")) ? legacy : fresh;
+  homeMemo = { key, at: now, value };
+  return value;
 }
+
+/** Filesystem-derived path answers are reused for this long (a config move is still seen within ~1 s). */
+const PATH_MEMO_MS = 1000;
+let homeMemo: { key: string; at: number; value: string } | null = null;
+const fileMemo = new Map<string, { at: number; value: string }>();
 
 /** A path under PAI_HOME, e.g. `paiHomePath("config.json")`. */
 export function paiHomePath(...segments: string[]): string {
@@ -106,6 +115,16 @@ const noticesPrinted = new Set<string>();
  * fallback location is actually used.
  */
 export function resolvePaiFile(newPath: string, oldCandidates: string[], migrateHint: string): string {
+  const memoKey = `${newPath}\0${oldCandidates.join("\0")}`;
+  const now = Date.now();
+  const m = fileMemo.get(memoKey);
+  if (m && now - m.at >= 0 && now - m.at < PATH_MEMO_MS) return m.value;
+  const value = resolvePaiFileUncached(newPath, oldCandidates, migrateHint);
+  fileMemo.set(memoKey, { at: now, value });
+  return value;
+}
+
+function resolvePaiFileUncached(newPath: string, oldCandidates: string[], migrateHint: string): string {
   if (existsSync(newPath)) return newPath;
   for (const old of legacyOnly(oldCandidates)) {
     if (old !== newPath && existsSync(old)) {
