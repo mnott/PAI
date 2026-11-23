@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT } from "./report.js";
+import { workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, checkProof } from "./report.js";
+import { repairAndValidateAg2 } from "./agentish.js";
 
 describe("workerContractPrompt — planner classes (orchestrate/plan without the flag)", () => {
   for (const cls of ["orchestrate", "plan"]) {
@@ -68,5 +69,43 @@ describe("workerContractPrompt — code graph lines", () => {
     expect(on).toContain("pai code callers <symbol>");
     expect(on).toContain("pai code search <text>");
     expect(off).not.toContain("indexed in the code graph");
+  });
+});
+
+describe("proof check and report validation credit what really ran (2026-11-22/23 false 'invalid report')", () => {
+  const R = (c: string, p: string): string => `R\ni=job\nr=+\nG=+\nc=${c}\nt=Check+\np=${p}\nz=done`;
+
+  it("a repo-root c= path is repaired to ./name so the validator accepts it", () => {
+    const out = repairAndValidateAg2(R("config.yaml add entry | workers.yaml add entry", "python3 -I chk.py"));
+    expect(out.repairs).toContain("c root path");
+    expect(out.validation.errors).toEqual([]);
+  });
+
+  it("a script run from $TMPDIR inside a && chain counts as run", () => {
+    const runs = [{ command: `sed -i '' -e 's/a/b/' config.yaml && printf 'x' > "$TMPDIR/p.py" && python3 -I "$TMPDIR/p.py"; sed -n 1p config.yaml`, failed: false }];
+    const chk = checkProof(R("./config.yaml x", 'python3 -I p.py (yaml.safe_load config.yaml) → ok; line 331: "--reasoning on"'), runs);
+    expect(chk.rewritten).toBe(false);
+  });
+
+  it("per-command `cmd → result; cmd2 → result` claims stand when each ran (loop variable, description prefix)", () => {
+    const runs = [
+      { command: "sed -e 's#cd x#cd .#' b.sh > $TMPDIR/b.sh; (time bash $TMPDIR/b.sh) 2>&1 | tail -25", failed: false },
+      { command: "cd build-metal; for t in gemv_parity pair_parity; do echo == $t; timeout 100 ./$t 2>&1 | tail -8; done", failed: false },
+    ];
+    const chk = checkProof(R("./a/b.metal x", "bash build script copy (cd .) → BUILD EXIT 0; build-metal/gemv_parity → ALL PASS; build-metal/pair_parity → ALL PASS"), runs);
+    expect(chk.rewritten).toBe(false);
+  });
+
+  it("a later `cmd → result` segment that never ran still downgrades the report", () => {
+    const runs = [{ command: "cd build-metal; ./gemv_parity | tail -3", failed: false }];
+    const chk = checkProof(R("./a/b.metal x", "bash build script copy (cd .) → BUILD EXIT 0; build-metal/gemv_parity → ALL PASS; build-metal/pair_parity → ALL PASS"), runs);
+    expect(chk.rewritten).toBe(true);
+  });
+
+  it("a proof command that never ran is still downgraded", () => {
+    const runs = [{ command: "npx tsc --noEmit", failed: false }];
+    const chk = checkProof(R("./a/b.ts x", "npx vitest run src/a.test.ts → 3 passed"), runs);
+    expect(chk.rewritten).toBe(true);
+    expect(chk.text).toContain("r=~");
   });
 });

@@ -389,10 +389,12 @@ export function repairAg2(text: string): Ag2Repair {
         if (looksLikePath(part.split(/\s/, 1)[0]) || !entries.length) entries.push(part);
         else entries[entries.length - 1] += ` ${part}`;
       }
-      const fixed = entries.join("|");
+      // the validator wants a "/" in every entry: a repo-root file (`config.yaml`) is written `./config.yaml`
+      const rooted = entries.map((e) => (/^[^\s/@]+\.\w+(?::\d+)?(\s|$)/.test(e) ? `./${e}` : e));
+      const fixed = rooted.join("|");
       if (entries.length && fixed !== v.replace(/\s*\|\s*/g, "|")) {
         lines[i] = `c=${fixed}`;
-        repairs.push("c pairs");
+        repairs.push(rooted.some((e, j) => e !== entries[j]) ? "c root path" : "c pairs");
       }
     } else if (k === "t") {
       const fixed = repairTests(val(lines[i]));
