@@ -11,7 +11,7 @@ import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
 import { routerHandler, routerPort } from "../../router/router.js";
 import { defaultV1Guard, displayHost, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
-import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler, setEndpointHealth } from "../../router/cockpit.js";
+import { enableQueueThread, cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler, setEndpointHealth } from "../../router/cockpit.js";
 import { createEndpointHealth } from "../../workers/endpoint-health.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
@@ -216,6 +216,7 @@ const runCommand: CommandDef = {
       // built once: each holds its own TTL cache, so a new one per request would reread every status file on every poll
       const sessionMap = cachedSessionMap();
       const workerWindows = cachedWorkerWindows();
+      enableQueueThread();
       warmCockpit(rows, sessionMap, workerWindows); // the first build walks every status file: before the port opens, not in a request
       const endpointHealth = createEndpointHealth(); // one probe cache for the router and the cockpit
       setEndpointHealth(endpointHealth);

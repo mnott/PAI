@@ -95,3 +95,43 @@ export function localModelOf(p: { models: Record<string, string | undefined> }):
 
 export const failoverNotice = (reason: FailoverReason): string =>
   `cloud unavailable (${reason}), this session now runs on the local model`;
+
+/**
+ * Remembers when the router's own event loop last stalled. A cloud timeout whose window overlaps a
+ * stall is our own doing (the timer fired late), so it never counts as the cloud being down.
+ */
+export class LoopStallLog {
+  private lastEnd = 0;
+  private lastMs = 0;
+  private timer: NodeJS.Timeout | undefined;
+  constructor(private readonly now: () => number = Date.now, private readonly thresholdMs = 300) {}
+  /** Feed one timer tick: `drift` is how much later than scheduled it fired. */
+  tick(drift: number): void {
+    if (drift >= this.thresholdMs) {
+      this.lastEnd = this.now();
+      this.lastMs = drift;
+    }
+  }
+  start(tickMs = 100): this {
+    let last = this.now();
+    this.timer = setInterval(() => {
+      const t = this.now();
+      this.tick(t - last - tickMs);
+      last = t;
+    }, tickMs);
+    this.timer.unref();
+    return this;
+  }
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+  }
+  /** True when a stall ended after `since` (the request's start). */
+  stalledSince(since: number): boolean {
+    return this.lastMs > 0 && this.lastEnd >= since;
+  }
+}
+
+/** Backoff for retrying the cloud: 1, 2, 4, 8, 15 s, then 15 s. */
+export const cloudBackoffMs = (attempt: number): number => Math.min(15_000, 1000 * 2 ** attempt);
+/** How long a request keeps retrying the cloud before the client gets a retryable 529. */
+export const CLOUD_RETRY_BUDGET_MS = 120_000;

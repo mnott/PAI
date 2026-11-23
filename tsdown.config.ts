@@ -7,6 +7,7 @@ export default defineConfig({
     "src/daemon/index.ts",
     "src/daemon-mcp/index.ts",
     "src/audit/scan-thread.ts",
+    "src/router/queue-thread.ts",
   ],
   format: "esm",
   target: "node20",
