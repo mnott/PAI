@@ -82,6 +82,19 @@ describe("worker mistakes are never harness", () => {
   });
 });
 
+describe("API/auth classification", () => {
+  it("api_error text inside Bash output is not an API/auth error", () => {
+    const raw = 'Exit code 1\n["api_error_status","duration_api_ms","is_error"]\nhead: illegal line count -- 0';
+    const c = classifyToolError(rec({ tool: "Bash", raw, input: "jq -c 'keys' worker.json | head -0" }));
+    expect(c.hint).not.toBe("API/auth error");
+    expect(c.cls).not.toBe("harness");
+  });
+  it("a real API error is still API/auth", () => {
+    const c = classifyToolError(rec({ tool: "api", raw: "API Error: 401 authentication_error" }));
+    expect(c).toMatchObject({ cls: "harness", hint: "API/auth error" });
+  });
+});
+
 describe("harnessEvidence", () => {
   // A real harness sample: a PAI guard message carries the marker and may be called harness.
   it("matches a PAI guard deny", () => {
