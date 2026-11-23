@@ -25,10 +25,24 @@ public final class Store: ObservableObject {
 
     private let session: URLSession
     private var lastDataFetch = Date.distantPast
+    /// Start of the latest poll (any trigger) and the latest poll that succeeded.
+    public private(set) var lastPoll = Date.distantPast
+    @Published public private(set) var lastSuccess: Date?
+    public static let openDebounce: TimeInterval = 1
 
     public init(session: URLSession = .shared) { self.session = session }
 
+    /// Poll everything right away when the popover opens. Skipped when a poll started under 1 s ago
+    /// (quick open/close/open). Returns whether a poll ran.
+    @discardableResult
+    public func refreshOnOpen(baseURL: URL, now: Date = Date()) async -> Bool {
+        guard now.timeIntervalSince(lastPoll) >= Store.openDebounce else { return false }
+        await refresh(baseURL: baseURL, forceData: true)
+        return true
+    }
+
     public func refresh(baseURL: URL, forceData: Bool = false) async {
+        lastPoll = Date()
         let heavyDue = forceData || Date().timeIntervalSince(lastDataFetch) > 15
         if heavyDue { lastDataFetch = Date() }
         do {
@@ -43,6 +57,7 @@ public final class Store: ObservableObject {
             ingest(power: r)
             if heavyDue, let d: DataResponse = try? await get("cockpit/data?window=1h", baseURL) { data = d }
             error = nil
+            lastSuccess = Date()
         } catch {
             self.error = "cannot reach \(baseURL.absoluteString)"
         }
@@ -71,6 +86,13 @@ public final class Store: ObservableObject {
         guard let b = r.battery else { batteryHistory = []; return }
         batteryHistory.append(.init(t: now, memPct: b.percent))
         if batteryHistory.count > Store.historyCap { batteryHistory.removeFirst(batteryHistory.count - Store.historyCap) }
+    }
+
+    /// "updated 12 s ago" for stale data after a failed poll; nil when there is nothing to say.
+    public func staleLine(now: Date = Date()) -> String? {
+        guard error != nil, let t = lastSuccess else { return nil }
+        let s = max(0, Int(now.timeIntervalSince(t)))
+        return s < 60 ? "updated \(s) s ago" : "updated \(s / 60) min ago"
     }
 
     /// Text under the battery graph: state, draw, runtime at current usage.

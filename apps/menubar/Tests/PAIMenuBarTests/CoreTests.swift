@@ -297,3 +297,45 @@ final class PowerTests: XCTestCase {
         XCTAssertEqual(sudoersRemoveScript, "/bin/rm -f /etc/sudoers.d/pai-powermode")
     }
 }
+
+final class CountingProtocol: URLProtocol {
+    nonisolated(unsafe) static var hits = 0
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        CountingProtocol.hits += 1
+        let r = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: r, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("{}".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@MainActor
+final class StoreOpenRefreshTests: XCTestCase {
+    func testOpenRefreshPollsAndDebounces() async {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [CountingProtocol.self]
+        let store = Store(session: URLSession(configuration: cfg))
+        let base = URL(string: "http://localhost:1")!
+        CountingProtocol.hits = 0
+        let first = await store.refreshOnOpen(baseURL: base)
+        XCTAssertTrue(first)
+        XCTAssertGreaterThanOrEqual(CountingProtocol.hits, 3) // limits, system, queue
+        let after = CountingProtocol.hits
+        let second = await store.refreshOnOpen(baseURL: base)
+        XCTAssertFalse(second)
+        XCTAssertEqual(CountingProtocol.hits, after)
+        let later = await store.refreshOnOpen(baseURL: base, now: Date().addingTimeInterval(1.5))
+        XCTAssertTrue(later)
+        XCTAssertGreaterThan(CountingProtocol.hits, after)
+    }
+
+    func testStaleLineOnlyAfterFailure() async {
+        let store = Store()
+        XCTAssertNil(store.staleLine())
+        await store.refresh(baseURL: URL(string: "http://127.0.0.1:1")!)
+        XCTAssertNil(store.staleLine()) // never succeeded: nothing to age
+    }
+}

@@ -490,6 +490,7 @@ struct PopoverContent: View {
             }
             if let err = store.error {
                 Text(err).font(.caption).foregroundStyle(Color(Palette.bad))
+                if let age = store.staleLine() { Text(age).font(.caption2).foregroundStyle(.secondary) }
             }
             Card { MachineBar(machine: store.queue?.machine, baseURL: base, message: $message, powerMode: store.powerMode) }
             LimitsCard(limits: store.limits, queue: store.queue, data: store.data, speeds: store.lastSpeed)
@@ -501,7 +502,7 @@ struct PopoverContent: View {
         }
         .padding(10)
         .frame(width: 420)
-        .onAppear { visible = true; Task { await store.refresh(baseURL: base, forceData: true) } }
+        .onAppear { visible = true; Task { await store.refreshOnOpen(baseURL: base) } }
         .onDisappear { visible = false }
     }
 
