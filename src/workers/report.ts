@@ -317,6 +317,13 @@ export const AG2_REASK_TEXT =
   "R\ni=task-id\nr=+\nG=+\nc=path summary\nt=Name+\np=proof command\nz=the answer, one line\n" +
   "(r is + - ~ ? !; r=+ needs G=+ and p; when r is not +, add y=why.)";
 
+/** The re-ask when the run made zero tool calls: the model must not invent a reason for the failure. */
+export const AG2_REASK_NO_TOOLS_TEXT =
+  "Your final message was not a valid AG2 R message. This run made no tool calls, so nothing was read, run or changed. " +
+  "Do not claim that a file or command failed or does not exist: you did not look. Send a single AG2 R message only, " +
+  "no prose, no code fence, with r=? (unverified), c=none and y=the run made no tool calls.\n" +
+  "R\ni=task-id\nr=?\nc=none\nt=NoToolCalls-\nz=run made no tool calls; nothing verified\ny=the run made no tool calls";
+
 /** The full-contract AG2 prompt — the keepalive path's identical-construction baseline. */
 export const WORKER_CONTRACT_PROMPT = fullContractPrompt("ag2");
 

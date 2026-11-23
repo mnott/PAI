@@ -42,7 +42,9 @@ import {
   verifyReportChanges,
   verifyFailNote,
   untrackedPaths,
+  AG2_REASK_NO_TOOLS_TEXT,
 } from "../report.js";
+import { recordFiring } from "../../hooks/ts/lib/antipattern-log.js";
 import { parseDenialText, recordDenial } from "../denials.js";
 import { repairAndValidateAg2, validateAg2 } from "../agentish.js";
 import { preambleLine } from "../preamble.js";
@@ -97,6 +99,7 @@ import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
 import { readSchedFile } from "../../router/scheduler.js";
 import { unparsedCallPrompt } from "./unparsed-call.js";
+import { announcedActionDecision } from "./announced-action.js";
 import { evaluate } from "../../guard/evaluate.js";
 import type { PreparedRun } from "./execute-prepare.js";
 
@@ -641,11 +644,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const unparsed = headless && config.unparsedCallContinuations > 0 && status.claudeSession ? evaluate({ kind: "final_text", text: resultEvent?.result ?? "", cwd, workerId: wid }, { env }) : null;
   // monitor mode records the firing (inside evaluate) and leaves the run as it ended
   const unparsedName = unparsed?.action === "continue" ? unparsed.unparsed?.name ?? null : null;
-  if (unparsedName && resultEvent) {
-    appendLedger(ledger, "WORKER-CONTINUED", { id: wid, reason: `unparsed tool call ${unparsedName}` });
-    status.last = `continued: unparsed tool call ${unparsedName}`;
-    saveStatus(logDir, status);
-    // the continuation's events reach the transcript and status like the main run's; its result is read from the return value
+  // one continuation of the same session with `prompt`; its events reach the transcript and status like the main run's, its result is read from the return value
+  const continueSession = async (prompt: string): Promise<void> => {
+    if (!resultEvent) return;
     state.eventsFd = openSync(eventsPath(logDir, wid), "a");
     const continuationEvent = (e: StreamEvent): void => {
       writeEvent(e as Record<string, unknown>);
@@ -664,7 +665,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         slimArgs,
         sessionId: status.claudeSession as string,
         claudeCmd,
-        prompt: unparsedCallPrompt(unparsedName, grantedToolNames(toolsFlag.slice(1), parsed.allowedTools).join(", ")),
+        prompt,
         timeoutMs: 30 * 60_000,
         onEvent: continuationEvent,
       });
@@ -677,6 +678,27 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     }
     closeSync(state.eventsFd);
     state.eventsFd = null;
+  };
+  const grantedTools = grantedToolNames(toolsFlag.slice(1), parsed.allowedTools);
+  if (unparsedName && resultEvent) {
+    appendLedger(ledger, "WORKER-CONTINUED", { id: wid, reason: `unparsed tool call ${unparsedName}` });
+    status.last = `continued: unparsed tool call ${unparsedName}`;
+    saveStatus(logDir, status);
+    await continueSession(unparsedCallPrompt(unparsedName, grantedTools.join(", ")));
+  }
+  // a text that only announces an action ends the turn without a tool call: continue, capped per run by the pattern
+  if (headless && status.claudeSession && resultEvent && !unparsedName) {
+    const hasTools = grantedTools.some((t) => /^(Read|Write|Edit|Bash|Glob|Grep|NotebookEdit)$/.test(t));
+    for (let done = 0; ; done++) {
+      const d = announcedActionDecision(resultEvent.result, done, hasTools);
+      if (!d) break;
+      recordFiring({ id: "announced-no-action", version: d.version, category: "final-text", action: "continue", mode: d.mode, input: resultEvent.result ?? "", cwd, env, source: "hook" });
+      if (d.mode !== "enforce") break;
+      appendLedger(ledger, "WORKER-CONTINUED", { id: wid, reason: "announced action without a tool call" });
+      status.last = "continued: announced action without a tool call";
+      saveStatus(logDir, status);
+      await continueSession(d.message);
+    }
   }
   const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
   const ok = !empty && runSucceeded(headless, rc, resultEvent);
@@ -723,6 +745,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           slimArgs,
           sessionId: status.claudeSession!,
           claudeCmd,
+          ...(status.tools === 0 ? { prompt: AG2_REASK_NO_TOOLS_TEXT } : {}),
         });
         const v2 = validateAg2(reaskText);
         status.reportValid = v2.ok;

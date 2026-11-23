@@ -1,0 +1,36 @@
+# A worker's turn ends (end_turn) with a short text that announces an action ("I'll start by
+# reading the tasks file.") and no tool call. Claude Code takes it as the final answer and the
+# run ends. The worker is continued (at most max_per_run times) with the prompt below. Only
+# for workers that have read or write tools.
+id: announced-no-action
+layer: behaviour
+status: stable
+mode: enforce
+version: 1
+created: 2026-11-23
+category: final-text
+detector:
+  kind: announced-action
+  params:
+    max_chars: 240
+    max_per_run: 2
+    # the text starts with one of these (after trimming)
+    starts: '^(?:(?:ok|okay|alright|first|now|next)[,.:]?\s+)?(?:i\s*(?:''|’)?\s*ll|i will|i am going to|i''m going to|let me|let''s|next,? i|now,? i)\b'
+    # a report block or AG2 message makes it a final answer
+    report: '(?:^|\n)\s*R\s*\n\s*i=|\n\s*r=[+\-~?!]'
+action: continue
+message: "You announced an action but did not call a tool. Call the tool now."
+tests:
+  match:
+    - "I'll start by reading the tasks file."
+    - "Let me check the config first."
+    - "Now I'll write the test file."
+  no_match:
+    - "R\ni=task-1\nr=+\nG=+\nc=none\nt=Tsc+\np=npx tsc\nz=done"
+    - "The function returns the parsed value; the tests pass."
+    - "I'll start by reading the tasks file. Done: it lists 3 tasks and I fixed the bug in parse.ts, then ran the tests and all 40 passed. Nothing else is left to change, so this is the final answer for the whole task as asked, including the follow-up notes about the cache layer and the edge cases."
+provenance:
+  date: 2026-11-23
+  model: signal-2
+  observed: first turn answered "I'll start by reading the tasks file." with end_turn and no tool call; hard set 0/40
+  ref: 20261123-091753-32746
