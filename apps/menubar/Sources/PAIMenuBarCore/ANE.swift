@@ -17,6 +17,12 @@ public func energyToWatts(delta: Double, unit: String, seconds: Double) -> Doubl
     return j / seconds
 }
 
+/// True when an IOReport channel name belongs to a given power reader: the ANE reader
+/// matches names starting with "ANE"; the GPU/CPU readers match "GPU"/"CPU" prefixes.
+public func channelMatches(_ name: String, prefix: String) -> Bool {
+    name.hasPrefix(prefix)
+}
+
 /// Neural Engine power read in-process from IOReport ("Energy Model" group): the energy
 /// counter delta between two calls, divided by the interval. No sudo, no spawned process.
 /// `read()` returns nil on the first call (it only primes) and whenever IOReport is unreadable.
@@ -40,6 +46,9 @@ public final class ANEReader: @unchecked Sendable {
     private var prev: CFDictionary?
     private var prevAt = Date.distantPast
     public private(set) var available = false
+    /// Channel names the subscription matched, e.g. ["ANE Energy", "GPU Energy"]:
+    /// lets a dump tool show that the reader's prefix match actually found channels.
+    public private(set) var matchedChannels: [String] = []
 
     public init() {
         guard let h = dlopen("/usr/lib/libIOReport.dylib", RTLD_NOW) else { return }
@@ -58,6 +67,12 @@ public final class ANEReader: @unchecked Sendable {
         subbed?.release()
         createSamples = cs; createDelta = cd; iterate = it; name = nm; unit = un; intValue = iv
         sub = s; channels = ch; available = true
+        var names: [String] = []
+        iterate?(ch) { item in
+            if let n = name?(item)?.takeUnretainedValue() as String? { names.append(n) }
+            return 0
+        }
+        matchedChannels = names
     }
 
     /// ANE watts since the previous call; nil when priming or unreadable.
