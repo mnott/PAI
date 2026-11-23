@@ -303,27 +303,35 @@ export function emptyLoopState(): LoopState {
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const READ_TOOLS = new Set(["Read", "Bash", "Grep"]);
 const TMP_PATH = /(?:\/private)?\/tmp\/[^\s'";|&<>)]*|\$\{?TMPDIR\}?(?:\/[^\s'";|&<>)]*)?/g;
-/** `pai worker wait <ids...>` / `wait-on <pids...>`: the ids it waits on (wait-on takes pids, not worker ids). */
-const WAIT_IDS = /\bpai worker (wait|wait-on)\s+([^\s;&|<>]+)/;
+/** `pai worker wait <ids...>` / `wait-on <pids...>`: the operands up to the first flag or shell operator. */
+const WAIT_IDS = /\bpai worker (wait-on|wait)(?![\w-])((?:\s+[^\s;&|<>]+)*)/;
 /** `wait-url` / `wait-file`: no worker status to consult; exempt only while the previous result said "still running". */
 const WAIT_OTHER = /\bpai worker (?:wait-url|wait-file)\b/;
 const WAIT_VERB = /\bpai worker (?:wait|wait-on|wait-url|wait-file)\b/;
 
-/**
- * Worker ids a `pai worker wait` command waits on, or null for `wait-on` (which takes pids, not ids) and for
- * commands that are not a worker wait. Only the first operand is read: a status file is trusted only for the
- * id the command names first, never for a token that happens to match a live worker.
- */
-export function waitedWorkerIds(command: string): string[] | null {
+/** Operands of a wait verb: flags and their values (`--max 590`, `--log f`) dropped. */
+function waitOperands(command: string): { verb: string; ops: string[] } | null {
   const m = WAIT_IDS.exec(command);
-  if (!m || m[1] === "wait-on") return null;
-  return [m[2]];
+  if (!m) return null;
+  const ops: string[] = [];
+  const toks = m[2].trim().split(/\s+/).filter(Boolean);
+  for (let i = 0; i < toks.length; i++) {
+    if (toks[i].startsWith("-")) {
+      if (!toks[i].includes("=") && i + 1 < toks.length && !toks[i + 1].startsWith("-")) i++;
+      continue;
+    }
+    ops.push(toks[i].replace(/^["']|["']$/g, ""));
+  }
+  return { verb: m[1], ops };
 }
 
-/**
- * True when at least one worker a `pai worker wait` command names is still live (running/queued with a live pid).
- * `logDir` is the workers log directory; a missing status file or a missing logDir is not live.
- */
+/** Worker ids a `pai worker wait` command names (every operand), or null for `wait-on` (pids) and for other commands. */
+export function waitedWorkerIds(command: string): string[] | null {
+  const w = waitOperands(command);
+  return !w || w.verb === "wait-on" ? null : w.ops;
+}
+
+/** True when at least one worker a `pai worker wait` command names is still live; a missing status file or logDir is not live. */
 export function anyWaitedWorkerLive(command: string, logDir: string | undefined, now = Date.now()): boolean {
   if (!logDir) return false;
   const ids = waitedWorkerIds(command);
@@ -335,14 +343,14 @@ export function anyWaitedWorkerLive(command: string, logDir: string | undefined,
 }
 
 /**
- * True when a `pai worker wait-on <pid>` command waits on a process that is still alive. Only the first operand
- * is checked; a pid that is not alive (or not a number) is not live.
+ * `pai worker wait-on <pid...>`: true when a numeric pid operand is alive. An operand that is not a literal pid
+ * (`$(cat x.pid)`) cannot be resolved here: `unresolved` is returned for it, so the caller falls back to the
+ * previous "still running" result.
  */
-export function waitedPidAlive(command: string): boolean {
-  const m = WAIT_IDS.exec(command);
-  if (!m || m[1] !== "wait-on") return false;
-  const pid = Number(m[2]);
-  return Number.isInteger(pid) && pid > 0 && alive(pid);
+export function waitedPidAlive(command: string, unresolved = false): boolean {
+  const w = waitOperands(command);
+  if (!w || w.verb !== "wait-on") return false;
+  return w.ops.some((o) => (/^\d+$/.test(o) ? Number(o) > 0 && alive(Number(o)) : unresolved));
 }
 
 /**
@@ -353,7 +361,7 @@ export function waitedPidAlive(command: string): boolean {
  */
 export function waitExempt(command: string, logDir: string | undefined, now = Date.now(), prevWaitResult = false): boolean {
   if (WAIT_OTHER.test(command)) return prevWaitResult;
-  return anyWaitedWorkerLive(command, logDir, now) || waitedPidAlive(command);
+  return anyWaitedWorkerLive(command, logDir, now) || waitedPidAlive(command, prevWaitResult);
 }
 
 function exempt(command: string, logDir?: string, now = Date.now(), prevWaitResult = false): boolean {
