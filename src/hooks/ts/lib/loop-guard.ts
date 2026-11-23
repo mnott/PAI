@@ -40,13 +40,8 @@ const live = (id: string): { params: Record<string, unknown>; message: string } 
   // a user copy of the pattern predates the key: the shipped one supplies it
   const localStop = ap.detector.params.local_stop_at ?? shippedAntipattern(id).detector.params.local_stop_at;
   const base = process.env.PAI_WORKER_LOCAL === "1" && typeof localStop === "number" ? { ...ap.detector.params, stop_at: localStop } : ap.detector.params;
-  // a user copy predates the optional texts: the shipped ones fill in (a per_model entry still wins)
-  const sp = shippedAntipattern(id).detector.params;
-  const filled = id === "growing-command" ? { ...pick(sp, GC_OPTIONAL), ...base } : base;
-  return { params: paramsForModel(filled, ap, modelOf()), message: ap.message };
+  return { params: paramsForModel(base, ap, modelOf()), message: ap.message };
 };
-const GC_OPTIONAL = ["note_message_unedited", "deny_message_unedited", "note_message_edited_red"];
-const pick = (o: Record<string, unknown>, keys: string[]): Record<string, unknown> => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
 export const LOOP_MAX_REPEATS = shipped("growing-command", "max_repeats");
 /** Identical writes of one file (same bytes) after which the write is denied and the session stopped; a rewrite costs nothing, so only a runaway loop trips it. */
 export const IDENTICAL_WRITE_STOP_AT = shipped("identical-write", "stop_at");
@@ -84,22 +79,14 @@ function hungBefore(state: LoopState, idx: number[]): boolean {
   return idx.some((i) => state.outs?.[i]?.includes(HANG_MARKER));
 }
 
-/** Does a stored (normalised) result look like a failing check? */
-export const looksRed = (text: string | null | undefined): boolean => !!text && /fail|error|✗|FAIL|not ok|Exit code [1-9]/i.test(text);
-
-/** `edited`: a repo file was changed in this session; when false and `deny_message_unedited` exists it replaces the deny text. */
-export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS, edited = true): string {
+export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string {
   const { params, message } = live("growing-command");
-  const un = !edited && typeof params.deny_message_unedited === "string" ? params.deny_message_unedited : null;
-  if (un) return fillMessage(un, { tool, count: tool === "Bash" ? (params.max_repeats as number) : count });
   return tool === "Bash"
     ? fillMessage(message, { count: params.max_repeats as number })
     : fillMessage(params.tool_message as string, { tool, count });
 }
 
 export interface LoopState {
-  /** A repo (non-scratch) file was edited or written in this session; survives the edit-reset of the window. */
-  edited?: boolean;
   /** File -> key of its last Write/Edit and how many times in a row that exact call was made; a Read in between does not reset it. */
   writes?: Record<string, { key: string; n: number; /** Keys of the last versions written (oldest first, current last). */ seen?: string[]; /** Writes that went back to an earlier version. */ reverts?: number }>;
   /** File -> Writes since the last Read/Bash/Grep of anything: count, distinct content hashes, and whether distinct-rewrites already fired. */
@@ -508,7 +495,7 @@ function countFailure(state: LoopState, tool: string, response: unknown): LoopSt
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false): LoopState {
   const counted = typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response);
   // an edit resets the window and drops everything not carried over by hand: the failure counts survive
-  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.stall ? { stall: counted.stall } : {}), ...(counted.edited ? { edited: true } : {}) };
+  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.stall ? { stall: counted.stall } : {}) };
   if (!ledger) return core;
   // an edit resets the window and drops everything not carried over by hand: the ledger survives
   const next = core.fail === state.fail ? core : { ...core, fail: state.fail };
@@ -794,7 +781,7 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
       stop: denials[head] >= (gc.stop_denials as number),
       id: "growing-command",
       evasion: typeof cmd === "string" && loopGuardEvasion(cmd, head.split("\t")[1] ?? ""),
-      reason: hung || echoed || (!state.edited && typeof gc.deny_message_unedited === "string") ? `${loopDenyReason(tool, tool === "Bash" ? maxRepeats : maxRepeats + denials[head], !!state.edited)}${hung ? HANG_SUFFIX : ""}${echoed}` : undefined,
+      reason: hung || echoed ? `${loopDenyReason(tool)}${hung ? HANG_SUFFIX : ""}${echoed}` : undefined,
       key: head.split("\t")[1],
       count: maxRepeats + denials[head],
     };
@@ -804,14 +791,7 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
   const nextOuts = [...outs];
   while (nextOuts.length < state.window.length) nextOuts.push(null);
   nextOuts.push(null);
-  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false, ...(nudge ? { note: growingNote(gc, state, outs[idx[idx.length - 1]]), id: "growing-command" } : {}) };
-}
-
-/** The note of growing-command: unedited, edited with a red previous result, or the plain text. */
-function growingNote(gc: Record<string, unknown>, state: LoopState, prevOut: string | null | undefined): string {
-  if (!state.edited && typeof gc.note_message_unedited === "string") return gc.note_message_unedited;
-  if (state.edited && typeof gc.note_message_edited_red === "string" && looksRed(prevOut)) return gc.note_message_edited_red;
-  return gc.note_message as string;
+  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false, ...(nudge ? { note: gc.note_message as string, id: "growing-command" } : {}) };
 }
 
 /**
@@ -835,17 +815,7 @@ function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Reco
   if (READ_TOOLS.has(tool) && !bashWrites && r.state.rewrites) r = { ...r, state: { ...r.state, rewrites: undefined } };
   if (bashWrites && command !== undefined) r = countBashRewrites(r, bashWrites, command);
   if (state.stall && !r.state.stall) r = { ...r, state: { ...r.state, stall: state.stall } };
-  if ((state.edited || editsRepo(tool, input, command)) && !r.state.edited) r = { ...r, state: { ...r.state, edited: true } };
   return withStall(applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd, source), source), tool, input, now, source);
-}
-
-/** Does this call change a repo (non-scratch) file? */
-function editsRepo(tool: string, input: string | Record<string, unknown> | undefined, command: string | undefined): boolean {
-  if (EDIT_TOOLS.has(tool)) {
-    const o = typeof input === "object" ? input : undefined;
-    return !isScratchPath(String(o?.file_path ?? o?.notebook_path ?? ""));
-  }
-  return command !== undefined && bashWritesRepoFile(command);
 }
 
 // ---- no-edit-stall: read-only calls in a row with no edit of a repo file (code-change workers only) ----
