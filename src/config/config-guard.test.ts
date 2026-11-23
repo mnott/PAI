@@ -6,6 +6,9 @@ import {
   armConfigGuard, confirmConfigGuard, guardedEdit, guardStatusText, parseWindow, readGuardState,
   tickConfigGuard, type ProofDeps,
 } from "./config-guard.js";
+import { parseDocument } from "yaml";
+import { parseWorkersYamlDocument, providerEntryProblem, providerWarnings, effectiveWorkersYamlData } from "../workers/workers-config.js";
+import { routeRows } from "../workers/route-table.js";
 import { guardedRegistryWrite, handleRegistryRoute, readRegistry, saveRegistry, type RegistryCtx } from "../router/cockpit-registry.js";
 
 let dir: string;
@@ -179,5 +182,73 @@ describe("cockpit registry save under the guard", () => {
     expect(j.reverted).toBe(true);
     expect(j.error).toMatch(/^reverted: /);
     expect(readFileSync(ctx.yamlPath, "utf8")).toBe(before);
+  });
+});
+
+// --- provider entry validation (#30) ---
+const GOOD_SIGNAL = `  signal-2:
+    url: [http://127.0.0.1:8101, http://127.0.0.1:8102]
+    models: {default: m1}
+`;
+const BAD_SIGNAL = `  signal-2:
+    baseUrl: [http://127.0.0.1:8101, http://127.0.0.1:8102]
+    models: {default: m1}
+`;
+const PV_REST = `  glm:
+    url: http://127.0.0.1:9000
+    models: {default: g1}
+tiers:
+  - id: t2
+    name: Worker
+    default: true
+    models: [signal-2, glm]
+`;
+const pvYaml = (sig: string) => `providers:\n${sig}${PV_REST}`;
+const pvParse = (t: string) => parseWorkersYamlDocument(parseDocument(t), join(dir, "workers.yaml"));
+
+describe("provider entry validation", () => {
+  it("baseUrl list is invalid with a message naming key and shape", () => {
+    const d = pvParse(pvYaml(BAD_SIGNAL));
+    expect(d.providers["signal-2"]).toBeUndefined();
+    expect(d.invalidProviders?.["signal-2"]).toMatch(/unknown key "baseUrl".*did you mean "url"/);
+    expect(d.providers.glm).toBeDefined();
+  });
+  it("good multi-url entry is valid", () => {
+    const d = pvParse(pvYaml(GOOD_SIGNAL));
+    expect(d.invalidProviders).toBeUndefined();
+    expect(d.providers["signal-2"].instances?.length).toBe(2);
+  });
+  it("wrong types and missing url", () => {
+    expect(providerEntryProblem({ url: { a: 1 } })).toMatch(/url must be a string, or a list/);
+    expect(providerEntryProblem({ url: "http://x", enabled: "yes" })).toMatch(/enabled must be true or false/);
+    expect(providerEntryProblem({ url: "http://x", models: ["a"] })).toMatch(/models must be a mapping \(got a list\)/);
+    expect(providerEntryProblem({ models: { default: "a" } })).toMatch(/url is required/);
+    expect(providerEntryProblem("x")).toMatch(/must be a mapping/);
+  });
+  it("route falls back past the invalid provider and the warning is recorded", async () => {
+    providerWarnings.length = 0;
+    writeFileSync(join(dir, "workers.yaml"), pvYaml(BAD_SIGNAL));
+    const data = effectiveWorkersYamlData(join(dir, "workers.yaml"));
+    expect(providerWarnings).toHaveLength(1);
+    expect(providerWarnings[0]).toMatch(/provider signal-2 invalid: unknown key "baseUrl".*t2: falling back to glm/);
+    const workers = { providers: data.providers, invalidProviders: data.invalidProviders, tiers: data.tiers, routing: {} } as never;
+    const rows = await routeRows(workers, { logDir: dir, running: async () => true } as never);
+    expect(rows[0].chips[0].state).toBe("unavailable");
+    expect(rows[0].chips[0].why).toMatch(/^invalid: unknown key "baseUrl"/);
+    expect(rows[0].chips[1].provider).toBe("glm");
+  });
+  it("config-guard proof fails and reverts on an invalid provider entry; passes on a good one", async () => {
+    const wy = join(dir, "workers.yaml");
+    writeFileSync(wy, pvYaml(GOOD_SIGNAL));
+    armConfigGuard({ files: ["workers.yaml"], forMs: 60_000 });
+    writeFileSync(wy, pvYaml(BAD_SIGNAL));
+    const r = await confirmConfigGuard(deps(), undefined, { files: ["workers.yaml"] });
+    expect(r.ok).toBe(false);
+    expect(r.checks.find((c) => c.name === "providers")?.detail).toMatch(/provider signal-2 invalid: unknown key "baseUrl"/);
+    expect(r.reverted).toEqual(["workers.yaml"]);
+    armConfigGuard({ files: ["workers.yaml"], forMs: 60_000 });
+    const ok = await confirmConfigGuard(deps(), undefined, { files: ["workers.yaml"] });
+    expect(ok.checks.find((c) => c.name === "providers")?.ok).toBe(true);
+    expect(ok.ok).toBe(true);
   });
 });

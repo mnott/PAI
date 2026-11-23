@@ -119,6 +119,83 @@ export interface WorkersYamlData {
   capabilities: Record<string, string[]>;
   mcpSets: Record<string, string[]>;
   nativeModels: WorkerProvider["models"];
+  /** provider entries that failed validation: name → reason. They are not in `providers`; routing falls through them loudly. */
+  invalidProviders?: Record<string, string>;
+}
+
+// ---------------------------------------------------------------------------
+// Provider entry validation (workers.yaml on-disk shape)
+// ---------------------------------------------------------------------------
+
+type KeyKind = "string" | "boolean" | "number" | "object" | "string-or-list" | "list" | "any";
+const PROVIDER_KEYS: Record<string, KeyKind> = {
+  enabled: "boolean", url: "string-or-list", instances: "list", key_file: "string", key: "string", tier: "any",
+  models: "object", protocol: "string", engine: "string", upstream_url: "string", env: "object", note: "string",
+  router: "boolean", contract: "string", prompt: "string", quota_probe: "any", quota_skip_at: "number",
+  quotaSkipAt: "number", worker_model: "string", toolParsing: "any", tool_parsing: "any", context_window: "number",
+  thinking: "any", maxConcurrent: "number", max_concurrent: "number", conversationSlots: "number",
+  conversation_slots: "number", hold: "any", tags: "list", characteristics: "object", usage: "any",
+  model_tiers: "object", builtin: "boolean",
+};
+const KIND_TEXT: Record<KeyKind, string> = {
+  string: "a string", boolean: "true or false", number: "a number", object: "a mapping", list: "a list of strings",
+  "string-or-list": "a string, or a list of URLs/ports as strings", any: "any value",
+};
+
+/** Why a provider entry is unusable, as `<key> <expected shape>`; null when it is fine. Names the offending key. */
+export function providerEntryProblem(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return "entry must be a mapping of keys (url, models, ...)";
+  const y = raw as Record<string, unknown>;
+  for (const [k, v] of Object.entries(y)) {
+    const kind = PROVIDER_KEYS[k];
+    if (!kind) {
+      const hint = k === "baseUrl" || k === "base_url" ? ` (did you mean "url"?)` : "";
+      return `unknown key "${k}"${hint}; allowed: ${Object.keys(PROVIDER_KEYS).join(", ")}`;
+    }
+    if (v === null || kind === "any") continue;
+    const isStr = typeof v === "string";
+    const ok =
+      kind === "string" ? isStr
+      : kind === "boolean" ? typeof v === "boolean"
+      : kind === "number" ? typeof v === "number"
+      : kind === "object" ? typeof v === "object" && !Array.isArray(v)
+      : kind === "list" ? Array.isArray(v) && v.every((x) => typeof x === "string")
+      : isStr || (Array.isArray(v) && v.every((x) => typeof x === "string"));
+    if (!ok) return `${k} must be ${KIND_TEXT[kind]} (got ${Array.isArray(v) ? "a list" : typeof v})`;
+  }
+  if (y.builtin === true) return null;
+  const hasUrl = (typeof y.url === "string" && y.url.trim() !== "") || (Array.isArray(y.url) && y.url.length > 0) || (Array.isArray(y.instances) && y.instances.length > 0);
+  if (!hasUrl && y.protocol !== "openai") return `url is required (a string, or a list of URLs/ports as strings)`;
+  return null;
+}
+
+/** One loud line per provider invalid in this load, naming what routing falls back to. Also kept for tests / status. */
+export const providerWarnings: string[] = [];
+function warnInvalidProviders(invalid: Record<string, string>, tiers: TierDef[]): void {
+  for (const [name, why] of Object.entries(invalid)) {
+    let next = "";
+    for (const t of tiers) {
+      const i = t.models.findIndex((m) => m.split("/")[0] === name);
+      if (i >= 0) {
+        const alt = t.models.slice(i + 1).find((m) => !invalid[m.split("/")[0]]);
+        next = ` ${t.id}: falling back to ${alt ?? "nothing (no later entry)"};`;
+        break;
+      }
+    }
+    const msg = `provider ${name} invalid: ${why};${next || " not referenced by any tier;"} fix workers.yaml`.replace(/;$/, "");
+    providerWarnings.push(msg);
+    process.stderr.write(`pai worker: WARNING ${msg}\n`);
+  }
+}
+
+/** Invalid provider entries of a workers.yaml file (name → reason); empty when all are fine or the file is absent. */
+export function invalidProvidersOf(yamlPath: string): Record<string, string> {
+  if (!existsSync(yamlPath)) return {};
+  try {
+    return effectiveWorkersYamlData(yamlPath).invalidProviders ?? {};
+  } catch {
+    return {};
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +346,7 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
   const r = root as Record<string, unknown>;
 
   const providers: Record<string, WorkerProvider> = {};
+  const invalidProviders: Record<string, string> = {};
   let nativeModels: WorkerProvider["models"] = { ...nativeAnthropicModels() };
   const providersRaw = r.providers;
   if (providersRaw !== undefined) {
@@ -280,7 +358,16 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
         if (name === ANTHROPIC_NATIVE) {
           nativeModels = parseBuiltinAnthropic(raw, `providers.${name}`);
         } else {
-          providers[name] = parseProvider(name, yamlProviderToRaw(raw as Record<string, unknown>));
+          const problem = providerEntryProblem(raw);
+          if (problem) {
+            invalidProviders[name] = problem;
+            continue;
+          }
+          try {
+            providers[name] = parseProvider(name, yamlProviderToRaw(raw as Record<string, unknown>));
+          } catch (e) {
+            invalidProviders[name] = (e instanceof Error ? e.message : String(e)).replace(/^.*?\.providers\.[^.\s]+\.?/, "");
+          }
         }
       } catch (e) {
         withLine(doc, ["providers", name], yamlPath, e);
@@ -318,13 +405,13 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
       const alias = typeof target === "string" ? target.split("/")[1] : undefined;
       for (const m of typeof target === "object" ? (target.models ?? []) : []) {
         const mp = m.split("/")[0];
-        if (mp !== ANTHROPIC_NATIVE && !providers[mp]) {
+        if (mp !== ANTHROPIC_NATIVE && !providers[mp] && !invalidProviders[mp]) {
           withLine(doc, ["classes", cls], yamlPath, new WorkersConfigError(`classes.${cls}.models: no provider named "${mp}" in "${m}"`));
         }
       }
       if (provider !== undefined) {
         const native = provider === ANTHROPIC_NATIVE;
-        if (!native && !providers[provider]) {
+        if (!native && !providers[provider] && !invalidProviders[provider]) {
           withLine(
             doc,
             ["classes", cls],
@@ -383,7 +470,7 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
   mergeVerifyOf(r, (m) => withLine(doc, ["merge", "verify"], yamlPath, new WorkersConfigError(m)));
 
   const active = r.active === undefined || r.active === null ? null : String(r.active);
-  if (active !== null && active !== ANTHROPIC_NATIVE && active !== "auto" && !providers[active]) {
+  if (active !== null && active !== ANTHROPIC_NATIVE && active !== "auto" && !providers[active] && !invalidProviders[active]) {
     withLine(
       doc,
       ["active"],
@@ -409,7 +496,7 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     withLine(doc, ["tiers"], yamlPath, e);
   }
 
-  return { active, providers, classes, tiers, capabilities, mcpSets, nativeModels };
+  return { active, providers, classes, tiers, capabilities, mcpSets, nativeModels, ...(Object.keys(invalidProviders).length ? { invalidProviders } : {}) };
 }
 
 /** The `merge.verify` command of a parsed workers.yaml root (undefined when unset); `fail` is called with the message when the key is malformed. */
@@ -453,7 +540,11 @@ export function readWorkersYaml(yamlPath: string): { doc: Document; data: Worker
 export function effectiveWorkersYamlData(yamlPath: string): WorkersYamlData {
   return cachedParse(
     yamlPath,
-    () => parseWorkersYamlDocument(effectiveWorkersYamlDoc(yamlPath), yamlPath),
+    () => {
+      const d = parseWorkersYamlDocument(effectiveWorkersYamlDoc(yamlPath), yamlPath);
+      if (d.invalidProviders) warnInvalidProviders(d.invalidProviders, d.tiers);
+      return d;
+    },
     "workers-data",
     [shippedWorkersDefaultsPath()]
   );

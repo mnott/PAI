@@ -602,6 +602,8 @@ export interface WorkersConfig {
   /** Provider name, or "auto" for routing.order resolution. */
   active: string | null;
   providers: Record<string, WorkerProvider>;
+  /** workers.yaml provider entries that failed validation: name → reason (not in `providers`). */
+  invalidProviders?: Record<string, string>;
   /** Class → target; see ClassTarget. (Reads the legacy `roles` key.) */
   classes: Record<string, ClassTarget>;
   /** Delegation tiers (route-lists.ts TierDef): names, ordered model lists, class -> tier mapping, session-start flag. Config only. */
@@ -1862,6 +1864,7 @@ export function readWorkersSection(
     // what this read saw on disk: the write diffs against it, so it changes only what the caller changed
     yamlBaselines.set(workers, structuredClone(yaml));
     workers.active = yaml.active;
+    if (yaml.invalidProviders) workers.invalidProviders = yaml.invalidProviders;
     // config.yaml may hold partial provider overrides (a `pai config set
     // workers.providers.<name>.*` from before 2026-11-18): deep-merged onto the
     // workers.yaml providers, never validated as standalone definitions.

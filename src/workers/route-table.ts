@@ -334,7 +334,10 @@ async function chipOf(workers: WorkersConfig, tier: TierDef, entry: string, deps
   const { provider } = parseEntry(entry);
   const p = providerOf(workers, provider);
   const base = { entry, label: entryLabel(workers, tier, entry), provider };
-  if (!p) return { ...base, local: false, state: "unavailable", why: "not configured" };
+  if (!p) {
+    const why = workers.invalidProviders?.[provider];
+    return { ...base, local: false, state: "unavailable", why: why ? `invalid: ${why}` : "not configured" };
+  }
   if (isLocalProvider(p.baseUrl)) {
     if (!p.enabled && !isLocalCandidate(p, provider, deps.tiers ?? tierProviderNames())) return { ...base, local: true, state: "idle", why: "disabled" };
     const up = await (deps.running ?? ((_n, q) => pingLocal(q.baseUrl, 1500)))(provider, p).catch(() => false);
