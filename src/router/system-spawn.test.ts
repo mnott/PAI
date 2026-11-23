@@ -35,6 +35,31 @@ describe("cockpit page script", () => {
     expect(scripts.length).toBeGreaterThan(0);
     for (const src of scripts) expect(() => new Script(src)).not.toThrow();
   });
+  it("cloud gauge draws the pace needle and cloud-first threshold when pace is present, and neither when it is absent", async () => {
+    const vm = await import("node:vm");
+    const { cockpitLayout } = await import("./cockpit-layout.js");
+    const { scriptModels } = await import("./cockpit-page/script-models.js");
+    const src = scriptModels(cockpitLayout(), String, JSON.stringify, JSON.stringify, 0.8);
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\nfunction dur(ms){return Math.round(ms/60000)+"m"}\nfunction sev(p){return p>=90?"var(--bad)":p>=70?"var(--warn)":"var(--ok)"}\n` + src, ctx);
+    ctx.__l = { provider: "anthropic" };
+    // pace present: needle at pace, faint marker at ratio x pace (0.8 x 34.3 = 27.4), bands green/amber/red
+    const under = vm.runInContext(`gauge(__l,{name:"7d",percent:21,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
+    expect(under).toContain("pace 34%");
+    expect(under).toContain("cloud first below this");
+    expect(under).toMatch(/opacity="\.3"/);
+    expect(under.match(/stroke="var\(--ok\)"/g)).toHaveLength(1); // green below the threshold
+    const mid = vm.runInContext(`gauge(__l,{name:"7d",percent:30,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
+    expect(mid).toContain("stroke=\"var(--warn)\""); // amber between threshold and pace
+    const over = vm.runInContext(`gauge(__l,{name:"7d",percent:40,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
+    expect(over).toContain("stroke=\"var(--bad)\""); // red above pace
+    // pace absent: no needle, no marker, old sev colours
+    const none = vm.runInContext(`gauge(__l,{name:"7d",percent:21,resetAt:${Date.now() + 5 * 86_400_000}})`, ctx) as string;
+    expect(none).not.toContain("pace");
+    expect(none).not.toContain("<line");
+    expect(none).not.toContain("cloud first below this");
+    expect(none).toContain("21%");
+  });
   it("queue row renders as one line with at most three action buttons (start now, pause, menu)", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
