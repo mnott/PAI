@@ -312,3 +312,88 @@ describe("no-edit-stall: scratch work after the first repo edit", () => {
   });
   void runs;
 });
+
+// ---- repeated-failure: content states, write+runner, baseline-red text ----
+
+const rfShipped = shippedAntipattern("repeated-failure").detector.params;
+const RF_BASE = rfShipped.message_baseline_red as string;
+const RF_WRITE = rfShipped.message_with_write as string;
+const RUN = "npx vitest run x.test.ts";
+const RED = "Exit code 1\nFAIL x.test.ts\nAssertionError";
+const OK = "Exit code 0\nok";
+
+function rf(state: LoopState, cmd: string, fp: string, out = OK): { state: LoopState; step: LoopStep } {
+  const step = stepLoopGuard(state, "Bash", cmd, fp, 1_000_000, process.cwd());
+  if (step.deny) return { state: step.state, step };
+  return { state: recordLoopResult(step.state, "Bash", cmd, out), step };
+}
+
+describe("repeated-failure content states (taxonomy 1.1 low r1 prune)", () => {
+  it("a cp toggle back to an earlier state keeps counting; the first-time state resets; 3rd run in state A is denied", () => {
+    let s = emptyLoopState();
+    let r = rf(s, RUN, "A"); s = r.state; // run 1 in A
+    s = { ...s, edited: true };
+    r = rf(s, RUN, "B"); s = r.state; // new state: resets to 1
+    expect(s.runs?.[RUN.replace("npx ", "").replace(" run", "").replace("vitest ", "vitest ")] ?? Object.values(s.runs ?? {})[0]).toBe(1);
+    r = rf(s, RUN, "A"); s = r.state; // toggle back: counts on, not denied yet
+    expect(r.step.deny).toBe(false);
+    expect(Object.values(s.runs ?? {})[0]).toBe(2);
+    r = rf(s, RUN, "A");
+    expect(r.step.deny).toBe(true);
+    expect(r.step.id).toBe("repeated-failure");
+  });
+
+  it("toggling A/B/A/B cannot reset forever", () => {
+    let s = emptyLoopState();
+    let denied = false;
+    for (const fp of ["A", "B", "A", "B", "A", "B"]) {
+      const r = rf(s, RUN, fp);
+      s = r.state;
+      if (r.step.deny) denied = true;
+    }
+    expect(denied).toBe(true);
+  });
+
+  it("a compound write + runner is allowed and counts as a fresh run; a plain re-run is denied", () => {
+    const heredoc = "python3 - <<'EOF'\nopen('src/a.ts','w').write('x')\nEOF\nnpx vitest run x.test.ts";
+    for (const cmd of [heredoc, "sed -i '' -e 's/a/b/' src/a.ts && npx vitest run x.test.ts", "git apply p.diff && npx vitest run x.test.ts"]) {
+      let s = emptyLoopState();
+      for (let i = 0; i < 4; i++) {
+        const r = rf(s, cmd, "A");
+        s = r.state;
+        expect(r.step.deny).toBe(false);
+      }
+      expect(Object.values(s.runs ?? {})[0]).toBe(1);
+    }
+    let s = emptyLoopState();
+    const denies = [1, 2, 3].map(() => { const r = rf(s, RUN, "A"); s = r.state; return r.step.deny; });
+    expect(denies).toEqual([false, false, true]);
+  });
+
+  it("an output redirect of the runner is no write; a scratch-only write uses the no-clause text", () => {
+    let s = emptyLoopState();
+    let last: LoopStep | undefined;
+    for (let i = 0; i < 3; i++) { const r = rf(s, `${RUN} > out.log 2>&1`, "A"); s = r.state; last = r.step; }
+    expect(last?.deny).toBe(true);
+    s = emptyLoopState();
+    const cmd = `echo hi > .pai-scratch/n.txt && ${RUN}`;
+    for (let i = 0; i < 3; i++) { const r = rf(s, cmd, "A", "Exit code 0\nok"); s = r.state; last = r.step; }
+    expect(last?.deny).toBe(true);
+    expect(last?.reason).not.toContain("without changing anything");
+    expect(last?.reason).toContain("did not change");
+    expect(RF_WRITE).not.toContain("without changing");
+  });
+
+  it("baseline red with an unchanged result uses the baseline text; a green baseline the plain text", () => {
+    let s = emptyLoopState();
+    let last: LoopStep | undefined;
+    for (let i = 0; i < 3; i++) { const r = rf(s, RUN, "A", RED); s = r.state; last = r.step; }
+    expect(last?.reason).toBe(RF_BASE);
+    s = emptyLoopState();
+    for (let i = 0; i < 3; i++) { const r = rf(s, RUN, "A", "Exit code 0\nall passed"); s = r.state; last = r.step; }
+    expect(last?.reason).toContain("without changing anything");
+    s = emptyLoopState();
+    for (let i = 0; i < 3; i++) { const r = rf(s, RUN, "A", i === 1 ? "Exit code 1\nFAIL other thing entirely" : RED); s = r.state; last = r.step; }
+    expect(last?.reason).toContain("without changing anything");
+  });
+});

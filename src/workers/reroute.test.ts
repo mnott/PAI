@@ -12,7 +12,7 @@ import { parseLedger } from "./ledger.js";
 import { stopOriginFirst } from "./run/escalate.js";
 import { isReadOnlyJob } from "./run/stream.js";
 import { carryGoals } from "./note-delivery.js";
-import { budgetCheck, budgetProgress, budgetText, emptySnapshot, fireBudget, initialBudgetMinutes, nextBudgetMinutes, parseExtendMinutes, reviewNote, DEFAULT_TIME_BUDGET } from "./time-budget.js";
+import { budgetCheck, budgetProgress, distinctTestRuns, budgetText, emptySnapshot, fireBudget, initialBudgetMinutes, nextBudgetMinutes, parseExtendMinutes, reviewNote, DEFAULT_TIME_BUDGET } from "./time-budget.js";
 import { fallThroughReason } from "./policy.js";
 import { parseBudget } from "./deadline.js";
 
@@ -667,6 +667,13 @@ describe("progress-based time budget", () => {
   it("read-only jobs progress on successful tool calls only", () => {
     expect(budgetProgress(snap({}), snap({ toolsOk: 4 }))).toBeNull();
     expect(budgetProgress(snap({}), snap({ toolsOk: 4 }), true)).toContain("4 successful tool calls");
+  });
+
+  it("an identical re-run of the same test counts as progress only once", () => {
+    const isTest = (c: string) => /vitest/.test(c);
+    const r = (command: string, output: string, failed = false) => ({ command, output, failed });
+    expect(distinctTestRuns([r("npx vitest run a", "ok 3"), r("npx vitest run a", "ok 3"), r("npx vitest run a", "ok 3")], isTest)).toBe(1);
+    expect(distinctTestRuns([r("npx vitest run a", "ok 3"), r("npx vitest run a", "ok 4"), r("npx vitest run b", "ok 4"), r("npx vitest run c", "x", true), r("ls", "x")], isTest)).toBe(3);
   });
 
   it("respects the cap and the run's own max-minutes", () => {
