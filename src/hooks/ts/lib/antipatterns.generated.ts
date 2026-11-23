@@ -388,6 +388,51 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "tool-loop/missing-path-streak.yaml"
   },
   {
+    "id": "no-edit-stall",
+    "layer": "behaviour",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-11-23",
+    "category": "tool-loop",
+    "detector": {
+      "kind": "no-edit-streak",
+      "params": {
+        "note1_calls": 12,
+        "note1_min": 4,
+        "note2_calls": 25,
+        "note2_min": 8,
+        "deny_calls": 40,
+        "deny_min": 12,
+        "note1_message": "You have made {n} read-only calls in {min} min and changed no file. The spec names the files to change. Stop looking for more context: find the closest existing sibling of what you must add (same file, same shape), copy its structure, and make your first small edit now. Unknown details are cheaper to fix after the first test run than to find by reading.",
+        "note2_message": "{n} calls, {min} min, still no edit. Write your best-guess implementation now, even partial, in the file the spec names; run the test or a 10-line script once; fix what it reports. Do not search again unless the test output names something you lack."
+      }
+    },
+    "action": "deny",
+    "message": "Read-only calls are paused: {n} calls and {min} min without any edit. Make an edit to a file the spec names (Edit, or a python/cat heredoc) or run the test; then you may read again.",
+    "tests": {
+      "match": [
+        "R R G R R G R R G R R G",
+        "R R S R R S R R S R R S",
+        "R B T R B T R B T R B T"
+      ],
+      "no_match": [
+        "R R G E R R",
+        "R W R R R",
+        "R R G R R G R R G R R E R R G",
+        "R R R H R R R"
+      ]
+    },
+    "provenance": {
+      "date": "2026-11-23",
+      "model": "inkling-2-mini (mtplx, strata, locals)",
+      "observed": "12 of 22 failed bench tasks read 50 to 94 files with no edit until the 20-minute budget stopped them",
+      "ref": "failure taxonomy of the 2026-11-22/23 bench, section 4 P1"
+    },
+    "proxy": "monitor",
+    "source": "tool-loop/no-edit-stall.yaml"
+  },
+  {
     "id": "repeated-error",
     "layer": "behaviour",
     "status": "stable",

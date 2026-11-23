@@ -57,6 +57,17 @@ export function headlessToolGrants(allowedTools: string[]): string[] {
 }
 
 /**
+ * Is this a code-change worker: Edit or Write AND Bash among its tool grants (no grant = the default set, which has all).
+ * Read-only/analysis workers and eval sets with only Read,Write are not. Sets PAI_WORKER_CAN_EDIT for the no-edit-stall guard.
+ */
+export function workerCanEdit(allowedTools: string[]): boolean {
+  const names = allowedTools.length
+    ? allowedTools.flatMap((e) => e.split(",")).map((x) => x.trim().replace(/\(.*$/, "")).filter(Boolean)
+    : DEFAULT_WORKER_TOOLS.split(",");
+  return (names.includes("Edit") || names.includes("Write")) && names.includes("Bash");
+}
+
+/**
  * `--tools` narrows which built-in tool *schemas* claude loads into the
  * system prompt — distinct from `--allowedTools`, which narrows which of
  * those loaded tools may run without asking. A headless worker with a small

@@ -59,6 +59,7 @@ const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null
     return null;
   },
   "growing-command": (p) => (num(p.max_repeats) && num(p.stop_denials) && typeof p.note_message === "string" && typeof p.tool_message === "string" ? null : "needs max_repeats, stop_denials (numbers), note_message and tool_message"),
+  "no-edit-streak": (p) => (["note1_calls", "note1_min", "note2_calls", "note2_min", "deny_calls", "deny_min"].every((k) => num(p[k])) && typeof p.note1_message === "string" && typeof p.note2_message === "string" ? null : "needs note1_calls, note1_min, note2_calls, note2_min, deny_calls, deny_min (numbers), note1_message and note2_message"),
   "repeated-failure": (p) => (num(p.deny_at) && num(p.stop_at) ? null : "needs deny_at and stop_at (numbers)"),
   "failure-fingerprint": (p) => (num(p.deny_at) && num(p.stop_after) ? null : "needs deny_at and stop_after (numbers)"),
   "unparsed-tool-call": (p) => {
