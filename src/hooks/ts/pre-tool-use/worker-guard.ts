@@ -26,6 +26,7 @@ import { renderDecision } from "../lib/render-decision.js";
 import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { expandHome } from "../../../daemon/config.js";
+import { ownWorktreeDir } from "../lib/own-worktree.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { failLedgerOn } from "../lib/fail-ledger.js";
@@ -49,10 +50,12 @@ function git(cwd: string, args: string[]): string | null {
   }
 }
 
-function buildContext(cwd: string): WorkerGuardContext {
-  const worktreeRoot = git(cwd, ["rev-parse", "--show-toplevel"]);
-  const gitDir = git(cwd, ["rev-parse", "--absolute-git-dir"]);
-  const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+function buildContext(cwd: string, env: NodeJS.ProcessEnv = process.env): WorkerGuardContext {
+  const own = ownWorktreeDir(cwd, env);
+  const base = own ?? cwd; // git facts come from the worktree itself, never from a nested repo under it
+  const worktreeRoot = own ? (git(own, ["rev-parse", "--show-toplevel"]) ?? own) : git(cwd, ["rev-parse", "--show-toplevel"]);
+  const gitDir = git(base, ["rev-parse", "--absolute-git-dir"]);
+  const common = git(base, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const inWorktree = !!gitDir && !!common && gitDir !== common;
   return {
     cwd,
