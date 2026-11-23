@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { vi, afterEach, describe, expect, it } from "vitest";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { backgroundArgv, capBashCommand, withCpuLimit } from "./priority.js";
 import { killTree, killWorker } from "./kill-tree.js";
@@ -10,6 +10,9 @@ import { tmpdir } from "node:os";
 import { REAP_TICK_MS, reapOrphansOnce, type ProcRow, type ReaperDeps, type ReaperState } from "./reaper.js";
 import { loadStatusesCached } from "./status.js";
 import { worktreesDir } from "./worktree.js";
+
+// Real git repos / spawned process trees: sized for a loaded machine (load 50 seen), not the 5 s default.
+vi.setConfig({ testTimeout: 120_000 });
 
 const row = (over: Partial<ProcRow>): ProcRow => ({ pid: 100, ppid: 1, cpu: 80, ageSecs: 600, command: "node /usr/local/bin/pai worker run --class implement", cwd: "", ...over });
 

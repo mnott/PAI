@@ -1,10 +1,13 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { vi, afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyClean, scanClean } from "./clean.js";
 import { nowStamp } from "./status.js";
+
+// Real git repos / spawned process trees: sized for a loaded machine (load 50 seen), not the 5 s default.
+vi.setConfig({ testTimeout: 120_000 });
 
 const roots: string[] = [];
 afterAll(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -43,7 +46,7 @@ function fixture() {
 }
 
 describe("pai clean", () => {
-  it("dry run lists and changes nothing; --apply acts on exactly the list", { timeout: 60_000 }, () => {
+  it("dry run lists and changes nothing; --apply acts on exactly the list", () => {
     const { logDir, repo, tree } = fixture();
     // finished worker with a commit not on main: archived under refs/pai-archive, never lost
     const dir = tree("w-done");
@@ -139,7 +142,7 @@ describe("pai clean", () => {
 });
 
 describe("worktree gc output", () => {
-  it("archiving a finished worktree writes nothing to stdout (stays pure JSON for --output-format json)", { timeout: 60_000 }, async () => {
+  it("archiving a finished worktree writes nothing to stdout (stays pure JSON for --output-format json)", async () => {
     const { logDir, repo, tree } = fixture();
     const dir = tree("w-gc");
     writeFileSync(join(dir, "a.txt"), "x");
