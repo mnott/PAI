@@ -66,7 +66,7 @@ struct SettingsView: View {
     }
 }
 
-/// Drives refresh cadence (2.5 s while the popover is open, 15 s while closed)
+/// Drives refresh cadence (1 s while the popover is open, 15 s while closed)
 /// and the menu bar title.
 @MainActor
 final class Poller: ObservableObject {
@@ -83,7 +83,11 @@ final class Poller: ObservableObject {
                 await Store.shared.refresh(baseURL: EndpointManager.shared.baseURL)
                 let running = (Store.shared.queue?.jobs() ?? []).filter { $0.state == "running" }.count
                 title = Store.shared.error != nil ? "PAI ✕" : menuTitle(running: running, gpu: Store.shared.system?.current?.gpu)
-                try? await Task.sleep(nanoseconds: visible ? 2_500_000_000 : 15_000_000_000)
+                // 1 s while the popover is open, 15 s while closed; sliced so open/close takes effect at once
+                let began = Date()
+                while Date().timeIntervalSince(began) < (visible ? Store.openInterval : Store.closedInterval) {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
             }
         }
     }

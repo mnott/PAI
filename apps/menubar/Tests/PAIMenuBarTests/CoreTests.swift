@@ -324,10 +324,10 @@ final class StoreOpenRefreshTests: XCTestCase {
         XCTAssertTrue(first)
         XCTAssertGreaterThanOrEqual(CountingProtocol.hits, 3) // limits, system, queue
         let after = CountingProtocol.hits
-        let second = await store.refreshOnOpen(baseURL: base)
+        let second = await store.refreshOnOpen(baseURL: base, now: store.lastPoll.addingTimeInterval(0.5))
         XCTAssertFalse(second)
         XCTAssertEqual(CountingProtocol.hits, after)
-        let later = await store.refreshOnOpen(baseURL: base, now: Date().addingTimeInterval(1.5))
+        let later = await store.refreshOnOpen(baseURL: base, now: store.lastPoll.addingTimeInterval(1.5))
         XCTAssertTrue(later)
         XCTAssertGreaterThan(CountingProtocol.hits, after)
     }
