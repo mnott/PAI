@@ -207,7 +207,9 @@ export function psOutput(
         `scope: MACHINE — every live worker on this host (${machine.length} running` +
           `${here ? `, ${here} in this session` : ""}); the tag names each row's owner session`,
         new Date(),
-        {}
+        {},
+        undefined,
+        logDir
       )
     );
   }
