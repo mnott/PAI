@@ -137,3 +137,29 @@ describe("pai clean", () => {
     expect(existsSync(join(dd, "dirty.txt"))).toBe(true);
   });
 });
+
+describe("worktree gc output", () => {
+  it("archiving a finished worktree writes nothing to stdout (stays pure JSON for --output-format json)", { timeout: 60_000 }, async () => {
+    const { logDir, repo, tree } = fixture();
+    const dir = tree("w-gc");
+    writeFileSync(join(dir, "a.txt"), "x");
+    git(dir, "add", "a.txt");
+    git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "work");
+    status(logDir, "w-gc", { cwd: repo, worktreeDir: dir, branch: "worker/w-gc" }, 3);
+    const { gcWorktrees } = await import("./worktree.js");
+    const out: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    const log = console.log;
+    console.log = (...a: unknown[]) => void out.push(a.join(" "));
+    process.stdout.write = ((c: string | Uint8Array) => (out.push(String(c)), true)) as typeof process.stdout.write;
+    let res;
+    try {
+      res = gcWorktrees(logDir, 24, false, NOW);
+    } finally {
+      console.log = log;
+      process.stdout.write = orig;
+    }
+    expect(res.some((r) => r.archive)).toBe(true);
+    expect(out).toEqual([]);
+  });
+});

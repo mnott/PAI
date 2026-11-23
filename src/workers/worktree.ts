@@ -2939,7 +2939,7 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
     notes.push(`archived ${knowledge.commits.length} commit(s), ${knowledge.dirty.length} uncommitted file(s) of worker ${id} in ${target}`);
   }
   for (const m of knowledge.missing) notes.push(`written but missing: ${m} (worker ${id}; see its transcript)`);
-  for (const l of notes) console.log(l);
+  for (const l of notes) console.error(l);
   if (hasBranch && !branchArchived(repo, `refs/heads/${branch}`, [target, `${target}-branch`])) {
     throw new Error(`archive ${target} does not keep ${branch}`);
   }
@@ -3188,7 +3188,7 @@ function archiveSlotBranch(
     const k = knowledge();
     git(repo, ["update-ref", target, `refs/heads/${tree.branch}`]);
     git(repo, ["branch", "-D", tree.branch]);
-    if (k.commits.length) console.log(`archived ${k.commits.length} commit(s) of worker ${id} in ${target}`);
+    if (k.commits.length) console.error(`archived ${k.commits.length} commit(s) of worker ${id} in ${target}`);
     saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: target });
     appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: target });
     out.push(entry());
@@ -3452,7 +3452,7 @@ export function gcWorktrees(
     const cap = maxGb * 1024 ** 3;
     let total = dirBytes(root);
     if (total > cap) {
-      console.log(`worktree gc: ${(total / 1024 ** 3).toFixed(1)} GB over cap ${maxGb} GB, archiving oldest finished`);
+      console.error(`worktree gc: ${(total / 1024 ** 3).toFixed(1)} GB over cap ${maxGb} GB, archiving oldest finished`);
       for (const y of young.sort((a, b) => a.end - b.end)) {
         if (total <= cap) break;
         const size = dirBytes(y.tree.dir);
@@ -3461,12 +3461,12 @@ export function gcWorktrees(
         const e = out[before];
         if (e?.archive) {
           total -= size;
-          console.log(`worktree gc: cap archived ${y.st.id} (${(size / 1024 ** 3).toFixed(2)} GB)`);
+          console.error(`worktree gc: cap archived ${y.st.id} (${(size / 1024 ** 3).toFixed(2)} GB)`);
         } else if (e?.skipped) {
-          console.log(`worktree gc: cap kept ${y.st.id}: ${e.skipped}`);
+          console.error(`worktree gc: cap kept ${y.st.id}: ${e.skipped}`);
         }
       }
-      if (total > cap) console.log(`worktree gc: still ${(total / 1024 ** 3).toFixed(1)} GB over cap ${maxGb} GB (running or unsalvageable workers)`);
+      if (total > cap) console.error(`worktree gc: still ${(total / 1024 ** 3).toFixed(1)} GB over cap ${maxGb} GB (running or unsalvageable workers)`);
     }
   }
 
