@@ -1,5 +1,5 @@
 # Read-only calls (Read, Grep, Glob, read-only Bash) in a row with no edit of a repo file: two notes, then read-only calls are denied.
-# Active only in code-change workers (PAI_WORKER_CAN_EDIT=1). A test or build run counts and does not reset; a write under a scratch path is no edit.
+# Active only in code-change workers (PAI_WORKER_CAN_EDIT=1). A test or build run counts and does not reset; a write under a scratch path is no edit, but after the first repo edit it counts as work and resets. The time rules need >= 6 counted calls.
 # Fixture tokens: R Read, G Grep/Glob, B read-only Bash, T test run, E Edit, W Write of a repo file, S scratch write, H bash heredoc write of a repo file.
 # A sequence matches when the first note threshold is reached.
 id: no-edit-stall

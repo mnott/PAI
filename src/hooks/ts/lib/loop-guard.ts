@@ -21,7 +21,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { dropHeredocBodies } from "./heredoc.js";
+import { dropDataHeredocBodies, dropHeredocBodies } from "./heredoc.js";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
 import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
@@ -131,7 +131,7 @@ export interface LoopState {
   /** Failure fingerprint -> times seen (they survive edits), and Bash calls denied for it (see repeated-error). */
   fails?: { counts: Record<string, number>; denials: number };
   /** no-edit-stall: calls and start time (ms) since the start or the last edit of a repo file, and the notes already given. */
-  stall?: { calls: number; since: number; fired1?: boolean; fired2?: boolean };
+  stall?: { calls: number; since: number; fired1?: boolean; fired2?: boolean; edited?: boolean };
   /** Per-run FAIL ledger (workers.failLedger); absent while the experiment is off. */
   fail?: FailLedgerState;
 }
@@ -869,7 +869,8 @@ export function bashWritesRepoFile(command: string): boolean {
     if (!/^\/dev\/(?:null|stdout|stderr)$/.test(m[1]) && !isScratchPath(m[1])) return true;
   }
   for (const m of body.matchAll(TEE)) if (!isScratchPath(m[1])) return true;
-  for (const m of command.matchAll(STALL_WRITE_CALL)) {
+  // data heredocs (`cat > f <<EOF`) are file content, not code; an interpreter heredoc body is scanned
+  for (const m of dropDataHeredocBodies(command).matchAll(STALL_WRITE_CALL)) {
     const arg = m[1] ?? m[2] ?? m[3] ?? "";
     if (!isScratchPath(arg) && !/tmpdir|scratch/i.test(arg)) return true;
   }
@@ -885,6 +886,12 @@ export function bashWritesRepoFile(command: string): boolean {
     if (verb === "patch" && last !== undefined && !isScratchPath(last)) return true;
   }
   return false;
+}
+
+/** Does this Bash command write any file (repo or scratch)? */
+function bashWritesAnyFile(command: string): boolean {
+  const body = dropHeredocBodies(command).replace(/<<-?\s*(?:'[^']+'|"[^"]+"|\w+)/g, " ").replace(/\d?>&\d?/g, " ");
+  return /(?:^|[\s\d])>>?\s*(?!\/dev\/(?:null|stdout|stderr))[^\s;&|<>]/.test(body) || body.search(TEE) >= 0 || dropDataHeredocBodies(command).search(STALL_WRITE_CALL) >= 0 || /\b(?:cp|mv|install)\s/.test(body);
 }
 
 const STALL_TEST_RUN = /\b(?:vitest|jest|pytest|tsc|tsdown|xcodebuild|npm (?:run )?(?:test|build)|swift (?:test|build)|cargo (?:test|build)|go (?:test|build)|bun test|make)\b/;
@@ -906,15 +913,18 @@ export function stallStep(prev: LoopState["stall"], tool: string, input: string 
   let readOnly = false;
   if (EDIT_TOOLS.has(tool)) {
     const file = String(obj?.file_path ?? obj?.notebook_path ?? "");
-    if (!isScratchPath(file)) return { stall: { calls: 0, since: now }, n: 0, min: 0 };
+    if (!isScratchPath(file)) return { stall: { calls: 0, since: now, edited: true }, n: 0, min: 0 };
+    if (cur.edited) return { stall: { calls: 0, since: now, edited: true }, n: 0, min: 0 };
   } else if (tool === "Bash") {
-    if (bashWritesRepoFile(command)) return { stall: { calls: 0, since: now }, n: 0, min: 0 };
+    if (bashWritesRepoFile(command)) return { stall: { calls: 0, since: now, edited: true }, n: 0, min: 0 };
+    if (cur.edited && bashWritesAnyFile(command)) return { stall: { calls: 0, since: now, edited: true }, n: 0, min: 0 };
     readOnly = !isTestRun(command);
   } else if (tool === "Read" || tool === "Grep" || tool === "Glob") readOnly = true;
   else return { stall: cur, n: cur.calls, min: Math.floor((now - cur.since) / 60_000) };
   cur = { ...cur, calls: cur.calls + 1 };
   const n = cur.calls;
-  const min = Math.max(0, Math.floor((now - cur.since) / 60_000));
+  // the time rules need at least 6 counted calls: two slow calls are no stall
+  const min = n < 6 ? 0 : Math.max(0, Math.floor((now - cur.since) / 60_000));
   if (suppress === "all") return { stall: cur, n, min };
   if (readOnly && (n >= p("deny_calls") || min >= p("deny_min"))) return { stall: cur, kind: "deny", n, min };
   if (suppress === "notes") return { stall: cur, n, min };
