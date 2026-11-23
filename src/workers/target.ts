@@ -21,7 +21,7 @@ import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { detectSessionProvider, SESSION_WORKER_PROVIDER_ENV } from "./session-provider.js";
 import { workersLogDir } from "./paths.js";
-import { classifyRoute, localFailures, routeLine } from "./route-classifier.js";
+import { classifyRouteAssisted, localFailures, routeLine } from "./route-classifier.js";
 import { ledgerPath } from "./paths.js";
 import { detectSessionName } from "./session-name.js";
 import { getProfile, liveResolveCtx, resolveWorkers, type ResolveCtx } from "./session-profile.js";
@@ -104,12 +104,12 @@ async function unknownProvider(cfg: ProviderTable, name: string, why: string, op
 }
 
 /** Route classifier for a local target: the cloud provider it reroutes to, with the reason, or undefined to stay local. */
-function reroute(args: TargetArgs, deps: TargetDeps): { reason: string } | undefined {
+async function reroute(args: TargetArgs, deps: TargetDeps): Promise<{ reason: string } | undefined> {
   if (args.task === undefined && !args.label && !args.kind && !args.tags) return undefined;
   const failures = args.label
     ? (deps.localFailures ?? ((l) => localFailures(ledgerPath(deps.logDir), l, (p) => { const c = getProviderOrNative(deps.workers, p); return !!c && isLoopbackProvider(c); })))(args.label)
     : 0;
-  const d = classifyRoute({ kind: args.kind, label: args.label, tags: args.tags, text: args.task, failures, forceLocal: args.forceLocal });
+  const d = await classifyRouteAssisted({ kind: args.kind, label: args.label, tags: args.tags, text: args.task, failures, forceLocal: args.forceLocal });
   return d.where === "cloud" ? { reason: routeLine(d) } : undefined;
 }
 
@@ -139,7 +139,7 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
     if (r?.source === "none") throw new CliError(r.description, "pai session profile: session_profile_set fallback / parallel_min");
     if (r?.provider && (r.source === "profile" || r.source === "fallback")) {
       const pc = getProviderOrNative(cfg, r.provider);
-      const rr2 = pc && isLoopbackProvider(pc) ? reroute(args, deps) : undefined;
+      const rr2 = pc && isLoopbackProvider(pc) ? await reroute(args, deps) : undefined;
       if (rr2) {
         const cloud = cloudProvider(cfg, env, deps.logDir);
         const cm = modelFor(cfg, cloud, modelArg);

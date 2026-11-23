@@ -86,8 +86,11 @@ export function trimTldrInput(specText: string): string {
   return t.length > TLDR_INPUT_CHARS ? `${t.slice(0, TLDR_INPUT_CHARS)}\n[...truncated...]` : t;
 }
 
+/** A preface the small model puts before its answer ("Sure! Here is the summary:"), and markdown around it. */
+const TLDR_PREFACE_RE = /^(?:sure|certainly|okay|ok)\b[^.!?:]*[.!:]\s+|^here(?:'s| is| are)\b[^:\n]{0,60}:\s*/i;
+
 export function cleanTldr(text: string): string | null {
-  const t = text.replace(/\s+/g, " ").trim();
+  const t = text.replace(/[*_`#>]+/g, "").replace(/^\s*(?:[-•]|\d+[.)])\s+/gm, "").replace(/\s+/g, " ").trim().replace(TLDR_PREFACE_RE, "").replace(TLDR_PREFACE_RE, "");
   if (!t) return null;
   // complete sentences when there are any; otherwise the whole short answer — a one-liner
   // with no final period ("Adds the chip. It lands in the status file") is still usable
@@ -121,11 +124,16 @@ export function cachedTldr(logDir: string, id: string, specText: string, deps: H
       const task = "Summarize this task spec in exactly 2 plain sentences: what is to be built or fixed, and where. No lists, no markdown.";
       // the small engine answers empty now and then: one retry inside this call, before the
       // 10-minute cooldown; a model that failed outright is cooling down, so the retry skips it
-      const raw =
-        (await helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs: 8_000, task, input }, deps)) ??
-        (await helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs: 12_000, task, input }, deps));
-      const t = raw === null ? null : cleanTldr(raw);
-      if (raw !== null && !t) helperRejected("tldr", model0(deps), deps);
+      // (an answer that cleans to nothing counts like an empty one: asked again, then rejected)
+      const ask = (timeoutMs: number): Promise<string | null> => helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs, task, input }, deps);
+      let raw = await ask(12_000);
+      let t = raw === null ? null : cleanTldr(raw);
+      if (!t) {
+        if (raw !== null) helperRejected("tldr", model0(deps), deps);
+        raw = await ask(12_000);
+        t = raw === null ? null : cleanTldr(raw);
+        if (raw !== null && !t) helperRejected("tldr", model0(deps), deps);
+      }
       if (t) {
         mkdirSync(logDir, { recursive: true });
         writeFileSync(f, t + "\n");
@@ -173,4 +181,79 @@ export function summarizeGateFailure(output: string, deps: HelperDeps = {}): str
   const s = cleanGateSummary(text);
   if (!s) helperRejected("gate", model0(deps), deps);
   return s;
+}
+
+// ---- d: route classifier second opinion -------------------------------------------------------
+
+export function parseRouteVerdict(text: string): { where: "local" | "cloud"; reason: string } | null {
+  const m = /^[\s<\["'*]*(local|cloud)\b[>\]"'*]*\s*[:\-–—]?\s*(.*)$/im.exec(text.trim());
+  if (!m) return null;
+  return { where: m[1].toLowerCase() as "local" | "cloud", reason: m[2].replace(/\s+/g, " ").trim().slice(0, 100) };
+}
+
+/**
+ * Second opinion on a task the rules called "bounded code": null = stay local (model off, busy,
+ * down, unusable, or it also says local); a reason string = the model sends it to the cloud.
+ * It can only add caution, never keep a task the rules sent to the cloud.
+ */
+export async function routeSecondOpinion(taskText: string, deps: HelperDeps = {}): Promise<string | null> {
+  if (!taskText.trim() || !(deps.config ?? helperConfig()).uses.routeClass) return null;
+  const text = await helperComplete(
+    {
+      label: "route",
+      maxTokens: 40,
+      keep: "head",
+      timeoutMs: 20_000,
+      task:
+        "A small local coding model may take this task. Answer cloud if it needs a stronger model (infrastructure, installers, signing, devices, external services, " +
+        "migrations, cross-module redesign, vague or open-ended work); answer local if it is a bounded code or test change. " +
+        'Reply on ONE line as "<local|cloud>: <reason in at most 8 words>".',
+      input: taskText.slice(0, 1500),
+    },
+    deps
+  );
+  if (text === null) return null;
+  const v = parseRouteVerdict(text);
+  if (!v) {
+    helperRejected("route", model0(deps), deps);
+    return null;
+  }
+  return v.where === "cloud" ? `model: ${v.reason || "needs a stronger model"}` : null;
+}
+
+// ---- e: report proof check --------------------------------------------------------------------
+
+/** "nothing" = the proof command shows nothing about the work (git diff, ls, cat); null = no objection. */
+export function parseProofVerdict(text: string): boolean | null {
+  const m = /^[\s<\["'*]*(proof|nothing)\b/i.exec(text.trim());
+  return m ? m[1].toLowerCase() === "nothing" : null;
+}
+
+/**
+ * Sync sanity check of the p= command of an r=+ report that already passed the mechanical
+ * check: true only when the model says the command proves nothing. Can only downgrade.
+ */
+export function proofIsEmpty(proof: string, deps: HelperDeps = {}): boolean {
+  const cmd = proof.split(/ (?:→|->|=>|⇒|#) /)[0].trim();
+  if (!cmd || !(deps.config ?? helperConfig()).uses.reportCheck) return false;
+  const text = helperCompleteSync(
+    {
+      label: "report",
+      maxTokens: 8,
+      keep: "head",
+      timeoutMs: 20_000,
+      task:
+        "A coding agent claims this shell command as proof its work is correct. Answer proof if it runs tests, a type check, a build, a linter or a probe of the changed behaviour; " +
+        "answer nothing if it only shows files, a diff, a status, a listing or prints text. Reply with ONE word: proof or nothing.",
+      input: cmd,
+    },
+    deps
+  );
+  if (text === null) return false;
+  const v = parseProofVerdict(text);
+  if (v === null) {
+    helperRejected("report", model0(deps), deps);
+    return false;
+  }
+  return v;
 }

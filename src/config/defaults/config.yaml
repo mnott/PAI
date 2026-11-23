@@ -567,6 +567,10 @@ helper:
     tldr: true
     # 3-line summary of a failing merge gate / build / test run
     gateSummary: true
+    # the route classifier's second opinion on a task the rules call "bounded code" (can only move it to the cloud)
+    routeClass: true
+    # sanity check of an r=+ report's claimed proof (can only downgrade r=+ to r=~)
+    reportCheck: true
 # `pai session --local` / `pai local` (src/cli/commands/session.ts).
 session:
   # Autocompact window of a local session in tokens (flag --context n|128k|256k).

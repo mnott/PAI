@@ -32,7 +32,7 @@ export interface HelperConfig {
   maxInputChars: number;
   ollamaUrl: string;
   /** Per-use switches. */
-  uses: { toolErrors: boolean; tldr: boolean; gateSummary: boolean };
+  uses: { toolErrors: boolean; tldr: boolean; gateSummary: boolean; routeClass: boolean; reportCheck: boolean };
 }
 
 export const DEFAULT_HELPER: HelperConfig = {
@@ -41,7 +41,7 @@ export const DEFAULT_HELPER: HelperConfig = {
   timeoutMs: 20_000,
   maxInputChars: 6000,
   ollamaUrl: "http://127.0.0.1:11434",
-  uses: { toolErrors: true, tldr: true, gateSummary: true },
+  uses: { toolErrors: true, tldr: true, gateSummary: true, routeClass: true, reportCheck: true },
 };
 
 export function helperConfig(raw?: unknown): HelperConfig {
@@ -67,6 +67,8 @@ export function helperConfig(raw?: unknown): HelperConfig {
       toolErrors: bool(u.toolErrors, true),
       tldr: bool(u.tldr, true),
       gateSummary: bool(u.gateSummary, true),
+      routeClass: bool(u.routeClass, true),
+      reportCheck: bool(u.reportCheck, true),
     },
   };
 }
@@ -358,9 +360,14 @@ export function helperCompleteSync(req: HelperRequest, deps: HelperDeps = {}): s
   return out;
 }
 
-/** Share of the remaining budget one attempt may use: the first model of several leaves room for the next. */
+/**
+ * Share of the remaining budget one attempt may use: the first model of several leaves room
+ * for the next. The Neural Engine answers a short prompt in a median 2.5 s but p90 5.9 s
+ * (measured over 200 TL;DR calls), so it gets 60% of the budget, not an even share: at an
+ * even split a 8 s call gave it 5 s and cut off one answer in three that was still coming.
+ */
 function attemptBudget(remaining: number, modelsLeft: number): number {
-  return modelsLeft > 1 ? Math.max(5000, Math.floor(remaining / modelsLeft)) : remaining;
+  return modelsLeft > 1 ? Math.max(5000, Math.floor((remaining * 3) / 5)) : remaining;
 }
 
 async function run(p: Plan, req: HelperRequest, deps: HelperDeps, send: (w: WireRequest, t: number) => Promise<string>): Promise<string | null> {
