@@ -28,6 +28,7 @@ import { activeAntipattern, fillMessage, loadAntipatterns, shippedAntipattern } 
 import { dispositionOf, modelOf, paramsForModel } from "./antipattern-lifecycle.js";
 import { ledgerResult, ledgerStep, type FailLedgerState } from "./fail-ledger.js";
 import { isPollCommand } from "./wait-poll.js";
+import { alive, isLive, loadStatusCached, type WorkerStatus } from "../../../workers/status.js";
 
 // Thresholds and message texts live in antipatterns/tool-loop/*.yaml (user overrides in PAI_HOME/antipatterns).
 // The exported constants are the shipped values; the step functions read the active pattern on every call.
@@ -126,6 +127,8 @@ export interface LoopState {
   baseRed?: Record<string, false | { sig: string; same: boolean }>;
   /** Window key -> ms timestamp of the first "still running" result of a polling call (see isWaitResult). */
   waits?: Record<string, number>;
+  /** Window key -> ms timestamp of the last exempt call of a `pai worker wait*` whose waited-on worker/process is live; the wait cap is measured from here. */
+  waitSeen?: Record<string, number>;
   /** Window key -> ms timestamp of the first call of a build-door poll (see isPollCommand); bounded by WAIT_CAP_MS. */
   polls?: Record<string, number>;
   /** Poll key -> consecutive finished (non-waiting) results of a build-door poll; an instant door failure is not a wait. */
@@ -300,10 +303,61 @@ export function emptyLoopState(): LoopState {
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const READ_TOOLS = new Set(["Read", "Bash", "Grep"]);
 const TMP_PATH = /(?:\/private)?\/tmp\/[^\s'";|&<>)]*|\$\{?TMPDIR\}?(?:\/[^\s'";|&<>)]*)?/g;
+/** `pai worker wait <ids...>` / `wait-on <pids...>`: the ids it waits on (wait-on takes pids, not worker ids). */
+const WAIT_IDS = /\bpai worker (wait|wait-on)\s+([^\s;&|<>]+)/;
+/** `wait-url` / `wait-file`: no worker status to consult; exempt only while the previous result said "still running". */
+const WAIT_OTHER = /\bpai worker (?:wait-url|wait-file)\b/;
 const WAIT_VERB = /\bpai worker (?:wait|wait-on|wait-url|wait-file)\b/;
 
-function exempt(command: string): boolean {
-  if (WAIT_VERB.test(command)) return true;
+/**
+ * Worker ids a `pai worker wait` command waits on, or null for `wait-on` (which takes pids, not ids) and for
+ * commands that are not a worker wait. Only the first operand is read: a status file is trusted only for the
+ * id the command names first, never for a token that happens to match a live worker.
+ */
+export function waitedWorkerIds(command: string): string[] | null {
+  const m = WAIT_IDS.exec(command);
+  if (!m || m[1] === "wait-on") return null;
+  return [m[2]];
+}
+
+/**
+ * True when at least one worker a `pai worker wait` command names is still live (running/queued with a live pid).
+ * `logDir` is the workers log directory; a missing status file or a missing logDir is not live.
+ */
+export function anyWaitedWorkerLive(command: string, logDir: string | undefined, now = Date.now()): boolean {
+  if (!logDir) return false;
+  const ids = waitedWorkerIds(command);
+  if (!ids?.length) return false;
+  return ids.some((id) => {
+    const s = loadStatusCached(logDir, id, now);
+    return !!s && isLive(s);
+  });
+}
+
+/**
+ * True when a `pai worker wait-on <pid>` command waits on a process that is still alive. Only the first operand
+ * is checked; a pid that is not alive (or not a number) is not live.
+ */
+export function waitedPidAlive(command: string): boolean {
+  const m = WAIT_IDS.exec(command);
+  if (!m || m[1] !== "wait-on") return false;
+  const pid = Number(m[2]);
+  return Number.isInteger(pid) && pid > 0 && alive(pid);
+}
+
+/**
+ * Whether a `pai worker wait*` call is exempt from repeat tracking right now: a `wait`/`wait-on` while a
+ * waited-on worker/process is live, and a `wait-url`/`wait-file` while its previous result said "still
+ * running" (the caller passes that flag). Once everything it waits on has finished, a further identical
+ * wait is a loop and the repeat rule applies again.
+ */
+export function waitExempt(command: string, logDir: string | undefined, now = Date.now(), prevWaitResult = false): boolean {
+  if (WAIT_OTHER.test(command)) return prevWaitResult;
+  return anyWaitedWorkerLive(command, logDir, now) || waitedPidAlive(command);
+}
+
+function exempt(command: string, logDir?: string, now = Date.now(), prevWaitResult = false): boolean {
+  if (WAIT_VERB.test(command)) return waitExempt(command, logDir, now, prevWaitResult);
   // only a command that starts by sleeping is a wait; a sleep buried in a longer command is a pause inside a retry
   const m = /^\s*sleep (\d+(?:\.\d+)?)\b/.exec(command);
   return !!m && Number(m[1]) <= 60;
@@ -380,8 +434,12 @@ export function loopGuardEvasion(command: string, prev: string): boolean {
   return !!m && loopKey(command.slice(m[0].length)) === loopKey(prev);
 }
 
-/** Window key of a call, or null when it is not trackable or is exempt. Display text is the part after the tab. */
-export function callKey(tool: string, input: string | Record<string, unknown> | undefined): string | null {
+/**
+ * Window key of a call, or null when it is not trackable or is exempt. Display text is the part after the tab.
+ * `logDir`/`now` make a `pai worker wait` exemption conditional: a wait whose waited-on workers are all finished
+ * is trackable again, so repeating it is a loop.
+ */
+export function callKey(tool: string, input: string | Record<string, unknown> | undefined, logDir?: string, now = Date.now(), prevWaitResult = false): string | null {
   if (tool === "Bash") {
     let c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
     // a nudge prefix hides the command it repeats: compare the command behind it
@@ -389,7 +447,7 @@ export function callKey(tool: string, input: string | Record<string, unknown> | 
       const m = NUDGE_PREFIX.exec(c);
       if (m) c = c.slice(m[0].length);
     }
-    return typeof c === "string" && c.trim() && !exempt(c) ? `Bash\t${loopKey(c)}` : null;
+    return typeof c === "string" && c.trim() && !exempt(c, logDir, now, prevWaitResult) ? `Bash\t${loopKey(c)}` : null;
   }
   if (!tool || !input || typeof input !== "object") return null;
   if (tool === "Read") {
@@ -594,9 +652,12 @@ function preInput(tool: string, input: string | Record<string, unknown> | undefi
   return typeof input?.command === "string" ? { ...input, command: strip(input.command) } : input;
 }
 
-export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false): LoopState {
+export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false, logDir?: string): LoopState {
   input = preInput(tool, input);
-  const counted = trackBaseRed(typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response), tool, input, response);
+  // a wait whose waited-on workers are still live: its exit-3 "still running" is the documented answer, not a failure
+  const cmd = tool === "Bash" ? bashCommand(input) : undefined;
+  const liveWait = cmd !== undefined && WAIT_VERB.test(cmd) && waitExempt(cmd, logDir, now);
+  const counted = trackBaseRed(typeof response === "string" && response.startsWith("error:") ? state : liveWait ? state : countFailure(state, tool, response), tool, input, response);
   // an edit resets the window and drops everything not carried over by hand: the failure counts survive
   const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.seen ? { seen: counted.seen } : {}), ...(counted.baseRed ? { baseRed: counted.baseRed } : {}), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.results ? { results: counted.results } : {}), ...(counted.stall ? { stall: counted.stall } : {}), ...(counted.edited ? { edited: true } : {}) };
   if (!ledger) return core;
@@ -736,7 +797,7 @@ const bashCommand = (input: string | Record<string, unknown> | undefined): strin
 };
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
-function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
+function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, logDir?: string): LoopStep {
   if (EDIT_TOOLS.has(tool)) {
     const ek = callKey(tool, input);
     if (ek === null) return { state: { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks }, deny: false };
@@ -801,7 +862,8 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
   }
   if (tool === "Bash") {
     const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
-    const pk = typeof c === "string" ? callKey(tool, c) : null;
+    // a `pai worker wait*` is a worker wait, not a build-door poll: its exemption is decided by worker status below
+    const pk = typeof c === "string" && !WAIT_VERB.test(c) ? callKey(tool, c) : null;
     if (pk !== null && isPollCommand(c as string, cwd)) {
       const since = state.polls?.[pk] ?? now;
       const next = { ...state, polls: { ...(state.polls ?? {}), [pk]: since } };
@@ -823,6 +885,38 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
         key: pk.split("\t")[1],
         reason: `loop guard: this command has been polled for over ${WAIT_CAP_MS / 60_000} minutes (wait cap per command). It is not finishing; check what it is waiting on or report the blocker. ${SELF}`,
       };
+    }
+  }
+  if (tool === "Bash") {
+    // a `pai worker wait*` exempt right now (a waited-on worker/process is live, or a wait-url/wait-file whose
+    // previous result said "still running"): repeating it is the sanctioned way to keep waiting (it returns at
+    // --max with exit 3 while the children run), so the repeat rule is waived, bounded by WAIT_CAP_MS measured
+    // from the last exempt call; once everything it waits on has finished the repeat rule applies again
+    const wc = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    if (typeof wc === "string" && WAIT_VERB.test(wc)) {
+      const plainKey = callKey(tool, wc, logDir, now, false);
+      const wk = callKey(tool, wc, logDir, now, plainKey !== null && state.waits?.[plainKey] !== undefined);
+      if (wk !== null) {
+        const since = state.waitSeen?.[wk] ?? now;
+        const next = { ...state, waitSeen: { ...(state.waitSeen ?? {}), [wk]: now } };
+        if (now - since < WAIT_CAP_MS) return { state: next, deny: false };
+        return {
+          state: next,
+          deny: true,
+          key: wk.split("\t")[1],
+          reason: `loop guard: this wait has been repeated for over ${WAIT_CAP_MS / 60_000} minutes (wait cap per command). It is not finishing; check what it is waiting on or report the blocker. ${SELF}`,
+        };
+      }
+    }
+  }
+  if (tool === "Bash") {
+    // a `pai worker wait*` whose waited-on workers are all finished: its exit-3 "still running" is no longer a
+    // documented answer, so it is not counted as a failure (repeated-error) and not treated as a build-door poll;
+    // it falls through to the ordinary repeat rule below
+    const wc = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+    if (typeof wc === "string" && WAIT_VERB.test(wc)) {
+      state = { ...state, waits: undefined, polls: undefined, pollDone: undefined };
+      return { state, deny: false };
     }
   }
   if (tool === "Bash") {
@@ -938,16 +1032,16 @@ function growingNote(gc: Record<string, unknown>, state: LoopState, prevOut: str
  * One step of the loop guard. A pattern in monitor mode (or retired, or excepted) is neutralised here, in one place:
  * the step still counts, but nothing is denied, stopped or noted; a monitored one says what it would have done.
  */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, ledger = false, source: "hook" | "proxy" = "hook"): LoopStep {
-  const r = stepLoopGuardCore(state, tool, input, fingerprint, now, cwd, echo, source);
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, ledger = false, source: "hook" | "proxy" = "hook", logDir?: string): LoopStep {
+  const r = stepLoopGuardCore(state, tool, input, fingerprint, now, cwd, echo, source, logDir);
   if (!ledger) return r;
   const obj = typeof input === "object" ? input : undefined;
   const file = tool === "Write" ? String(obj?.file_path ?? "") || null : null;
   return { ...r, state: ledgerStep({ ...r.state, fail: state.fail }, tool, file ? callKey(tool, input) : null, file, source === "proxy" ? null : missingProbe(tool, obj, cwd ?? process.cwd())) };
 }
 
-function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, source: "hook" | "proxy" = "hook"): LoopStep {
-  let r = resultDeny(state, tool) ?? failureDeny(state, tool) ?? stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
+function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, source: "hook" | "proxy" = "hook", logDir?: string): LoopStep {
+  let r = resultDeny(state, tool) ?? failureDeny(state, tool) ?? stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo, logDir);
   if (state.fails && !r.state.fails) r = { ...r, state: { ...r.state, fails: state.fails } };
   if (state.results && !r.state.results) r = { ...r, state: { ...r.state, results: state.results } };
   const command = tool === "Bash" ? bashCommand(input) : undefined;
@@ -1215,14 +1309,14 @@ function applyLifecycle(r: LoopStep, source: "hook" | "proxy" = "hook"): LoopSte
  * so when Pre did not record this call (no pending window entry) the call is stepped here first.
  * `deny` then means the 4th identical failure: hand `reason` back as context and stop the session if `stop`.
  */
-export function recordLoopFailure(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, error: unknown, now = Date.now(), cwd?: string, ledger = false, source: "hook" | "proxy" = "hook"): LoopStep {
-  const key = callKey(tool, input);
+export function recordLoopFailure(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, error: unknown, now = Date.now(), cwd?: string, ledger = false, source: "hook" | "proxy" = "hook", logDir?: string): LoopStep {
+  const key = callKey(tool, input, logDir, now);
   if (key === null || EDIT_TOOLS.has(tool)) return { state, deny: false };
   const last = state.window.length - 1;
   const seenByPre = last >= 0 && state.window[last] === key && (state.outs?.[last] ?? null) === null;
   let step: LoopStep = { state, deny: false };
   if (!seenByPre) {
-    step = stepLoopGuard(state, tool, input, null, now, cwd, undefined, ledger, source);
+    step = stepLoopGuard(state, tool, input, null, now, cwd, undefined, ledger, source, logDir);
     if (step.deny) return { ...step, reason: step.reason ?? loopDenyReason(tool, step.count) };
   }
   return { ...step, state: recordLoopResult(countFailure(step.state, tool, error), tool, input, `error: ${resultSig(error)}`, now, ledger) };

@@ -141,6 +141,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
           now: Date.now(),
           echo: readWorkersSection().workers.loopGuard,
           failLedger: !!failLedgerOn(env, readWorkersSection().workers.failLedger),
+          logDir,
         },
       },
     );
