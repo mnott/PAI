@@ -3045,8 +3045,9 @@ export interface ArchiveResult {
 
 /**
  * The one removal path (gc, discard): check what the worktree carries, archive
- * commits and uncommitted state under refs/pai-archive/<id>, copy ignored
- * knowledge files into the main checkout, then remove worktree and branch.
+ * commits and uncommitted state under refs/pai-archive/<id>, move non-regenerable
+ * ignored outputs (salvageOutputs) and copy ignored knowledge files into the main
+ * checkout, then remove worktree and branch.
  * Throws, with the worktree untouched, when anything cannot be salvaged.
  */
 export function archiveWorktree(logDir: string, id: string, dir: string, branch: string): ArchiveResult {
@@ -3112,10 +3113,11 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
     // worktree HEAD moved off the branch: keep the branch tip under its own ref
     git(repo, ["update-ref", `${target}-branch`, `refs/heads/${branch}`]);
   }
+  const outputs = salvageOutputs(checkout, dir, id);
   const salvage = salvageIgnored(checkout, dir, id);
   if (salvage.failed.length) throw new Error(`cannot salvage ${salvage.failed.join(", ")}`);
   git(repo, ["update-ref", target, tip]);
-  const notes = [...salvage.lines];
+  const notes = [...outputs, ...salvage.lines];
   if (knowledge.commits.length || knowledge.dirty.length) {
     notes.push(`archived ${knowledge.commits.length} commit(s), ${knowledge.dirty.length} uncommitted file(s) of worker ${id} in ${target}`);
   }
@@ -3140,7 +3142,7 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   git(repo, ["worktree", "remove", "--force", dir]);
   if (hasBranch) git(repo, ["branch", "-D", branch]);
   removeScratch(id);
-  return { archive: target, knowledge, salvaged: salvage.lines };
+  return { archive: target, knowledge, salvaged: notes };
 }
 
 /**

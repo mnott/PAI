@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { saveStatus, type WorkerStatus } from "./status.js";
-import { mergeWorker, worktreePath } from "./worktree.js";
+import { archiveWorktree, mergeWorker, worktreePath } from "./worktree.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
@@ -79,6 +79,39 @@ describe("merge keeps a worker's ignored outputs", () => {
     await mergeWorker(logDir, id, opts);
     const lines = log.mock.calls.map((c) => String(c[0]));
     log.mockRestore();
+    const left = join(logDir, "leftovers", id);
+    expect(readFileSync(join(repo, "out/mine.txt"), "utf8")).toBe("mine");
+    expect(existsSync(join(left, "out/run/annotated.pdf"))).toBe(true);
+    expect(existsSync(join(left, "node_modules"))).toBe(false);
+    expect(lines.filter((l) => l.includes(left) && /MB/.test(l))).toHaveLength(1);
+  });
+
+  it("discard/archive moves out/ into the checkout and drops node_modules", () => {
+    const id = "keep3";
+    const { repo, logDir } = setup(id);
+    const dir = worktreePath(logDir, id);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = archiveWorktree(logDir, id, dir, `worker/${id}`);
+    const lines = err.mock.calls.map((c) => String(c[0]));
+    err.mockRestore();
+    expect(existsSync(dir)).toBe(false);
+    expect(statSync(join(repo, "out/run/annotated.pdf")).size).toBe(11 * 1024 * 1024);
+    expect(readFileSync(join(repo, "out/run/cache/b.json"), "utf8")).toBe('{"b":2}');
+    expect(existsSync(join(repo, "out/run/gpu.txt"))).toBe(true);
+    expect(existsSync(join(repo, "node_modules"))).toBe(false);
+    expect(res.salvaged.some((l) => l.includes("kept ignored out"))).toBe(true);
+    expect(lines.some((l) => l.includes("kept ignored out"))).toBe(true);
+  });
+
+  it("discard/archive sends a colliding out/ to leftovers", () => {
+    const id = "keep4";
+    const { repo, logDir } = setup(id, "out");
+    const dir = worktreePath(logDir, id);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    archiveWorktree(logDir, id, dir, `worker/${id}`);
+    const lines = err.mock.calls.map((c) => String(c[0]));
+    err.mockRestore();
+    expect(existsSync(dir)).toBe(false);
     const left = join(logDir, "leftovers", id);
     expect(readFileSync(join(repo, "out/mine.txt"), "utf8")).toBe("mine");
     expect(existsSync(join(left, "out/run/annotated.pdf"))).toBe(true);
