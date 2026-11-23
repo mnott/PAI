@@ -8,12 +8,13 @@ Test governance: audit a repo's tests, prune them to the governed core
 pai tests <command>
 ```
 
-Tests stay only with evidence (tests/KEPT.md): (a) a real fix they guarded, (b) a security or destructive-operation guard, (c) an external contract. UI/simulator targets, snapshot baselines and run outputs (.xcresult, recordings, screenshots, DerivedData) are classified too; outputs are always dropped unless listed. `audit` reads git and files only and never runs a test. `prune` prints the plan; with --apply a worker (orchestrate class) removes the rest on its own branch and commits; you land it. The growth alarm (config tests.growthAlarm, default 20) counts test call sites — it()/test() definitions, not a runner's expanded cases — and tells the session when a project's suite outgrows its core or holds more than 500 of them.
+Tests stay only with evidence (tests/KEPT.md): (a) a real fix they guarded, (b) a security or destructive-operation guard, (c) an external contract. UI/simulator targets, snapshot baselines and run outputs (.xcresult, recordings, screenshots, DerivedData) are classified too; outputs are always dropped unless listed. `audit` reads git and files only and never runs a test. `prune` prints the plan; with --apply a worker (orchestrate class) removes the rest on its own branch and commits; you land it. The growth alarm (config tests.growthAlarm, default 20) counts test call sites — it()/test() definitions, not a runner's expanded cases — and tells the session when a project's suite outgrows its core or holds more than 500 of them. `keep` appends exactly one row to tests/KEPT.md (or Tests/KEPT.md) — never rewrite the ledger by hand.
 
 ```sh
 pai tests audit --repo .
 pai tests prune --repo ~/code/app
 pai tests prune --repo ~/code/app --apply
+pai tests keep tests/foo.test.ts --kind a --evidence "guarded the off-by-one in #123"
 ```
 
 See also: `pai worker merge`
@@ -59,12 +60,40 @@ pai tests prune
 pai tests prune --repo ~/code/app --apply
 ```
 
+### pai tests keep
+
+Append one evidence row to tests/KEPT.md for a test file
+
+```
+pai tests keep TEST_FILE [options]
+```
+
+Registers a kept test file in the governance ledger without touching the other rows: appends exactly one `| file | class | evidence |` row to tests/KEPT.md (or Tests/KEPT.md), creating the file with its header when missing. Refuses a duplicate — it prints the existing row and writes nothing. Never rewrite the ledger by hand: a wholesale rewrite drops rows.
+
+| Argument | Required | Description |
+|---|---|---|
+| `TEST_FILE` | yes | Test file to register, relative to the repo (e.g. tests/foo.test.ts) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--repo PATH` | string | — | Repository (default: the current directory) |
+| `--kind a|b|c` | string | — | Evidence class: a = guarded a real fix, b = security/destructive guard, c = external contract |
+| `--evidence TEXT` | string | — | One line: why this test stays |
+
+```sh
+pai tests keep tests/foo.test.ts --kind a --evidence "guarded the off-by-one in #123"
+pai tests keep tests/sec.test.ts --kind b --evidence pins the destructive-op block
+```
+
+See also: `pai tests audit`
+
 ## Subcommands
 
 | Command | Description |
 |---|---|
 | `pai tests audit` | List test files with a proposed class and the file-count trend |
 | `pai tests prune` | Plan, or with --apply start a worker, that prunes the suite to the governed core |
+| `pai tests keep` | Append one evidence row to tests/KEPT.md for a test file |
 
 ## See also
 

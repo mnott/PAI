@@ -474,6 +474,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai tasks schedule uninstall` | Remove the timer |
 | `pai tests` | Test governance: audit a repo's tests, prune them to the governed core |
 | `pai tests audit` | List test files with a proposed class and the file-count trend |
+| `pai tests keep` | Append one evidence row to tests/KEPT.md for a test file |
 | `pai tests prune` | Plan, or with --apply start a worker, that prunes the suite to the governed core |
 | `pai thaw` | Continue everything `pai freeze` stopped, exactly where it was |
 | `pai topic` | Detect when a conversation moved to another project |

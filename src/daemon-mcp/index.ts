@@ -38,7 +38,7 @@ import { loadConfig } from "../daemon/config.js";
 import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
 import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
-import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, release, routerService, testsAudit, testsPrune, workerGc, workerKill, updateCheck, workerMerge } from "./tools/ops.js";
+import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, release, routerService, testsAudit, testsKeep, testsPrune, workerGc, workerKill, updateCheck, workerMerge } from "./tools/ops.js";
 import { dropItermBundleId } from "../utils/env.js";
 
 dropItermBundleId();
@@ -2199,6 +2199,18 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       apply: z.boolean().optional().describe("Start the pruning worker (default false: plan only)."),
     },
     async (args) => testsPrune(args)
+  );
+
+  server.tool(
+    "tests_keep",
+    "Register one kept test file in a repo's tests/KEPT.md ledger (`pai tests keep`): appends exactly one `| file | class | evidence |` row, creates the file with its header when missing, and refuses a duplicate (prints the existing row, writes nothing). Never rewrites other rows — do not edit the ledger by hand. kind: a = guarded a real fix, b = security or destructive-operation guard, c = external contract.",
+    {
+      repo: z.string().optional().describe("Repository path (default: the current project)."),
+      file: z.string().describe("Test file to register, relative to the repo (e.g. tests/foo.test.ts)."),
+      kind: z.enum(["a", "b", "c"]).describe("Evidence class."),
+      evidence: z.string().describe("One line: why this test stays."),
+    },
+    async (args) => testsKeep(args)
   );
 
   server.tool(

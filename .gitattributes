@@ -1,0 +1,5 @@
+# The KEPT.md ledger is append-only: parallel branches each add a row at the
+# end, so the union driver keeps every row from both sides instead of
+# conflicting (2026-11-23: every two-branch KEPT merge conflicted).
+tests/KEPT.md merge=union
+Tests/KEPT.md merge=union
