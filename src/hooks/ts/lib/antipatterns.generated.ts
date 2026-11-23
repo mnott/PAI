@@ -226,7 +226,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
-    "version": 1,
+    "version": 2,
     "created": "2026-10-25",
     "category": "tool-loop",
     "detector": {
@@ -235,6 +235,9 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
         "max_repeats": 4,
         "stop_denials": 3,
         "note_message": "Same result as before. If your change is complete and its checks passed, stop checking: commit and write your R report now.",
+        "note_message_unedited": "Same result as before, and you have not changed any file yet. The answer is already above. Stop searching: make your first edit in the file the spec names (a heredoc python/cat is fine), then run the test.",
+        "deny_message_unedited": "Stop repeating it. Edit a file the spec names, or ask `pai worker help`; report only after a change exists. loop guard: you ran this command {count} times with the same result and nothing changed.",
+        "note_message_edited_red": "Same result as before. If this check fails the same way before and after your edit, it does not tell you anything about your edit; stop re-running it and check your change with a small script of your own in .pai-scratch instead.",
         "tool_message": "Stop. Write your R report now (r=~ if something is unverified, list it in x=). loop guard: you called {tool} with similar input {count} times with the same result and nothing changed. Stop repeating it; the earlier result is still valid. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
       }
     },
