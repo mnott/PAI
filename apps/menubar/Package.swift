@@ -7,6 +7,7 @@ let package = Package(
     targets: [
         .target(name: "PAIMenuBarCore"),
         .executableTarget(name: "PAIMenuBar", dependencies: ["PAIMenuBarCore"]),
+        .executableTarget(name: "PAIMenuBarDump", dependencies: ["PAIMenuBarCore"]),
         .testTarget(name: "PAIMenuBarTests", dependencies: ["PAIMenuBarCore"]),
     ]
 )
