@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseDocument } from "yaml";
 import { paiHomePath } from "../config/pai-home.js";
+import { cachedParse } from "../config/parse-cache.js";
 import { readLastGood } from "../router/limits.js";
 import { workersYamlPath } from "./workers-config.js";
 
@@ -27,6 +28,11 @@ export interface PaceConfig { enabled: boolean; ratio: number; hysteresis: numbe
 export const DEFAULT_PACE: PaceConfig = { enabled: true, ratio: 0.8, hysteresis: 0.1 };
 
 export function readPaceConfig(yamlPath: string = workersYamlPath()): PaceConfig {
+  // parsed once per file change (mtime/size): the /cockpit/limits poller hits this every second
+  return cachedParse(yamlPath, () => readPaceConfigUncached(yamlPath), "pace");
+}
+
+function readPaceConfigUncached(yamlPath: string): PaceConfig {
   try {
     if (!existsSync(yamlPath)) return DEFAULT_PACE;
     const c = parseDocument(readFileSync(yamlPath, "utf8")).getIn(["budget", "cloudUnderPace"]) as { toJSON?: () => unknown } | null;
