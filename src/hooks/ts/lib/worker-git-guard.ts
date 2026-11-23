@@ -17,11 +17,92 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { capContent } from "./rules/cap.js";
 
 export const PRIVATE_CLONE_MARKER = "pai-private-clone";
+
+/**
+ * The shared config file a git write in `dir` would land in. A linked worktree's
+ * `.git` is a FILE pointing at `<main>/.git/worktrees/<name>`; without
+ * extensions.worktreeConfig its config is the MAIN repo's `.git/config`, so a
+ * bare `git config user.name …` there rewrites the operator's identity for every
+ * later commit — 148 commits on main were authored "bench <b@b>" after a worker
+ * did exactly that (2026-11-19..23). Returns null when `dir` is not inside a git
+ * repo or the check fails.
+ */
+export function sharedConfigOf(dir: string): string | null {
+  try {
+    const out = execFileSync("git", ["-C", dir, "rev-parse", "--local-git-env"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const m = /^GIT_CONFIG=(.*)$/m.exec(out);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when `dir` is a linked worktree whose config is shared with the main repo. */
+function sharesConfigWithMain(dir: string): boolean {
+  const cfg = sharedConfigOf(dir);
+  if (!cfg) return false;
+  // A nested repo (e.g. a fixture under .pai-scratch/) has its own .git/config;
+  // only a linked worktree resolves GIT_CONFIG to the main checkout's config.
+  try {
+    const common = execFileSync("git", ["-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    // linked worktree: common dir is the main repo's .git, not a nested one under dir
+    return resolve(common) !== resolve(join(dir, ".git"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when `command` contains a `git config` WRITE that would land in the shared
+ * .git/config of a linked worktree: no `--file`, no `-C`/GIT_DIR to a nested repo,
+ * and the effective cwd is a linked worktree (or a dir inside one) whose config is
+ * the main checkout's. Read-only forms (--get/--list/-l) are not writes.
+ */
+function configWriteHitsSharedConfig(command: string, cwd: string): boolean {
+  let here = cwd;
+  for (const segment of splitSegments(command)) {
+    const tokens = tokenize(segment);
+    let i = 0;
+    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
+    const rest = tokens.slice(i);
+    if (rest[0] === "cd") {
+      const arg = rest.slice(1).find((t) => !t.startsWith("-"));
+      here = arg === undefined ? here : resolveDir(here, arg);
+      continue;
+    }
+    const g = rest.indexOf("git");
+    if (g < 0) continue;
+    let k = g + 1;
+    while (k < rest.length && rest[k].startsWith("-")) k += GIT_VALUE_OPTS.has(rest[k]) ? 2 : 1;
+    if (rest[k] !== "config") continue;
+    const args = rest.slice(k + 1).filter((a) => !/^[<>]|^\d*>/.test(a));
+    // read-only forms never write
+    if (args[0] === "--get" || args[0] === "--get-all" || args[0] === "--list" || args[0] === "-l") continue;
+    // an explicit --file or -C to a nested dir scopes the write away from the shared config
+    const scoped = args.some((a) => a === "--file" || a.startsWith("--file="));
+    let targetDir = here;
+    for (let j = 0; j < rest.length; j++) {
+      if (rest[j] === "-C" && j + 1 < rest.length) targetDir = resolveDir(targetDir, rest[++j]);
+    }
+    if (scoped) continue;
+    // the write lands in the shared config iff the effective dir is a linked worktree
+    if (sharesConfigWithMain(targetDir)) return true;
+  }
+  return false;
+}
 
 /** True iff the git dir of the repo containing `cwd` holds the marker; any failure is false. */
 export function isPrivateClone(cwd: string): boolean {
@@ -352,6 +433,15 @@ export function decideWorkerGitGuard(
 ): WorkerGitGuardResult {
   if (!isWorker) return { blocked: false };
   command = capContent(command); // the git patterns below are not linear on megabytes of padding
+
+  // A linked worktree shares .git/config with the main repo unless
+  // extensions.worktreeConfig is set; a bare `git config user.*` there rewrites
+  // the operator's identity for every later commit (148 commits authored
+  // "bench <b@b>" on main, 2026-11-19..23). Deny it wherever it would land.
+  if (configWriteHitsSharedConfig(command, cwd)) {
+    return { blocked: true, cmd: "git config in a linked worktree" };
+  }
+
   if (worktreesRoot && isInsideWorktree(cwd, worktreesRoot)) {
     return worktreeEscape(command, cwd, worktreesRoot) ? { blocked: true, cmd: "git write outside the worktree" } : { blocked: false };
   }
@@ -366,6 +456,9 @@ export function decideWorkerGitGuard(
 }
 
 export function workerGitGuardMessage(cmd: string): string {
+  if (cmd === "git config in a linked worktree") {
+    return "worker: `git config` without --file/-C writes the MAIN repo's shared .git/config from a linked worktree and rewrites the operator's identity for every later commit; scope it with `git -C <nested-repo> config …` or `git config --file <path> …`";
+  }
   return (
     cmd === "git write outside the worktree"
       ? "worker: git write aimed at a directory outside your worktree is blocked; use relative paths and commit on your own branch"

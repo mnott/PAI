@@ -22,6 +22,7 @@
  * state. That is the bug, not this file.
  */
 
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -199,12 +200,30 @@ if (liveUrl) {
  * cannot point a child's git commands at the real repo; a test that needs them
  * sets them explicitly on its own spawn env.
  */
-const repoConfig = join(process.cwd(), ".git", "config");
+// The shared config of a linked worktree is the MAIN repo's .git/config:
+// `git rev-parse --local-git-env` prints GIT_CONFIG, and a bare `git config`
+// write lands there. Snapshot that file, not a path built from cwd (which is
+// a .git FILE inside a linked worktree).
+const sharedConfig = (() => {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--local-git-env"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const m = /^GIT_CONFIG=(.*)$/m.exec(out);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+})();
 let configSnapshot: string | null = null;
-try {
-  configSnapshot = readFileSync(repoConfig, "utf8");
-} catch {
-  // not a git repo (or no .git/config): nothing to protect
+if (sharedConfig) {
+  try {
+    configSnapshot = readFileSync(sharedConfig, "utf8");
+  } catch {
+    // not a git repo (or no shared config): nothing to protect
+  }
 }
 delete process.env.GIT_DIR;
 delete process.env.GIT_WORK_TREE;
@@ -217,13 +236,13 @@ if (configSnapshot !== null) {
     reported = true;
     let now: string | null = null;
     try {
-      now = readFileSync(repoConfig, "utf8");
+      now = readFileSync(sharedConfig!, "utf8");
     } catch {
       // config vanished mid-run: that is itself the corruption
     }
     if (now !== snapshot) {
       throw new Error(
-        `git identity guard: ${repoConfig} changed during the test run.\n` +
+        `git identity guard: ${sharedConfig} changed during the test run.\n` +
           "A test wrote git config into the real repo (cwd defaulted to process.cwd()). " +
           "Pass an explicit temp dir or `-C <tmp>`; never let a fixture write the operator's identity.",
       );
