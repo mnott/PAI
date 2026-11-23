@@ -20,6 +20,8 @@ export interface StallOptions {
   tickMs?: number;
   log: (line: string) => void;
   now?: () => number;
+  /** called after a stall is logged (opt-in profiler hook) */
+  onStall?: (stallMs: number, inflight: string[]) => void;
 }
 
 const RECENT = 20;
@@ -48,6 +50,7 @@ export function startStallMonitor(o: StallOptions): StallMonitor {
     o.log(
       `${new Date(t).toISOString()} event-loop stall ${stall} ms; in flight: ${paths.join(", ") || "-"}; slow sync handlers: ${slow.join(", ") || "-"}`
     );
+    o.onStall?.(stall, paths);
   }, tick);
   timer.unref();
   return {

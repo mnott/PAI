@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
+import { startStallProfiler, stallProfilerEnabled } from "../../router/stall-profiler.js";
 import { routerHandler, routerPort } from "../../router/router.js";
 import { defaultV1Guard, displayHost, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
 import { enableQueueThread, cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler, setEndpointHealth } from "../../router/cockpit.js";
@@ -224,7 +225,9 @@ const runCommand: CommandDef = {
       const cockpit = token ? withCockpitToken(token, serve) : serve;
       const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
       const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { hosts, ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp, health: endpointHealth });
-      const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
+      const logLine = (l: string) => process.stderr.write(l + "\n");
+      const profiler = stallProfilerEnabled() ? startStallProfiler({ log: logLine }) : undefined;
+      const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: logLine, onStall: profiler?.onStall });
       const handler = stalls.wrap(inner);
       // backstop: a stray exception is logged, it does not take the proxy down
       process.on("uncaughtException", (e) => process.stderr.write(`pai: router: uncaught exception: ${(e as Error)?.stack ?? String(e)}\n`));
