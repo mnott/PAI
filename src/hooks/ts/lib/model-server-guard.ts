@@ -1,8 +1,9 @@
 /**
  * model-server-guard.ts — sessions and workers never start local model
- * servers and never port-scan for them (incident 2026-10-19: a session curled
- * 127.0.0.1:8010/8011/8020, found nothing, and went looking for how to start
- * a server while the running one was never considered). PAI answers which
+ * servers (incident 2026-10-19: a session went looking for how to start
+ * a server while the running one was never considered). Only commands that
+ * start a server process match; curl/ps/lsof probes, quoted text and port
+ * numbers alone never do. PAI answers which
  * local model runs (lib/../workers/local-status.ts); the operator starts
  * servers. Pure: the hook entry passes the daemon's cached answer line.
  *
@@ -14,7 +15,6 @@
 
 import { basename } from "node:path";
 import { parseCommand } from "./worker-guard.js";
-import { dropHeredocBodies } from "./heredoc.js";
 
 const SERVER_BINARIES = new Set([
   "vllm-mlx", "vllm", "mlx_lm.server", "llama-server", "llama-cpp-server", "sglang", "text-generation-launcher",
@@ -55,7 +55,8 @@ function startsServer(words: string[], depth: number): boolean {
   if (bin === "strata" && (w[1] === "serve" || w[1] === "run")) return true;
   if (/^python[\d.]*$/.test(bin) && w[1] === "-m" && (SERVER_BINARIES.has(w[2] ?? "") || SERVER_MODULES.test(w[2] ?? ""))) return true;
   if (/^python[\d.]*$/.test(bin) && LAUNCHER_SCRIPT.test(w[1] ?? "")) return true;
-  if (/(?:^|\s)(?:--port[= ]|-p )(?:8010|8011|8020|8034|8035)\b/.test(w.join(" ")) && /serv|model|gguf|llama|mlx|vllm/i.test(w.join(" "))) return true;
+  if (/^python[\d.]*$/.test(bin) && /(?:^|\/)server\.py$/.test(w[1] ?? "") && w.includes("--engine")) return true;
+  if ((bin === "mtplx" || bin === "locals") && w[1] === "serve") return true;
   if (LAUNCHER_SCRIPT.test(w[0])) return true;
   if (SHELLS.has(bin)) {
     const c = w.indexOf("-c");
@@ -75,22 +76,10 @@ function startsServer(words: string[], depth: number): boolean {
   return false;
 }
 
-/** Two or more distinct loopback ports in 8000-8099 probed by one command, or a loop over a port variable. */
-function isPortScan(raw: string): boolean {
-  const command = dropHeredocBodies(raw);
-  if (!/\b(curl|wget|nc|ncat|nmap)\b/.test(command)) return false;
-  const ports = new Set<string>();
-  for (const m of command.matchAll(/(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0):(80\d\d)\b/g)) ports.add(m[1]);
-  if (ports.size >= 2) return true;
-  const viaVar = /(?:127\.0\.0\.1|localhost|\[::1\]):\$\{?\w+/.test(command);
-  const range = /\bseq\s+80\d\d\b|\{80\d\d\.\.80\d\d\}|\bfor\s+\w+\s+in\s+(?:[^;\n]*\b80\d\d\b[^;\n]*\b80\d\d\b)/.test(command);
-  return viaVar && range;
-}
-
 export function modelServerReason(command: string, env: Record<string, string | undefined>, answer: string): string | null {
   if (env.PAI_ALLOW_MODEL_SERVER === "1") return null;
   const starts = parseCommand(command).some((s) => !allowsServer(s.words) && startsServer(s.words, 0));
-  if (!starts && !isPortScan(command)) return null;
+  if (!starts) return null;
   return (
     "Local model servers are not started by sessions unless asked for: add PAI_ALLOW_MODEL_SERVER=1 in front of the command to start it on purpose. " +
     `Running now: ${answer}. Use \`pai worker run --local\`.`

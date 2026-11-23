@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
 import { decidePreGates, decideWorkerGate } from "./gates.js";
+import { modelServerReason } from "../hooks/ts/lib/model-server-guard.js";
 import { WORKER_CHILD_ROUTE_REASON, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 
 const base = { PAI_WORKER: "1", PAI_WORKER_CLASS: "orchestrate", TMPDIR: "/var/folders/x/T" } as NodeJS.ProcessEnv;
@@ -217,5 +218,20 @@ describe("sleep-poll gate: per-step rule", () => {
     expect(verdict("Bash", "sleep 65")).toBe("deny");
     expect(verdict("Bash", "sleep 61; curl x")).toBe("deny");
     expect(verdict("Bash", "sleep 40; sleep 40; curl x")).toBe("deny");
+  });
+});
+
+describe("model-server guard matches only commands that start a server", () => {
+  const r = (command: string, env: Record<string, string | undefined> = {}) => modelServerReason(command, env, "signal-2 8044");
+  it("allows probes and quoted text", () => {
+    expect(r('for p in 8044 8045; do curl -sf -m 3 127.0.0.1:$p/v1/models >/dev/null && echo "$p up" || echo "$p DOWN"; done; pai worker ps')).toBeNull();
+    expect(r(`printf -- '- Guard false positive for p in 8044 8045; do curl 127.0.0.1:$p; server.py --engine strata --port 8045' >> ~/.pai/Notes/TODO.md`)).toBeNull();
+    expect(r("lsof -nP -iTCP:8044 -sTCP:LISTEN")).toBeNull();
+  });
+  it("blocks real starts unless opted in", () => {
+    expect(r("cd x && exec python serve/server.py --engine strata --config y --port 8045")).toContain("Local model servers");
+    expect(r("mtplx serve --port 8042")).toContain("Local model servers");
+    expect(r("PAI_ALLOW_MODEL_SERVER=1 mtplx serve --port 8042")).toBeNull();
+    expect(r("mtplx serve --port 8042", { PAI_ALLOW_MODEL_SERVER: "1" })).toBeNull();
   });
 });
