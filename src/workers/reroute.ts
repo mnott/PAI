@@ -21,6 +21,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { join } from "node:path";
 import { queueDir } from "./capacity.js";
 import { escalationPolicy } from "./config.js";
+import { DEFAULT_ESCALATE } from "./escalation.js";
 import { activeMsOf, frozenSince, inLineMs, ownMsOf } from "./freeze.js";
 import { appendLedger } from "./ledger.js";
 import { withCallerPath } from "./caller-env.js";
@@ -102,10 +103,33 @@ function overdueReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, sched: 
   // GPU sharing) reads as busy, not stuck. The only wall-clock limit left is
   // the outer max-minutes backstop, which speed-scale.ts stretches instead.
   const since = (s.turns ?? 0) - (s.turnsAtProgress ?? 0);
-  if (since < p.stallCalls) return null;
+  if (since < p.stallCalls) return convergenceReason(s, nowMs, p, pause);
   const what = s.readOnly ? "no successful tool call" : s.deliverable === "findings" ? "no write or report output" : "no edit or commit";
   return `${what} for ${since} turns`;
 }
+
+/**
+ * Convergence rule (local runs, write jobs): a run that is armed (convergeStartMin active minutes, or convergeBudgetFraction
+ * of its max-minutes budget, whichever comes first) and made no commit and no green test/tsc run for convergeQuietMin
+ * active minutes keeps editing without converging: it moves to the cloud. Cloud runs and read-only/findings jobs are exempt.
+ */
+function convergenceReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, pause: { paused?: boolean; pausedAt?: number; pausedMs?: number }): string | null {
+  if (s.route?.local !== true || s.readOnly || s.deliverable === "findings") return null;
+  const startMs = stampMs(s.started);
+  if (startMs === null) return null;
+  const startMin = p.convergeStartMin ?? DEFAULT_ESCALATE.convergeStartMin;
+  const fraction = p.convergeBudgetFraction ?? DEFAULT_ESCALATE.convergeBudgetFraction;
+  const quietMin = p.convergeQuietMin ?? DEFAULT_ESCALATE.convergeQuietMin;
+  const armAt = s.maxMinutes && s.maxMinutes > 0 ? Math.min(startMin, s.maxMinutes * fraction) : startMin;
+  const ran = activeMsOf(s.id, startMs, nowMs, pause) / 60_000;
+  if (ran < armAt) return null;
+  const lastMs = Math.max(startMs, stampMs(s.convergedAt) ?? 0);
+  const quiet = activeMsOf(s.id, lastMs, nowMs, pause) / 60_000;
+  return quiet >= quietMin ? `${NO_CONVERGENCE} ${Math.floor(quiet)}m without commit or green check` : null;
+}
+
+/** The escalation reason's prefix for a run that edits without converging; the counters in the ledger key on it. */
+export const NO_CONVERGENCE = "no convergence:";
 
 /** A finished fall-through still blocks another reroute of its origin this long. */
 export const FALLTHROUGH_RECENT_MS = 5 * 60_000;
@@ -661,6 +685,8 @@ export async function escalateOverdue(
     }
     try {
       const r = await rerouteWorker(s.id, "cloud", { ...d, by: "escalation", reason });
+      // counted per model for the escalation measurements (#26): one ledger line per convergence escalation
+      if (reason.startsWith(NO_CONVERGENCE)) appendLedger(ledgerPath(d.logDir), "WORKER-ESCALATE-NOCONVERGE", { id: s.id, model: s.model || "?", provider: s.provider, reason });
       done.push({ id: s.id, label: s.label, provider: r.provider, reason, session: s.spawnerSession ?? s.session?.id ?? null });
     } catch (e) {
       const orphaned = (e as { orphaned?: { branch: string | null } }).orphaned;

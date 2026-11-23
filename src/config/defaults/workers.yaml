@@ -215,6 +215,14 @@ workers:
     scaleWithSpeed: true
     maxScale: 4
     stallFailedCalls: 6
+    # Convergence rule (local runs only): a run that used convergeBudgetFraction
+    # of its max-minutes budget or convergeStartMin active minutes (whichever
+    # comes first) and made no commit and no green test/tsc run for
+    # convergeQuietMin minutes moves once to the cloud ("no convergence: Xm
+    # without commit or green check"); its branch and salvaged edits go along.
+    convergeStartMin: 25
+    convergeBudgetFraction: 0.5
+    convergeQuietMin: 15
   # Worker Bash guard: the live-database write allowlist. A worker's SQL-client
   # writes (psql/mysql/sqlite3/… via shell, docker exec, kubectl exec or ssh) are
   # denied unless the statement declares itself read-only, the target is a scratch

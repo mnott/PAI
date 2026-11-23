@@ -5,6 +5,7 @@
  */
 
 import { join } from "node:path";
+import { isTestCommand } from "../hang-probe.js";
 import { isTestRun } from "../../hooks/ts/lib/loop-guard.js";
 import { type WorkerStatus } from "../status.js";
 import { OPERATOR_MARK } from "../report.js";
@@ -101,6 +102,11 @@ export function bashCommand(input: unknown): string {
 export function isProgressTool(name: string, input: unknown): boolean {
   if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit") return true;
   return name === "Bash" && /\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(bashCommand(input));
+}
+
+/** A Bash command whose success shows the work converges: a git commit, a test run, or a tsc check. */
+export function isConvergenceCommand(command: string): boolean {
+  return /\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(command) || isTestCommand(command) || /\b(?:tsc|vitest)\b/.test(command);
 }
 
 /**

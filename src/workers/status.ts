@@ -203,6 +203,8 @@ export interface WorkerStatus {
   /** Measured local slowdown (1..maxScale) applied to the max-minutes backstop, and whether macOS Low Power Mode was on (speed-scale.ts); ps and the cockpit show "low power: limits x2.1". */
   slowdown?: number;
   lowPower?: boolean;
+  /** nowStamp() of the last commit or green test/tsc run (convergence rule, reroute.ts); absent = none yet. */
+  convergedAt?: string;
   /** `turns` at the moment of that progress; escalation counts turns since (reroute.ts stallCalls), not minutes. */
   turnsAtProgress?: number;
   /** Cumulative ms this worker's requests waited in the router's local scheduler queue, as of progressAt (reroute.ts: that wait is not stall time). */
