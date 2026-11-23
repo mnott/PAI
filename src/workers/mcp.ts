@@ -19,11 +19,12 @@
  * naming it becomes that flag rather than an "unknown MCP server" rejection.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { WorkersConfigError, type WorkersConfig } from "./config.js";
 import { claudeJsonPath } from "../config/claude-json.js";
+import { writePrivateFile } from "./settings-file.js";
 
 /** ~/.claude.json — the user's MCP server definitions (top-level mcpServers). */
 
@@ -159,7 +160,8 @@ export function writeMcpConfig(
   logDir: string,
   id: string,
   names: string[],
-  claudeJson = claudeJsonPath()
+  claudeJson = claudeJsonPath(),
+  spawnEnv?: NodeJS.ProcessEnv
 ): string {
   const available = readMcpServers(claudeJson);
   const unknown = names.filter((n) => !(n in available));
@@ -173,8 +175,84 @@ export function writeMcpConfig(
   for (const n of names) servers[n] = available[n];
   const path = runMcpConfigPath(logDir, id);
   if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
-  writeFileSync(path, JSON.stringify({ mcpServers: servers }, null, 2) + "\n", "utf8");
+  writeScrubbedMcpConfig(path, servers, spawnEnv);
   return path;
+}
+
+const SECRET_NAME = /KEY|TOKEN|SECRET|PASSWORD|API|AUTH|COOKIE|CREDENTIAL/i;
+/** Never handed to a worker, whatever a config says. */
+const NEVER_PASS = new Set(["ANTHROPIC_API_KEY"]);
+
+/**
+ * Replace secret values in each server's `env` block by "${NAME}" (Claude
+ * Code expands ${VAR} in MCP config env from its own environment). A value is
+ * secret when its name looks like one or it equals a secret-named var of
+ * `parentEnv`. Returns the scrubbed servers and the values the worker's spawn
+ * env must carry for the references to resolve.
+ */
+export function scrubMcpServers(
+  servers: Record<string, unknown>,
+  parentEnv: NodeJS.ProcessEnv = process.env
+): { servers: Record<string, unknown>; secrets: Record<string, string> } {
+  const parentSecrets = new Set<string>();
+  for (const [k, v] of Object.entries(parentEnv)) if (v && v.length >= 8 && SECRET_NAME.test(k)) parentSecrets.add(v);
+  const secrets: Record<string, string> = {};
+  const out: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(servers)) {
+    const d = def as Record<string, unknown> | null;
+    const e = d && typeof d === "object" ? d.env : undefined;
+    if (!e || typeof e !== "object" || Array.isArray(e)) {
+      out[name] = def;
+      continue;
+    }
+    const env: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(e as Record<string, unknown>)) {
+      if (typeof v === "string" && !/^\$\{[^}]*\}$/.test(v) && (SECRET_NAME.test(k) || parentSecrets.has(v))) {
+        env[k] = `\${${k}}`;
+        if (!NEVER_PASS.has(k)) secrets[k] = v;
+      } else env[k] = v;
+    }
+    out[name] = { ...d, env };
+  }
+  return { servers: out, secrets };
+}
+
+/** Write an MCP config 0600 with secrets scrubbed; the values go into `spawnEnv` (unless already set there). */
+export function writeScrubbedMcpConfig(
+  path: string,
+  servers: Record<string, unknown>,
+  spawnEnv?: NodeJS.ProcessEnv,
+  parentEnv: NodeJS.ProcessEnv = process.env
+): void {
+  const { servers: clean, secrets } = scrubMcpServers(servers, parentEnv);
+  if (spawnEnv) for (const [k, v] of Object.entries(secrets)) if (!spawnEnv[k]) spawnEnv[k] = v;
+  writePrivateFile(path, JSON.stringify({ mcpServers: clean }, null, 2) + "\n");
+}
+
+/**
+ * gc: rewrite worker MCP configs in the log dir (`*.mcp.json`) that still
+ * hold secret values, with "${NAME}" references. Returns the files changed.
+ */
+export function gcMcpConfigs(logDir: string, dryRun = false, parentEnv: NodeJS.ProcessEnv = process.env): string[] {
+  const changed: string[] = [];
+  if (!existsSync(logDir)) return changed;
+  for (const name of readdirSync(logDir)) {
+    if (!name.endsWith(".mcp.json")) continue;
+    const path = join(logDir, name);
+    try {
+      const text = readFileSync(path, "utf8");
+      const parsed = JSON.parse(text) as { mcpServers?: Record<string, unknown> };
+      if (!parsed.mcpServers || typeof parsed.mcpServers !== "object") continue;
+      const { servers } = scrubMcpServers(parsed.mcpServers, parentEnv);
+      const next = JSON.stringify({ ...parsed, mcpServers: servers }, null, 2) + "\n";
+      if (next === text) continue;
+      if (!dryRun) writePrivateFile(path, next);
+      changed.push(path);
+    } catch {
+      /* unreadable or foreign file: leave it */
+    }
+  }
+  return changed;
 }
 
 /** `pai worker mcp list`: the servers and sets a run could name. */

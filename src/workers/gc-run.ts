@@ -6,6 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { basename } from "node:path";
 import { endProcesses, findWorktreeOrphans } from "./reap.js";
+import { gcMcpConfigs } from "./mcp.js";
 import { gcSettingsFiles } from "./settings-file.js";
 import { formatKnowledge, gcPoolWorktrees, gcWorktrees, isPoolHostCmd, keepMarker } from "./worktree.js";
 
@@ -64,6 +65,7 @@ export async function runWorkerGc(logDir: string, o: WorkerGcOptions, out: (s: s
   const res = gcWorktrees(logDir, o.allFinished ? 0 : hours, dryRun, Date.now(), true, undefined, o.foreign ? o.repo ?? process.cwd() : undefined);
   if (o.pool || o.allFinished) res.push(...gcPoolWorktrees(logDir, dryRun));
   for (const f of gcSettingsFiles(logDir, dryRun)) out(`${dryRun ? "would remove" : "removed"} settings file ${f}`);
+  for (const f of gcMcpConfigs(logDir, dryRun)) out(`${dryRun ? "would scrub" : "scrubbed"} MCP config ${f}`);
   const verb = dryRun ? "would archive" : "archived";
   for (const r of res) {
     out(
