@@ -5,7 +5,10 @@
  */
 
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import type http from "node:http";
 import { tokenFailureCounts, type LimitsCache, type ProviderLimits } from "./limits.js";
 import { createHash } from "node:crypto";
@@ -1355,11 +1358,99 @@ const cockpitQueueShared = singleFlight<CockpitQueue, { now: number; logDir: str
   (a) => cockpitQueue(a.logDir, a.workers, a.now),
   { ttlMs: queueTtlMs, key: (a) => `${workersConfigStamp()}:${a.logDir}` }
 );
+/**
+ * The queue snapshot off the request path. With the thread on (the router enables it), the walk runs
+ * in a long-lived worker_thread and a request is answered at once from the last snapshot; a snapshot
+ * older than the window starts one background refresh. Without it (tests, the CLI) the single flight
+ * computes in-process as before.
+ */
+let queueThread: { worker: Worker; pending: Map<number, { ok: (v: CockpitQueue) => void; fail: (e: Error) => void }>; seq: number } | null = null;
+let queueThreadOn = false;
+let queueSnap: { at: number; key: string; value: CockpitQueue } | null = null;
+let queueRefresh: Promise<void> | null = null;
+
+/** Turn the off-loop queue snapshot on (the router calls this at startup; a start failure falls back to in-process). */
+export function enableQueueThread(on = true): void {
+  queueThreadOn = on;
+  if (!on) {
+    void queueThread?.worker.terminate();
+    queueThread = null;
+    queueSnap = null;
+  }
+}
+
+function queueThreadEntry(): { file: string; tsx?: string } {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const rel of ["router/queue-thread.mjs", "../router/queue-thread.mjs", "queue-thread.mjs"]) {
+    if (existsSync(join(here, rel))) return { file: join(here, rel) };
+  }
+  return { file: join(here, "queue-thread.ts"), tsx: createRequire(import.meta.url).resolve("tsx/cjs") };
+}
+
+function ensureQueueThread(): NonNullable<typeof queueThread> {
+  if (queueThread) return queueThread;
+  const { file, tsx } = queueThreadEntry();
+  const worker = tsx ? new Worker(`require(${JSON.stringify(tsx)}); require(${JSON.stringify(file)});`, { eval: true }) : new Worker(file);
+  worker.unref();
+  const t = { worker, pending: new Map<number, { ok: (v: CockpitQueue) => void; fail: (e: Error) => void }>(), seq: 0 };
+  const drop = (e: Error): void => {
+    if (queueThread === t) queueThread = null;
+    for (const p of t.pending.values()) p.fail(e);
+    t.pending.clear();
+  };
+  worker.on("message", (m: { id: number; value?: CockpitQueue; error?: string }) => {
+    const p = t.pending.get(m.id);
+    if (!p) return;
+    t.pending.delete(m.id);
+    if (m.value) p.ok(m.value);
+    else p.fail(new Error(m.error ?? "queue snapshot failed"));
+  });
+  worker.on("error", drop);
+  worker.on("exit", () => drop(new Error("queue thread exited")));
+  queueThread = t;
+  return t;
+}
+
+function queueFromThread(logDir: string): Promise<CockpitQueue> {
+  return new Promise((ok, fail) => {
+    try {
+      const t = ensureQueueThread();
+      const id = ++t.seq;
+      t.pending.set(id, { ok, fail });
+      t.worker.postMessage({ id, logDir });
+    } catch (e) {
+      fail(e as Error);
+    }
+  });
+}
+
 /** The /cockpit/queue payload through the shared window; `queueLogDir` is the handler's seam (tests redirect it). */
 /** Exported for the bench and tests: the same shared window the /cockpit/queue route serves through. */
 export async function cockpitQueueAsync(queueLogDir: (workers: WorkersConfig) => string, now = Date.now()): Promise<SharedResult<CockpitQueue>> {
   const workers = readWorkersCached();
-  return cockpitQueueShared({ now, logDir: queueLogDir(workers), workers });
+  const logDir = queueLogDir(workers);
+  if (!queueThreadOn) return cockpitQueueShared({ now, logDir, workers });
+  const key = `${workersConfigStamp()}:${logDir}`;
+  const fresh = queueSnap && queueSnap.key === key && Date.now() - queueSnap.at < queueTtlMs();
+  if (!fresh && !queueRefresh) {
+    queueRefresh = queueFromThread(logDir)
+      .then((value) => {
+        queueSnap = { at: Date.now(), key, value };
+      })
+      .finally(() => {
+        queueRefresh = null;
+      });
+    queueRefresh.catch(() => undefined);
+  }
+  // a snapshot of the same dir, however old, answers at once; the first call (or a changed dir) waits for the thread
+  if (queueSnap && queueSnap.key === key) return { at: queueSnap.at, value: queueSnap.value };
+  try {
+    await queueRefresh;
+  } catch {
+    // thread unavailable: compute in-process rather than fail the panel
+    return cockpitQueueShared({ now, logDir, workers });
+  }
+  return { at: queueSnap!.at, value: queueSnap!.value };
 }
 
 /**

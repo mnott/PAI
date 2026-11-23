@@ -62,7 +62,7 @@ import { createUpstreamStreak } from "./preflight.js";
 import { acquireEngine, engineAgent, isResetError, RESET_BACKOFF_MS } from "./engine-limit.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
-import { FailoverState, failoverNotice, isOfflineError, isUsageExhaustion, localModelOf, probeCloud, type FailoverReason } from "./failover.js";
+import { CLOUD_RETRY_BUDGET_MS, FailoverState, LoopStallLog, cloudBackoffMs, failoverNotice, isOfflineError, isUsageExhaustion, localModelOf, probeCloud, type FailoverReason } from "./failover.js";
 import { resolveLocalProvider } from "../workers/local-provider.js";
 import { aibrokerMessenger } from "../workers/run-events.js";
 import { readWorkersCached } from "../workers/config.js";
@@ -365,6 +365,12 @@ export interface RouterOptions {
     /** cloud probe once the sticky window is over; default: a 1-token messages call */
     probe?: (headers: Record<string, string>, model: string) => Promise<boolean>;
     notify?: (info: { session: string; reason: FailoverReason; text: string }) => void;
+    /** event-loop stall log (a timeout during a stall of the router itself is not a cloud outage); default: a live monitor */
+    stalls?: { stalledSince(since: number): boolean };
+    /** wait before cloud retry n (0-based), ms; default 1 s doubling to 15 s */
+    backoffMs?: (attempt: number) => number;
+    /** how long one request keeps retrying the cloud before the client gets a retryable 529; default 120 s */
+    retryBudgetMs?: number;
     /** ledger line; default appendLedger ROUTER-FAILOVER */
     onFailover?: (info: { session: string; reason: FailoverReason; to: string }) => void;
   };
@@ -688,6 +694,7 @@ export function routerHandler(
   setInterval(() => tokens.sweep(), 30_000).unref();
   const gaps = new GapTracker();
   const failState = new FailoverState();
+  const stalls = options?.failover?.stalls ?? new LoopStallLog().start();
   const warned = new Set<string>();
   const instancesOf = options?.instances ?? stateFileInstances();
   const launched = launchedConfig();
@@ -744,6 +751,10 @@ export function routerHandler(
         } else res.end();
         log(`${new Date().toISOString()} ${model} ${prov} ${status} ${Date.now() - started}ms`);
       };
+      // one 'close' listener per request, however many parts want to know (a listener each tripped MaxListenersExceededWarning)
+      const closeCbs: Array<() => void> = [];
+      res.once("close", () => closeCbs.forEach((f) => f()));
+      const onClose = (cb: () => void): void => void closeCbs.push(cb);
       if (path === RUN_TOKEN_PATH) return runTokenControl(req, res, Buffer.concat(chunks).toString("utf8"), tokens, log);
       // a run's placeholder credential: it names the provider, the router supplies the real key
       const presented = requestToken(req.headers);
@@ -783,7 +794,7 @@ export function routerHandler(
           ures.on("end", () => log(`${new Date().toISOString()} GET ${path.split("?")[0]} anthropic ${ures.statusCode} ${Date.now() - started}ms`));
         });
         ureq.on("error", (e: NodeJS.ErrnoException) => fail(502, `upstream error: ${e.code ?? e.message} reaching ${claudeBase} (router.claudeUpstream in config.yaml)`, "GET models", ANTHROPIC_NATIVE));
-        res.on("close", () => ureq.destroy());
+        onClose(() => ureq.destroy());
         ureq.end();
         return;
       }
@@ -834,7 +845,7 @@ export function routerHandler(
             held.set(engine, Math.max(0, (held.get(engine) ?? 1) - 1));
           };
           releaseHeld = free;
-          res.on("close", free);
+          onClose(free);
         }
       }
       const isCount = path.includes("/count_tokens");
@@ -902,19 +913,39 @@ export function routerHandler(
         target.kind === "claude" && !runProvider && !isCount && wire!.id === "messages" && !req.headers["x-pai-failover"] && !!(presented || req.headers["x-api-key"]) && foCfg().enabled; // an unauthenticated request is the launch probe: it never fails over
       /** A network blip is retried after 30 s; a spent allowance keeps the configured window. */
       const stickyFor = (reason: FailoverReason): number => (reason === "offline" ? Math.min(foCfg().stickyMin, 0.5) : foCfg().stickyMin);
+      const retryBudget = options?.failover?.retryBudgetMs ?? CLOUD_RETRY_BUDGET_MS;
+      const backoff = options?.failover?.backoffMs ?? cloudBackoffMs;
+      /** keep probing the cloud with backoff; once it answers, send the request again, else a retryable 529 after the budget */
+      const retryCloudOrOverload = async (reasonKey: FailoverReason): Promise<void> => {
+        const t0 = Date.now();
+        for (let n = 0; Date.now() - t0 < retryBudget; n++) {
+          await new Promise((r) => setTimeout(r, Math.min(backoff(n), Math.max(0, retryBudget - (Date.now() - t0)))).unref());
+          if (res.destroyed) return;
+          const ph: Record<string, string> = { ...up.headers };
+          delete ph["content-length"];
+          if (await (options?.failover?.probe ?? ((h: Record<string, string>, m: string) => probeCloud(claudeBase, h, m)))(ph, target.model)) {
+            failState.release(foKey);
+            return forward(() => {});
+          }
+        }
+        if (res.destroyed) return;
+        if (!res.headersSent) {
+          res.writeHead(529, { "content-type": "application/json", "retry-after": "30" });
+          res.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: `cloud unavailable (${reasonKey}); retry` } }));
+        } else res.end();
+        log(`${new Date().toISOString()} ${target.model} cloud ${reasonKey}, still down after ${Math.round((Date.now() - t0) / 1000)}s: 529 overloaded_error, the client retries`);
+      };
       const failoverTo = (reason: FailoverReason | "sticky"): void => {
         void (async () => {
           const reasonKey: FailoverReason = reason === "sticky" ? failState.get(foKey)?.reason ?? "offline" : reason;
           const cap = options?.failover?.localContextTokens ?? readWorkersCached().localContextTokens ?? 65536;
           const tokens = estimateTokens(up.body);
           if (tokens > cap) {
-            return fail(
-              400,
-              `cloud unavailable (${reasonKey}) and this conversation (~${tokens} tokens) is larger than the local model window (${cap}); run /compact, then retry`,
-              target.model,
-              ANTHROPIC_NATIVE
-            );
+            // the local model cannot hold this conversation: keep trying the cloud, then answer with an overloaded error Claude Code retries by itself
+            log(`${new Date().toISOString()} ${target.model} cloud ${reasonKey}, session ${foKey} (~${tokens} tokens) does not fit the local window (${cap}): retrying the cloud, no failover`);
+            return void retryCloudOrOverload(reasonKey);
           }
+          let announce: () => void = () => {};
           let name: string;
           try {
             name = await (options?.failover?.localProvider ?? (async () => (await resolveLocalProvider(readWorkersSection().workers, workersLogDir(readWorkersSection().workers))).name))();
@@ -926,7 +957,8 @@ export function routerHandler(
           if (!lp || !lm) return fail(502, `cloud unavailable (${reasonKey}) and local provider ${name} declares no model`, target.model, ANTHROPIC_NATIVE);
           if (reason !== "sticky") {
             const fresh = failState.pin(foKey, reason, stickyFor(reason));
-            if (fresh) {
+            announce = (): void => {
+              if (!fresh) return;
               log(`${new Date().toISOString()} ${target.model} cloud ${reason}, session ${foKey} failing over to ${name}; the cloud is retried ${reason === "offline" ? "after 30s" : `after ${foCfg().stickyMin} min`}`);
               try {
                 (options?.failover?.onFailover ?? ((i) => appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-FAILOVER", i)))({ session: foKey, reason, to: name });
@@ -944,7 +976,7 @@ export function routerHandler(
               } catch {
                 /* notices are best effort */
               }
-            }
+            };
           }
           const body = Buffer.from(JSON.stringify({ ...(safeBody(Buffer.concat(chunks)) ?? {}), model: lm }));
           const headers: Record<string, string> = {};
@@ -958,6 +990,7 @@ export function routerHandler(
           headers["x-pai-failover"] = "1";
           if (foKey !== "anon") headers["x-pai-session"] = foKey;
           const lq = http.request({ host: "127.0.0.1", port: req.socket.localPort, path: req.url ?? path, method: "POST", headers }, (lres) => {
+            if ((lres.statusCode ?? 502) < 400) announce(); // the notice goes out only once the local model really answers
             const rh = { ...lres.headers };
             delete rh["transfer-encoding"];
             delete rh.connection;
@@ -972,7 +1005,7 @@ export function routerHandler(
             });
           });
           lq.on("error", (e) => fail(502, `local failover to ${name} failed: ${e.message}`, lm, name));
-          res.on("close", () => lq.destroy());
+          onClose(() => lq.destroy());
           lq.end(body);
         })();
       };
@@ -983,9 +1016,9 @@ export function routerHandler(
         if (res.destroyed) return release0();
         if (target.kind !== "provider" || isCount || !isLocal(up.url)) return forwardRaw(release0, preempt);
         let gone0: boolean = res.destroyed;
-        res.on("close", () => (gone0 = true));
+        onClose(() => (gone0 = true));
         void acquireEngine(up.url.origin).then((done) => {
-          res.on("close", done);
+          onClose(done);
           if (gone0) return done();
           forwardRaw((u, opts) => {
             done();
@@ -1009,7 +1042,7 @@ export function routerHandler(
           x.on("error", () => cb(502, {}, Buffer.alloc(0)));
         });
         q.on("error", () => cb(502, {}, Buffer.alloc(0)));
-        res.on("close", () => q.destroy());
+        onClose(() => q.destroy());
         q.end(b);
       };
       // A provider whose engine leaves tool calls as text: the router parses them (tool-args.ts). On the messages wire every
@@ -1285,11 +1318,19 @@ export function routerHandler(
       const localEngine = target.kind === "provider" && !isCount && isLocal(up.url) && up.url.protocol === "http:";
       let ureq!: http.ClientRequest;
       let resets = 0;
+      let attemptStart = Date.now();
+      const cloudT0 = Date.now();
+      let cloudTries = 0;
       const send = (): void => {
+      attemptStart = Date.now();
       ureq = mod.request(up.url, { method: "POST", headers: up.headers, ...(localEngine ? { agent: engineAgent(up.url.origin) } : {}) }, (ures0) => {
         touchHold();
         ures0.on("data", touchHold);
         if (resets) log(`${new Date().toISOString()} ${target.model} ${prov} upstream reset, retried ${resets}x, ok`);
+        if (foEligible && (ures0.statusCode ?? 500) < 500 && ures0.statusCode !== 429 && failState.get(foKey)) {
+          failState.release(foKey); // one cloud answer ends the failover
+          log(`${new Date().toISOString()} ${target.model} cloud answers again, session ${foKey} back on the cloud`);
+        }
         if (foEligible && (ures0.statusCode === 429 || ures0.statusCode === 402)) {
           const bits: Buffer[] = [];
           ures0.on("data", (c: Buffer) => bits.push(c));
@@ -1329,9 +1370,24 @@ export function routerHandler(
         }
         if (resets) log(`${new Date().toISOString()} ${target.model} ${prov} upstream reset, retried ${resets}x, failed ${e.code ?? e.message}`);
         if (foEligible && isOfflineError(e.code) && !streamed && !res.headersSent && !res.destroyed) {
-          release();
-          log(`${new Date().toISOString()} ${target.model} ${prov} cloud unreachable (${e.code}), failing over to the local model`);
-          return failoverTo("offline");
+          // one timeout is not an outage: our own stalled loop makes timers fire late, and a blip passes. Only an independent probe that also fails confirms it.
+          const stalled = stalls.stalledSince(attemptStart);
+          void (async () => {
+            const ph: Record<string, string> = { ...up.headers };
+            delete ph["content-length"];
+            const up2 = stalled || (await (options?.failover?.probe ?? ((h: Record<string, string>, m: string) => probeCloud(claudeBase, h, m)))(ph, target.model));
+            if (res.destroyed) return;
+            if (up2 && Date.now() - cloudT0 < retryBudget) {
+              log(`${new Date().toISOString()} ${target.model} ${prov} cloud ${e.code} ${stalled ? "during a router event-loop stall" : "but the probe answers"}: not offline, retrying the request`);
+              await new Promise((r) => setTimeout(r, Math.min(backoff(cloudTries++), 5000)).unref());
+              return res.destroyed ? undefined : send();
+            }
+            release();
+            if (up2) return void retryCloudOrOverload("offline");
+            log(`${new Date().toISOString()} ${target.model} ${prov} cloud unreachable (${e.code}), probe failed too: offline`);
+            failoverTo("offline");
+          })();
+          return;
         }
         release();
         record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());
@@ -1353,7 +1409,7 @@ export function routerHandler(
       });
       ureq.end(up.body);
       };
-      res.on("close", () => {
+      onClose(() => {
         release();
         ureq?.destroy();
       });
@@ -1372,7 +1428,7 @@ export function routerHandler(
           preempt.onYield();
         }, 100);
         watch.unref();
-        res.on("close", () => clearInterval(watch));
+        onClose(() => clearInterval(watch));
       }
       send();
       };
@@ -1386,16 +1442,9 @@ export function routerHandler(
         if (st) {
           void (async () => {
             if (Date.now() < st.until) return failoverTo("sticky");
-            const ph: Record<string, string> = { ...up.headers };
-            delete ph["content-length"];
-            const back = await (options?.failover?.probe ?? ((h: Record<string, string>, m: string) => probeCloud(claudeBase, h, m)))(ph, target.model);
-            if (back) {
-              failState.release(foKey);
-              log(`${new Date().toISOString()} ${target.model} cloud answers again, session ${foKey} back on the cloud`);
-              return forward(() => {});
-            }
-            failState.pin(foKey, st.reason, stickyFor(st.reason));
-            failoverTo("sticky");
+            // the window is over: the real request goes to the cloud again; its answer ends the failover, a confirmed outage pins anew
+            failState.release(foKey);
+            forward(() => {});
           })();
           return;
         }
@@ -1436,7 +1485,7 @@ export function routerHandler(
             }, pingMs());
             pings.unref();
           };
-          res.on("close", () => {
+          onClose(() => {
             gone = true;
           });
           scheduled = true;
@@ -1451,7 +1500,7 @@ export function routerHandler(
             // conversation affinity (prompt cache) only while that instance has a free slot
             const home = alts.length ? stickyEngine(prov, stickKey, alts, (k) => sched.free(k) > 0, (k) => sched.load(k)) : engine;
             sched
-              .acquire(home, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint, req.headers["x-pai-interactive"] === "1" || (req.headers["x-pai-failover"] === "1" && !workerHdr) ? { failover: req.headers["x-pai-failover"] === "1" } : undefined, alts)
+              .acquire(home, sess, worker, { onAbort: (cb) => onClose(cb) }, hint, req.headers["x-pai-interactive"] === "1" || (req.headers["x-pai-failover"] === "1" && !workerHdr) ? { failover: req.headers["x-pai-failover"] === "1" } : undefined, alts)
               .then(
                 (ticket) => {
                   stopPings();
@@ -1477,7 +1526,7 @@ export function routerHandler(
                     ticket.release();
                   };
                   if (gone || res.destroyed) return onGone();
-                  res.on("close", onGone);
+                  onClose(onGone);
                   const go = () =>
                     gone ? undefined : forward(
                       (u, opts) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined, opts),

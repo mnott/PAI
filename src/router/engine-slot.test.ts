@@ -331,22 +331,37 @@ describe("cloud -> local failover", () => {
     expect(t.ledger[0]?.reason).toBe("offline");
   });
 
-  it("failover does not stick: after a network blip the next request goes back to the cloud", async () => {
+  it("a network blip the cloud probe disagrees with is retried on the cloud, not failed over", async () => {
     let n = 0;
     const cloud: Cloud = (q, res) => {
       if (++n === 1) return void q.socket.destroy(); // the blip: connection reset before any byte
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ id: "c", type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "text", text: "from-cloud" }], usage: { input_tokens: 1, output_tokens: 1 } }));
     };
-    // stickyMin 0.0005 min = 30 ms backoff (an offline blip is retried after min(stickyMin, 30 s))
-    const t = await fo(cloud, { stickyMin: 0.0005, probe: async () => true });
+    const t = await fo(cloud, { probe: async () => true, backoffMs: () => 5 });
     const a = await t.post();
-    expect(a.text).toContain("from-local");
-    expect(t.ledger[0]?.reason).toBe("offline");
+    expect(a.text).toContain("from-cloud");
+    expect(t.seen.local).toBe(0);
+    expect(t.ledger).toEqual([]);
+    expect(t.notes).toEqual([]);
+  });
+
+  it("a timeout during an event-loop stall of the router does not mark the cloud offline", async () => {
+    // refused cloud + failing probe would be offline; the stall log says the timer fired late because of us
+    const t = await fo(null, { stalls: { stalledSince: () => true }, retryBudgetMs: 150, backoffMs: () => 10 });
+    const a = await t.post();
+    expect(a.status).toBe(529);
+    expect(t.seen.local).toBe(0);
+    expect(t.ledger).toEqual([]);
+    expect(t.notes).toEqual([]);
+  });
+
+  it("failover ends with the first cloud answer after the sticky window", async () => {
+    const t = await fo(limit, { stickyMin: 0.0005 });
+    expect((await t.post()).text).toContain("from-local");
     await new Promise((r) => setTimeout(r, 80));
-    const b = await t.post("again");
-    expect(b.text).toContain("from-cloud");
-    expect(t.seen.local).toBe(1);
+    await t.post("again");
+    expect(t.seen.cloud).toBe(2); // the real request went to the cloud again
   });
 
   it("a failover answer cut mid-answer ends with a retryable error, not a hang", async () => {
@@ -360,11 +375,26 @@ describe("cloud -> local failover", () => {
     expect(a.text).toContain("mid-answer");
   });
 
-  it("an input larger than the local window gets a /compact error", async () => {
-    const t = await fo(limit);
+  it("an input larger than the local window is never failed over: a retryable 529, never a 400 /compact", async () => {
+    const t = await fo(limit, { retryBudgetMs: 150, backoffMs: () => 10 });
     const a = await t.post("x".repeat(40_000));
-    expect(a.status).toBe(400);
-    expect(a.text).toContain("/compact");
+    expect(a.status).toBe(529);
+    expect(a.text).toContain("overloaded_error");
+    expect(a.text).not.toContain("/compact");
+    expect(t.seen.local).toBe(0);
+    expect(t.notes).toEqual([]);
+  });
+
+  it("an input larger than the local window goes back to the cloud once it answers", async () => {
+    let n = 0;
+    const cloud: Cloud = (_q, res) => {
+      if (++n === 1) return limit(_q, res);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "c", type: "message", role: "assistant", model: "m", content: [{ type: "text", text: "from-cloud" }], usage: { input_tokens: 1, output_tokens: 1 } }));
+    };
+    const t = await fo(cloud, { probe: async () => true, backoffMs: () => 10 });
+    const a = await t.post("x".repeat(40_000));
+    expect(a.text).toContain("from-cloud");
     expect(t.seen.local).toBe(0);
   });
 
@@ -502,4 +532,38 @@ describe("multi-instance engines: slots per instance, requests run on whichever 
     a.release();
     await until(() => second);
   });
+});
+
+describe("/cockpit/queue off the event loop", () => {
+  it("a large log dir is walked in the thread: the loop never stalls, later requests answer from the snapshot", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { cockpitQueueAsync, enableQueueThread } = await import("./cockpit.js");
+    const dir = mkdtempSync(join(tmpdir(), "queue-thread-"));
+    for (let i = 0; i < 3000; i++) {
+      const id = `20260101-0000${String(i).padStart(5, "0")}-${i}`;
+      writeFileSync(join(dir, `${id}.status`), JSON.stringify({ id, state: "done", provider: "anthropic", model: "m", started: "2026-01-01 00:00:00", label: "x", cwd: "/tmp" }));
+    }
+    enableQueueThread();
+    let maxLag = 0;
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const n = Date.now();
+      maxLag = Math.max(maxLag, n - last - 10);
+      last = n;
+    }, 10);
+    try {
+      const first = await cockpitQueueAsync(() => dir);
+      expect(first.value.providers).toBeDefined();
+      const t0 = Date.now();
+      await cockpitQueueAsync(() => dir);
+      expect(Date.now() - t0).toBeLessThan(50);
+      expect(maxLag).toBeLessThan(200);
+    } finally {
+      clearInterval(timer);
+      enableQueueThread(false);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
