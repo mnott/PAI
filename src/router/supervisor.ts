@@ -194,3 +194,16 @@ export function createRouterWatchdog(d: WatchdogDeps): () => Promise<"ok" | "res
     return "restarted";
   };
 }
+
+/** The serving router's live count of interactive (non-worker) requests in flight, rewritten every 2 s; read by the merge gate before it rebuilds. */
+export const routerInflightFile = (): string => paiHomePath("router.inflight");
+
+/** Interactive requests the router had in flight at its last write; 0 when the file is missing or older than 10 s. */
+export function readInteractiveInflight(now: number = Date.now()): number {
+  try {
+    const j = JSON.parse(readFileSync(routerInflightFile(), "utf8")) as { interactive?: number; ts?: number };
+    return j.ts && now - j.ts < 10_000 ? Number(j.interactive) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}

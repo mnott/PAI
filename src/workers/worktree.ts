@@ -1869,6 +1869,21 @@ function defaultBuild(cwd: string): BuildResult {
   return { ok: r.status === 0 && !r.error, ms: Date.now() - t0, tail };
 }
 
+/** Waits (up to maxMs, default 5 min) while the router has interactive (non-worker) requests in flight; true when none remain. */
+export async function waitForInteractiveIdle(deps: { read?: () => number; sleep?: (ms: number) => Promise<void>; maxMs?: number; pollMs?: number } = {}): Promise<boolean> {
+  const { readInteractiveInflight } = await import("../router/supervisor.js");
+  const read = deps.read ?? (() => readInteractiveInflight());
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const pollMs = deps.pollMs ?? 2000;
+  let waited = 0;
+  while (read() > 0) {
+    if (waited >= (deps.maxMs ?? 300_000)) return false;
+    await sleep(pollMs);
+    waited += pollMs;
+  }
+  return true;
+}
+
 /** Package root of the running CLI (dist/cli/index.mjs two levels up), symlinks resolved; null when unknown. */
 function runningCliRoot(): string | null {
   try {
@@ -1916,6 +1931,8 @@ async function rebuildDist(
   }
   // snapshot the daemon BEFORE the build replaces dist: its watcher may restart it while smoke runs
   const verifyRestart: RestartVerifier = opts.restartVerify ?? startDaemonRestartWatch();
+  // the build restarts the daemon and router: let interactive turns in flight finish first (bounded)
+  if (opts.build === undefined) await waitForInteractiveIdle();
   let res: BuildResult;
   try {
     res = (opts.build ?? defaultBuild)(target);

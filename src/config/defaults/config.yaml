@@ -277,10 +277,12 @@ router:
   # Milliseconds a stopping router waits for in-flight requests before force-closing.
   drainMs: 120000
   # Zero-downtime handover: the new router takes every new connection at once; the old
-  # one finishes its in-flight requests (long local-engine streams) for at most this
-  # many seconds, then ends them with a retryable error and exits (never lingers).
+  # one serves its in-flight requests (long cloud and local-engine streams) until they
+  # finish and exits with the last one. Only a request idle (no byte either way) for
+  # idleSecs is ended with a retryable error; drainMaxSecs is the absolute ceiling.
   handover:
-    drainMaxSecs: 120
+    idleSecs: 300
+    drainMaxSecs: 21600
   # Idle-engine watchdog: a local request in flight this many seconds while the GPU reads idle
   # is released (ENGINE-SLOT-RELEASED reason=engine-idle) so its client retries. 0 = off.
   engineIdleSecs: 90

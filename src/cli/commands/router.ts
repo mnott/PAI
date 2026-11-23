@@ -26,7 +26,7 @@ import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatS
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
 import { trackInflight } from "../../router/inflight.js";
 import { realDuplicateDeps, stopDuplicateRouters } from "../../router/duplicates.js";
-import { routerSwapArgs, startHandover, routerHandoverFile, routerHandoverStatusFile, readHandoverStatus, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
+import { routerSwapArgs, startHandover, routerHandoverFile, routerHandoverStatusFile, readHandoverStatus, routerLogFile, routerPidFile, routerRunningPid, routerInflightFile, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { engineControlReader } from "../../workers/engine-control.js";
 import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
@@ -232,6 +232,28 @@ const runCommand: CommandDef = {
         let draining = false;
         const inflight = trackInflight();
         const tracked = inflight.wrap(handler);
+        if (managed) {
+          const publish = () => {
+            if (draining) return;
+            try {
+              writeFileSync(routerInflightFile(), JSON.stringify({ pid: process.pid, interactive: inflight.interactive(), total: inflight.count(), ts: Date.now() }));
+            } catch {
+              /* best effort */
+            }
+          };
+          setInterval(publish, 2000).unref();
+        }
+        if (managed) {
+          const publish = () => {
+            if (draining) return;
+            try {
+              writeFileSync(routerInflightFile(), JSON.stringify({ pid: process.pid, interactive: inflight.interactive(), total: inflight.count(), ts: Date.now() }));
+            } catch {
+              /* best effort */
+            }
+          };
+          setInterval(publish, 2000).unref();
+        }
         const serving: typeof handler = (req, res) => {
           if (draining) res.setHeader("Connection", "close");
           return tracked(req, res);
@@ -263,7 +285,7 @@ const runCommand: CommandDef = {
           process.send?.({ ready: true });
           // leftover older routers for this port (stuck in-flight requests): stop them once past the drain window, now and again right after it
           if (managed) {
-            const graceSec = (loadConfig().router.handover?.drainMaxSecs ?? 120) + 10;
+            const graceSec = (loadConfig().router.handover?.drainMaxSecs ?? 21600) + 10;
             const sweep = () => void stopDuplicateRouters(port, process.pid, graceSec, realDuplicateDeps(ledgerPath(workersLogDir(readWorkersSection().workers))));
             sweep();
             setTimeout(sweep, (graceSec + 5) * 1000).unref();
@@ -293,14 +315,20 @@ const runCommand: CommandDef = {
           }
         }
         }
-        // a handover keeps the old router alive for its in-flight streams: bounded by router.handover.drainMaxSecs, then they end with a retryable error
+        // a handover keeps the old router alive until its in-flight streams finish: only a request idle for router.handover.idleSecs is cut (retryable error); drainMaxSecs is the absolute ceiling
         const bye = (handedOver = false) => {
           draining = true;
           cancelTail?.();
-          const maxMs = handedOver ? (loadConfig().router.handover?.drainMaxSecs ?? 120) * 1000 : loadConfig().router.drainMs;
+          const h = loadConfig().router.handover;
+          const maxMs = handedOver ? (h?.drainMaxSecs ?? 21600) * 1000 : loadConfig().router.drainMs;
+          const idleMs = (h?.idleSecs ?? 300) * 1000;
           if (handedOver) {
             writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "draining", inflight: inflight.count() }));
-            process.stderr.write(`pai: router: handed over, finishing ${inflight.count()} in-flight request(s) (at most ${maxMs / 1000}s)\n`);
+            process.stderr.write(`pai: router: handed over, finishing ${inflight.count()} in-flight request(s) until they end (cut only when idle ${idleMs / 1000}s)\n`);
+            setInterval(() => {
+              const n = inflight.endIdle(idleMs, "router restarted, retry the request");
+              if (n) process.stderr.write(`pai: router: ended ${n} idle request(s) with a retryable error\n`);
+            }, 5000).unref();
           }
           // backstop: whatever keeps the drain from finishing (a wedged socket), the old router still exits shortly after its limit
           setTimeout(() => process.exit(0), maxMs + 10_000).unref();
