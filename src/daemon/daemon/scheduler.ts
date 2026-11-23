@@ -1165,7 +1165,7 @@ export function startRouterSupervisor(): void {
   const guard = () => void watchdog().catch((e) => process.stderr.write(`[pai-daemon] Router watchdog error: ${e instanceof Error ? e.message : String(e)}\n`));
   // at most one router per port: keep the serving one, stop leftovers by exact pid (ledger ROUTER-DUPLICATE-STOPPED)
   const dedupe = () => {
-    const graceSec = (daemonConfig.router.handover?.drainMaxSecs ?? 120) + 10;
+    const graceSec = (daemonConfig.router.handover?.drainMaxSecs ?? 21600) + 10;
     const stopped = stopDuplicateRouters(daemonConfig.router.port, routerRunningPid() ?? undefined, graceSec, realDuplicateDeps(ledgerPath(workersLogDir(readWorkersSection().workers))));
     if (stopped.length) process.stderr.write(`[pai-daemon] Router supervisor: stopped duplicate router(s) ${stopped.join(", ")}\n`);
   };

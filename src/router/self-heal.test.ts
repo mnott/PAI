@@ -4,6 +4,7 @@ import { drainServers } from "./drain.js";
 import { trackInflight } from "./inflight.js";
 import { duplicatesToStop, parseRouterProcs, stopDuplicateRouters } from "./duplicates.js";
 import { engineIdleFrom } from "./engine-idle.js";
+import { waitForInteractiveIdle } from "../workers/worktree.js";
 import { RequestScheduler, DEFAULT_SCHED } from "./scheduler.js";
 
 describe("bounded drain", () => {
@@ -102,5 +103,43 @@ describe("engine-idle watchdog", () => {
     idle.v = true;
     x.advance(50_000);
     expect(x.s.reapEngineIdle()).toBe(0);
+  });
+});
+
+describe("handover keeps streams alive", () => {
+  it("a slow stream spanning the handover finishes; an idle one is cut; the gate waits bounded", async () => {
+    let clock = 0;
+    const inflight = trackInflight(() => clock);
+    const server = http.createServer(inflight.wrap((req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (req.url === "/stuck") { res.write("data: 0\n\n"); return; }
+      let i = 0;
+      const t = setInterval(() => { res.write(`data: ${i++}\n\n`); if (i === 6) { clearInterval(t); res.end(); } }, 60);
+    }));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    const get = (path: string) => new Promise<string>((resolve) => {
+      let body = "";
+      http.get({ port, host: "127.0.0.1", path, agent: false }, (res) => { res.on("data", (c) => (body += c)); res.on("end", () => resolve(body)); res.on("close", () => resolve(body)); });
+    });
+    const slow = get("/slow");
+    const stuck = get("/stuck");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(inflight.interactive()).toBe(2);
+    const drained = drainServers([server], { timeoutMs: 60_000, idleGraceMs: 100 }); // handover: listener closed, no cap hit
+    clock = 4 * 60_000;
+    expect(inflight.endIdle(5 * 60_000, "restarted")).toBe(0); // under the idle limit: nothing cut
+    const a = await slow; // keeps writing across the handover, finishes untouched
+    expect(a).toContain("data: 5");
+    clock = 6 * 60_000;
+    expect(inflight.endIdle(5 * 60_000, "restarted")).toBe(1); // only the stream silent since minute 0
+    expect(await stuck).toContain("restarted");
+    await drained;
+    expect(inflight.count()).toBe(0);
+
+    let n = 3;
+    let slept = 0;
+    expect(await waitForInteractiveIdle({ read: () => n, sleep: async () => { if (++slept === 2) n = 0; }, pollMs: 1 })).toBe(true);
+    expect(await waitForInteractiveIdle({ read: () => 1, sleep: async () => {}, pollMs: 1000, maxMs: 5000 })).toBe(false);
   });
 });
