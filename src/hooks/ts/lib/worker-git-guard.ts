@@ -17,7 +17,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { capContent } from "./rules/cap.js";
 
@@ -87,6 +88,22 @@ function stashRewritesTree(command: string): boolean {
 }
 
 /** Absolute-path prefix check; `root` with or without a trailing separator. */
+/** realpath of the deepest existing ancestor plus the rest, so symlinked prefixes compare equal. */
+function realLoose(p: string): string {
+  if (p === "/\0unresolved") return p;
+  let head = p;
+  const tail: string[] = [];
+  while (!existsSync(head) && resolve(head, "..") !== head) {
+    tail.unshift(head.slice(resolve(head, "..").length).replace(/^\//, ""));
+    head = resolve(head, "..");
+  }
+  try {
+    return join(realpathSync(head), ...tail);
+  } catch {
+    return p;
+  }
+}
+
 function isInsideWorktree(cwd: string, root: string): boolean {
   const normalizedRoot = root.endsWith("/") ? root.slice(0, -1) : root;
   return cwd === normalizedRoot || cwd.startsWith(`${normalizedRoot}/`);
@@ -172,9 +189,10 @@ function tokenize(segment: string): string[] {
 function resolveDir(base: string, p: string, vars: Record<string, string> = {}): string {
   const sub = (s: string) => s.replace(/\$\{(\w+)\}|\$(\w+)/g, (m, a: string | undefined, b: string | undefined) => {
     const name = a ?? b ?? "";
-    return vars[name] ?? (name === "TMPDIR" ? process.env.TMPDIR : undefined) ?? m;
+    return vars[name] ?? (name === "TMPDIR" ? process.env.TMPDIR : undefined) ?? (name === "HOME" ? homedir() : undefined) ?? m;
   });
-  const expanded = sub(sub(p));
+  const home = /^~(?=\/|$)/.test(p) ? homedir() + p.slice(1) : p;
+  const expanded = sub(sub(home));
   return /^~|\$|`/.test(expanded) ? UNKNOWN_DIR : resolve(base, expanded);
 }
 
@@ -281,7 +299,11 @@ function freshCloneAllowed(rest: string[], here: string, vars: Record<string, st
 function worktreeEscape(command: string, cwd: string, worktreesRoot: string): boolean {
   const id = cwd.slice(worktreesRoot.replace(/\/$/, "").length + 1).split("/")[0];
   const own = join(worktreesRoot, id);
-  const allowed = (dir: string) => isInsideWorktree(dir, own) || isOwnScratch(dir, id);
+  const realOwn = realLoose(own);
+  const allowed = (dir: string) => {
+    const real = realLoose(dir);
+    return isInsideWorktree(dir, own) || isInsideWorktree(real, realOwn) || isOwnScratch(dir, id) || isOwnScratch(real, id);
+  };
   let here = cwd;
   const env: Record<string, string> = {};
   const vars: Record<string, string> = {};
