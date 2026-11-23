@@ -185,6 +185,23 @@ final class CoreTests: XCTestCase {
         let s = (0..<20).map { SystemResponse.Sample(t: Double($0) * 60_000, cpu: 1) }
         XCTAssertEqual(tailSeries(s).count, 7)
     }
+
+    // The popover window must follow the content's ideal height (sections
+    // appear/disappear: queue rows, battery chart on battery only), capped at
+    // the screen's visible height with scrolling beyond it.
+    func testPopoverHeightFollowsContent() {
+        // few jobs, no battery: short content; many jobs: taller content
+        XCTAssertEqual(popoverHeight(ideal: 300, visibleHeight: 900), 300)
+        XCTAssertEqual(popoverHeight(ideal: 640, visibleHeight: 900), 640)
+        // battery chart appears on battery only: content grows, window follows
+        XCTAssertLessThan(popoverHeight(ideal: 300, visibleHeight: 900), popoverHeight(ideal: 380, visibleHeight: 900))
+        // taller than the screen: capped, and the content scrolls
+        XCTAssertEqual(popoverHeight(ideal: 1200, visibleHeight: 900), 900)
+        XCTAssertTrue(popoverNeedsScroll(ideal: 1200, visibleHeight: 900))
+        XCTAssertFalse(popoverNeedsScroll(ideal: 640, visibleHeight: 900))
+        // never below the floor
+        XCTAssertEqual(popoverHeight(ideal: 40, visibleHeight: 900), 120)
+    }
 }
 
 @MainActor

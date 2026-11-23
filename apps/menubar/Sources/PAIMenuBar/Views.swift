@@ -517,6 +517,18 @@ struct MachineBar: View {
     }
 }
 
+/// Reports the view's measured height; used to keep the popover window matched
+/// to the content's ideal height.
+struct HeightReader: View {
+    var onChange: (CGFloat) -> Void
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear.onAppear { onChange(geo.size.height) }
+                .onChange(of: geo.size.height) { onChange($0) }
+        }
+    }
+}
+
 // MARK: popover
 
 struct PopoverContent: View {
@@ -568,6 +580,7 @@ struct PopoverContent: View {
         .frame(width: 420)
         .onAppear { visible = true; Task { await store.refreshOnOpen(baseURL: base) } }
         .onDisappear { visible = false }
+        .background(HeightReader { store.contentIdealHeight = $0 })
     }
 
     func footer(base: URL) -> some View {
