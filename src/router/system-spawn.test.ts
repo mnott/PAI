@@ -45,7 +45,7 @@ describe("cockpit page script", () => {
     ctx.__l = { provider: "anthropic" };
     // pace present: exactly one red radial tick on the ring (r=44, stroke 10 → r±5), threshold only in its tooltip
     const under = vm.runInContext(`gauge(__l,{name:"7d",percent:21,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
-    expect(under).toContain("pace 34% · cloud first below 27%");
+    expect(under).toContain("pace 34.3% · cloud first below 27.4%");
     expect(under.match(/<line /g)).toHaveLength(1); // exactly one marker, the threshold needle is gone
     expect(under).not.toContain("cloud first below this");
     expect(under).not.toMatch(/opacity="\.3"/);
@@ -53,8 +53,15 @@ describe("cockpit page script", () => {
     expect(tick).not.toBeNull();
     const [x1, y1, x2, y2] = tick.slice(1).map(Number);
     const d1 = Math.hypot(x1 - 60, y1 - 56), d2 = Math.hypot(x2 - 60, y2 - 56);
-    expect(Math.min(d1, d2)).toBeGreaterThanOrEqual(39); // never reaches into the centre
-    expect(Math.max(d1, d2)).toBeLessThanOrEqual(49); // stays within the ring's stroke width
+    // both endpoints sit at the pace angle on the same side of the centre (a sign slip drew the tick through the number)
+    const ang = Math.PI * 34.3 / 100;
+    for (const [x, y] of [[x1, y1], [x2, y2]]) {
+      expect(Math.atan2(56 - y, 60 - x)).toBeCloseTo(ang, 1);
+      expect(Math.hypot(x - 60, y - 56)).toBeGreaterThanOrEqual(38.9);
+      expect(Math.hypot(x - 60, y - 56)).toBeLessThanOrEqual(49.1);
+    }
+    expect(Math.min(d1, d2)).toBeGreaterThanOrEqual(38.9); // never reaches into the centre
+    expect(Math.max(d1, d2)).toBeLessThanOrEqual(49.1); // stays within the ring's stroke width
     expect(under.match(/stroke="var\(--ok\)"/g)).toHaveLength(1); // green below the threshold
     const mid = vm.runInContext(`gauge(__l,{name:"7d",percent:30,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
     expect(mid).toContain("stroke=\"var(--warn)\""); // amber between threshold and pace
@@ -89,6 +96,20 @@ describe("cockpit page script", () => {
     expect(html).toContain('class="wq-eye"');
     expect(html).toContain("a session waits for this job: wait: right pane fix (local)");
     expect(html).toContain("aria-label=");
+  });
+  it("queue header lists every local instance by its own number; the row menu names the reroute target", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
+    (ctx as Record<string, unknown>).__q = { providers: [{ provider: "signal-2", instances: [{ engine: "signal-2", busy: 1, cap: 2 }, { engine: "signal-2#2", busy: 1, cap: 2 }] }] };
+    expect(vm.runInContext("wkInst(__q)", ctx)).toBe(" · signal-2 #1 1/2 · #2 1/2");
+    const row = { slot: 1, kind: "job", id: "w-9", state: "running", stateText: "", priority: "normal", session: "mdf", model: "", local: true, task: "t", seconds: 5, activity: "", now: "", detail: "", actions: ["to-cloud"] };
+    (ctx as Record<string, unknown>).__rows = [row];
+    vm.runInContext("WQ={table:__rows};WK_MENU={key:'row:w-9',x:0,y:0}", ctx);
+    const h = vm.runInContext("wkMenuHtml()", ctx) as string;
+    expect(h).toContain("Run on cloud");
+    expect(h).toContain("now on local");
   });
   it("the row … menu carries copy id; a pane run is never drawn as a queue row", async () => {
     const vm = await import("node:vm");
