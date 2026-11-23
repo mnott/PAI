@@ -30,6 +30,8 @@ export interface CleanOptions {
   minBytes?: number;
   /** Worker files and supervision markers wait this long (default 14 days). */
   archiveAfterDays?: number;
+  /** Scan only these categories (default all). */
+  only?: CleanCategory[];
   now?: number;
 }
 
@@ -63,7 +65,7 @@ export interface CleanScan {
 const HOUR = 3_600_000;
 const DAY_MS = 24 * HOUR;
 
-export const WORKER_FILE_RE = /^(.+?)\.(jsonl|status|prompt|sock|settings\.json|inbox\.jsonl|mcp\.json|kill|reroute\.prompt|loop-stop)$/;
+export const WORKER_FILE_RE = /^(.+?)\.(jsonl|status|prompt|sock|settings\.json|inbox\.jsonl|mcp\.json|kill|reroute\.prompt|loop-stop|tldr|topic|out|merge-gate-[^/]*\.log)$/;
 const WORKER_SUBDIRS = ["waits", "loop-guard"];
 
 const lstatOrNull = (p: string) => {
@@ -202,6 +204,7 @@ export function scanClean(logDir: string, o: CleanOptions = {}): CleanScan {
   if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad older-than "${hours}"`);
   const minBytes = o.minBytes ?? 0;
   const longMs = Math.max(hours * HOUR, (o.archiveAfterDays ?? 14) * DAY_MS);
+  const want = (c: CleanCategory): boolean => !o.only || o.only.includes(c);
   const items: CleanItem[] = [];
   const refused: CleanRefusal[] = [];
   const statuses = loadStatuses(logDir);
@@ -216,7 +219,7 @@ export function scanClean(logDir: string, o: CleanOptions = {}): CleanScan {
   // 1. finished worktrees: the existing gc decides, clean adds the guards around it
   const root = worktreesDir(logDir);
   const rootReal = realOr(root);
-  for (const e of gcWorktrees(logDir, hours, true, now)) {
+  for (const e of want("worktree") ? gcWorktrees(logDir, hours, true, now) : []) {
     if (e.branch) continue;
     const st = byId.get(e.id);
     const tree = st ? ownedTree(st) : null;
@@ -262,7 +265,7 @@ export function scanClean(logDir: string, o: CleanOptions = {}): CleanScan {
 
   // 2. top-level files of workers finished > 14 days: moved into archive/YYYY-MM
   const files = new Map<string, string[]>();
-  if (existsSync(logDir)) {
+  if (want("worker-files") && existsSync(logDir)) {
     for (const name of readdirSync(logDir)) {
       const m = WORKER_FILE_RE.exec(name);
       if (!m) continue;
@@ -322,7 +325,7 @@ export function scanClean(logDir: string, o: CleanOptions = {}): CleanScan {
 
   // 3. supervision markers of sessions no live worker names, quiet > 14 days
   const sup = supervisionDirPath(logDir);
-  if (existsSync(sup)) {
+  if (want("supervision") && existsSync(sup)) {
     for (const name of readdirSync(sup)) {
       const m = /^(.+)\.(events|pushed)$/.exec(name);
       if (!m) continue;
@@ -343,7 +346,7 @@ export function scanClean(logDir: string, o: CleanOptions = {}): CleanScan {
   }
 
   // 4. build dirs outside the tree a finished worker recorded
-  for (const [id, dirs] of buildDirsFromLedger(logDir)) {
+  for (const [id, dirs] of want("build-dir") ? buildDirsFromLedger(logDir) : []) {
     const st = byId.get(id);
     for (const dir of dirs) {
       if (!lstatOrNull(dir)) continue;

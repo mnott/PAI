@@ -4,7 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyClean, scanClean } from "./clean.js";
-import { nowStamp } from "./status.js";
+import { loadStatus, loadStatuses, nowStamp } from "./status.js";
+import { archiveWorkerFiles } from "./gc-run.js";
+import { eventsPath } from "./paths.js";
+import { latestMergeGateLog } from "./gate-log.js";
 import { recordGitIdentity, restoreGitIdentity } from "./git-identity.js";
 
 // Real git repos / spawned process trees: sized for a loaded machine (load 50 seen), not the 5 s default.
@@ -139,6 +142,43 @@ describe("pai clean", () => {
     expect(scan.refused.find((r) => r.category === "build-dir")?.reason).toMatch(/uncommitted/);
     applyClean(logDir, scan, { now: NOW });
     expect(existsSync(join(dd, "dirty.txt"))).toBe(true);
+  });
+});
+
+describe("worker gc archive", () => {
+  it("moves old finished workers with every sibling; live, young and pending stay; lookups fall back to the archive", () => {
+    const { logDir, repo, tree } = fixture();
+    const sibs = [".jsonl", ".prompt", ".tldr", ".topic", ".out", ".merge-gate-2026-10-01T00-00-00-000Z.log"];
+    const mk = (id: string, extra: Record<string, unknown>, days: number): void => {
+      status(logDir, id, extra, days);
+      for (const sfx of sibs) {
+        writeFileSync(join(logDir, `${id}${sfx}`), "x\n");
+        age(join(logDir, `${id}${sfx}`), days);
+      }
+    };
+    mk("w-old", {}, 30);
+    mk("w-young", {}, 2);
+    mk("w-live", { state: "running", pid: process.pid }, 30);
+    const dir = tree("w-pending");
+    mk("w-pending", { cwd: repo, worktreeDir: dir, branch: "worker/w-pending" }, 30);
+    const month = (t: number): string => `${new Date(t).getFullYear()}-${String(new Date(t).getMonth() + 1).padStart(2, "0")}`;
+    const out: string[] = [];
+    expect(archiveWorkerFiles(logDir, 14, true, (l) => out.push(l), NOW)).toBe(1);
+    expect(existsSync(join(logDir, "w-old.status"))).toBe(true); // dry run moves nothing
+    expect(archiveWorkerFiles(logDir, 14, false, (l) => out.push(l), NOW)).toBe(1);
+    const arch = join(logDir, "archive", month(NOW - 30 * DAY));
+    for (const sfx of [".status", ...sibs]) {
+      expect(existsSync(join(arch, `w-old${sfx}`))).toBe(true);
+      expect(existsSync(join(logDir, `w-old${sfx}`))).toBe(false);
+    }
+    for (const id of ["w-young", "w-live", "w-pending"]) expect(existsSync(join(logDir, `${id}.status`))).toBe(true);
+    expect(out.join("\n")).toContain("moved w-old");
+    // lookups by id fall back to the archive; scans read the top folder only
+    expect(loadStatus(logDir, "w-old")?.id).toBe("w-old");
+    expect(eventsPath(logDir, "w-old")).toBe(join(arch, "w-old.jsonl"));
+    expect(latestMergeGateLog(logDir, "w-old")).toContain(arch);
+    expect(loadStatuses(logDir).map((s) => s.id)).not.toContain("w-old");
+    expect(loadStatuses(logDir)).toHaveLength(3);
   });
 });
 

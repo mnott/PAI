@@ -333,6 +333,7 @@ function workersMainConfigShape(): Record<string, unknown> {
     localHandoffMinutes: workers.localHandoffMinutes,
     noBrowserByDefault: workers.noBrowserByDefault,
     gcOlderThanHours: workers.gcOlderThanHours,
+    archiveAfterDays: workers.archiveAfterDays,
     worktreesMaxGb: workers.worktreesMaxGb,
     reaper: workers.reaper,
     ...(workers.fallback ? { fallback: workers.fallback } : {}),

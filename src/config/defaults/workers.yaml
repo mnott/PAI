@@ -260,6 +260,9 @@ workers:
   # Size cap in GB of the worktrees dir; over it, gc archives the oldest
   # finished ones.
   worktreesMaxGb: 20
+  # `pai worker gc` (and the daemon hourly) moves the log files of workers
+  # finished longer ago than this many days into logs/workers/archive/YYYY-MM.
+  archiveAfterDays: 14
   # Daemon reaper for orphaned worker processes.
   reaper: true
   # Cost tier used when a provider names none (1 cheapest … 5 most expensive).

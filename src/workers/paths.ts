@@ -6,7 +6,7 @@
  * disposable and configurable: `workers.logDir`, default ~/.claude/logs/workers.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defaultWorkersConfig, expandHome, type WorkersConfig } from "./config.js";
 import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
@@ -44,12 +44,35 @@ export function ensureNoMcpConfig(logDir: string): string {
 /** A worker id as a file stem: no path separators, so `<logDir>/<id>.status` stays inside logDir. */
 export const WORKER_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
+/** Where `pai worker gc` moves the files of long-finished workers: <logDir>/archive/<YYYY-MM>/. */
+export function archiveRoot(logDir: string): string {
+  return join(logDir, "archive");
+}
+
+/**
+ * The one id -> file resolver: `<logDir>/<id><suffix>`, or, when the top folder has no such file and an
+ * archive month does, that archived copy. Scans (loadStatuses, ps, cockpit) read the top folder only.
+ */
+export function workerFilePath(logDir: string, id: string, suffix: string): string {
+  const top = join(logDir, `${id}${suffix}`);
+  if (existsSync(top)) return top;
+  try {
+    for (const month of readdirSync(archiveRoot(logDir)).sort().reverse()) {
+      const p = join(archiveRoot(logDir), month, `${id}${suffix}`);
+      if (existsSync(p)) return p;
+    }
+  } catch {
+    /* no archive */
+  }
+  return top;
+}
+
 export function statusPath(logDir: string, id: string): string {
-  return join(logDir, `${id}.status`);
+  return workerFilePath(logDir, id, ".status");
 }
 
 export function eventsPath(logDir: string, id: string): string {
-  return join(logDir, `${id}.jsonl`);
+  return workerFilePath(logDir, id, ".jsonl");
 }
 
 export function ledgerPath(logDir: string): string {

@@ -7,6 +7,7 @@
 
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
+import { archiveWorkerFiles } from "../workers/gc-run.js";
 import { gcWorktreesThrottled } from "../workers/worktree.js";
 
 export const WORKTREE_GC_TICK_MS = 60 * 60_000;
@@ -21,6 +22,7 @@ export function runWorktreeGcHourly(): void {
       maxGb: workers.worktreesMaxGb,
     });
     if (!res) return;
+    archiveWorkerFiles(workersLogDir(workers), workers.archiveAfterDays, false, (l) => process.stderr.write(`[pai-daemon] ${l}\n`));
     const kept = res.filter((r) => r.skipped);
     process.stderr.write(
       `[pai-daemon] worktree gc: archived ${res.filter((r) => r.archive).length}, kept ${kept.length}` +
