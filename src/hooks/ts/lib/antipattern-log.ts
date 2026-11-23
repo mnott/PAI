@@ -12,11 +12,11 @@
  * PAI_HOME/antipatterns/_candidates/ for review.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { modelOf } from "./antipattern-lifecycle.js";
 import { getActiveTenant } from "./antipatterns.js";
@@ -266,38 +266,219 @@ export interface CandidateInput {
   env?: NodeJS.ProcessEnv;
   /** How the candidate was observed; default: a guard stop no pattern covers. */
   observed?: string;
+  /** Worker ids behind the observation (default: this process's PAI_WORKER_ID). */
+  workers?: string[];
+}
+
+/** Stored examples per signature; further repeats only raise the counter. */
+export const CANDIDATE_MAX_EXAMPLES = 5;
+const CANDIDATE_MAX_WORKERS = 100;
+const SIG_BODY_CHARS = 56;
+/** Shell words that say nothing about which loop it is. */
+const SKELETON_NOISE = new Set(["echo", "date", "sh", "bash", "tail", "head", "tee", "grep", "cat", "true", "false", "rc", "exit", "sleep", "set", "then", "do", "done", "if", "fi"]);
+
+/** Text with ids, quoted strings, paths and numbers replaced by placeholders: the same incident on another day reads the same. */
+export function normalizeCandidateText(text: string): string {
+  return text
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/\b\d{8}-\d{6}-\d+\b/g, "<ID>")
+    .replace(/\b[0-9a-f]{8,}\b/g, "<ID>")
+    .replace(/String: .*/s, "String: <S>")
+    .replace(/(^|[\s(=:])(["'`])(?:(?!\2).){0,200}?\2(?!\w)/g, "$1<S>")
+    .replace(/(same command )(?:\S*\/)?(\S+)/, "$1$2")
+    .replace(/\S*\/\S*/g, (m) => (m.startsWith("<") ? m : "<P>"))
+    .replace(/\b\d+(?:\.\d+)*\b/g, "<N>")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Command skeleton of a loop-guard fingerprint (a bag of tokens): long flags and command words, paths as basenames, noise dropped. */
+function loopSkeleton(text: string): string {
+  const out = new Set<string>();
+  for (const raw of text.split(/\s+/)) {
+    const w = raw.replace(/^.*\//, "");
+    if (!/^(--[a-z][\w-]*|[A-Za-z][\w.-]*)$/.test(w) || /^[A-Z_]+$/.test(w) || SKELETON_NOISE.has(w)) continue;
+    out.add(w);
+  }
+  return [...out].sort().join(" ");
 }
 
 /**
- * A guard stopped something no pattern covers: write an inactive candidate (status experimental, mode monitor, the
- * excerpt as a tests.match fixture). The same category and input write one file only. Returns the path, or null.
+ * The key of a candidate: category | tool | error class | command skeleton. Tool errors ("[head\n]Tool|text") key on the
+ * normalised error text; the command head only matters when the text is a bare exit code. Guard stops key on the
+ * normalised guard message plus the skeleton of the looped command. Computed from the 120-char excerpts, so a
+ * stored literal candidate and a fresh one of the same incident agree.
  */
-export function writeCandidate(c: CandidateInput): string | null {
+export function candidateSignature(category: string, input: string, message = ""): string {
+  const ex = excerptOf(input);
+  const m = /^(?:([^\n]*)\n)?([A-Za-z][\w-]*)\|([\s\S]*)$/.exec(ex);
+  if (m) {
+    // a truncated excerpt ends at a different place when the head line is longer: cut it where every variant still agrees and
+    // drop the half-cut last word, so one error text keys the same however long its head
+    let body = normalizeCandidateText(m[3]);
+    if (ex.length >= EXCERPT_CHARS) body = body.slice(0, SIG_BODY_CHARS).replace(/\s*\S*$/, "");
+    const generic = /^Exit code <N>$/.test(body);
+    return `${category}|${m[2]}|${body}${generic ? `|${normalizeCandidateText(m[1] ?? "")}` : ""}`;
+  }
+  return `${category}|guard|${normalizeCandidateText(excerptOf(message)).slice(0, 60)}|${loopSkeleton(ex)}`;
+}
+
+const signatureShort = (sig: string): string => hashOf(sig).slice(0, 8);
+
+interface CandidateDoc {
+  [k: string]: any;
+}
+
+/** Add one occurrence to a signature candidate document. Returns false when nothing new was recorded (a worker already counted). */
+function addOccurrence(doc: CandidateDoc, o: { date: string; worker?: string; model: string }, n = 1): boolean {
+  const workers: string[] = Array.isArray(doc.workers) ? doc.workers : [];
+  if (o.worker) {
+    if (workers.includes(o.worker)) return false;
+    if (workers.length < CANDIDATE_MAX_WORKERS) workers.push(o.worker);
+  }
+  doc.workers = workers;
+  doc.count = Number(doc.count ?? 0) + n;
+  doc.last_seen = o.date;
+  const examples: unknown[] = Array.isArray(doc.examples) ? doc.examples : [];
+  if (examples.length < CANDIDATE_MAX_EXAMPLES) examples.push({ date: o.date, ...(o.worker ? { worker: o.worker } : {}), model: o.model });
+  doc.examples = examples;
+  return true;
+}
+
+function findBySignature(dir: string, short: string): string | null {
+  try {
+    const n = readdirSync(dir).filter((f) => f.endsWith(`-${short}.yaml`)).sort()[0];
+    return n ? join(dir, n) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface CandidateWrite {
+  path: string;
+  /** A new file was created. */
+  created: boolean;
+  /** The file was created or its counter moved. */
+  changed: boolean;
+}
+
+/**
+ * A guard stopped something no pattern covers, or a model tool error repeated: write or update ONE inactive candidate
+ * per signature (see candidateSignature). A repeat raises `count` and appends worker/date/model to `examples` (at most
+ * CANDIDATE_MAX_EXAMPLES); a worker already listed counts once. Never throws.
+ */
+export function upsertCandidate(c: CandidateInput): CandidateWrite | null {
   try {
     const env = c.env ?? process.env;
-    const short = hashOf(`${c.category}\n${c.input}`).slice(0, 8);
+    const sig = candidateSignature(c.category, c.input, c.message);
+    const short = signatureShort(sig);
     const date = new Date().toISOString().slice(0, 10);
     const dir = candidatesDir();
-    const path = join(dir, `${date}-${short}.yaml`);
-    if (existsSync(path)) return path;
+    const model = modelOf(env);
+    const workers = c.workers ?? (env.PAI_WORKER_ID ? [env.PAI_WORKER_ID] : [undefined]);
+    const existing = findBySignature(dir, short);
+    if (existing) {
+      const doc = parse(readFileSync(existing, "utf8")) as CandidateDoc;
+      let changed = false;
+      for (const w of workers) changed = addOccurrence(doc, { date, worker: w, model }) || changed;
+      if (changed) writeFileSync(existing, stringify(doc), { mode: 0o600 });
+      return { path: existing, created: false, changed };
+    }
     mkdirSync(dir, { recursive: true });
-    const excerpt = excerptOf(c.input);
-    const doc = {
+    const path = join(dir, `${date}-${short}.yaml`);
+    const doc: CandidateDoc = {
       id: `cand-${short}`,
       status: "experimental",
       mode: "monitor",
       version: 1,
       created: date,
       category: c.category,
+      signature: sig,
       detector: { kind: "observed", params: {} },
       action: c.action,
       message: excerptOf(c.message) || "guard stop without a pattern",
-      tests: { match: [excerpt], no_match: [] },
-      provenance: { date, model: modelOf(env), observed: c.observed ?? `${c.action} by a guard no pattern covers` },
+      tests: { match: [excerptOf(c.input)], no_match: [] },
+      provenance: { date, model, observed: c.observed ?? `${c.action} by a guard no pattern covers` },
     };
+    for (const w of workers) addOccurrence(doc, { date, worker: w, model });
     writeFileSync(path, stringify(doc), { mode: 0o600 });
-    return path;
+    return { path, created: true, changed: true };
   } catch {
     return null;
   }
+}
+
+/** Write or update the signature candidate; returns its path, or null. */
+export function writeCandidate(c: CandidateInput): string | null {
+  return upsertCandidate(c)?.path ?? null;
+}
+
+export interface MigrationResult {
+  /** Candidate files read. */
+  before: number;
+  /** Signature candidates after the merge. */
+  after: number;
+  /** Old files removed (empty on a dry run). */
+  removed: string[];
+  written: string[];
+}
+
+/**
+ * One-off: collapse literal candidates (one file per incident, keyed by a hash of the whole text) into signature
+ * candidates. Each group keeps the oldest file's identity data; counts add up (distinct workers when the literal
+ * candidates name them, else one per file); examples are capped. Files already carrying a `signature` are only re-keyed
+ * when two share one. `dryRun` reports without touching the directory.
+ */
+export function migrateCandidates(dir: string = candidatesDir(), dryRun = false): MigrationResult {
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
+  } catch {
+    return { before: 0, after: 0, removed: [], written: [] };
+  }
+  const groups = new Map<string, { file: string; doc: CandidateDoc }[]>();
+  for (const n of names) {
+    try {
+      const doc = parse(readFileSync(join(dir, n), "utf8")) as CandidateDoc;
+      const sig = String(doc.signature ?? candidateSignature(String(doc.category), String(doc.tests?.match?.[0] ?? ""), String(doc.message ?? "")));
+      groups.set(sig, [...(groups.get(sig) ?? []), { file: n, doc }]);
+    } catch {
+      /* unreadable candidate stays where it is */
+    }
+  }
+  const res: MigrationResult = { before: names.length, after: groups.size, removed: [], written: [] };
+  for (const [sig, items] of groups) {
+    const short = signatureShort(sig);
+    const base = items[0].doc;
+    const merged: CandidateDoc = { ...base, id: `cand-${short}`, signature: sig, workers: [], examples: [], count: 0 };
+    merged.created = items.map((i) => String(i.doc.created ?? "")).filter(Boolean).sort()[0] ?? base.created;
+    for (const { doc } of items) {
+      const date = String(doc.created ?? merged.created);
+      const model = String(doc.provenance?.model ?? "session");
+      if (Array.isArray(doc.workers) && typeof doc.count === "number") {
+        // already a signature candidate: fold its counter and examples in
+        for (const w of doc.workers) if (!merged.workers.includes(w) && merged.workers.length < CANDIDATE_MAX_WORKERS) merged.workers.push(w);
+        merged.count += doc.count;
+        for (const e of doc.examples ?? []) if (merged.examples.length < CANDIDATE_MAX_EXAMPLES) merged.examples.push(e);
+        merged.last_seen = [merged.last_seen, doc.last_seen].filter(Boolean).sort().pop();
+        continue;
+      }
+      const named = /across workers ([^—]+?) —/.exec(String(doc.provenance?.observed ?? ""))?.[1]?.split(/,\s*/).filter(Boolean) ?? [];
+      if (named.length === 0) addOccurrence(merged, { date, model });
+      for (const w of named) addOccurrence(merged, { date, worker: w, model });
+    }
+    const target = join(dir, `${merged.created}-${short}.yaml`);
+    res.written.push(target);
+    const same = items.length === 1 && join(dir, items[0].file) === target && items[0].doc.signature === sig;
+    if (same || dryRun) continue;
+    writeFileSync(target, stringify(merged), { mode: 0o600 });
+    for (const { file } of items) {
+      const p = join(dir, file);
+      if (p !== target) {
+        rmSync(p, { force: true });
+        res.removed.push(p);
+      }
+    }
+  }
+  return res;
 }

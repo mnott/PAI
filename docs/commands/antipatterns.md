@@ -79,6 +79,24 @@ Inactive files under PAI_HOME/antipatterns/_candidates. Review, then `pai antipa
 pai antipatterns candidates
 ```
 
+### pai antipatterns migrate-candidates
+
+Collapse literal candidates into one file per signature
+
+```
+pai antipatterns migrate-candidates [options]
+```
+
+One-off: groups the files under PAI_HOME/antipatterns/_candidates by normalised signature (tool, error class, command skeleton), sums the counters, keeps up to 5 examples and removes the merged files.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | flag | — | Machine-readable JSON output |
+
+```sh
+pai antipatterns migrate-candidates --dry-run
+```
+
 ### pai antipatterns promote
 
 Make a candidate a pattern (status test, mode monitor)
@@ -226,6 +244,7 @@ pai antipatterns conflicts
 | `pai antipatterns list` | Every pattern with status, mode and version |
 | `pai antipatterns stats` | Firing counts, models, outcomes and health flags per pattern |
 | `pai antipatterns candidates` | Cases a guard stopped that no pattern covers |
+| `pai antipatterns migrate-candidates` | Collapse literal candidates into one file per signature |
 | `pai antipatterns promote` | Make a candidate a pattern (status test, mode monitor) |
 | `pai antipatterns enforce` | Switch a pattern to enforce mode |
 | `pai antipatterns monitor` | Switch a pattern to monitor mode (record, take no action) |

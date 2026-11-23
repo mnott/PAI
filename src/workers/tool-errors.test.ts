@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
+import { candidateSignature, CANDIDATE_MAX_EXAMPLES, migrateCandidates, normalizeCandidateText, writeCandidate } from "../hooks/ts/lib/antipattern-log.js";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { classifyToolError, commandHead, harnessEvidence, lastCommand, recordToolErrorCandidates, type ToolErrorRecord } from "./tool-errors.js";
 import { checkLoops } from "./loop-watch.js";
 import { detectEditMiss, editMissNote } from "./edit-miss.js";
@@ -241,5 +243,88 @@ describe("failed Edit note", () => {
     expect(said.filter((t) => /with Write/.test(t))).toHaveLength(1);
     const rows = readFileSync(join(logDir, "edit-misses.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(rows.map((r) => r.model)).toEqual(["m1", "m1"]);
+  });
+});
+
+describe("antipattern candidates are keyed by signature", () => {
+  let home: string;
+  let prevHome: string | undefined;
+  beforeEach(() => {
+    prevHome = process.env.PAI_HOME;
+    home = mkdtempSync(join(tmpdir(), "pai-sig-"));
+    process.env.PAI_HOME = home;
+  });
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.PAI_HOME;
+    else process.env.PAI_HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const dir = (): string => join(home, "antipatterns", "_candidates");
+  const files = (d = dir()): string[] => {
+    try {
+      return readdirSync(d).filter((f) => f.endsWith(".yaml"));
+    } catch {
+      return [];
+    }
+  };
+  const guard = (cmd: string, msg = "loop guard: this command has been polled for over 45 minutes (wait cap per command)."): Parameters<typeof writeCandidate>[0] => ({ category: "tool-loop", action: "deny", message: msg, input: cmd });
+
+  it("normalizes paths, numbers, ids and quoted strings", () => {
+    expect(normalizeCandidateText(`read '/a/b/c.ts' in 20261119-000643-79358 line 42 at ~/x/y`)).toBe("read <S> in <ID> line <N> at <P>");
+  });
+
+  it("the same loop on two days is one signature, a different command another", () => {
+    const a = candidateSignature("tool-loop", "--wait -5 mac sh tail tools/build.sh", "loop guard: this command has been polled for over 45 minutes");
+    const b = candidateSignature("tool-loop", "--wait -9 EXIT=$? 12 echo mac sh tail tools/build.sh", "loop guard: this command has been polled for over 90 minutes");
+    const c = candidateSignature("tool-loop", "--wait -5 docker psql", "loop guard: this command has been polled for over 45 minutes");
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+    // a tool error keys on its error text, not on the command head or the file
+    const e = (head: string, file: string): string => candidateSignature("tool-loop", `${head}\nEdit|<tool_use_error>File does not exist. Note: your current working directory is /x/${file}`);
+    expect(e("a.ts", "p1")).toBe(e("b.ts", "p2"));
+    expect(candidateSignature("tool-loop", "sh\nBash|Exit code <N>")).not.toBe(candidateSignature("tool-loop", "cd\nBash|Exit code <N>"));
+  });
+
+  it("a repeat raises the counter and appends worker and date instead of a new file", () => {
+    for (let i = 1; i <= 8; i++) writeCandidate({ ...guard(`--wait -${i} mac tools/build.sh`), env: { PAI_WORKER_ID: `w${i}` } as NodeJS.ProcessEnv });
+    expect(files().length).toBe(1);
+    const doc = parse(readFileSync(join(dir(), files()[0]), "utf8")) as Record<string, any>;
+    expect(doc.count).toBe(8);
+    expect(doc.workers).toEqual(["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8"]);
+    expect(doc.examples.length).toBe(CANDIDATE_MAX_EXAMPLES);
+    expect(doc.examples[0].worker).toBe("w1");
+    // the same worker again does not count twice
+    writeCandidate({ ...guard("--wait -1 mac tools/build.sh"), env: { PAI_WORKER_ID: "w1" } as NodeJS.ProcessEnv });
+    expect((parse(readFileSync(join(dir(), files()[0]), "utf8")) as Record<string, any>).count).toBe(8);
+  });
+
+  it("migration collapses literal candidates into signature candidates", () => {
+    const d = join(home, "legacy");
+    mkdirSync(d, { recursive: true });
+    const lit = (name: string, created: string, match: string, message: string, observed: string, model = "session"): void => {
+      writeFileSync(join(d, name), stringify({ id: `cand-${name.slice(-13, -5)}`, status: "experimental", mode: "monitor", version: 1, created, category: "tool-loop", detector: { kind: "observed", params: {} }, action: "deny", message, tests: { match: [match], no_match: [] }, provenance: { date: created, model, observed } }));
+    };
+    const poll = "loop guard: this command has been polled for over 45 minutes";
+    lit("2026-11-01-aaaaaaaa.yaml", "2026-11-01", "--wait -5 mac tail tools/build.sh", poll, "deny by a guard no pattern covers", "sonnet");
+    lit("2026-11-09-bbbbbbbb.yaml", "2026-11-09", "--wait -9 date mac tail tools/build.sh", poll, "deny by a guard no pattern covers", "qwen");
+    lit("2026-11-10-cccccccc.yaml", "2026-11-10", "docker psql", poll, "deny by a guard no pattern covers");
+    lit("2026-11-20-dddddddd.yaml", "2026-11-20", "a.ts\nEdit|<tool_use_error>No changes to make", "w1, w2: x", "a.ts failed 3x in 7d across workers w1, w2 — repeated model tool error");
+    lit("2026-11-21-eeeeeeee.yaml", "2026-11-21", "b.ts\nEdit|<tool_use_error>No changes to make", "w3: x", "b.ts failed 3x in 7d across workers w2, w3 — repeated model tool error");
+    const dry = migrateCandidates(d, true);
+    expect(dry).toMatchObject({ before: 5, after: 3, removed: [] });
+    expect(files(d).length).toBe(5);
+    const r = migrateCandidates(d);
+    expect(r).toMatchObject({ before: 5, after: 3 });
+    expect(files(d).length).toBe(3);
+    const docs = files(d).map((f) => parse(readFileSync(join(d, f), "utf8")) as Record<string, any>);
+    const build = docs.find((x) => String(x.signature).includes("build.sh"))!;
+    expect(build.count).toBe(2);
+    expect(build.created).toBe("2026-11-01");
+    expect(build.examples.map((e: any) => e.model)).toEqual(["sonnet", "qwen"]);
+    const edit = docs.find((x) => String(x.signature).includes("Edit|"))!;
+    expect(edit.workers).toEqual(["w1", "w2", "w3"]);
+    expect(edit.count).toBe(3);
+    // idempotent
+    expect(migrateCandidates(d)).toMatchObject({ before: 3, after: 3, removed: [] });
   });
 });

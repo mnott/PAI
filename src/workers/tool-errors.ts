@@ -23,7 +23,7 @@ import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
 import { bashExitCode } from "./wait.js";
 import { isExpectedWaitExit } from "../hooks/ts/lib/wait-poll.js";
-import { candidatesDir, hashOf, writeCandidate } from "../hooks/ts/lib/antipattern-log.js";
+import { upsertCandidate } from "../hooks/ts/lib/antipattern-log.js";
 
 export interface ToolErrorRecord {
   /** Epoch ms. */
@@ -542,9 +542,9 @@ export function isBenchWorker(w: { label: string; cwd?: string }): boolean {
  * with stderr "invalid command code ,", the alerts were classified [unknown] and
  * nothing was learned. Within TOOL_ERROR_CANDIDATE_WINDOW_MS of records, one
  * signature (tool + normalised error text) seen TOOL_ERROR_CANDIDATE_MIN times
- * writes ONE candidate under PAI_HOME/antipatterns/_candidates/, deduped by the
- * candidate writer's own hash and re-checked against existing candidates across
- * days. Benign exits never qualify; the suggested fix is left empty for review.
+ * writes ONE candidate under PAI_HOME/antipatterns/_candidates/, keyed by
+ * candidateSignature (tool + error class + normalised command skeleton): a
+ * repeat on another day raises the counter of the one candidate. Benign exits never qualify; the suggested fix is left empty for review.
  */
 export const TOOL_ERROR_CANDIDATE_MIN = 3;
 export const TOOL_ERROR_CANDIDATE_WINDOW_MS = 7 * 86_400_000;
@@ -568,24 +568,12 @@ function candidateTrigger(g: ToolErrorGroup): string {
   return head || g.signature;
 }
 
-/** True when a candidate for this trigger already exists in _candidates (any day's file). */
-function candidateExists(category: string, input: string): boolean {
-  const short = hashOf(`${category}\n${input}`).slice(0, 8);
-  let names: string[];
-  try {
-    names = readdirSync(candidatesDir());
-  } catch {
-    return false;
-  }
-  return names.some((n) => n.endsWith(".yaml") && n.includes(short));
-}
-
 /**
  * One pass per supervision tick over the recent tool-error records: signatures
  * classified model or unknown whose count reaches TOOL_ERROR_CANDIDATE_MIN
  * inside the window write one candidate each (trigger = command pattern,
  * evidence = worker ids + stderr, suggested fix left empty). Returns the paths
- * written; never throws — a learning gap must not break supervision.
+ * written or updated; never throws — a learning gap must not break supervision.
  */
 export function recordToolErrorCandidates(records: readonly ToolErrorRecord[], now = Date.now()): string[] {
   const out: string[] = [];
@@ -604,17 +592,17 @@ export function recordToolErrorCandidates(records: readonly ToolErrorRecord[], n
       // error with different line numbers dedupe to one candidate
       const trigger = candidateTrigger(g);
       const input = `${trigger}\n${g.signature}`;
-      if (candidateExists("tool-loop", input)) continue;
       const workers = [...new Set(recs.map((r) => r.worker))].join(", ");
       // the evidence (worker ids + stderr) goes first so it survives the writer's 120-char excerpt; the suggested fix is deliberately absent — review fills it in
-      const path = writeCandidate({
+      const w = upsertCandidate({
         category: "tool-loop",
         action: "deny",
         message: `${workers}: ${g.sample}${g.sampleInput ? ` (input: ${g.sampleInput})` : ""} | ${trigger} failed ${recs.length}x in ${TOOL_ERROR_CANDIDATE_WINDOW_MS / 86_400_000}d`,
         input,
+        workers: [...new Set(recs.map((r) => r.worker))],
         observed: `${trigger} failed ${recs.length}x in ${TOOL_ERROR_CANDIDATE_WINDOW_MS / 86_400_000}d across workers ${workers} — repeated model tool error, suggested fix left empty for review`,
       });
-      if (path) out.push(path);
+      if (w?.changed) out.push(w.path);
     }
   } catch {
     /* learning never fails the tick */
