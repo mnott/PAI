@@ -27,7 +27,7 @@ function wkOne(){return WK_FILTERS.length===1?WK_FILTERS[0]:null}
 /** The short id (last dash-part) in grey under the task; computed here so every view has it.
  *  WK_OPEN: the ids of the rows whose inline detail is open (a tap on a row or its ▸ opens it, a tap again closes). */
 var WK_OPEN={};
-/** Narrow mode (the html.narrow class, the 900 px break): the detail rides inside the task cell and shows only there; in wide mode it is never drawn (the columns carry everything). */
+/** Narrow mode (the html.narrow class, the 900 px break): the detail is its own full-width table row under the job row (the task cell is too narrow on a phone) and shows only there; in wide mode it is never drawn (the columns carry everything). */
 function wkNarrow(){return typeof document!=="undefined"&&!!document.documentElement&&document.documentElement.classList.contains("narrow")}
 function wkSid(r){r.sid=String(r.id).slice(String(r.id).lastIndexOf("-")+1);return r}
 /** "12m left" / "3m over" from the deadline (seconds to the stop; negative = past it); "" without one. */
@@ -82,7 +82,7 @@ function wkCopyId(id){var done=function(){WK_COPY=id;if(WK_CT)clearTimeout(WK_CT
 function wkDetail(r){
  var x='<div class="wq-x" data-x="'+esc(r.id)+'">';
  // compact panel directly under the row: task, TL;DR, id, engine/provider, age / own time / budget left, turns and tools, "now:", last error, queue position
- x+='<div class="wq-dt">'+wkLevel(r,false)+esc(r.task)+'</div>';
+ x+='<button type="button" class="wq-xc" data-wqx="'+esc(r.id)+'" aria-label="close detail" title="close">✕</button><div class="wq-dt">'+wkLevel(r,false)+esc(r.task)+'</div>';
  if(r.summary)x+='<div class="dim wq-sum">'+esc(r.summary)+'</div>';
  x+='<div class="dim wq-id2" title="'+esc("tap the row again to copy the full worker id")+'">worker: '+esc(r.sid||r.id)+'</div>';
  var meta=[],eng=r.modelFull?r.modelFull+(r.cloudWhy?" ("+r.cloudWhy+")":""):r.model;
@@ -117,10 +117,10 @@ function wkTRow(r){
  // the narrow second line (always there): the task ellipsised to one line, then the runtime "12m · own 8m · 32m left" and the short id
  var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,kid)+'<div class="wq-nl"><span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+'</span><div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(wkRuntime(r))+" · "+esc(r.sid||r.id)+'</div></div>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"");
  // the tap detail: a compact panel directly below the row's first line (narrow mode only; wide mode hides it by CSS — the columns carry everything there)
- if(op&&wkNarrow())task+=wkDetail(r).replace('class="wq-x"','class="wq-x on"');
+ var dtl=op&&wkNarrow()?'<tr class="wq-xr" data-xr="'+esc(r.id)+'"><td colspan="'+WK_COLS.length+'">'+wkDetail(r).replace('class="wq-x"','class="wq-x on"')+'</td></tr>':"";
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
  var pr='<select class="wq-sel" data-qp="'+esc(r.id)+'" aria-label="priority" title="'+esc("priority: "+WK_PTIP[r.priority])+'">'+["low","normal","high","now"].map(function(l){return'<option value="'+l+'" title="'+esc(WK_PTIP[l])+'"'+(r.priority===l?" selected":"")+'>'+l+'</option>'}).join("")+'</select>';
- return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>';
+ return'<tr class="wq-r" data-id="'+esc(r.id)+'"><td>'+st+'</td><td>'+wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)+wkTopic(r,WK_TF.indexOf(r.topic?wkTk(r):"")>=0)+'</td><td class="wq-tc">'+task+'</td><td class="wq-m">'+wkModel(r)+'</td><td class="wq-p">'+pr+'</td><td class="r wq-tm">'+wkDur(r.seconds)+'</td><td class="wq-ac">'+acts+'</td></tr>'+dtl;
 }
 /** Interactive local sessions: state (generating / idle Nm) + failover badge, session chip, engine, last request age, tokens served; the second line (narrow pattern) carries tokens and request age. */
 function wkTok(n){n=n||0;return n<1000?String(n):n<1e6?(n/1000).toFixed(1)+"k":(n/1e6).toFixed(1)+"M"}
