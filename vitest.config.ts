@@ -26,6 +26,12 @@ export default defineConfig({
     // enough: paths derived from homedir() are frequently module-level
     // constants, evaluated on import. See test/setup-home-guard.ts.
     setupFiles: ["./test/setup-home-guard.ts"],
+    // Run-level git identity guard: one `git config --local --get` pair at
+    // setup, one comparison at teardown. A test that writes git config into
+    // the repo (cwd default) rewrites the operator's identity — a linked
+    // worktree shares the main repo's .git/config — so teardown restores the
+    // snapshot and fails the run. See src/workers/git-identity-guard.ts.
+    globalSetup: ["./src/workers/git-identity-guard.ts"],
     projects: [
       { extends: true, test: { name: "unit", sequence: { groupOrder: 1 }, include, exclude: [...exclude, ...browser], maxWorkers: unitMaxWorkers() } },
       { extends: true, test: { name: "browser", sequence: { groupOrder: 2 }, include: browser, exclude, maxWorkers: BROWSER_WORKERS } },
