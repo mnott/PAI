@@ -37,6 +37,7 @@ import { latestMergeGateLog, parseGateFailure, saveMergeGateLog } from "./gate-l
 import { summarizeGateFailure } from "./helper-uses.js";
 import type { SmokeStartResult } from "./smoke-start.js";
 import { asMergeReverted, mergeRevertedLine, MergeRevertedError } from "./merge-reverted.js";
+import { recordGitIdentity, restoreGitIdentity } from "./git-identity.js";
 
 /** The smoke start of a freshly built CLI (injectable; the live one starts a real worker on an offline stub model). */
 export type SmokeRunner = (cwd: string) => Promise<SmokeStartResult>;
@@ -326,6 +327,7 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   if (snapshotSkipped) dirty = false;
   const base = dirty ? snapshotUncommitted(cwd, id, head, bookkeeping) : head;
   // -B: a reusable leftover branch is reset to base; a fresh name is simply created
+  recordGitIdentity(logDir, id, cwd);
   git(cwd, ["worktree", "add", "-B", branch, dir, base]);
   ensureScratchDir(dir);
   provisionDeps(logDir, id, cwd, dir);
@@ -1607,6 +1609,7 @@ async function mergeWorkerInner(
       );
     }
   }
+  restoreGitIdentity(logDir, id, st.cwd);
   if (st.escalatedTo && escalationState(logDir, st) === "running") {
     throw new Error(
       `worker ${id}: escalated to ${st.escalatedTo}, which is still running from branch ${st.branch}; ` +

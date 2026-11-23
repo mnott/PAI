@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyClean, scanClean } from "./clean.js";
 import { nowStamp } from "./status.js";
+import { recordGitIdentity, restoreGitIdentity } from "./git-identity.js";
 
 const roots: string[] = [];
 afterAll(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -161,5 +162,29 @@ describe("worktree gc output", () => {
     }
     expect(res.some((r) => r.archive)).toBe(true);
     expect(out).toEqual([]);
+  });
+});
+
+describe("git identity backstop", () => {
+  it("restores a repo identity a worker changed and logs the worker id", () => {
+    const root = mkdtempSync(join(tmpdir(), "pai-gid-"));
+    try {
+      const repo = join(root, "repo");
+      const logDir = join(root, "logs");
+      const gc = (...a: string[]): string => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" }).trim();
+      execFileSync("git", ["init", "-q", repo]);
+      gc("config", "user.name", "Real");
+      gc("config", "user.email", "real@example.com");
+      recordGitIdentity(logDir, "w1", repo);
+      expect(restoreGitIdentity(logDir, "w1", repo)).toBeNull();
+      gc("config", "user.name", "bench");
+      gc("config", "user.email", "b@b");
+      expect(restoreGitIdentity(logDir, "w1", repo)).toContain("worker w1");
+      expect(gc("config", "user.name")).toBe("Real");
+      expect(gc("config", "user.email")).toBe("real@example.com");
+      expect(readFileSync(join(logDir, "git-identity", "alerts.log"), "utf8")).toContain("worker w1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
