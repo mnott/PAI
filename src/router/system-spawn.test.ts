@@ -127,7 +127,7 @@ describe("cockpit page script", () => {
     vm.runInContext('WK_SORT={col:"time",dir:"asc"}', ctx);
     expect((vm.runInContext("wkQTable(wkView(__m))", ctx) as string).match(/class="wq-g"/g)).toBeNull();
     vm.runInContext("WK_SORT=null", ctx);
-    expect(vm.runInContext("wkBar({table:__g})", ctx)).toContain("▶ one step toward running · ⏸ one step toward paused · stop and more in …");
+    expect(vm.runInContext("wkBar({table:__g})", ctx)).toContain("more actions");
   });
   it("interactive sessions render in their own group above running/waiting, with failover badge and a narrow second line", async () => {
     const vm = await import("node:vm");
@@ -171,15 +171,10 @@ describe("cockpit page script", () => {
     expect(bar).toContain('class="wq-i"');
     expect(bar).toContain('data-tip=');
     expect(bar).toContain('<span class="wq-tip" role="tooltip">');
-    // the legend itself: states, activity words (both 'in line' meanings), buttons and chips
-    for (const w of ["writing =", "in line =", "tool =", "waiting =", "idle Nm ="]) expect(bar).toContain(w);
-    expect(bar).toContain("either at the engine or for a slot");
-    expect(bar).toContain("Buttons: ▶ one step toward running");
-    expect(bar).toContain("⏸ one step toward paused");
-    expect(bar).toContain("more actions");
-    expect(bar).toContain("session chip filters");
-    expect(bar).toContain("topic chip filters");
-    expect(bar).toContain("model chip names the model");
+    // the legend is short (at most 6 lines) and names pills, levels, state badges, the ? marker and the actions
+    const leg = bar.match(/role="tooltip">([^<]*)</)![1];
+    expect(leg.split("\n").length).toBeLessThanOrEqual(6);
+    for (const w of ["Pills", "L0", "L1", "L2", "running", "waiting", "paused", "more actions"]) expect(leg).toContain(w);
   });
   it("the (i) legend tooltip shows on click/tap: the CSS rule covers hover, focus and .on", async () => {
     const { readFileSync } = await import("node:fs");
@@ -305,6 +300,35 @@ describe("cockpit page script", () => {
       for (const r of rules) expect(r, `${sel}: ${r}`).not.toMatch(/min-height:\s*(?!0)|100vh|flex-grow|height:\s*100%/);
     }
   });
+  it("queue tree: L0 session row, L1 hangs under it with a └, L2 hangs under its L1 with two └; an L2 without an L1 hangs directly under L0", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
+    const mk = (id: string, level: number, parent?: string) => ({ slot: 1, kind: "job", id, state: "running", stateText: "", priority: "normal", session: "PAI", model: "m", local: true, level, parent, task: "task-" + id, seconds: 5, activity: "", now: "", detail: "", actions: ["pause"] });
+    const l1 = mk("l1", 1);
+    const l2a = mk("l2a", 2, "l1"); // under the L1
+    const l2b = mk("l2b", 2);       // no parent at all
+    const p1 = { ...mk("p1", 1), state: "paused" }; // the parent lives in another section
+    const l2c = mk("l2c", 2, "p1");
+    (ctx as Record<string, unknown>).__rows = [l2b, l1, l2a, l2c, p1];
+    vm.runInContext("WQ={table:__rows}", ctx);
+    const html = vm.runInContext("wkQTable(wkView(__rows))", ctx) as string;
+    // one L0 row per session, no actions on it
+    expect(html.match(/class="wq-r wq-l0"/g)).toHaveLength(2); // one per session per section
+    expect(html.indexOf('class="wq-r wq-l0"')).toBeLessThan(html.indexOf('<tr class="wq-r" data-id="l1"'));
+    // L1: one connector; L2 under it: two connectors, right after the L1 row
+    const l1Row = '<tr class="wq-r" data-id="l1"';
+    expect(html).toContain('└</span><span class="wq-lv wq-l1"');
+    const iL1 = html.indexOf(l1Row), iL2a = html.indexOf('<tr class="wq-r" data-id="l2a"');
+    expect(iL1).toBeLessThan(iL2a);
+    expect(html.slice(iL2a, html.indexOf("</tr>", iL2a))).toContain("└</span><span class=\"wq-kid\" aria-hidden=\"true\">└</span><span class=\"wq-lv wq-l2\"");
+    // an L2 without a live L1 parent hangs directly under L0 (one connector) with the parent's label as a hint
+    const iL0 = html.indexOf('class="wq-r wq-l0"');
+    expect(iL0).toBeLessThan(html.indexOf('<tr class="wq-r" data-id="l2b"'));
+    expect(html.slice(html.indexOf('<tr class="wq-r" data-id="l2b"'), html.indexOf('</tr>', html.indexOf('<tr class="wq-r" data-id="l2b"')))).toContain('└</span><span class="wq-lv wq-l2"');
+    expect(html).toContain('under task-p1</span>');
+  });
   it("phone: row actions live only in the opened detail, pause/stop confirm inline; session is L0; instance per job", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
@@ -313,9 +337,9 @@ describe("cockpit page script", () => {
     const mk = (id: string, session: string) => ({ slot: "running", kind: "job", id: `w-1-${id}`, sid: id, state: "running", stateText: "running", priority: "normal", session, model: "signal-2", local: true, level: 2, task: "t" + id, seconds: 5, turns: 1, tools: 2, activity: "", now: "", detail: "", actions: ["pause", "stop"], instance: "signal-2#2" });
     (ctx as Record<string, unknown>).__rows = [mk("1", "PAI"), mk("2", "other"), mk("3", "PAI"), mk("4", "Paperfull")];
     vm.runInContext("WK_OPEN[__rows[0].id]=1", ctx);
-    const t = vm.runInContext("wkQTable(wkByOwner(__rows))", ctx) as string;
-    expect(t.match(/wq-l0"/g)).toHaveLength(2);
-    expect(t.indexOf("PAI</button>")).toBeLessThan(t.indexOf("t3"));
+    const t = vm.runInContext("wkQTable(wkView(__rows))", ctx) as string;
+    expect(t.match(/class="wq-r wq-l0"/g)).toHaveLength(2);
+    expect(t.indexOf('data-sess="PAI"')).toBeLessThan(t.indexOf(">t3<"));
     // the row (first tr) carries the pause button only in the hidden actions cell; the detail carries the spaced buttons and the instance
     expect(t).toContain('class="wq-da"');
     expect(t).toContain("instance: signal-2#2");
@@ -351,7 +375,7 @@ describe("cockpit page script", () => {
     vm.runInContext(`function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}\n` + WIN_WORKERS_JS, ctx);
     (ctx as Record<string, unknown>).__r = { slot: "running", kind: "job", id: "a", sid: "a", state: "running", stateText: "running", priority: "normal", session: "PAI", model: "m", local: true, level: 2, task: "t", seconds: 5, activity: "", now: "", detail: "", actions: ["pause"], specTip: "the guard blocked this job 2 times; the block may contradict its brief: x" };
     const h = vm.runInContext("wkTRow(__r)", ctx) as string;
-    expect(h).toContain('class="wq-tip" role="tooltip">the guard blocked this job 2 times');
+    expect(h).toContain('class="wq-q" tabindex="0" role="note" title="the guard blocked this job 2 times');
   });
   it("queue model column is a short name", async () => {
     const { shortModel } = await import("../workers/queue-table.js");
