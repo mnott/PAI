@@ -97,6 +97,20 @@ describe("cockpit page script", () => {
     expect(html).toContain("a session waits for this job: wait: right pane fix (local)");
     expect(html).toContain("aria-label=");
   });
+  it("queue header lists every local instance by its own number; the row menu names the reroute target", async () => {
+    const vm = await import("node:vm");
+    const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
+    const ctx = vm.createContext({});
+    vm.runInContext(`function esc(s){return String(s==null?"":s)}\n` + WIN_WORKERS_JS, ctx);
+    (ctx as Record<string, unknown>).__q = { providers: [{ provider: "signal-2", instances: [{ engine: "signal-2", busy: 1, cap: 2 }, { engine: "signal-2#2", busy: 1, cap: 2 }] }] };
+    expect(vm.runInContext("wkInst(__q)", ctx)).toBe(" · signal-2 #1 1/2 · #2 1/2");
+    const row = { slot: 1, kind: "job", id: "w-9", state: "running", stateText: "", priority: "normal", session: "mdf", model: "", local: true, task: "t", seconds: 5, activity: "", now: "", detail: "", actions: ["to-cloud"] };
+    (ctx as Record<string, unknown>).__rows = [row];
+    vm.runInContext("WQ={table:__rows};WK_MENU={key:'row:w-9',x:0,y:0}", ctx);
+    const h = vm.runInContext("wkMenuHtml()", ctx) as string;
+    expect(h).toContain("Run on cloud");
+    expect(h).toContain("now on local");
+  });
   it("the row … menu carries copy id; a pane run is never drawn as a queue row", async () => {
     const vm = await import("node:vm");
     const { WIN_WORKERS_JS } = await import("./cockpit-page/win/cards-workers.js");
