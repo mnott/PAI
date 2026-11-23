@@ -49,9 +49,6 @@ function buildHtml(L: CockpitLayout): string {
   return parts.map((p) => p(L, n, q, hex, ratio)).join("");
 }
 
-/** The full page, built once at module load from the config defaults. */
-export const COCKPIT_HTML = buildHtml(cockpitLayout());
-
 /** The page; the layout policy is re-read on every call, so a user config override changes the served page. */
 export function cockpitHtml(): string {
   return buildHtml(cockpitLayout());
