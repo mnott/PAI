@@ -66,10 +66,12 @@ export function admitCap(maxConcurrent: number | undefined, conversationSlots: n
 }
 
 /** Cap of a named provider from the config, the same rule the gate applies. */
-export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; conversationSlots?: number; baseUrl: string }>; capacity?: Partial<CapacityConfig> }, provider: string): number | undefined {
+export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; conversationSlots?: number; baseUrl: string; instances?: string[] }>; capacity?: Partial<CapacityConfig> }, provider: string): number | undefined {
   const p = config.providers[provider];
   if (!p) return undefined;
-  return admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
+  const per = admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
+  // maxConcurrent applies per instance: a provider of N instances admits N times as many runs
+  return per === undefined ? undefined : per * Math.max(1, p.instances?.length ?? 1);
 }
 
 /** Queue key of a session's `max_parallel` gate (a provider name never contains "~"). */

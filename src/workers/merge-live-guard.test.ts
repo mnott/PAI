@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -510,5 +510,26 @@ describe("merge targets the checkout the worker started in", () => {
       /had branch port\/x when the worker started but has other now/
     );
     expect(existsSync(join(linked, "w.txt"))).toBe(false);
+  });
+
+  it("a worker started in a subdirectory merges into the repo toplevel", async () => {
+    const { repo, logDir } = fixture();
+    mkdirSync(join(repo, "sub", "dir"), { recursive: true });
+    writeFileSync(join(repo, "sub", "dir", "k.txt"), "k\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-qm", "sub"]);
+    const sub = join(repo, "sub", "dir");
+    const info = addWorktree(logDir, "sub-ok", sub);
+    writeFileSync(join(info.dir, "w.txt"), "worker work\n");
+    git(info.dir, ["add", "-A"]);
+    git(info.dir, ["commit", "-qm", "worker commit"]);
+    const st: WorkerStatus = {
+      id: "sub-ok", pid: DEAD_PID, label: "sub-ok", cwd: sub, term: "", provider: "p", model: "m", state: "done",
+      started: "2026-11-17 00:00:00", updated: "2026-11-17 00:00:00", turns: 1, tools: 0, last: "", rc: 0, secs: 1,
+    };
+    recordWorktree(logDir, st, info, true);
+    expect(loadStatus(logDir, "sub-ok")?.cwd).toBe(realpathSync(repo));
+    await mergeWorker(logDir, "sub-ok", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(existsSync(join(repo, "w.txt"))).toBe(true);
   });
 });

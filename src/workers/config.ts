@@ -103,6 +103,8 @@ export interface WorkerProvider {
   protocol: WorkerProtocol;
   /** Anthropic-compatible Messages API base. */
   baseUrl: string;
+  /** Several servers of the same model (workers.yaml `baseUrl: [a, b]` or `instances: [a, b]`); `baseUrl` is the first. maxConcurrent applies per instance. Absent for a single url. */
+  instances?: string[];
   /** 0600 file holding the auth token; null for local servers ("local"). */
   keyFile: string | null;
   /**
@@ -903,7 +905,11 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     bad(`.providers.${name}.engine`, `"${str(p.engine)}" is none of "claude", "codex", "opencode", "image", "uhp"`);
   }
 
-  const baseUrl = str(p.baseUrl);
+  const urlList = (Array.isArray(p.baseUrl) ? p.baseUrl : Array.isArray(p.instances) ? p.instances : [])
+    .map((u) => str(u).replace(/\/+$/, ""))
+    .filter(Boolean);
+  const baseUrl = urlList.length ? urlList[0] : str(p.baseUrl);
+  const instances = urlList.length > 1 ? [...new Set(urlList)] : undefined;
   // openai providers reach the model through the PAI proxy; their baseUrl is
   // the proxy URL, filled in by the runner — only anthropic needs one here.
   if (p.router !== undefined && typeof p.router !== "boolean") {
@@ -1107,6 +1113,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     enabled: p.enabled === undefined ? true : p.enabled === true,
     protocol,
     baseUrl,
+    ...(instances && instances.length > 1 ? { instances } : {}),
     keyFile,
     ...(key ? { key } : {}),
     models,

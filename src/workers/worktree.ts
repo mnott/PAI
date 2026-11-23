@@ -430,6 +430,10 @@ export function recordWorktree(
   // Only a PAI-owned worktree (an orchestrator's, removed when it ends) maps back to the repo checkout;
   // a user's linked worktree is itself the checkout the worker started in and merge must land there.
   if (isRealWorktree(s.cwd) && !isSlotWorktree(s.cwd) && isUnder(worktreesDir(logDir), s.cwd)) s.cwd = repoCheckoutOf(s.cwd);
+  // A worker started in a subdirectory merges into the repo toplevel, never into the subdirectory itself.
+  if (existsSync(s.cwd)) {
+    try { const top = git(s.cwd, ["rev-parse", "--show-toplevel"]); if (realpathOr(top) !== realpathOr(s.cwd)) s.cwd = top; } catch { /* not a git dir */ }
+  }
   if (info.startBranch) s.startBranch = info.startBranch;
   if (ok) {
     s.branch = info.branch;
