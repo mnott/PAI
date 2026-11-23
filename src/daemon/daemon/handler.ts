@@ -25,6 +25,7 @@ import {
   passFailures,
   notificationConfig,
   setNotificationConfig,
+  shutdownRequested,
 } from "./state.js";
 import { runEmbed, runIndex, runVaultIndex } from "./scheduler.js";
 import { dispatchTool } from "./dispatcher.js";
@@ -72,6 +73,14 @@ export async function handleRequest(
   socket: Socket
 ): Promise<void> {
   const { id, method, params } = request;
+
+  // A request that lands after shutdown began (accepted just before the listener
+  // closed) fails at once with a retryable error instead of hanging.
+  if (shutdownRequested) {
+    sendResponse(socket, { id, ok: false, error: "PAI daemon is restarting (shutting down); retry" });
+    socket.end();
+    return;
+  }
 
   // Special: status
   if (method === "status") {
