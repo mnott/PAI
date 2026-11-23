@@ -18,6 +18,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { probeEndpointUrl } from "./endpoint-health.js";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
@@ -65,13 +66,41 @@ export function admitCap(maxConcurrent: number | undefined, conversationSlots: n
   return cap === undefined ? limit : Math.min(cap, limit);
 }
 
-/** Cap of a named provider from the config, the same rule the gate applies. */
-export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; conversationSlots?: number; baseUrl: string; instances?: string[] }>; capacity?: Partial<CapacityConfig> }, provider: string): number | undefined {
+/**
+ * Cap of a named provider from the config, the same rule the gate applies. maxConcurrent applies per instance: a provider of N
+ * instances admits N times as many runs. `up` (url -> healthy) drops down instances from N (never below 1); without it every configured instance counts.
+ */
+export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; conversationSlots?: number; baseUrl: string; instances?: string[] }>; capacity?: Partial<CapacityConfig> }, provider: string, up?: (url: string) => boolean): number | undefined {
   const p = config.providers[provider];
   if (!p) return undefined;
   const per = admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
-  // maxConcurrent applies per instance: a provider of N instances admits N times as many runs
-  return per === undefined ? undefined : per * Math.max(1, p.instances?.length ?? 1);
+  if (per === undefined) return undefined;
+  const urls = p.instances ?? [];
+  const n = up ? urls.filter(up).length : urls.length;
+  return per * Math.max(1, n);
+}
+
+const urlProbe = new Map<string, { ok: boolean; at: number }>();
+const urlProbing = new Set<string>();
+const URL_PROBE_MS = 10_000;
+
+/**
+ * Process-wide cached health of an instance url for the admission gate: unknown = healthy (optimistic); a stale answer
+ * triggers a fire-and-forget probe, so the next poll of a waiting run sees a changed instance count.
+ */
+export function instanceUp(url: string, probe: (u: string) => Promise<boolean> = probeEndpointUrl, now: () => number = Date.now): boolean {
+  const hit = urlProbe.get(url);
+  if ((!hit || now() - hit.at >= URL_PROBE_MS) && !urlProbing.has(url)) {
+    urlProbing.add(url);
+    void probe(url).catch(() => false).then((ok) => { urlProbe.set(url, { ok, at: now() }); }).finally(() => { urlProbing.delete(url); });
+  }
+  return hit?.ok ?? true;
+}
+
+/** Test hook: forget the cached probe answers. */
+export function resetInstanceHealth(): void {
+  urlProbe.clear();
+  urlProbing.clear();
 }
 
 /** Queue key of a session's `max_parallel` gate (a provider name never contains "~"). */
