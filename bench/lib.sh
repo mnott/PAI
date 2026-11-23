@@ -2,6 +2,8 @@
 BENCH=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # the PAI checkout the tasks come from (read only: clones borrow its objects); default: the repo this bench/ lives in
 REPO=${BENCH_REPO:-$(git -C "$BENCH" rev-parse --show-toplevel)}
+# deterministic task environment: ps/date output must not depend on the operator locale
+export LC_ALL=C LANG=C
 TREES=$HOME/.cache/pai/realtask-trees
 TASKS=${TASKS:-"prune-dist-rerun mirror-sync-token worker-priority session-move-selectors escalate-loopstop"}
 
