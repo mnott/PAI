@@ -39,6 +39,8 @@ export interface LimitWindow {
   /** epoch ms of the next reset */
   resetAt?: number;
   estimated?: boolean;
+  /** elapsed share of the window in percent (pace.ts), when it has a reset time */
+  pace?: number;
 }
 
 export interface ProviderLimits {

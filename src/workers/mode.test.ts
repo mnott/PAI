@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyMode, readMode, writeMode } from "./mode.js";
+import { DEFAULT_PACE, currentPace, decidePace, paceOf } from "./pace.js";
 import type { TierDef } from "./route-lists.js";
 
 const tiers = (): TierDef[] => [
