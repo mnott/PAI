@@ -66,6 +66,8 @@ public struct SystemResponse: Codable {
         public var socTemp: Double?
         public var systemW: Double?
         public var memPct: Double?
+        /// battery history only: true while the charge was rising on AC
+        public var charging: Bool?
     }
     public struct Series: Codable {
         public var series: [Sample]?

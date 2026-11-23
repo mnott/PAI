@@ -339,3 +339,29 @@ final class StoreOpenRefreshTests: XCTestCase {
         XCTAssertNil(store.staleLine()) // never succeeded: nothing to age
     }
 }
+
+final class ANEAndModeTests: XCTestCase {
+    func testEnergyDeltaToWatts() {
+        XCTAssertEqual(energyToWatts(delta: 1500, unit: "mJ", seconds: 1.0)!, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(energyToWatts(delta: 3_000_000, unit: "uJ", seconds: 2.0)!, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(energyToWatts(delta: 2_000_000_000, unit: "nJ", seconds: 4.0)!, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(energyToWatts(delta: 6, unit: "J", seconds: 3)!, 2, accuracy: 1e-9)
+        XCTAssertNil(energyToWatts(delta: 1, unit: "mJ", seconds: 0))
+        XCTAssertNil(energyToWatts(delta: 1, unit: "furlong", seconds: 1))
+        XCTAssertNil(energyToWatts(delta: -5, unit: "mJ", seconds: 1))
+    }
+
+    func testWorkModeRuleAndParse() {
+        XCTAssertEqual(workModeRule(.balanced, used: 21, pace: 34), "cloud first: 21% < 80% of pace 34%")
+        XCTAssertEqual(workModeRule(.balanced, used: 40, pace: 34), "local first: 40% >= 80% of pace 34%")
+        XCTAssertEqual(parseWorkMode("mode: budget \u{2014} t2 = local only"), .budget)
+        XCTAssertNil(parseWorkMode("garbage"))
+    }
+
+    func testBatteryCaption() {
+        let chg = BatteryInfo(percent: 50, state: "charging", macRemainingMin: 40, onBattery: false)
+        XCTAssertEqual(batteryCaption(info: chg, remainingWh: nil, watts: nil), "charging, full in 40m")
+        let ac = BatteryInfo(percent: 100, state: "charged", macRemainingMin: nil, onBattery: false)
+        XCTAssertEqual(batteryCaption(info: ac, remainingWh: nil, watts: nil), "on AC")
+    }
+}
