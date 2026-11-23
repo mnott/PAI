@@ -956,6 +956,7 @@ export function routerHandler(
           headers["content-length"] = String(body.length);
           headers["x-pai-provider"] = name;
           headers["x-pai-failover"] = "1";
+          if (foKey !== "anon") headers["x-pai-session"] = foKey;
           const lq = http.request({ host: "127.0.0.1", port: req.socket.localPort, path: req.url ?? path, method: "POST", headers }, (lres) => {
             const rh = { ...lres.headers };
             delete rh["transfer-encoding"];
@@ -1405,7 +1406,9 @@ export function routerHandler(
           const sched = sharedScheduler();
           sharedParker().noteEngine(engine, up.url.origin);
           sched.idleHook ??= (e, w, n) => sharedParker().maybePark(e, w, n);
-          const sess = headerValue(req.headers["x-pai-session"], 80) || "anon";
+          const workerHdr = headerValue(req.headers["x-pai-worker"], 80);
+          // a failover request keeps its session, else the worker or the Claude Code session id names it: never a bare "anon"
+          const sess = headerValue(req.headers["x-pai-session"], 80) || (req.headers["x-pai-failover"] === "1" ? workerHdr || sessionId?.slice(0, 8) : "") || "anon";
           // several instances: the request waits on all of them and runs on the first with a free slot (no job waits while another instance is idle)
           const alts = siblings.length > 1 ? siblings.map((i) => instanceEngineKey(i)) : [];
           if (alts.length) {
@@ -1448,7 +1451,7 @@ export function routerHandler(
             // conversation affinity (prompt cache) only while that instance has a free slot
             const home = alts.length ? stickyEngine(prov, stickKey, alts, (k) => sched.free(k) > 0, (k) => sched.load(k)) : engine;
             sched
-              .acquire(home, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint, req.headers["x-pai-interactive"] === "1" || req.headers["x-pai-failover"] === "1" ? { failover: req.headers["x-pai-failover"] === "1" } : undefined, alts)
+              .acquire(home, sess, worker, { onAbort: (cb) => res.on("close", cb) }, hint, req.headers["x-pai-interactive"] === "1" || (req.headers["x-pai-failover"] === "1" && !workerHdr) ? { failover: req.headers["x-pai-failover"] === "1" } : undefined, alts)
               .then(
                 (ticket) => {
                   stopPings();
