@@ -40,6 +40,7 @@ More on the commands: [config.md](config.md). Worker keys: [workers-config.md](w
 | Local model consumers | `models.consumers`, `models.runtimes` | Who uses a runtime, and the start/stop/ready commands `pai models start|stop` run; the shipped defaults configure `ollama` and `docker-model-runner`, your entries win per key ([local models](concepts/local-models.md)). |
 | Battery guard | `power.batteryGuard.*` | Pause and stop thresholds, benchmark last-resort stop, sampling ([battery guard](concepts/battery-guard.md)). |
 | Router watchdog | `router.watchdog.failStreak` (5) | Consecutive upstream network failures before the daemon restarts the router ([router](concepts/router.md)). |
+| Router stall profiler | `router.profileStalls` (off) | On a router stall, save a bounded CPU profile window to `~/.pai/logs/router-profiles`. Env var `PAI_ROUTER_PROFILE=1` also works but does not survive `pai router restart`; this key is the durable switch. |
 | Workers (`config.yaml`) | `workers.*`, shipped in `workers.yaml` defaults | Pool, routing budget walls, supervision, capacity and stagger, gc ([worker.md](worker.md)). |
 | Delegation tiers (`workers.yaml`) | `tiers`, `providers.anthropic.models` | The shipped t0/t1/t2 table ([delegation tiers](concepts/delegation-tiers.md)). |
 | Cache keepalive | `sessions.cacheKeepalive.*`, `workers.cacheKeepaliveSecs` | Off by default ([cache-keepalive.md](cache-keepalive.md)). |

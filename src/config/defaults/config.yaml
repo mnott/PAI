@@ -291,6 +291,11 @@ router:
   # the daemon restarts the router.
   watchdog:
     failStreak: 5
+  # Opt-in stall profiler (src/router/stall-profiler.ts): on a router stall, save a bounded
+  # CPU profile window to ~/.pai/logs/router-profiles. The env var PAI_ROUTER_PROFILE=1 also
+  # works but does not survive `pai router restart` (the successor inherits the old router's
+  # environment), so this key is the durable switch. Default: false.
+  profileStalls: false
   # Cockpit page layout policy (src/router/cockpit-layout.ts): tile min/max
   # widths, chart heights, sample/history window lengths, refresh intervals,
   # row limits. Card arrangement is the windowing registry's, not config's.

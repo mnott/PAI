@@ -16,12 +16,19 @@ export interface ProfilerOptions {
   log: (line: string) => void;
 }
 
-export function stallProfilerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+/**
+ * Opt-in: the env var `PAI_ROUTER_PROFILE` or config `router.profileStalls: true`.
+ * The env var alone does not survive `pai router restart` — the gapless handover
+ * spawns the successor from the old router's environment, not the caller's — so the
+ * config key is the durable switch. Either one turns it on; both off = off.
+ */
+export function stallProfilerEnabled(env: NodeJS.ProcessEnv = process.env, profileStalls?: boolean): boolean {
+  if (profileStalls === true) return true;
   return /^(1|true|on|yes)$/i.test(env.PAI_ROUTER_PROFILE ?? "");
 }
 
 /**
- * Opt-in (PAI_ROUTER_PROFILE=1): a ~1 ms sampling CPU profile that restarts every
+ * Opt-in (PAI_ROUTER_PROFILE=1 or router.profileStalls: true): a ~1 ms sampling CPU profile that restarts every
  * windowMs so it stays bounded. On a stall the current window is stopped, written to
  * <dir>/<ts>.cpuprofile (with a paiStall block: end epoch + stall length so the analyzer
  * can cut the stall's time range) and a fresh window starts. Only the last `keep` files stay.
