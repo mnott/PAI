@@ -49,6 +49,12 @@ export interface EscalateConfig {
   maxScale: number;
   /** Failed tool calls in a row that count as a stall. */
   stallFailedCalls: number;
+  /** Convergence rule (local runs): the rule arms after this many active minutes of the run... */
+  convergeStartMin: number;
+  /** ...or this fraction of its max-minutes budget, whichever comes first. */
+  convergeBudgetFraction: number;
+  /** Active minutes a armed local run may go without a commit or a green test/tsc run before it moves to the cloud. */
+  convergeQuietMin: number;
 }
 
 export interface CloudTarget {
@@ -60,7 +66,7 @@ export interface CloudTarget {
 const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure", "loop-stop", "deadline"];
 
 /** Fallbacks of the escalate block when workers.yaml omits a key; the shipped defaults file carries the policy values. */
-export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" }, queuedMaxMin: 0, stallCalls: 60, stallFailedCalls: 6, scaleWithSpeed: true, maxScale: 4 };
+export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" }, queuedMaxMin: 0, stallCalls: 60, stallFailedCalls: 6, scaleWithSpeed: true, maxScale: 4, convergeStartMin: 25, convergeBudgetFraction: 0.5, convergeQuietMin: 15 };
 
 /** Failed local attempts that escalate a task (the route classifier's rule, now this one). */
 export const ESCALATE_FAILURES = DEFAULT_ESCALATE.failures;
@@ -258,7 +264,7 @@ export function parseEscalate(v: unknown, bad: Bad): EscalateConfig {
     if (typeof t.scaleWithSpeed !== "boolean") bad(".escalate.scaleWithSpeed", "must be true or false");
     out.scaleWithSpeed = t.scaleWithSpeed;
   }
-  for (const k of ["queuedMaxMin", "stallCalls", "stallFailedCalls", "maxScale"] as const) {
+  for (const k of ["queuedMaxMin", "stallCalls", "stallFailedCalls", "maxScale", "convergeStartMin", "convergeBudgetFraction", "convergeQuietMin"] as const) {
     if (t[k] === undefined) continue;
     const min = k === "queuedMaxMin" ? 0 : 1e-9; // queuedMaxMin 0 = a queued job waits unless the operator gave priority
     if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) < min) bad(`.escalate.${k}`, k === "queuedMaxMin" ? "must be a number >= 0 (0 = off)" : "must be a positive number");

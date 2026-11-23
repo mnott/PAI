@@ -21,6 +21,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { join } from "node:path";
 import { queueDir } from "./capacity.js";
 import { escalationPolicy } from "./config.js";
+import { DEFAULT_ESCALATE } from "./escalation.js";
 import { activeMsOf, frozenSince, inLineMs, ownMsOf } from "./freeze.js";
 import { appendLedger } from "./ledger.js";
 import { withCallerPath } from "./caller-env.js";
@@ -102,10 +103,33 @@ function overdueReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, sched: 
   // GPU sharing) reads as busy, not stuck. The only wall-clock limit left is
   // the outer max-minutes backstop, which speed-scale.ts stretches instead.
   const since = (s.turns ?? 0) - (s.turnsAtProgress ?? 0);
-  if (since < p.stallCalls) return null;
+  if (since < p.stallCalls) return convergenceReason(s, nowMs, p, pause);
   const what = s.readOnly ? "no successful tool call" : s.deliverable === "findings" ? "no write or report output" : "no edit or commit";
   return `${what} for ${since} turns`;
 }
+
+/**
+ * Convergence rule (local runs, write jobs): a run that is armed (convergeStartMin active minutes, or convergeBudgetFraction
+ * of its max-minutes budget, whichever comes first) and made no commit and no green test/tsc run for convergeQuietMin
+ * active minutes keeps editing without converging: it moves to the cloud. Cloud runs and read-only/findings jobs are exempt.
+ */
+function convergenceReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, pause: { paused?: boolean; pausedAt?: number; pausedMs?: number }): string | null {
+  if (s.route?.local !== true || s.readOnly || s.deliverable === "findings") return null;
+  const startMs = stampMs(s.started);
+  if (startMs === null) return null;
+  const startMin = p.convergeStartMin ?? DEFAULT_ESCALATE.convergeStartMin;
+  const fraction = p.convergeBudgetFraction ?? DEFAULT_ESCALATE.convergeBudgetFraction;
+  const quietMin = p.convergeQuietMin ?? DEFAULT_ESCALATE.convergeQuietMin;
+  const armAt = s.maxMinutes && s.maxMinutes > 0 ? Math.min(startMin, s.maxMinutes * fraction) : startMin;
+  const ran = activeMsOf(s.id, startMs, nowMs, pause) / 60_000;
+  if (ran < armAt) return null;
+  const lastMs = Math.max(startMs, stampMs(s.convergedAt) ?? 0);
+  const quiet = activeMsOf(s.id, lastMs, nowMs, pause) / 60_000;
+  return quiet >= quietMin ? `${NO_CONVERGENCE} ${Math.floor(quiet)}m without commit or green check` : null;
+}
+
+/** The escalation reason's prefix for a run that edits without converging; the counters in the ledger key on it. */
+export const NO_CONVERGENCE = "no convergence:";
 
 /** A finished fall-through still blocks another reroute of its origin this long. */
 export const FALLTHROUGH_RECENT_MS = 5 * 60_000;
@@ -217,7 +241,7 @@ export interface RerouteDeps {
 export interface RerouteResult {
   id: string;
   provider: string;
-  was: "queued" | "running";
+  was: "queued" | "running" | "review";
   branch?: string;
   specFile: string;
   description: string;
@@ -485,7 +509,7 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const load = d.load ?? ((x: string) => loadStatus(d.logDir, x));
   const old = load(id);
   if (!old) throw new Error(`no worker named "${id}"`);
-  if (old.state !== "queued" && old.state !== "running") throw new Error(`worker ${id} is ${old.state}; only a queued or running worker can be rerouted`);
+  if (old.state !== "queued" && old.state !== "running" && old.state !== "review") throw new Error(`worker ${id} is ${old.state}; only a queued, running or review-stopped worker can be rerouted`);
   // the local-only window blocks automatic cloud moves (escalations, pane commands); an operator's own
   // reroute — the CLI, the cockpit — always passes (local-only.ts).
   {
@@ -516,14 +540,35 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
       saveStatus(d.logDir, st, new Date(), true);
     }
   };
-  const branch = old.state === "running" ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
+  const branch = old.state === "running" || old.state === "review" ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
   const specFile = join(d.logDir, `${id}.reroute.prompt`);
-  writeFileSync(specFile, branch ? `${continuedNote(id, branch)}\n\n${text}` : text, "utf8");
+  const reviewWhy = old.state === "review" ? (old.last ?? "").replace(/\s+/g, " ").trim().slice(0, 300) : "";
+  const note = branch ? `${continuedNote(id, branch)}${reviewWhy ? `. It was stopped for review: ${reviewWhy}` : ""}` : "";
+  writeFileSync(specFile, note ? `${note}\n\n${text}` : text, "utf8");
   const stop = async (): Promise<void> => {
     markHandover(d.logDir, id, old.rerouted ?? `rerouted to ${target.provider} (${reason})`);
     await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
   };
   const start = async (): Promise<NonNullable<RerouteResult["queuedAtTarget"]> | undefined> => (await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile })) ?? undefined;
+  if (old.state === "review") {
+    // a review-stopped run has no process: nothing to kill. The continuation starts on the target with the branch and the
+    // review reason; the old run stays as the record, marked superseded (rerouted + continuedBy), no longer awaiting review.
+    let q: NonNullable<RerouteResult["queuedAtTarget"]> | undefined;
+    try {
+      q = await start();
+    } catch (e) {
+      unmark();
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed: ${(e as Error).message}`.slice(0, 200) });
+      throw e;
+    }
+    const end = load(id) ?? old;
+    end.rerouted = old.rerouted;
+    delete end.needsReview;
+    if (end.fallThroughTo) end.continuedBy = end.fallThroughTo;
+    saveStatus(d.logDir, end, new Date(), true);
+    if (q) appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });
+    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description, ...(q ? { queuedAtTarget: q } : {}) };
+  }
   if (d.deferKill && old.state === "running") {
     // least impact: the continuation joins the target's queue (it waits there, not running) and the old run keeps working;
     // finishDeferredMoves stops the origin once the continuation holds a slot.
@@ -640,6 +685,8 @@ export async function escalateOverdue(
     }
     try {
       const r = await rerouteWorker(s.id, "cloud", { ...d, by: "escalation", reason });
+      // counted per model for the escalation measurements (#26): one ledger line per convergence escalation
+      if (reason.startsWith(NO_CONVERGENCE)) appendLedger(ledgerPath(d.logDir), "WORKER-ESCALATE-NOCONVERGE", { id: s.id, model: s.model || "?", provider: s.provider, reason });
       done.push({ id: s.id, label: s.label, provider: r.provider, reason, session: s.spawnerSession ?? s.session?.id ?? null });
     } catch (e) {
       const orphaned = (e as { orphaned?: { branch: string | null } }).orphaned;

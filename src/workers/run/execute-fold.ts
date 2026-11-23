@@ -56,6 +56,7 @@ import { speedProbe } from "../speed-scale.js";
 import { fireHandoff, handoffLimit } from "./handoff.js";
 import { budgetCheck, budgetLimit, distinctTestRuns, fireBudget, type BudgetSnapshot } from "../time-budget.js";
 import { isTestCommand } from "../hang-probe.js";
+
 import { blockedMsOf } from "../active-time.js";
 import { createOperatorServer } from "../operator.js";
 import { reapRunTree } from "./lifecycle.js";
@@ -70,6 +71,7 @@ import {
   resetContextTokensOnCompact,
   isCompactBoundary,
   bashCommand,
+  isConvergenceCommand,
   isProgressTool,
   isFindingsProgressTool,
   isReadOnlyJob,
@@ -562,6 +564,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
           // progress clock: a "change" job counts edits/commits; a "findings" job counts any write it makes
           const progressed = !!use && (status.deliverable === "findings" ? isFindingsProgressTool(use.name, use.input) : isProgressTool(use.name, use.input));
+          if (use && !toolResultFailed(block) && use.name === "Bash" && isConvergenceCommand(bashCommand(use.input))) status.convergedAt = nowStamp();
           if (use && !toolResultFailed(block) && (progressed || readOnly)) {
             status.progressAt = nowStamp();
             status.turnsAtProgress = status.turns;

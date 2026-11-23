@@ -2414,16 +2414,18 @@ function escalateEnvOverride(name: string, fallback: number): number {
  * machine is not stalled); `lowPower` resolves synchronously from the cached reading —
  * off until the first pmset sample lands.
  */
+export type EscalatePolicy = Pick<EscalateConfig, "queuedMaxMin" | "stallCalls" | "stallFailedCalls"> & Partial<Pick<EscalateConfig, "convergeStartMin" | "convergeBudgetFraction" | "convergeQuietMin">>;
+
 export function escalationPolicy(
   lowPower: () => boolean = cachedLowPowerActive,
   factor: () => number = lowPowerFactor
-): Pick<EscalateConfig, "queuedMaxMin" | "stallCalls" | "stallFailedCalls"> {
-  let base: Pick<EscalateConfig, "queuedMaxMin" | "stallCalls" | "stallFailedCalls">;
+): EscalatePolicy {
+  let base: EscalatePolicy;
   try {
-    const { queuedMaxMin, stallCalls, stallFailedCalls } = readWorkersSection().workers.escalate;
-    base = { queuedMaxMin, stallCalls, stallFailedCalls };
+    const { queuedMaxMin, stallCalls, stallFailedCalls, convergeStartMin, convergeBudgetFraction, convergeQuietMin } = readWorkersSection().workers.escalate;
+    base = { queuedMaxMin, stallCalls, stallFailedCalls, convergeStartMin, convergeBudgetFraction, convergeQuietMin };
   } catch {
-    base = { queuedMaxMin: DEFAULT_ESCALATE.queuedMaxMin, stallCalls: DEFAULT_ESCALATE.stallCalls, stallFailedCalls: DEFAULT_ESCALATE.stallFailedCalls };
+    base = { queuedMaxMin: DEFAULT_ESCALATE.queuedMaxMin, stallCalls: DEFAULT_ESCALATE.stallCalls, stallFailedCalls: DEFAULT_ESCALATE.stallFailedCalls, convergeStartMin: DEFAULT_ESCALATE.convergeStartMin, convergeBudgetFraction: DEFAULT_ESCALATE.convergeBudgetFraction, convergeQuietMin: DEFAULT_ESCALATE.convergeQuietMin };
   }
   base = {
     ...base,

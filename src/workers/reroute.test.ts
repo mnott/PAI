@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { escalationMessage, rerunFromEnv, defaultSpawn, endContinuedOrigins, escalationReason, escalationHeldNote, providerPinned, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
-import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 import { getProfile, lastProfileWriteLogError, profilesPath, setProfileLedger, updateProfile, nextClockTime } from "./session-profile-store.js";
 import { namesTarget, resolveWorkers } from "./session-profile.js";
 import { resolveTarget, type TargetDeps } from "./target.js";
@@ -176,6 +176,41 @@ describe("escalationReason queued", () => {
   });
 });
 
+describe("convergence rule (local runs)", () => {
+  const stamp = (ms: number): string => nowStamp(new Date(ms));
+  const MIN = 60_000;
+  const run = (o: Partial<WorkerStatus>): WorkerStatus =>
+    job({ state: "running", route: { policy: "auto", reason: "x", local: true }, started: stamp(NOW - 40 * MIN), maxMinutes: 120, turns: 30, turnsAtProgress: 29, progressAt: stamp(NOW - MIN), ...o } as never);
+  it("edits without commit past the threshold: escalated with the reason", () => {
+    expect(escalationReason(run({}), NOW, pol(0))).toBe("no convergence: 40m without commit or green check");
+  });
+  it("a recent commit or green check: not escalated", () => {
+    expect(escalationReason(run({ convergedAt: stamp(NOW - 5 * MIN) }), NOW, pol(0))).toBeNull();
+  });
+  it("an old convergence does not shield a quiet run", () => {
+    expect(escalationReason(run({ convergedAt: stamp(NOW - 20 * MIN) }), NOW, pol(0))).toBe("no convergence: 20m without commit or green check");
+  });
+  it("not armed before 25 min or half the budget", () => {
+    expect(escalationReason(run({ started: stamp(NOW - 20 * MIN) }), NOW, pol(0))).toBeNull();
+    expect(escalationReason(run({ started: stamp(NOW - 20 * MIN), maxMinutes: 30 }), NOW, pol(0))).toBe("no convergence: 20m without commit or green check"); // 50% of 30 = 15
+  });
+  it("cloud runs are unaffected", () => {
+    expect(escalationReason(run({ route: { policy: "auto", reason: "x", local: false } }), NOW, pol(0))).toBeNull();
+  });
+  it("thresholds are config keys", () => {
+    expect(escalationReason(run({}), NOW, { ...pol(0), convergeQuietMin: 60 })).toBeNull();
+  });
+  it("the escalation counts per model in the ledger", async () => {
+    saveStatus(dir, run({ id: "w1", promptFile: join(dir, "spec.txt"), model: "m-x", provider: "fakeA" } as never));
+    writeFileSync(join(dir, "spec.txt"), "task");
+    const out = await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: () => undefined }, NOW);
+    expect(out[0]!.reason).toMatch(/^no convergence:/);
+    const lines = readFileSync(join(dir, "ledger.log"), "utf8");
+    expect(lines).toContain("WORKER-ESCALATE-NOCONVERGE");
+    expect(lines).toContain("m-x");
+  });
+});
+
 describe("escalationReason", () => {
   it("an overdue queued job moves; a fresh one and an already rerouted one do not", () => {
     const now = Date.now();
@@ -244,6 +279,33 @@ describe("rerouteWorker", () => {
     expect(st.rerouted).toBe("fakeB: reroute");
     expect(st.fallThroughTo).toBe("w2");
     expect(st.state).toBe("killed");
+  });
+
+  it("a review-stopped origin is continued on the target with its branch and review reason, nothing killed, old run superseded", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "review", needsReview: true, branch: "worker/w1", last: "no progress in its 20-min allowance" }));
+    let killed = false;
+    let spec: SpawnSpec | undefined;
+    const r = await rerouteWorker("w1", "cloud", {
+      logDir: dir,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async () => { killed = true; return []; },
+      spawn: (s: SpawnSpec) => {
+        spec = s;
+        const o = loadStatus(dir, s.id)!;
+        o.fallThroughTo = "w2";
+        saveStatus(dir, o, new Date(), true);
+      },
+    });
+    expect(killed).toBe(false);
+    expect(r.was).toBe("review");
+    const note = readFileSync(spec!.specFile, "utf8");
+    expect(note).toContain("continued from w1 on branch worker/w1");
+    expect(note).toContain("stopped for review: no progress in its 20-min allowance");
+    const st = loadStatus(dir, "w1")!;
+    expect(st.rerouted).toBe("fakeB: reroute");
+    expect(st.continuedBy).toBe("w2");
+    expect(st.needsReview).toBeUndefined();
+    expect(st.state).toBe("review");
   });
 
   it("a running origin that cannot be stopped gets no continuation", async () => {

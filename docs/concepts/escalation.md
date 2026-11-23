@@ -86,3 +86,7 @@ To move a job up yourself, or when escalation is off:
 4. A worker that is stuck on one bounded step can ask a stronger model with
    `pai worker help`.
 5. Merge with `pai worker merge ID --verify "<command>"`.
+
+## No convergence
+
+A local write run that edits but never converges moves once to the cloud (same branch, edits salvaged, reason `no convergence: Xm without commit or green check`). It arms after `workers.escalate.convergeStartMin` (25) active minutes or `convergeBudgetFraction` (0.5) of its max-minutes budget, whichever comes first, and fires after `convergeQuietMin` (15) minutes without a commit or a green test/tsc run. Each one is counted per model in the ledger as `WORKER-ESCALATE-NOCONVERGE`.
