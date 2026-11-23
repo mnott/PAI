@@ -169,7 +169,8 @@ function logDirOf(deps: HelperDeps): string | null {
 export const HELPER_CALLS_FILE = "helper-calls.jsonl";
 
 /** Why a helper call failed: the cockpit and the audit read it off the log line. */
-export type HelperFailKind = "timeout" | "error" | "empty" | "rejected" | "busy-fallback";
+export type HelperFailKind = "timeout" | "error" | "empty" | "rejected" | "busy-fallback" | "skipped-short";
+// "skipped-short" is logged ok:true: no model call was needed (input already short).
 
 export interface HelperCall {
   ts: number;
@@ -251,6 +252,7 @@ export function helperStats(deps: HelperDeps = {}): HelperStats {
       }
       if (c.ts < since) continue;
       const m = (out.models[c.model] ??= { perHour: 0, medianMs: null, fallbacks: 0 });
+      if (c.kind === "skipped-short") continue;
       if (c.ms > 0 || c.ok) m.perHour += 1;
       if (!c.ok) m.fallbacks += 1;
       else (lat[c.model] ??= []).push(c.ms);
