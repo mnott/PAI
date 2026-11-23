@@ -28,7 +28,7 @@ All take `--root <dir>` (default: the repo around the current directory), `--jso
 
 - `code_summary` — `target` (a key `code:<slug>:<path>`, a directory or a file path; `.` is the repo), optional `root`. Returns the stored module or repo summary.
 
-Headless workers (local and cloud) get these three tools with the `pai` MCP server, and their guidance tells them to call `code_explore` before grepping an unfamiliar repo.
+Headless workers (local and cloud) do not get the MCP tools: their tool surface is the harness's own (Read/Edit/Write/Bash/Grep/Glob). They reach the graph through Bash — `pai code explore <symbol>`, `pai code search <words>`, `pai code callers <name>` — and their brief tells them to use it before grepping an unfamiliar repo. Interactive sessions with the `pai` MCP server loaded get the tools above.
 
 ## Module and repo summaries
 
@@ -39,8 +39,8 @@ Rows live in `code_summaries` next to the graph (key `code:<slug>:<path>`, the m
 ## Languages and limits
 
 - Parsed: TypeScript/TSX, JavaScript, Swift, Python. Other files get a file row only.
-- Files over 1 MB are skipped, as are `node_modules`, `dist`, `build` and `vendor`.
-- Files come from `git ls-files`, so untracked and ignored files are not indexed.
+- Files over 1 MB are skipped, as are `node_modules`, `dist`, `build` and `vendor`. `tools/` and `scripts/` are indexed like any other source dir — they hold real code (Swift bridges, Python report scripts), not build output.
+- Files come from `git ls-files`, so untracked and ignored files are not indexed. A nested `.gitignore` (e.g. `tools/apple-fm-bridge/.gitignore` → `.build/`) keeps a dir's own build artifacts out while its source stays in.
 - The index is reconciled with the repo when you query it; there is no file watcher.
 
 ## Relations across projects and domains
