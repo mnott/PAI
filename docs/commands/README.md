@@ -98,6 +98,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai antipatterns enforce` | Switch a pattern to enforce mode |
 | `pai antipatterns label` | Label a firing (or all firings of a pattern) tp, fp or benign_tp |
 | `pai antipatterns list` | Every pattern with status, mode and version |
+| `pai antipatterns migrate-candidates` | Collapse literal candidates into one file per signature |
 | `pai antipatterns monitor` | Switch a pattern to monitor mode (record, take no action) |
 | `pai antipatterns promote` | Make a candidate a pattern (status test, mode monitor) |
 | `pai antipatterns retire` | Retire a pattern (status deprecated) |

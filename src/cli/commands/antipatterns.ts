@@ -3,6 +3,7 @@
 import { CliError, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { renderTable } from "../lib/utils.js";
 import { DISPOSITIONS, type Disposition } from "../../hooks/ts/lib/antipattern-log.js";
+import { migrateCandidates } from "../../hooks/ts/lib/antipattern-log.js";
 import { candidates, conflicts, label, listPatterns, parseSince, promote, retire, setMode, setParam, setProxy, stats } from "../../antipatterns/govern.js";
 
 const ID: ArgDef = { name: "ID", summary: "Pattern id (see: pai antipatterns list)", required: true };
@@ -74,6 +75,17 @@ export const antipatternsCommand: CommandDef = {
       run: (ctx) => {
         const rows = candidates();
         return show(ctx, rows, () => (rows.length ? renderTable(["id", "category", "created", "action", "observed"], rows.map((c) => [c.id, c.category, c.created, c.action, c.excerpt.slice(0, 60)])) : "No candidates."));
+      },
+    },
+    {
+      name: "migrate-candidates",
+      summary: "Collapse literal candidates into one file per signature",
+      description: "One-off: groups the files under PAI_HOME/antipatterns/_candidates by normalised signature (tool, error class, command skeleton), sums the counters, keeps up to 5 examples and removes the merged files.",
+      options: [JSON_OPT],
+      examples: ["pai antipatterns migrate-candidates --dry-run"],
+      run: (ctx) => {
+        const r = migrateCandidates(undefined, ctx.dryRun);
+        return show(ctx, r, () => `${r.before} candidates -> ${r.after} signatures; ${r.removed.length} files removed`);
       },
     },
     {
