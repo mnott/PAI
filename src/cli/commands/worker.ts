@@ -1138,7 +1138,7 @@ const gcCommand: CommandDef = {
     { name: "all-finished", type: "boolean", summary: "Any finished worker, regardless of age" },
     { name: "pool", type: "boolean", summary: "Also remove leftover pool reserve worktrees (spare-*, slots/*) no worker owns and no process sits in (implied by --all-finished)" },
     { name: "foreign", type: "boolean", summary: "Also archive merged, clean worktrees of this repo that PAI did not create (refs/pai-archive/BRANCH); unmerged ones are kept" },
-    { name: "kill-orphans", type: "boolean", summary: "End processes (pid + command listed) whose cwd sits inside a finished worker's worktree: SIGTERM, 3 s, SIGKILL" },
+    { name: "kill-orphans", type: "boolean", summary: "Kept for compatibility: gc always ends processes (cwd or command line inside a finished worker's worktree): SIGTERM, 3 s, SIGKILL; --dry-run only lists them" },
     { ...OPT.dryRun, summary: "Print what would be archived and what each worktree carries, change nothing" },
   ],
   examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72", "pai worker gc --all-finished", "pai worker gc --pool --dry-run"],

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { backgroundArgv, capBashCommand, withCpuLimit } from "./priority.js";
 import { killTree, killWorker } from "./kill-tree.js";
-import { findOrphans, reapWorkerProcesses } from "./reap.js";
+import { argvOrphanCounts, argvOrphansOf, findOrphans, reapWorkerProcesses } from "./reap.js";
 import { scratchDir } from "./scratch.js";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -314,4 +314,25 @@ describe("worker priority and kill", () => {
       rmSync(logDir, { recursive: true, force: true });
     }
   }, 25_000);
+});
+
+describe("argv orphans of a worktree", () => {
+  const dir = join(tmpdir(), "wt-argv-test", "20261122-020212-11011");
+  const rows = [
+    { pid: 10, ppid: 1, args: `node --require ${dir}/node_modules/vitest/suppress-warnings.cjs ${dir}/node_modules/vitest/dist/workers/forks.js` },
+    { pid: 11, ppid: 1, args: `node /elsewhere/node_modules/vitest/dist/workers/forks.js` },
+    { pid: 12, ppid: 1, args: `node ${dir}-other/x.js` },
+    { pid: 13, ppid: 500, args: `node ${dir}/x.js` },
+  ];
+  it("lists the orphan naming the worktree, leaves the rest", () => {
+    expect(argvOrphansOf(rows, dir).map((r) => r.pid)).toEqual([10]);
+  });
+  it("counts per finished worktree dir", () => {
+    const logDir = fakeLogDir();
+    const wt = join(worktreesDir(logDir), "w1");
+    mkdirSync(wt);
+    const counts = argvOrphanCounts(logDir, [{ pid: 20, ppid: 1, args: `node ${wt}/a.js` }, { pid: 21, ppid: 1, args: "node /other/a.js" }]);
+    expect(counts.get(wt)).toBe(1);
+    rmSync(logDir, { recursive: true, force: true });
+  });
 });
