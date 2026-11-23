@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { appendKept, keptLedgerPath, parseKept, renderKept, KEPT_HEADER, type KeptEntry } from "./kept.js";
 
@@ -67,5 +68,42 @@ describe("appendKept — one row, never a rewrite", () => {
 
   it("keptLedgerPath falls back to tests/KEPT.md when neither exists", () => {
     expect(keptLedgerPath(base)).toBe(join(base, "tests", "KEPT.md"));
+  });
+});
+
+describe("KEPT.md merges with the union driver", () => {
+  let base: string;
+  beforeEach(() => {
+    base = mkdtempSync(join("/tmp", "kept-merge-"));
+  });
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  const git = (args: string[]) => execFileSync("git", ["-C", base, ...args], { encoding: "utf8" });
+
+  it("two branches appending different rows merge cleanly with both rows present", () => {
+    git(["init", "-q"]);
+    git(["config", "user.email", "t@t.t"]);
+    git(["config", "user.name", "t"]);
+    mkdirSync(join(base, "tests"), { recursive: true });
+    writeFileSync(join(base, ".gitattributes"), "tests/KEPT.md merge=union\n");
+    writeFileSync(join(base, "tests", "KEPT.md"), renderKept([{ file: "tests/base.test.ts", classes: ["a"], evidence: "base row" }]));
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "base"]);
+    git(["checkout", "-q", "-b", "side1"]);
+    appendKept(base, "tests/one.test.ts", ["a"], "row from side1");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "side1 row"]);
+    git(["checkout", "-q", "master"]);
+    appendKept(base, "tests/two.test.ts", ["b"], "row from side2");
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "side2 row"]);
+    git(["merge", "-q", "side1"]); // union driver: no conflict
+    const text = readFileSync(join(base, "tests", "KEPT.md"), "utf8");
+    expect(text).not.toContain("<<<<<<<");
+    expect(parseKept(text)).toEqual([
+      { file: "tests/base.test.ts", classes: ["a"], evidence: "base row" },
+      { file: "tests/two.test.ts", classes: ["b"], evidence: "row from side2" },
+      { file: "tests/one.test.ts", classes: ["a"], evidence: "row from side1" },
+    ]);
   });
 });
