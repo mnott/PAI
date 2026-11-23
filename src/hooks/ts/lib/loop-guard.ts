@@ -117,6 +117,8 @@ export interface LoopState {
   reads?: { key: string; files: string; print: string | null; n: number; denials: number };
   /** Failure fingerprint -> times seen (they survive edits), and Bash calls denied for it (see repeated-error). */
   fails?: { counts: Record<string, number>; denials: number };
+  /** no-edit-stall: calls and start time (ms) since the start or the last edit of a repo file, and the notes already given. */
+  stall?: { calls: number; since: number; fired1?: boolean; fired2?: boolean };
   /** Per-run FAIL ledger (workers.failLedger); absent while the experiment is off. */
   fail?: FailLedgerState;
 }
@@ -493,7 +495,7 @@ function countFailure(state: LoopState, tool: string, response: unknown): LoopSt
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false): LoopState {
   const counted = typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response);
   // an edit resets the window and drops everything not carried over by hand: the failure counts survive
-  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.fails ? { fails: counted.fails } : {}) };
+  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.stall ? { stall: counted.stall } : {}) };
   if (!ledger) return core;
   // an edit resets the window and drops everything not carried over by hand: the ledger survives
   const next = core.fail === state.fail ? core : { ...core, fail: state.fail };
@@ -812,7 +814,131 @@ function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Reco
   // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file; a bare Bash write does not, it is a write
   if (READ_TOOLS.has(tool) && !bashWrites && r.state.rewrites) r = { ...r, state: { ...r.state, rewrites: undefined } };
   if (bashWrites && command !== undefined) r = countBashRewrites(r, bashWrites, command);
-  return applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd, source), source);
+  if (state.stall && !r.state.stall) r = { ...r, state: { ...r.state, stall: state.stall } };
+  return withStall(applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd, source), source), tool, input, now, source);
+}
+
+// ---- no-edit-stall: read-only calls in a row with no edit of a repo file (code-change workers only) ----
+
+const SCRATCH_PATH = /\.pai-scratch\/|\$\{?TMPDIR\}?|(?:^|[^\w.])\/tmp\/|\/var\/folders\/|\/private\/tmp\//;
+/** A path under a scratch directory: not a repo file. */
+export const isScratchPath = (p: string): boolean => SCRATCH_PATH.test(p) || /^\/?tmp\//.test(p);
+
+const STALL_WRITE_CALL = /\b(?:writeFileSync|writeFile|appendFileSync|appendFile)\s*\(\s*([^,)]*)|\bopen\s*\(\s*([^,)]*)\s*,\s*['"][wax]\+?b?t?['"]|\bPath\s*\(\s*([^)]*)\)\s*\.\s*write_(?:text|bytes)\s*\(|\.\s*write_(?:text|bytes)\s*\(()/g;
+const STALL_TOKEN_PATH = (t: string): string => t.replace(/^['"]|['"]$/g, "");
+
+/**
+ * Does this Bash command write a repo file? python/node writes (open(..,'w'), writeFileSync, write_text), `sed -i`,
+ * `> f` / `>> f`, `tee f`, `cp`/`mv` into a path, `git apply`. A target under a scratch path (.pai-scratch/, $TMPDIR, /tmp/,
+ * /var/folders/) is no repo write; `git checkout -- path` is not an edit.
+ */
+export function bashWritesRepoFile(command: string): boolean {
+  const body = dropHeredocBodies(command).replace(/<<-?\s*(?:'[^']+'|"[^"]+"|\w+)/g, " ");
+  const plain = body.replace(/(>>?\s*)?(["'])((?:(?!\2).)*)\2/g, (_m, r: string | undefined, _q, c: string) => (r ? r + c : "Q"));
+  for (const m of plain.replace(/\d?>&\d?/g, " ").matchAll(/(?:^|[\s\d])>>?\s*([^\s;&|<>]+)/g)) {
+    if (!/^\/dev\/(?:null|stdout|stderr)$/.test(m[1]) && !isScratchPath(m[1])) return true;
+  }
+  for (const m of body.matchAll(TEE)) if (!isScratchPath(m[1])) return true;
+  for (const m of command.matchAll(STALL_WRITE_CALL)) {
+    const arg = m[1] ?? m[2] ?? m[3] ?? "";
+    if (!isScratchPath(arg) && !/tmpdir|scratch/i.test(arg)) return true;
+  }
+  for (const seg of plain.split(/&&|\|\||[;|\n]/)) {
+    const ws = seg.trim().split(/\s+/).filter(Boolean);
+    while (ws[0] === "sudo" || ws[0] === "command" || /^\w+=/.test(ws[0] ?? "")) ws.shift();
+    const verb = (ws[0] ?? "").replace(/^.*\//, "");
+    const args = ws.slice(1).filter((w) => !w.startsWith("-")).map(STALL_TOKEN_PATH);
+    const last = args[args.length - 1];
+    if ((verb === "cp" || verb === "mv" || verb === "install") && args.length >= 2 && !isScratchPath(last)) return true;
+    if ((verb === "sed" || verb === "perl") && ws.slice(1).some((w) => /^-\w*i/.test(w)) && last !== undefined && !isScratchPath(last)) return true;
+    if (verb === "git" && ws[1] === "apply" && !ws.includes("--check") && !ws.includes("--stat")) return true;
+    if (verb === "patch" && last !== undefined && !isScratchPath(last)) return true;
+  }
+  return false;
+}
+
+const STALL_TEST_RUN = /\b(?:vitest|jest|pytest|tsc|tsdown|xcodebuild|npm (?:run )?(?:test|build)|swift (?:test|build)|cargo (?:test|build)|go (?:test|build)|bun test|make)\b/;
+/** A test or build run: counts as a call, never reset, never denied. */
+export const isTestRun = (command: string): boolean => STALL_TEST_RUN.test(command);
+
+type StallState = NonNullable<LoopState["stall"]>;
+type StallKind = "note1" | "note2" | "deny";
+
+/**
+ * One call of the stall detector. `suppress`: another rule already denies (all) or notes (notes) this call, so nothing is
+ * emitted and no fired flag is set. Pure on its arguments; the caller decides whether the detector is active.
+ */
+export function stallStep(prev: LoopState["stall"], tool: string, input: string | Record<string, unknown> | undefined, now: number, params: Record<string, unknown>, suppress: "all" | "notes" | null = null): { stall: StallState; kind?: StallKind; n: number; min: number } {
+  const obj = typeof input === "object" ? input : undefined;
+  let cur: StallState = prev ?? { calls: 0, since: now };
+  const p = (k: string): number => params[k] as number;
+  const command = tool === "Bash" ? bashCommand(input) ?? "" : "";
+  let readOnly = false;
+  if (EDIT_TOOLS.has(tool)) {
+    const file = String(obj?.file_path ?? obj?.notebook_path ?? "");
+    if (!isScratchPath(file)) return { stall: { calls: 0, since: now }, n: 0, min: 0 };
+  } else if (tool === "Bash") {
+    if (bashWritesRepoFile(command)) return { stall: { calls: 0, since: now }, n: 0, min: 0 };
+    readOnly = !isTestRun(command);
+  } else if (tool === "Read" || tool === "Grep" || tool === "Glob") readOnly = true;
+  else return { stall: cur, n: cur.calls, min: Math.floor((now - cur.since) / 60_000) };
+  cur = { ...cur, calls: cur.calls + 1 };
+  const n = cur.calls;
+  const min = Math.max(0, Math.floor((now - cur.since) / 60_000));
+  if (suppress === "all") return { stall: cur, n, min };
+  if (readOnly && (n >= p("deny_calls") || min >= p("deny_min"))) return { stall: cur, kind: "deny", n, min };
+  if (suppress === "notes") return { stall: cur, n, min };
+  if (!cur.fired2 && (n >= p("note2_calls") || min >= p("note2_min"))) return { stall: { ...cur, fired1: true, fired2: true }, kind: "note2", n, min };
+  if (!cur.fired1 && (n >= p("note1_calls") || min >= p("note1_min"))) return { stall: { ...cur, fired1: true }, kind: "note1", n, min };
+  return { stall: cur, n, min };
+}
+
+/** The stall detector is active only in a code-change worker. */
+export const stallActive = (): boolean => process.env.PAI_WORKER_CAN_EDIT === "1";
+
+/** Fold the no-edit-stall result for this call into the step of the other rules. */
+function withStall(base: LoopStep, tool: string, input: string | Record<string, unknown> | undefined, now: number, source: "hook" | "proxy"): LoopStep {
+  if (!stallActive()) return base;
+  const { params, message } = live("no-edit-stall");
+  const s = stallStep(base.state.stall, tool, input, now, params, base.deny ? "all" : base.note ? "notes" : null);
+  const out: LoopStep = { ...base, state: { ...base.state, stall: s.stall } };
+  if (!s.kind) return out;
+  const vars = { n: s.n, min: s.min };
+  const step: LoopStep =
+    s.kind === "deny"
+      ? { state: out.state, deny: true, id: "no-edit-stall", key: tool, count: s.n, reason: fillMessage(message, vars) }
+      : { state: out.state, deny: false, id: "no-edit-stall", key: tool, count: s.n, note: fillMessage(params[s.kind === "note1" ? "note1_message" : "note2_message"] as string, vars) };
+  const ls = applyLifecycle(step, source);
+  if (ls.deny) return { ...out, deny: true, stop: false, id: ls.id, key: ls.key, count: ls.count, reason: ls.reason, note: undefined };
+  if (ls.note) return { ...out, note: ls.note, id: ls.id, key: ls.key, count: ls.count };
+  if (ls.monitored && !out.monitored) return { ...out, id: ls.id, key: ls.key, count: ls.count, monitored: ls.monitored };
+  return out;
+}
+
+/** Compact fixture syntax for the no-edit-stall tests block: R Read, G Grep/Glob, B read-only Bash, T test run, E Edit, W Write (repo), S scratch write, H bash heredoc write (repo). */
+const STALL_TOKENS: Record<string, [string, Record<string, unknown> | string]> = {
+  R: ["Read", { file_path: "src/a.ts" }],
+  G: ["Grep", { pattern: "x" }],
+  B: ["Bash", "git log --oneline -3"],
+  T: ["Bash", "npx vitest run"],
+  E: ["Edit", { file_path: "src/a.ts" }],
+  W: ["Write", { file_path: "src/b.ts" }],
+  S: ["Write", { file_path: "/tmp/scratch.txt" }],
+  H: ["Bash", "python3 - <<'EOF'\nopen('src/a.ts','w').write('x')\nEOF"],
+};
+
+/** Replays a token sequence (one minute apart is not assumed: all calls at the same instant) and returns the first kind reached, or null. */
+export function stallSequence(tokens: string, params: Record<string, unknown>, start = 0, stepMs = 0): StallKind | null {
+  let st: LoopState["stall"];
+  let hit: StallKind | null = null;
+  tokens.split(/\s+/).filter(Boolean).forEach((t, i) => {
+    const c = STALL_TOKENS[t];
+    if (!c) throw new Error(`unknown stall token ${t}`);
+    const r = stallStep(st, c[0], c[1], start + i * stepMs, params);
+    st = r.stall;
+    if (r.kind && !hit) hit = r.kind;
+  });
+  return hit;
 }
 
 /** repeated-error: once one failure fingerprint was seen deny_at times, every Bash call is denied; the stop_after-th denial after the first stops the run. */

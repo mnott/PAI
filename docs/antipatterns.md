@@ -15,7 +15,7 @@ Every pattern has a `layer` (defaults from the category):
 | layer | what | per model |
 |---|---|---|
 | `baseline` | security and environment (shell rules, path rules) | no: always as configured; `applies_to` is ignored |
-| `behaviour` | loop patterns (identical-write, revert, distinct-rewrites, repeated-failure, growing-command, runaway-new-files, missing-path-streak, unparsed-tool-call) | the same rule for all models; `per_model` tunes thresholds and mode |
+| `behaviour` | loop patterns (identical-write, revert, distinct-rewrites, repeated-failure, growing-command, no-edit-stall, runaway-new-files, missing-path-streak, unparsed-tool-call) | the same rule for all models; `per_model` tunes thresholds and mode |
 | `quirk` | observed for specific models only (`mangled-var-folders-path`, Gyro family) | enforce for the models in `applies_to`, monitor for the rest |
 
 Outside a behaviour/quirk rule's `applies_to` a firing is recorded only (monitor). A `per_model` block (`per_model: { "<id or glob with *>": { mode?, params? } }`) overrides mode and detector params for one model at evaluation time; the first matching entry wins, an exact id beats a glob. A user override's `per_model` entry replaces the shipped entry for the same key. See [Lifecycle and layers](concepts/security-rules.md#layers).
@@ -51,6 +51,7 @@ Provenance holds model names, dates and a reference only: no paths, no user name
 | tool-loop | `identical-write` | `note_at`, `stop_at`, `stop_message` | `file`, `tool`, `n` | Write contents separated by spaces, one file |
 | tool-loop | `revert` | `note_at`, `stop_at`, `seen_cap`, `stop_message` | `file`, `ordinal`, `n` | Write contents separated by spaces, one file |
 | tool-loop | `growing-command` | `max_repeats`, `stop_denials`, `note_message`, `tool_message` | `count`, `tool` | Bash commands, one per line, identical output |
+| tool-loop | `no-edit-streak` (`no-edit-stall`) | `note1_calls`, `note1_min`, `note2_calls`, `note2_min`, `deny_calls`, `deny_min`, `note1_message`, `note2_message` | `n`, `min` | token sequence: R Read, G Grep/Glob, B read-only Bash, T test run, E Edit, W repo Write, S scratch write, H bash repo write; code-change workers only (`PAI_WORKER_CAN_EDIT=1`) |
 | tool-loop | `repeated-failure` | `deny_at`, `stop_at` | `key`, `deny_at`, `hang`, `echo` | runner commands, one per line, no edits |
 | final-text | `unparsed-tool-call` | `regexes` (group 1 = tool name), `tail_chars`, `json_window_lines` | `name`, `allowed` | the final text |
 | paths | `missing-path` | none | `path`, `near` | a path |
