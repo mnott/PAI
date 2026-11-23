@@ -314,8 +314,8 @@ describe("supervision stands down while frozen", () => {
     // the local stamp parses against the machine's zone, so build it from `now` (the test's local epoch)
     const startedStamp = (t: number): string => { const d = new Date(t); const p = (n: number): string => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
     const at = now; // 60 min after the start below
-    const s = st("L1", 100, { state: "running", started: startedStamp(now - 60 * 60_000), spec: specFile });
-    const p = { queuedMaxMin: 5, stallMaxMin: 30, stallFailedCalls: 5 };
+    const s = st("L1", 100, { state: "running", started: startedStamp(now - 60 * 60_000), spec: specFile, turns: 5, turnsAtProgress: 0 });
+    const p = { queuedMaxMin: 5, stallCalls: 60, stallFailedCalls: 5 };
     marker(at - 60 * 60_000, ["L1"]);
     expect(escalationReason(s, at, p)).toBeNull(); // frozen: never escalated
     acct({ L1: 60 * 60_000 });
@@ -324,7 +324,7 @@ describe("supervision stands down while frozen", () => {
     const q = st("L1", 100, { state: "queued", now: true, started: startedStamp(now - 60 * 60_000), spec: specFile });
     expect(escalationReason(q, at, p)).toBeNull(); // queued minutes frozen too (acct L1 = 60m covers the whole wait)
     acct({}); marker(at - 45 * 60_000, ["L9"]); // another worker's freeze moves this one's clock not at all
-    expect(escalationReason(s, at, p)).toMatch(/no edit or commit for 60m/);
+    expect(escalationReason({ ...s, turns: 70 }, at, p)).toMatch(/no edit or commit for 70 turns/);
   });
 
   it("paused workers (preemption or `pai worker pause`) tell no stall and their paused minutes never count", async () => {
@@ -340,12 +340,12 @@ describe("supervision stands down while frozen", () => {
     // a fully paused-since-start worker: every minute was paused time, nothing to tell after the resume either
     const allPaused = st("L2", 101, { spawnerSession: "own", updated: startedStamp(now - 50 * 60_000), turns: 3, pausedMs: 50 * 60_000 });
     expect(detectSupervisionEvents([allPaused], opts)).toEqual([]);
-    // escalation: a paused worker has no verdict, and its paused minutes do not count toward stallMaxMin
+    // escalation: a paused worker has no verdict, and pause never produces a verdict (turn-count rule)
     const specFile = join(dir, "spec.txt");
     writeFileSync(specFile, "task", "utf8");
-    const p = { queuedMaxMin: 5, stallMaxMin: 30, stallFailedCalls: 5 };
+    const p = { queuedMaxMin: 5, stallCalls: 60, stallFailedCalls: 5 };
     expect(escalationReason(paused, now, p)).toBeNull(); // paused: never escalated
-    expect(escalationReason({ ...resumed, spec: specFile }, now, p)).toMatch(/no edit or commit for 30m/); // only the active half of the spell counts
+    expect(escalationReason({ ...resumed, spec: specFile, turns: 70, turnsAtProgress: 0 }, now, p)).toMatch(/no edit or commit for 70 turns/); // turns, not minutes: pause time is irrelevant
     // TroubleWatcher: a worker whose status says paused tells nothing while parked
     const sent: string[] = [];
     let n = 0;

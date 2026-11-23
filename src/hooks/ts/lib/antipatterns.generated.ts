@@ -442,11 +442,8 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "kind": "no-edit-streak",
       "params": {
         "note1_calls": 12,
-        "note1_min": 4,
         "note2_calls": 25,
-        "note2_min": 8,
         "deny_calls": 40,
-        "deny_min": 12,
         "note1_message": "You have made {n} read-only calls in {min} min and changed no file. The spec names the files to change. Stop looking for more context: find the closest existing sibling of what you must add (same file, same shape), copy its structure, and make your first small edit now. Unknown details are cheaper to fix after the first test run than to find by reading.",
         "note2_message": "{n} calls, {min} min, still no edit. Write your best-guess implementation now, even partial, in the file the spec names; run the test or a 10-line script once; fix what it reports. Do not search again unless the test output names something you lack."
       }

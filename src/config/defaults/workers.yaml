@@ -201,16 +201,19 @@ workers:
       tier: sonnet
       provider: anthropic
       model: sonnet
-    # Time-bound escalation (the supervision tick, reroute.ts): a job that
-    # runs without a successful Edit/Write/commit for stallMaxMin, or has
+    # Escalation decisions count progress, not minutes (reroute.ts): a job with
+    # stallCalls model turns since its last successful Edit/Write/commit, or
     # stallFailedCalls failed tool calls in a row, moves once to the fallback
-    # provider. A job whose provider was pinned (--provider, --local) is never
-    # moved. queuedMaxMin: 0 = a queued job waits for its slot unless the
-    # operator gives priority (/now, --now, `pai worker priority <id> now`);
-    # then it moves after 2 min. A positive value moves a prioritised queued
-    # job after that many minutes instead.
+    # provider. A pinned job (--provider, --local) is never moved. queuedMaxMin:
+    # 0 = a queued job waits for its slot unless the operator gives priority
+    # (/now, --now, `pai worker priority <id> now`); then it moves after 2 min.
+    # The only wall-clock limit is the run's max-minutes backstop; with
+    # scaleWithSpeed it is stretched for a local model by reference decode
+    # tok/s / measured decode tok/s (clamped 1..maxScale; cloud never scaled).
     queuedMaxMin: 0
-    stallMaxMin: 10
+    stallCalls: 60
+    scaleWithSpeed: true
+    maxScale: 4
     stallFailedCalls: 6
   # Worker Bash guard: the live-database write allowlist. A worker's SQL-client
   # writes (psql/mysql/sqlite3/… via shell, docker exec, kubectl exec or ssh) are

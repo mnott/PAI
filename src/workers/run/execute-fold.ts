@@ -52,6 +52,7 @@ import { preambleLine } from "../preamble.js";
 import { armResultGrace, leftoverNote } from "../result-grace.js";
 import { createResultFold } from "./event-fold.js";
 import { armDeadline } from "../deadline.js";
+import { speedProbe } from "../speed-scale.js";
 import { fireHandoff, handoffLimit } from "./handoff.js";
 import { budgetCheck, budgetLimit, distinctTestRuns, fireBudget, type BudgetSnapshot } from "../time-budget.js";
 import { isTestCommand } from "../hang-probe.js";
@@ -359,7 +360,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   };
 
   const resultGrace = armResultGrace(headless ? proc.pid : undefined);
-  stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid), Date.now, {}, wid) : null;
+  stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid), Date.now, { speed: speedProbe(target.providerName, target.provider.baseUrl ?? "", model, status, () => saveStatus(logDir, status)) }, wid) : null;
   stopTrack = trackBlocked(logDir, status, limit);
   // a local run past workers.localHandoffMinutes hands its branch to the cloud (handoff.ts)
   const handoff = headless && a.route?.local && a.route.policy !== "local-only" && !isBenchmarkLabel(label) ? handoffLimit(config.localHandoffMinutes, limit) : null;
@@ -563,6 +564,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           const progressed = !!use && (status.deliverable === "findings" ? isFindingsProgressTool(use.name, use.input) : isProgressTool(use.name, use.input));
           if (use && !toolResultFailed(block) && (progressed || readOnly)) {
             status.progressAt = nowStamp();
+            status.turnsAtProgress = status.turns;
             const sched = readSchedFile(logDir);
             const a = sched?.workers[wid];
             if (a) status.lineAtProgressMs = a.waitMsTotal + (a.waitingSince ? Math.max(0, Date.now() - a.waitingSince) : 0);

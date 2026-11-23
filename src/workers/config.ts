@@ -2395,24 +2395,30 @@ function escalateEnvOverride(name: string, fallback: number): number {
 export function escalationPolicy(
   lowPower: () => boolean = cachedLowPowerActive,
   factor: () => number = lowPowerFactor
-): Pick<EscalateConfig, "queuedMaxMin" | "stallMaxMin" | "stallFailedCalls"> {
-  let base: Pick<EscalateConfig, "queuedMaxMin" | "stallMaxMin" | "stallFailedCalls">;
+): Pick<EscalateConfig, "queuedMaxMin" | "stallCalls" | "stallFailedCalls"> {
+  let base: Pick<EscalateConfig, "queuedMaxMin" | "stallCalls" | "stallFailedCalls">;
   try {
-    const { queuedMaxMin, stallMaxMin, stallFailedCalls } = readWorkersSection().workers.escalate;
-    base = { queuedMaxMin, stallMaxMin, stallFailedCalls };
+    const { queuedMaxMin, stallCalls, stallFailedCalls } = readWorkersSection().workers.escalate;
+    base = { queuedMaxMin, stallCalls, stallFailedCalls };
   } catch {
-    base = { queuedMaxMin: DEFAULT_ESCALATE.queuedMaxMin, stallMaxMin: DEFAULT_ESCALATE.stallMaxMin, stallFailedCalls: DEFAULT_ESCALATE.stallFailedCalls };
+    base = { queuedMaxMin: DEFAULT_ESCALATE.queuedMaxMin, stallCalls: DEFAULT_ESCALATE.stallCalls, stallFailedCalls: DEFAULT_ESCALATE.stallFailedCalls };
   }
   base = {
     ...base,
     queuedMaxMin: escalateEnvOverride("PAI_ESCALATE_QUEUED_MAX_MIN", base.queuedMaxMin),
-    stallMaxMin: escalateEnvOverride("PAI_ESCALATE_STALL_MAX_MIN", base.stallMaxMin),
   };
+  // only the queue wait is a clock; stall decisions count turns (stallCalls) and need no scaling
   const f = factor();
   if (!lowPower() || f <= 1) return base;
-  return {
-    queuedMaxMin: base.queuedMaxMin * f,
-    stallMaxMin: base.stallMaxMin * f,
-    stallFailedCalls: base.stallFailedCalls,
-  };
+  return { ...base, queuedMaxMin: base.queuedMaxMin * f };
+}
+
+/** workers.escalate.scaleWithSpeed / maxScale: whether and how far the max-minutes backstop stretches for a slow local model (speed-scale.ts). */
+export function speedScaleConfig(): { scaleWithSpeed: boolean; maxScale: number } {
+  try {
+    const { scaleWithSpeed, maxScale } = readWorkersSection().workers.escalate;
+    return { scaleWithSpeed, maxScale };
+  } catch {
+    return { scaleWithSpeed: DEFAULT_ESCALATE.scaleWithSpeed, maxScale: DEFAULT_ESCALATE.maxScale };
+  }
 }

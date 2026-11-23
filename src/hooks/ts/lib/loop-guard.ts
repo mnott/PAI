@@ -987,13 +987,14 @@ export function stallStep(prev: LoopState["stall"], tool: string, input: string 
   else return { stall: cur, n: cur.calls, min: Math.floor((now - cur.since) / 60_000) };
   cur = { ...cur, calls: cur.calls + 1 };
   const n = cur.calls;
-  // the time rules need at least 6 counted calls: two slow calls are no stall
+  // minutes are display only (2026-11-23): the rules fire on call counts, so a
+  // slow machine (Low Power, GPU sharing) is never nudged for doing real work
   const min = n < 6 ? 0 : Math.max(0, Math.floor((now - cur.since) / 60_000));
   if (suppress === "all") return { stall: cur, n, min };
-  if (readOnly && (n >= p("deny_calls") || min >= p("deny_min"))) return { stall: cur, kind: "deny", n, min };
+  if (readOnly && n >= p("deny_calls")) return { stall: cur, kind: "deny", n, min };
   if (suppress === "notes") return { stall: cur, n, min };
-  if (!cur.fired2 && (n >= p("note2_calls") || min >= p("note2_min"))) return { stall: { ...cur, fired1: true, fired2: true }, kind: "note2", n, min };
-  if (!cur.fired1 && (n >= p("note1_calls") || min >= p("note1_min"))) return { stall: { ...cur, fired1: true }, kind: "note1", n, min };
+  if (!cur.fired2 && n >= p("note2_calls")) return { stall: { ...cur, fired1: true, fired2: true }, kind: "note2", n, min };
+  if (!cur.fired1 && n >= p("note1_calls")) return { stall: { ...cur, fired1: true }, kind: "note1", n, min };
   return { stall: cur, n, min };
 }
 
