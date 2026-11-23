@@ -9,7 +9,7 @@
  */
 
 import { escalationCloud } from "./config.js";
-import { classifyRoute, routeLine } from "./route-classifier.js";
+import { classifyRouteAssisted, routeLine } from "./route-classifier.js";
 import { withRunLock, type LockDeps } from "./run-lock.js";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { gatePhaseName } from "./plan-status.js";
@@ -328,7 +328,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
     // local attempts always escalate there (route-classifier.ts); --force-local keeps it local
     const { tier: cloudTier, provider: cloudProvider } = escalationCloud();
     const cloud = { tier: cloudTier, provider: cloudProvider };
-    const verdict = planWasLocal && !opts.forceLocal ? classifyRoute({ kind: p.kind, label: label(p), text: p.spec }) : undefined;
+    const verdict = planWasLocal && !opts.forceLocal ? await classifyRouteAssisted({ kind: p.kind, label: label(p), text: p.spec }) : undefined;
     if (verdict) deps.log({ event: "route", part: p.id, unit: p.unit, note: routeLine(verdict) });
     const ladder: Array<{ tier: string; provider: string }> =
       verdict?.where === "cloud"

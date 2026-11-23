@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { RequestScheduler } from "../router/scheduler.js";
 import { readFileSync } from "node:fs";
 import { DEFAULT_HELPER, HELPER_CALLS_FILE, helperComplete, helperConfig, helperStats, resetHelperState, truncateInput, type HelperCall, type HelperDeps, type WireRequest } from "./helper.js";
-import { cachedTldr, classifyAlert, cleanGateSummary, cleanTldr, parseAlertVerdict, resetTldrState, trimTldrInput } from "./helper-uses.js";
+import { classifyRouteAssisted } from "./route-classifier.js";
+import { parseProofVerdict, proofIsEmpty, routeSecondOpinion, cachedTldr, classifyAlert, cleanGateSummary, cleanTldr, parseAlertVerdict, resetTldrState, trimTldrInput } from "./helper-uses.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { helperPickTopic, parseTopicWord, pickTopicAsync, resolveTopic, resetTopicPickState, TOPIC_WORDS } from "./topic.js";
 
@@ -368,5 +369,58 @@ describe("apple-fm summaries stop failing", () => {
     });
     await helperComplete({ task: "t", input: "i", timeoutMs: 12_000 }, d);
     expect(seen[0]).toBeGreaterThanOrEqual(7000);
+  });
+});
+
+describe("route classifier and report check on apple-fm", () => {
+  const bounded = { label: "fix parser", text: "Fix the off-by-one in the tokenizer and add a test." };
+
+  it("rules decide first: a cloud verdict never reaches the model", async () => {
+    let calls = 0;
+    const d = deps(async () => (calls++, msg("local: fine")));
+    const r = await classifyRouteAssisted({ kind: "infra", text: "x" }, d);
+    expect(r).toEqual({ where: "cloud", reason: "infra task" });
+    expect(calls).toBe(0);
+  });
+
+  it("the model may move a default-local task to the cloud, same shape", async () => {
+    const d = deps(async (w) => (w.kind === "messages" ? msg("cloud: touches several services") : ollama("local")));
+    const r = await classifyRouteAssisted(bounded, d);
+    expect(r).toEqual({ where: "cloud", reason: "model: touches several services" });
+    expect(callsOf(d)[0]).toMatchObject({ label: "route", model: "apple-fm", ok: true });
+  });
+
+  it("local verdict, failure, garbage and a switched-off use all keep the rules' answer", async () => {
+    const rules = { where: "local", reason: "bounded code task" };
+    expect(await classifyRouteAssisted(bounded, deps(async () => msg("local: bounded")))).toEqual(rules);
+    expect(await classifyRouteAssisted(bounded, deps(async () => { throw new Error("busy"); }))).toEqual(rules);
+    resetHelperState();
+    const g = deps(async () => msg("maybe, hard to say"));
+    expect(await classifyRouteAssisted(bounded, g)).toEqual(rules);
+    expect(callsOf(g).some((c) => c.kind === "rejected")).toBe(true);
+    const off = deps(async () => msg("cloud: x"), { config: { ...DEFAULT_HELPER, uses: { ...DEFAULT_HELPER.uses, routeClass: false } } });
+    expect(await classifyRouteAssisted(bounded, off)).toEqual(rules);
+  });
+
+  it("routeSecondOpinion is one call in flight", async () => {
+    let open = 0;
+    let max = 0;
+    const d = deps(async () => {
+      max = Math.max(max, ++open);
+      await new Promise((r) => setTimeout(r, 10));
+      open--;
+      return msg("local");
+    });
+    await Promise.all([routeSecondOpinion("a task", d), routeSecondOpinion("b task", d), routeSecondOpinion("c task", d)]);
+    expect(max).toBe(1);
+  });
+
+  it("proof verdicts parse; a switched-off check never objects", () => {
+    expect(parseProofVerdict("nothing")).toBe(true);
+    expect(parseProofVerdict("Proof.")).toBe(false);
+    expect(parseProofVerdict("hm")).toBeNull();
+    expect(proofIsEmpty("git diff HEAD", { config: { ...DEFAULT_HELPER, uses: { ...DEFAULT_HELPER.uses, reportCheck: false } } })).toBe(false);
+    // no config under test: the helper is off, the check stays silent
+    expect(proofIsEmpty("git diff HEAD")).toBe(false);
   });
 });

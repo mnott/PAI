@@ -8,6 +8,9 @@ import { editHintFor } from "../edit-assist.js";
 import { recordToolError } from "../tool-errors.js";
 import { checkProof, newUntracked, parseWorkerReport, type BashRun, type WorkerReport } from "../report.js";
 import { shortText } from "../args.js";
+import { parseAg2Report } from "../agentish.js";
+import type { HelperDeps } from "../helper.js";
+import { proofIsEmpty } from "../helper-uses.js";
 import { bashCommand, toolResultFailed, toolResultText } from "./stream.js";
 
 export interface ToolFoldOpts {
@@ -79,10 +82,25 @@ export function runProofCheck(
   dir: string,
   untrackedAtStart: Set<string>,
   ledger: string,
-  wid: string
+  wid: string,
+  helper: HelperDeps = {}
 ): ProofOutcome {
   const stray = newUntracked(dir, untrackedAtStart);
-  const chk = checkProof(result, bashRuns, stray);
+  let chk = checkProof(result, bashRuns, stray);
+  // an r=+ the mechanical check let stand gets apple-fm's look at the p= command: it can only downgrade
+  if (!chk.rewritten) {
+    const parsed = parseAg2Report(result);
+    const p = parsed?.kind === "R" && parsed.fields.r === "+" ? parsed.fields.p : undefined;
+    if (p && proofIsEmpty(p, helper)) {
+      const text = chk.text
+        .split("\n")
+        .filter((l) => !/^\s*y=/.test(l))
+        .map((l) => (/^\s*r=\+\s*$/.test(l) ? "r=~" : l))
+        .concat("y=claimed proof shows nothing about the work")
+        .join("\n");
+      chk = { text, rewritten: true, proof: p };
+    }
+  }
   const changed = chk.rewritten || stray.length > 0;
   const report = changed ? parseWorkerReport(chk.text) : null;
   if (report && stray.length) report.untracked = stray;

@@ -182,3 +182,78 @@ export function summarizeGateFailure(output: string, deps: HelperDeps = {}): str
   if (!s) helperRejected("gate", model0(deps), deps);
   return s;
 }
+
+// ---- d: route classifier second opinion -------------------------------------------------------
+
+export function parseRouteVerdict(text: string): { where: "local" | "cloud"; reason: string } | null {
+  const m = /^[\s<\["'*]*(local|cloud)\b[>\]"'*]*\s*[:\-–—]?\s*(.*)$/im.exec(text.trim());
+  if (!m) return null;
+  return { where: m[1].toLowerCase() as "local" | "cloud", reason: m[2].replace(/\s+/g, " ").trim().slice(0, 100) };
+}
+
+/**
+ * Second opinion on a task the rules called "bounded code": null = stay local (model off, busy,
+ * down, unusable, or it also says local); a reason string = the model sends it to the cloud.
+ * It can only add caution, never keep a task the rules sent to the cloud.
+ */
+export async function routeSecondOpinion(taskText: string, deps: HelperDeps = {}): Promise<string | null> {
+  if (!taskText.trim() || !(deps.config ?? helperConfig()).uses.routeClass) return null;
+  const text = await helperComplete(
+    {
+      label: "route",
+      maxTokens: 40,
+      keep: "head",
+      timeoutMs: 20_000,
+      task:
+        "A small local coding model may take this task. Answer cloud if it needs a stronger model (infrastructure, installers, signing, devices, external services, " +
+        "migrations, cross-module redesign, vague or open-ended work); answer local if it is a bounded code or test change. " +
+        'Reply on ONE line as "<local|cloud>: <reason in at most 8 words>".',
+      input: taskText.slice(0, 1500),
+    },
+    deps
+  );
+  if (text === null) return null;
+  const v = parseRouteVerdict(text);
+  if (!v) {
+    helperRejected("route", model0(deps), deps);
+    return null;
+  }
+  return v.where === "cloud" ? `model: ${v.reason || "needs a stronger model"}` : null;
+}
+
+// ---- e: report proof check --------------------------------------------------------------------
+
+/** "nothing" = the proof command shows nothing about the work (git diff, ls, cat); null = no objection. */
+export function parseProofVerdict(text: string): boolean | null {
+  const m = /^[\s<\["'*]*(proof|nothing)\b/i.exec(text.trim());
+  return m ? m[1].toLowerCase() === "nothing" : null;
+}
+
+/**
+ * Sync sanity check of the p= command of an r=+ report that already passed the mechanical
+ * check: true only when the model says the command proves nothing. Can only downgrade.
+ */
+export function proofIsEmpty(proof: string, deps: HelperDeps = {}): boolean {
+  const cmd = proof.split(/ (?:→|->|=>|⇒|#) /)[0].trim();
+  if (!cmd || !(deps.config ?? helperConfig()).uses.reportCheck) return false;
+  const text = helperCompleteSync(
+    {
+      label: "report",
+      maxTokens: 8,
+      keep: "head",
+      timeoutMs: 20_000,
+      task:
+        "A coding agent claims this shell command as proof its work is correct. Answer proof if it runs tests, a type check, a build, a linter or a probe of the changed behaviour; " +
+        "answer nothing if it only shows files, a diff, a status, a listing or prints text. Reply with ONE word: proof or nothing.",
+      input: cmd,
+    },
+    deps
+  );
+  if (text === null) return false;
+  const v = parseProofVerdict(text);
+  if (v === null) {
+    helperRejected("report", model0(deps), deps);
+    return false;
+  }
+  return v;
+}

@@ -12,6 +12,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parseLedger } from "./ledger.js";
 import { ESCALATE_FAILURES } from "./escalation.js";
+import type { HelperDeps } from "./helper.js";
+import { routeSecondOpinion } from "./helper-uses.js";
 
 export const CLOUD_KINDS = ["infra", "install", "device", "external", "redesign"] as const;
 export const LOCAL_KINDS = ["code", "test"] as const;
@@ -76,6 +78,18 @@ export function classifyRoute(i: RouteInput): RouteDecision {
     for (const { re, why } of KEYWORDS) if (re.test(text)) return { where: "cloud", reason: why };
   }
   return { where: "local", reason: "bounded code task" };
+}
+
+/**
+ * classifyRoute plus apple-fm's second opinion on the one verdict the rules reach by default
+ * ("bounded code task", the fall-through): the model may move it to the cloud, nothing else
+ * changes. Same result shape; any helper failure (busy, down, unusable) keeps the rules' verdict.
+ */
+export async function classifyRouteAssisted(i: RouteInput, deps: HelperDeps = {}): Promise<RouteDecision> {
+  const d = classifyRoute(i);
+  if (d.where !== "local" || d.reason !== "bounded code task") return d;
+  const why = await routeSecondOpinion([i.label ?? "", i.text ?? ""].join("\n"), deps).catch(() => null);
+  return why ? { where: "cloud", reason: why } : d;
 }
 
 /**
