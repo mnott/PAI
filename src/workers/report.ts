@@ -695,3 +695,95 @@ export function untrackedPaths(cwd: string): string[] {
     return [];
   }
 }
+
+/** Plain words a summary list may carry that are English, not code. */
+const CLAIM_PLAIN = new Set(["guard", "guards", "handler", "handlers", "tests", "test", "fixes", "fixed", "added", "adds", "update", "updated", "cleanup", "refactor", "helper", "helpers", "config", "docs", "types", "typing", "logic", "check", "checks", "support", "wiring", "comment", "comments", "import", "imports", "export", "exports", "rename", "renamed", "format", "options", "option", "fallback", "default", "defaults", "build", "script", "scripts", "other", "stuff", "changes", "change"]);
+
+/**
+ * Code-like identifiers a `changed` entry's summary names: backticked tokens, camelCase / snake_case /
+ * PascalCase words, `foo.bar` and `bar()`. Also a bare lowercase word that is a whole comma item of a
+ * list that already names a strong identifier ("listOk guard, dragIds, dragend"). Plain English,
+ * file names and the entry's own path parts are left out.
+ */
+export function claimIdentifiers(path: string, summary: string): string[] {
+  const own = new Set(claimedPaths(path).flatMap((p) => [p, ...p.split("/"), ...p.split("/").pop()!.split(".")]));
+  const fileLike = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|css|html|swift|py|sh|txt)$/i;
+  const out = new Set<string>();
+  const add = (raw: string, minLen = 4): void => {
+    const t = raw.replace(/\(\)?$/, "").replace(/^[.$]+|[.,;:]+$/g, "");
+    if (t.length < minLen || own.has(t) || fileLike.test(t) || /^\d/.test(t)) return;
+    out.add(t);
+  };
+  const stripped = summary.replace(/`([^`\n]+)`/g, (_m, tok: string) => (add(tok.trim().split(/\s+/)[0] ?? ""), " "));
+  const strong = /^(?:[A-Za-z_$][\w$]*\.[\w$]+(?:\.[\w$]+)*|[A-Za-z_$][\w$]*\(\)?|[a-z][a-z0-9]*[A-Z][\w$]*|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+|[A-Z][a-z0-9]+[A-Z][\w$]*)$/;
+  for (const w of stripped.split(/[\s,;|/—–]+/)) {
+    const t = w.replace(/^[("'\[]+|[.,;:!?]+$/g, "").replace(/^(.*[^(])\)$/, "$1");
+    if (t && strong.test(t)) add(t);
+  }
+  if (out.size) {
+    for (const item of stripped.split(/[,;|]/)) {
+      const t = item.trim();
+      if (/^[a-z][a-z0-9]{4,}$/.test(t) && !CLAIM_PLAIN.has(t)) add(t, 5);
+    }
+  }
+  return [...out];
+}
+
+export interface ClaimMissing {
+  id: string;
+  file: string;
+}
+
+/** The text of every added line of a unified diff, per file (`+++ b/path`). */
+function addedByFile(diff: string): Map<string, string> {
+  const m = new Map<string, string>();
+  let cur = "";
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("+++ ")) {
+      cur = l.slice(4).replace(/^b\//, "").trim();
+      if (!m.has(cur)) m.set(cur, "");
+    } else if (l.startsWith("+") && cur) m.set(cur, m.get(cur) + l.slice(1) + "\n");
+  }
+  return m;
+}
+
+/**
+ * Deterministic check of a report's `changed` entries against the worker's diff: every identifier an
+ * entry names must occur in some added line (the entry's own files first, then the whole diff).
+ * Paperfull #74: a report claimed a `dragend` handler its commit did not contain.
+ */
+export function claimsAbsentFromDiff(changed: Array<{ path?: string; summary?: string }> | undefined, diff: string): ClaimMissing[] {
+  const files = addedByFile(diff);
+  const all = [...files.values()].join("\n");
+  const missing: ClaimMissing[] = [];
+  for (const ch of changed ?? []) {
+    const path = (ch.path ?? "").trim();
+    for (const id of claimIdentifiers(path, ch.summary ?? "")) {
+      const mine = [...files].filter(([f]) => claimedPaths(path).some((p) => f === p || f.endsWith("/" + p) || p.endsWith("/" + f))).map(([, t]) => t).join("\n");
+      const hay = mine.includes(id) ? mine : all;
+      if (!hay.includes(id)) missing.push({ id, file: claimedPaths(path)[0] ?? path });
+    }
+  }
+  return missing;
+}
+
+/**
+ * Add the "ClaimsInDiff" check to a report: a failed one naming the absent identifiers (a "+" result
+ * becomes "~"), a passing one when every claimed identifier is in the diff. No change when the entries
+ * name no identifier. Never blocks a merge: it only moves the verdict and shows in the report.
+ */
+export function applyClaimCheck(report: WorkerReport, diff: string): WorkerReport {
+  const named = (report.changed ?? []).some((ch) => claimIdentifiers((ch.path ?? "").trim(), ch.summary ?? "").length);
+  if (!named) return report;
+  const missing = claimsAbsentFromDiff(report.changed, diff);
+  const checks = (report.checks ?? []).filter((c) => c.name !== "ClaimsInDiff");
+  if (!missing.length) return { ...report, checks: [...checks, { name: "ClaimsInDiff", ok: true }] };
+  const detail = `claimed but absent from the diff: ${missing.map((m) => `${m.id} (${m.file})`).join(", ")}`;
+  const down = report.result === "+";
+  return {
+    ...report,
+    checks: [...checks, { name: "ClaimsInDiff", ok: false, detail }],
+    ...(down ? { result: "~" as const, why: report.why ?? detail } : {}),
+    notes: report.notes ? `${report.notes} — ${detail}` : detail,
+  };
+}

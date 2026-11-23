@@ -4,7 +4,7 @@
  * existing import path keeps working.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { shortText } from "../args.js";
 import { buildRunEnv } from "../run-env.js";
 import { appendLedger } from "../ledger.js";
@@ -27,7 +27,7 @@ import {
   commitLines,
   recordWorktree,
 } from "../worktree.js";
-import { AG2_REASK_TEXT, type WorkerReport } from "../report.js";
+import { AG2_REASK_TEXT, applyClaimCheck, type WorkerReport } from "../report.js";
 import { scanWorkerRun } from "../scan.js";
 import { readWorkersCached } from "../config.js";
 import { killTree } from "../kill-tree.js";
@@ -275,6 +275,23 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     status.claimsContinue = true;
     saveStatus(logDir, status);
     f.onReviewed?.();
+  }
+  // the report's claimed code must be in the branch's diff (Paperfull #74: a claimed handler was never written)
+  if (f.worktree && report?.changed?.length) {
+    try {
+      const diff = execFileSync("git", ["diff", "--unified=0", `${f.worktree.base}..HEAD`], { cwd: f.worktree.dir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+      const checked = applyClaimCheck(report, diff);
+      if (checked !== report) {
+        report = checked;
+        if (checked.checks?.some((c) => c.name === "ClaimsInDiff" && c.ok === false)) {
+          appendLedger(ledger, "REPORT-CLAIMS-ABSENT", { id: wid, detail: checked.checks.find((c) => c.name === "ClaimsInDiff")?.detail ?? "" });
+          status.claimsContinue = report.result === "~";
+          saveStatus(logDir, status);
+        }
+      }
+    } catch {
+      // no diff to check against: the claim check is skipped
+    }
   }
   const cloudInvalid = !forReview && f.cloudRun?.(status) ? invalidCloudReport(status, report) : null;
   if (cloudInvalid) {

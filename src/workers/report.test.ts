@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, checkProof, verifyReportChanges } from "./report.js";
+import { applyClaimCheck, claimIdentifiers, workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, checkProof, verifyReportChanges } from "./report.js";
 import { repairAndValidateAg2 } from "./agentish.js";
 
 describe("workerContractPrompt — planner classes (orchestrate/plan without the flag)", () => {
@@ -107,5 +107,37 @@ describe("proof check and report validation credit what really ran (2026-11-22/2
     const chk = checkProof(R("./a/b.ts x", "npx vitest run src/a.test.ts → 3 passed"), runs);
     expect(chk.rewritten).toBe(true);
     expect(chk.text).toContain("r=~");
+  });
+});
+
+describe("claim check against the diff", () => {
+  const diff = ["diff --git a/src/Board.tsx b/src/Board.tsx", "--- a/src/Board.tsx", "+++ b/src/Board.tsx", "@@ -1 +1,3 @@", "+const listOk = true;", "+const dragIds = [];"].join("\n");
+  const base = (summary: string, result: "+" | "-" = "+") => ({ result, changed: [{ path: "src/Board.tsx", summary }], checks: [{ name: "Tsc", ok: true }] });
+
+  it("passes when every claimed identifier is in the added lines", () => {
+    const r = applyClaimCheck(base("listOk guard, dragIds"), diff);
+    expect(r.result).toBe("+");
+    expect(r.checks?.find((c) => c.name === "ClaimsInDiff")?.ok).toBe(true);
+  });
+
+  it("fails naming dragend (Paperfull #74) and downgrades + to ~", () => {
+    const r = applyClaimCheck(base("listOk guard, dragIds, dragend"), diff);
+    const ck = r.checks?.find((c) => c.name === "ClaimsInDiff");
+    expect(ck?.ok).toBe(false);
+    expect(ck?.detail).toContain("dragend");
+    expect(ck?.detail).not.toContain("dragIds");
+    expect(r.result).toBe("~");
+  });
+
+  it("leaves a failing result alone and flags prose-only entries as no claim", () => {
+    expect(applyClaimCheck(base("listOk, dragend", "-"), diff).result).toBe("-");
+    const prose = base("fixes the drag handling and cleans up the layout");
+    expect(claimIdentifiers("src/Board.tsx", "fixes the drag handling and cleans up the layout")).toEqual([]);
+    expect(applyClaimCheck(prose, diff)).toBe(prose);
+  });
+
+  it("extracts backticked, dotted and call tokens, not file names", () => {
+    expect(claimIdentifiers("a/x.ts", "`foo_bar` in x.ts, api.get, build() and Board")).toEqual(expect.arrayContaining(["foo_bar", "api.get", "build"]));
+    expect(claimIdentifiers("a/x.ts", "x.ts")).toEqual([]);
   });
 });
