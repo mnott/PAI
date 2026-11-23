@@ -7,6 +7,7 @@ import { workerCanEdit } from "../../../workers/run/argv.js";
 import { bashWritesRepoFile, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stallStep, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
 import { activeAntipattern, resetAntipatternCache, shippedAntipattern } from "./antipatterns.js";
 import { loadLoopState, logHookError, loopStateFile, saveLoopState } from "./loop-guard-state.js";
+import { announcesAction, announcedActionDecision } from "../../../workers/run/announced-action.js";
 import { paramsForModel, perModelEntry } from "./antipattern-lifecycle.js";
 
 const yamlDoc = parse(readFileSync("antipatterns/tool-loop/no-edit-stall.yaml", "utf8"));
@@ -456,5 +457,17 @@ describe("result recording when hooks rewrote the input after Pre (loop guard re
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---- announced-no-action.yaml tests block ----
+describe("announced-no-action.yaml tests block", () => {
+  const doc = parse(readFileSync("antipatterns/final-text/announced-no-action.yaml", "utf8"));
+  for (const t of doc.tests.match as string[]) it(`match: ${t}`, () => expect(announcesAction(t)).toBe(true));
+  for (const t of doc.tests.no_match as string[]) it(`no_match: ${t.slice(0, 30)}`, () => expect(announcesAction(t)).toBe(false));
+  it("caps at max_per_run and needs tools", () => {
+    expect(announcedActionDecision("I'll read the file.", 0, true)?.mode).toBe("enforce");
+    expect(announcedActionDecision("I'll read the file.", 2, true)).toBeNull();
+    expect(announcedActionDecision("I'll read the file.", 0, false)).toBeNull();
   });
 });

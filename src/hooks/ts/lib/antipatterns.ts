@@ -73,6 +73,17 @@ const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null
     }
     return null;
   },
+  "announced-action": (p) => {
+    if (!num(p.max_chars) || !num(p.max_per_run) || typeof p.starts !== "string" || typeof p.report !== "string") return "needs max_chars, max_per_run (numbers), starts and report (regex strings)";
+    for (const r of [p.starts, p.report]) {
+      try {
+        new RegExp(r);
+      } catch {
+        return `invalid regex ${r}`;
+      }
+    }
+    return null;
+  },
   "missing-path": () => null,
   "hook-source-read": () => null,
   "spec-paths": (p) => (p.max_tokens === undefined || num(p.max_tokens) ? null : "max_tokens must be a number"),
