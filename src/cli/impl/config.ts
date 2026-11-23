@@ -30,6 +30,7 @@ import {
 import { paiConfigFilePath, paiConfigYamlFilePath, migrateConfigFile } from "../../daemon/config.js";
 import { liveWorkersConfigShadows } from "../../workers/config-shadow.js";
 import { migrateMainConfigToYaml, MainConfigError } from "../../config/main-config.js";
+import { guardStatusText } from "../../config/config-guard.js";
 import { voicesJsonPath, voicesYamlPath, migrateVoicesToYaml } from "../../config/voices-config.js";
 import {
   listConfigOp,
@@ -260,9 +261,22 @@ export function configGetCmd(path: string, opts: { json?: boolean; source?: bool
   return 0;
 }
 
-export function configSetCmd(path: string, value: string, opts: { force?: boolean }): number {
+function guardMessage(r: { reverted: boolean; reason?: string }): void {
+  if (r.reverted) console.error(err(`reverted: ${r.reason ?? "the change did not prove working"}`));
+}
+
+/** Run a config edit under the config guard (snapshot, proof, auto-revert); see docs/config.md "Config guard". */
+async function guarded<T>(edit: () => T): Promise<{ value: T; reverted: boolean; reason?: string }> {
+  const { guardedEdit } = await import("../../config/config-guard.js");
+  const { liveProofDeps, liveReload } = await import("../../config/config-guard-live.js");
+  return guardedEdit(edit, liveProofDeps(), liveReload);
+}
+
+export async function configSetCmd(path: string, value: string, opts: { force?: boolean }): Promise<number> {
   try {
-    const r = setConfigValueOp(path, value, { force: opts.force });
+    const g = await guarded(() => setConfigValueOp(path, value, { force: opts.force }));
+    if (g.reverted) { guardMessage(g); return 1; }
+    const r = g.value;
     if (r.yamlCreated) console.log(dim(`  created ${r.yamlPath}`));
     console.log(ok(`Set ${path} = `) + (typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value)));
   } catch (e) {
@@ -272,14 +286,48 @@ export function configSetCmd(path: string, value: string, opts: { force?: boolea
   return 0;
 }
 
-export function configUnsetCmd(path: string): number {
+export async function configUnsetCmd(path: string): Promise<number> {
   try {
-    const r = unsetConfigValueOp(path);
-    console.log(r.existed ? ok(`Unset ${path}`) : dim(`  ${path} was not set`));
+    const g = await guarded(() => unsetConfigValueOp(path));
+    if (g.reverted) { guardMessage(g); return 1; }
+    console.log(g.value.existed ? ok(`Unset ${path}`) : dim(`  ${path} was not set`));
   } catch (e) {
     console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
     return 1;
   }
+  return 0;
+}
+
+export async function configArmCmd(opts: { file?: string; for?: string }): Promise<number> {
+  try {
+    const { armConfigGuard, parseWindow, GUARD_FILES } = await import("../../config/config-guard.js");
+    const files = opts.file ? GUARD_FILES.filter((f) => f === opts.file) : undefined;
+    if (opts.file && !files?.length) throw new Error(`--file must be config.yaml or workers.yaml`);
+    const forMs = opts.for ? parseWindow(opts.for) : undefined;
+    for (const e of armConfigGuard({ files, forMs })) {
+      console.log(ok(`armed ${e.file}`) + dim(` snapshot ${e.snapshot ?? "(file absent)"}, reverts at ${new Date(e.deadline).toTimeString().slice(0, 8)} unless \`pai config confirm\` passes`));
+    }
+    return 0;
+  } catch (e) {
+    console.error(err(e instanceof Error ? e.message : String(e)));
+    return 1;
+  }
+}
+
+export async function configConfirmCmd(): Promise<number> {
+  const { confirmConfigGuard } = await import("../../config/config-guard.js");
+  const { liveProofDeps, liveReload } = await import("../../config/config-guard-live.js");
+  const r = await confirmConfigGuard(liveProofDeps(), liveReload);
+  for (const c of r.checks) console.log(`  ${c.ok ? ok("pass") : err("FAIL")} ${c.name}${c.detail ? dim(` ${c.detail}`) : ""}`);
+  if (r.idle) { console.log(dim("  nothing was armed")); return r.ok ? 0 : 1; }
+  if (r.ok) { console.log(ok("proven: change kept, deadline cleared")); return 0; }
+  console.error(err(`proof failed: restored ${r.reverted.join(", ")}`));
+  return 1;
+}
+
+export function configGuardStatusCmd(): number {
+  const s = guardStatusText();
+  console.log(s.text || dim("  no guarded change"));
   return 0;
 }
 

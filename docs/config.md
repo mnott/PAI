@@ -168,6 +168,26 @@ search:
   snippetLength: 200
 ```
 
+## Config guard: a change reverts unless proven working
+
+A bad edit of `config.yaml` or `workers.yaml` (a session, a worker, `pai config set`, the cockpit) must never leave PAI broken. Every guarded change is snapshotted and carries a deadline; only a passing proof stops the revert.
+
+```
+pai config arm [--file config.yaml|workers.yaml] [--for 10m]   # BEFORE a hand edit: snapshot + deadline
+# ... edit the file ...
+pai config confirm                                             # run the proof: pass keeps, fail reverts now
+pai config guard                                               # pending confirm, reverts at HH:MM / change kept: proven / reverted: <reason>
+```
+
+Choices:
+
+- **Snapshot**: byte-for-byte copy in `~/.pai/logs/config-guard/<ts>-<file>`; both files unless `--file`. Arming an already armed file keeps the FIRST snapshot (the known-good state) and only extends the deadline.
+- **Deadline**: kept in `~/.pai/config-guard.json` and enforced by the daemon (15 s tick), not by a sleeping shell, so it survives the session. Default window 10 minutes. Past it the daemon restores the snapshot, swaps the router (the normal way a config change takes effect), logs `[config-guard]` and sends ONE PAILot notice.
+- **Proof** (`pai config confirm`): both YAML files parse; the config loader the daemon and router use (`loadConfig` + `readWorkersSection`) accepts them; daemon IPC answers; router port answers; the router serves `/v1/models` and `/cockpit` (any status below 500); every runtime with `autostart: true` that is not deliberately stopped accepts connections. Pass: deadline cleared, change kept. Fail: snapshot restored at once, router swapped, the failing check named.
+- **Automatic paths**: `pai config set` / `unset` arm, write, prove and revert by themselves. The proof only counts checks that passed BEFORE the edit, so a stopped daemon does not make every `set` revert itself. A refused edit (validation error) writes nothing and leaves no deadline.
+- **Cockpit**: registry editor saves and restores (`/cockpit/registry/save|restore`) go through the same path for `workers.yaml`: snapshot + arm, write, proof, keep or revert. The response carries `guard` ("change kept: proven") or `reverted: <reason>`; `GET /cockpit/registry` carries `guard: {state, text}` with "pending confirm, reverts at HH:MM" while a deadline is open.
+- **Not covered yet**: other writers (`pai worker classes set`, `pai models ...`, MCP `config_set`, the cockpit's config actions) still write directly; arm first when editing by hand through them.
+
 ## MCP tools
 
 On the `pai` MCP server (`src/daemon-mcp/index.ts`), backed by the same

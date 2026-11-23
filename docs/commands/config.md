@@ -168,6 +168,66 @@ pai config list
 
 See also: `pai config migrate`, `pai config set`
 
+### pai config arm
+
+Snapshot the config files; they revert unless `pai config confirm` passes in time
+
+```
+pai config arm [options]
+```
+
+Snapshot the config files; they revert unless `pai config confirm` passes in time.
+
+Run BEFORE hand-editing ~/.pai/config.yaml or ~/.pai/workers.yaml. Copies the file byte for byte to ~/.pai/logs/config-guard/<ts>-<file> and sets a deadline (default 10m) in ~/.pai/config-guard.json. The daemon enforces it: past the deadline it restores the snapshot, restarts the router and sends one PAILot notice. `pai config set`, `unset` and the cockpit registry editor do this by themselves.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--file FILE` | string | — | config.yaml or workers.yaml (default: both) |
+| `--for WINDOW` | string | — | Deadline, e.g. 90s, 10m, 1h (default 10m) |
+
+```sh
+pai config arm
+pai config arm --file workers.yaml --for 20m
+```
+
+See also: `pai config confirm`, `pai config guard`
+
+### pai config confirm
+
+Prove the armed config change works and keep it, or revert it now
+
+```
+pai config confirm
+```
+
+Prove the armed config change works and keep it, or revert it now.
+
+Checks: both YAML files parse, the config loader accepts them, the daemon and router answer, the router serves /v1/models and /cockpit, every running runtime accepts connections. Pass: the deadline is cleared and the change stays. Fail: the snapshot is restored immediately.
+
+```sh
+pai config confirm
+```
+
+See also: `pai config arm`, `pai config guard`
+
+### pai config guard
+
+Show whether a config change is pending, kept or was reverted
+
+```
+pai config guard
+```
+
+Show whether a config change is pending, kept or was reverted.
+
+Prints 'pending confirm, reverts at HH:MM', 'change kept: proven' or 'reverted: <reason>'.
+
+```sh
+pai config guard
+```
+
+See also: `pai config arm`, `pai config confirm`
+
 ### pai config validate
 
 Warn about workers settings that are shadowed or unused
@@ -237,6 +297,9 @@ See also: `pai config unset`
 | `pai config get` | Print one setting |
 | `pai config set` | Change one setting |
 | `pai config unset` | Reset one setting to its default |
+| `pai config arm` | Snapshot the config files; they revert unless `pai config confirm` passes in time |
+| `pai config confirm` | Prove the armed config change works and keep it, or revert it now |
+| `pai config guard` | Show whether a config change is pending, kept or was reverted |
 | `pai config validate` | Warn about workers settings that are shadowed or unused |
 | `pai config migrate` | Move old settings files into the current layout |
 

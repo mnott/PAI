@@ -61,7 +61,7 @@ function wrgAfterWrite(S,io,r,verb){
  S.busy=false;
  if(!r.ok){io.status("err",r.error||r.message||verb+" refused");io.paint();return r}
  S.passed=null;S.diff="";
- io.status("ok",verb+" · backup "+r.backup);
+ io.status("ok",verb+" · backup "+r.backup+(r.guard?" · "+r.guard:""));
  if(io.refresh)io.refresh(["models","limits"]);
  return wrgLoad(S,io,true).then(function(){return r});
 }

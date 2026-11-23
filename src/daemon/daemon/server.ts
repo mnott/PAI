@@ -37,7 +37,7 @@ import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sy
 import { interruptStaleJobs } from "../../router/cockpit-job-recovery.js";
 import { paiHomeDir } from "../../config/pai-home.js";
 import { startOrphanCheck } from "../orphan-check.js";
-import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch, startRuntimeAutostartSupervision, startLowPriorityKeeperSupervision } from "./scheduler.js";
+import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch, startConfigGuard, startRuntimeAutostartSupervision, startLowPriorityKeeperSupervision } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
@@ -258,6 +258,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // Restart onto a new build when dist changes under us.
   startDistWatch();
+
+  // A config change armed with `pai config arm` that nobody confirmed by its deadline is restored here.
+  startConfigGuard();
 
   // Connect the federation backend in the background. When storageBackend is
   // "postgres" this retries forever (never silently falls back to SQLite), so

@@ -155,7 +155,10 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai code summarize` | Write module and repo summaries with the local model |
 | `pai code summary` | Show the stored summary of a module or repo |
 | `pai config` | PAI settings: show, read, change |
+| `pai config arm` | Snapshot the config files; they revert unless `pai config confirm` passes in time |
+| `pai config confirm` | Prove the armed config change works and keep it, or revert it now |
 | `pai config get` | Print one setting |
+| `pai config guard` | Show whether a config change is pending, kept or was reverted |
 | `pai config list` | Print all settings (secrets hidden) |
 | `pai config migrate` | Move old settings files into the current layout |
 | `pai config path` | Print where PAI keeps its settings |

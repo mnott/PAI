@@ -72,6 +72,7 @@ import { paiHomeDir } from "../config/pai-home.js";
 import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
+import { liveProofDeps } from "../config/config-guard-live.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
 import { SESSION_ID_RE, sessionDetail, sessionTurnView } from "./session-detail.js";
 import { combinedSearch, type MemorySearchFn } from "./session-memory.js";
@@ -759,7 +760,8 @@ function registryCtx(): RegistryCtx {
   if (registryCtxOverride) return registryCtxOverride;
   const yamlPath = workersYamlPath();
   const logDir = registryLogDir(yamlPath);
-  return defaultRegistryCtx(yamlPath, ledgerPath(logDir), logDir);
+  // live saves run under the config guard: snapshot + arm, proof right after, revert on failure
+  return { ...defaultRegistryCtx(yamlPath, ledgerPath(logDir), logDir), guard: { deps: liveProofDeps() } };
 }
 /** The log dir comes from the merged config (~30 ms to read): remembered until one of the files it is read from changes. */
 let registryLogDirMemo: { key: string; dir: string } | null = null;

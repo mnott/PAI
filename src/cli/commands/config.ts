@@ -4,7 +4,7 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { configPathCmd, configYamlCmd, configListCmd, configGetCmd, configSetCmd, configUnsetCmd, configMigrateCmd, configValidateCmd } from "../impl/config.js";
+import { configPathCmd, configYamlCmd, configListCmd, configGetCmd, configSetCmd, configUnsetCmd, configMigrateCmd, configValidateCmd, configArmCmd, configConfirmCmd, configGuardStatusCmd } from "../impl/config.js";
 
 export const configSubcommands: CommandDef[] = [
 {
@@ -61,6 +61,31 @@ export const configSubcommands: CommandDef[] = [
   examples: ["pai config unset search.recencyBoostDays","pai config list"],
   seeAlso: ["pai config migrate","pai config set"],
   run: (ctx) => configUnsetCmd(String(ctx.args.PATH)),
+},
+{
+  name: "arm",
+  summary: "Snapshot the config files; they revert unless `pai config confirm` passes in time",
+  description: "Snapshot the config files; they revert unless `pai config confirm` passes in time.\n\nRun BEFORE hand-editing ~/.pai/config.yaml or ~/.pai/workers.yaml. Copies the file byte for byte to ~/.pai/logs/config-guard/<ts>-<file> and sets a deadline (default 10m) in ~/.pai/config-guard.json. The daemon enforces it: past the deadline it restores the snapshot, restarts the router and sends one PAILot notice. `pai config set`, `unset` and the cockpit registry editor do this by themselves.",
+  options: [{ name: "file", type: "string", value: "FILE", summary: "config.yaml or workers.yaml (default: both)" }, { name: "for", type: "string", value: "WINDOW", summary: "Deadline, e.g. 90s, 10m, 1h (default 10m)" }],
+  examples: ["pai config arm","pai config arm --file workers.yaml --for 20m"],
+  seeAlso: ["pai config confirm","pai config guard"],
+  run: (ctx) => configArmCmd({ file: typeof ctx.opts.file === "string" ? ctx.opts.file : undefined, for: typeof ctx.opts.for === "string" ? ctx.opts.for : undefined }),
+},
+{
+  name: "confirm",
+  summary: "Prove the armed config change works and keep it, or revert it now",
+  description: "Prove the armed config change works and keep it, or revert it now.\n\nChecks: both YAML files parse, the config loader accepts them, the daemon and router answer, the router serves /v1/models and /cockpit, every running runtime accepts connections. Pass: the deadline is cleared and the change stays. Fail: the snapshot is restored immediately.",
+  examples: ["pai config confirm"],
+  seeAlso: ["pai config arm","pai config guard"],
+  run: () => configConfirmCmd(),
+},
+{
+  name: "guard",
+  summary: "Show whether a config change is pending, kept or was reverted",
+  description: "Show whether a config change is pending, kept or was reverted.\n\nPrints 'pending confirm, reverts at HH:MM', 'change kept: proven' or 'reverted: <reason>'.",
+  examples: ["pai config guard"],
+  seeAlso: ["pai config arm","pai config confirm"],
+  run: () => configGuardStatusCmd(),
 },
 {
   name: "validate",
