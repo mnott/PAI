@@ -381,4 +381,14 @@ final class ANEAndModeTests: XCTestCase {
         let ac = BatteryInfo(percent: 100, state: "charged", macRemainingMin: nil, onBattery: false)
         XCTAssertEqual(batteryCaption(info: ac, remainingWh: nil, watts: nil), "on AC")
     }
+
+    func testActivityLineAndReroute() throws {
+        let json = #"{"id":"w1","activity":"tool","now":"Edit src/a.ts","local":true,"actions":["pause","to-cloud"]}"#
+        let r = try JSONDecoder().decode(QueueResponse.Row.self, from: Data(json.utf8))
+        XCTAssertEqual(activityLine(r), "tool · Edit src/a.ts")
+        XCTAssertEqual(rerouteItems(r).map(\.action), ["to-cloud"])
+        XCTAssertEqual(rerouteItems(r).first?.label, "Run on cloud (now local)")
+        let idle = try JSONDecoder().decode(QueueResponse.Row.self, from: Data(#"{"id":"w2"}"#.utf8))
+        XCTAssertNil(activityLine(idle))
+    }
 }

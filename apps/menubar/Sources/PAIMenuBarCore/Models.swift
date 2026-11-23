@@ -277,6 +277,29 @@ public func filterJobs(_ rows: [QueueResponse.Row], query: String) -> [QueueResp
     }
 }
 
+/// One dim line under a job title: what the worker is doing (writing / tool / thinking / waiting) and the current tool excerpt; nil when idle data is missing.
+public func activityLine(_ r: QueueResponse.Row) -> String? {
+    let word = (r.activity ?? "").trimmingCharacters(in: .whitespaces)
+    let now = (r.now ?? "").trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
+    let clipped = now.count > 80 ? String(now.prefix(79)) + "…" : now
+    switch (word.isEmpty, clipped.isEmpty) {
+    case (true, true): return nil
+    case (false, true): return word
+    case (true, false): return clipped
+    default: return word + " · " + clipped
+    }
+}
+
+/// Reroute entries for a job's context menu: (label, action) for what its action list offers, with the current target.
+public func rerouteItems(_ r: QueueResponse.Row) -> [(label: String, action: String)] {
+    let a = r.actions ?? []
+    let target = r.local == false ? "cloud" : "local"
+    var out: [(label: String, action: String)] = []
+    if a.contains("to-cloud") { out.append(("Run on cloud (now \(target))", "to-cloud")) }
+    if a.contains("to-local") { out.append(("Run locally (now \(target))", "to-local")) }
+    return out
+}
+
 /// Machine state badge: "normal", "frozen since 14:05", "deep-frozen".
 public func machineBadge(_ m: QueueResponse.Machine?, timeZone: TimeZone = .current) -> String {
     switch m?.state {
