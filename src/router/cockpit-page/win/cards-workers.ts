@@ -127,7 +127,7 @@ function wkTRow(r){
  tip+="\n\nmodel: "+(r.modelFull||r.model||"-")+(r.cloudWhy?" ("+r.cloudWhy+")":"")+"\npriority: "+r.priority+"\ntime: "+wkDur(r.seconds);
  var op=!!WK_OPEN[r.id];
  // the narrow second line (always there): the task ellipsised to one line, then the runtime "12m · own 8m · 32m left" and the short id
- var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,false,r.depth||0)+'<div class="wq-nl"><span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+(r.parentHint?' <span class="dim wq-phint">under '+esc(r.parentHint)+'</span>':"")+'</span><div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(wkRuntime(r))+" · "+esc(r.sid||r.id)+(r.instance?" · "+esc(r.instance):"")+'</div></div>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-i wq-q" tabindex="0" role="note" aria-label="'+esc(r.specTip)+'">?<span class="wq-tip" role="tooltip">'+esc(r.specTip)+'</span></span>':"");
+ var task='<button type="button" class="wq-cx" data-wqx="'+esc(r.id)+'" aria-expanded="'+(op?"true":"false")+'" title="'+esc("what this job is doing now")+'" aria-label="'+esc((op?"collapse ":"expand ")+r.task+' — what it is doing now')+'">'+(op?"▾":"▸")+'</button>'+wkLevel(r,false,typeof r.depth==="number"?r.depth:(r.level!==1&&!!r.parent&&((WQ&&WQ.table)||[]).some(function(x){return x.id===r.parent&&x.level===1})?1:0))+'<div class="wq-nl"><span class="wq-t" title="'+esc(tip)+'">'+esc(r.task)+(r.parentHint?' <span class="dim wq-phint">under '+esc(r.parentHint)+'</span>':"")+'</span><div class="wq-id" title="'+esc("worker id: "+r.id+" — ⋯ → copy id")+'">'+esc(wkRuntime(r))+" · "+esc(r.sid||r.id)+(r.instance?" · "+esc(r.instance):"")+'</div></div>'+(r.restarting?' <span class="wq-stale" title="the daemon restarts it on the new PAI version, keeping its place">restarting on new version</span>':"")+(r.specTip?' <span class="wq-q" tabindex="0" role="note" title="'+esc(r.specTip)+'" aria-label="'+esc(r.specTip)+'">?</span>':"");
  // the tap detail: a compact panel directly below the row's first line (narrow mode only; wide mode hides it by CSS — the columns carry everything there)
  var dtl=op&&wkNarrow()?'<tr class="wq-xr" data-xr="'+esc(r.id)+'"><td colspan="'+WK_COLS.length+'">'+wkDetail(r).replace('class="wq-x"','class="wq-x on"')+'</td></tr>':"";
  if(r.waits&&r.waits.length)task+='<span class="wq-eye" aria-label="a session waits for this job" title="'+esc(r.waits.map(function(w){return"a session waits for this job: "+w.label}).join("\n"))+'">◙</span>';
@@ -157,12 +157,12 @@ function wkTree(rows){
  var all=(WQ&&WQ.table)||[],byId={},i;
  for(i=0;i<all.length;i++)byId[all[i].id]=all[i];
  var out=[],groups=[[],[],[]],sess={};
- for(i=0;i<rows.length;i++){var r=rows[i];if(!r.session||r.session==="other"){out.push(r);continue}groups[wkGroupOf(r)].push(r)}
+ for(i=0;i<rows.length;i++){var r=rows[i];if(!r.session||r.session==="other"){out.push({x:r,depth:0});continue}groups[wkGroupOf(r)].push(r)}
  for(var g=0;g<3;g++){
   var gr=groups[g],order=[],idx={};
   for(i=0;i<gr.length;i++){var s=gr[i].session;if(idx[s]===undefined){idx[s]=order.length;order.push(s);sess[s]={}}sess[s][gr[i].id]=1}
   order.forEach(function(name){
-   out.push({l0:name,session:name,n:gr.filter(function(x){return x.session===name}).length});
+   out.push({l0:name,first:gr[gr.findIndex(function(x){return x.session===name})],n:gr.filter(function(x){return x.session===name}).length});
    var l1s=gr.filter(function(x){return x.session===name&&x.level===1}),kids={};
    for(i=0;i<l1s.length;i++){var p=l1s[i];out.push({x:p,depth:1});(kids[p.id]=kids[p.id]||[]).push(p)}
    gr.forEach(function(r){if(r.session!==name||r.level===1)return;
@@ -186,7 +186,7 @@ function wkQTable(rows){
   var vis=[0,0,0];rows.forEach(function(r){vis[g0(r)]++});
   if(bs){var sg=null;rows.forEach(function(r){if(r.session!==sg){sg=r.session;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+esc(sg)+'</td></tr>'}out+=wkTRow(r)})}
   // the group's own position, not a shared loop counter: the header is emitted exactly once per group, before its first row; inside it the tree hangs L1/L2 under the session's L0
-  else{var last=-1,nxt=wkTree(rows);nxt.forEach(function(o){if(o.l0){out+=wkL0Row(o.l0,o.n);return}var r=o.x,k=g0(r);if(k!==last){last=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+(vis[k]?'':' <span class="dim">(none)</span>')+'</td></tr>'}r.depth=o.depth;r.parentHint=o.parentHint||"";out+=wkTRow(r)});[0,1,2].forEach(function(k){if(!vis[k])out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+' <span class="dim">(none)</span></td></tr>'})}
+  else{var last=-1,nxt=wkTree(rows);nxt.forEach(function(o){var k=o.l0?wkGroupOf(o.first):g0(o.x);if(k!==last){last=k;out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+(vis[k]?'':' <span class="dim">(none)</span>')+'</td></tr>'}if(o.l0){out+=wkL0Row(o.l0,o.n);return}var r=o.x;r.depth=o.depth;r.parentHint=o.parentHint||"";out+=wkTRow(r)});[0,1,2].forEach(function(k){if(!vis[k])out+='<tr class="wq-g"><td colspan="'+WK_COLS.length+'">'+WK_GROUPS[k]+' <span class="dim">(none)</span></td></tr>'})}
  }
  return out+'</tbody></table>';
 }
@@ -204,9 +204,11 @@ function wkMenuHtml(){
  return'<div class="wq-menu" role="menu" style="left:'+WK_MENU.x+'px;top:'+WK_MENU.y+'px">'+items.map(function(x){return'<button type="button" role="menuitem" '+x[0]+'="'+esc(x[1])+'"'+(x[4]?' data-id="'+esc(x[4])+'"':'')+' title="'+esc(x[3])+'">'+esc(x[2])+'</button>'}).join("")+'</div>';
 }
 /** Title row: (i) legend tooltip, the session chips as filters, and the All jobs menu at the right. */
+/** The short (i) legend: pills, levels, state badges; a handful of lines, not the full manual. */
+var WK_LEGEND="Pills: a session (filter) or a topic; click to filter.\nL0 the session, L1 coordinates, L2 does the work; └ = child.\nrunning / waiting #n / paused: the job's state.\n? next to a job: what the guard flags (hover).\n⋯ per row: more actions; All jobs ▾: every job.";
 function wkBar(q){
  var seen={},chips=(q.table||[]).filter(function(r){return!seen[r.session]&&(seen[r.session]=1)}).map(function(r){return wkChip(r.session,WK_FILTERS.indexOf(r.session)>=0)}).join(" ")+(function(){var ts={};return(q.table||[]).filter(function(r){return r.topic&&!ts[wkTk(r)]&&(ts[wkTk(r)]=1)}).map(function(r){return wkTopic(r,WK_TF.indexOf(wkTk(r))>=0)}).join("")})(),n=(q.table||[]).length,sh=(WK_FILTERS.length||WK_TF.length)?wkView(q.table).length:n,cnt=(WK_FILTERS.length||WK_TF.length)?'<span class="wq-cnt dim" title="active session filter">showing '+sh+' of '+n+'</span>':"";
- var leg=WK_INFO+" "+WK_EXPLAIN+" "+WK_ACT+" "+WK_BTNS;
+ var leg=WK_LEGEND;
  // the (i) legend: a CSS tooltip that shows on hover, focus and click/tap (touch screens), not only the native title
  return'<div class="wq-bar"><span class="wq-i" tabindex="0" role="note" data-tip="'+esc(leg)+'" aria-label="legend">(i)<span class="wq-tip" role="tooltip">'+esc(leg)+'</span></span><span class="wq-chips">'+chips+'</span>'+cnt+'<button type="button" class="wq-all'+(WK_MENU&&WK_MENU.key==="all"?' on':'')+'" data-wm="all" aria-haspopup="true" title="actions on every job of the machine">All jobs ▾</button></div>';
 }
