@@ -451,3 +451,55 @@ describe("stable prompt prefix for local requests", () => {
     await until(() => inflight().every((w) => w === null));
   });
 });
+
+describe("multi-instance engines: slots per instance, requests run on whichever instance has a free slot", () => {
+  const instances = (n: number, slots: number) => {
+    const s = new RequestScheduler();
+    const keys = Array.from({ length: n }, (_, k) => (k === 0 ? "p" : `p#${k + 1}`));
+    for (const k of keys) s.setSlots(k, slots);
+    return { s, keys };
+  };
+  const spread = async (s: RequestScheduler, keys: string[], jobs: number) => {
+    const tickets = await Promise.all(Array.from({ length: jobs }, (_, j) => s.acquire(keys[0], `s${j}`, `w${j}`, undefined, undefined, undefined, keys)));
+    return tickets;
+  };
+
+  it("two instances, cap 2 each, 4 concurrent jobs: 2 per instance", async () => {
+    const { s, keys } = instances(2, 2);
+    const t = await spread(s, keys, 4);
+    expect(keys.map((k) => t.filter((x) => x.engine === k).length)).toEqual([2, 2]);
+  });
+
+  it("three instances, 6 jobs: 2 each", async () => {
+    const { s, keys } = instances(3, 2);
+    const t = await spread(s, keys, 6);
+    expect(keys.map((k) => t.filter((x) => x.engine === k).length)).toEqual([2, 2, 2]);
+  });
+
+  it("one instance full, one free: the next goes to the free one; a queued job moves to whichever frees", async () => {
+    const { s, keys } = instances(2, 1);
+    const a = await s.acquire(keys[0], "a", "wa");
+    const b = await s.acquire(keys[0], "b", "wb", undefined, undefined, undefined, keys);
+    expect(a.engine).toBe(keys[0]);
+    expect(b.engine).toBe(keys[1]);
+    let granted: string | undefined;
+    void s.acquire(keys[0], "c", "wc", undefined, undefined, undefined, keys).then((t) => (granted = t.engine));
+    await Promise.resolve();
+    expect(granted).toBeUndefined();
+    b.release();
+    await until(() => granted !== undefined);
+    expect(granted).toBe(keys[1]);
+    expect(s.snapshot().engines[keys[0]].queued).toEqual({});
+  });
+
+  it("a single-slot engine without alternatives still serves one request at a time", async () => {
+    const s = new RequestScheduler();
+    const a = await s.acquire("solo", "a", "wa");
+    let second = false;
+    void s.acquire("solo", "b", "wb").then(() => (second = true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(second).toBe(false);
+    a.release();
+    await until(() => second);
+  });
+});
