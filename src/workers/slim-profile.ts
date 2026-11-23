@@ -39,7 +39,7 @@ import { isLoopbackUrl } from "../utils/loopback.js";
 import { localCompactWindow } from "./run-env.js";
 import { writePrivateFile } from "./settings-file.js";
 import { claudeJsonPath } from "../config/claude-json.js";
-import { readMcpServers, runMcpConfigPath } from "./mcp.js";
+import { readMcpServers, runMcpConfigPath, writeScrubbedMcpConfig } from "./mcp.js";
 
 /** Hook commands kept for a worker; everything else is context or bookkeeping. */
 const GUARD_HOOKS = [
@@ -310,7 +310,7 @@ export function sessionSlimArgs(
     // the rest wait behind tool search (ENABLE_TOOL_SEARCH), loaded on demand
     const servers = Object.fromEntries(names.map((n) => [n, { ...(available[n] as object), alwaysLoad: always.includes(n) }]));
     const mcpPath = runMcpConfigPath(logDir, id);
-    writeFileSync(mcpPath, JSON.stringify({ mcpServers: servers }, null, 2) + "\n", "utf8");
+    writeScrubbedMcpConfig(mcpPath, servers, env);
     args.push("--strict-mcp-config", "--mcp-config", mcpPath);
   }
   return args;

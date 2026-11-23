@@ -292,7 +292,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     ];
     if (wanted.length) {
       const names = expandMcpNames(wanted, config); // unknown names fail fast
-      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names)];
+      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names, undefined, env)];
     } else {
       mcpArgs = ["--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir)];
     }
@@ -309,7 +309,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     for (const line of pinNotices(applied)) console.error(line);
     if (picked.mcpNames.length) {
       const names = expandMcpNames(picked.mcpNames, config);
-      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names)];
+      mcpArgs = ["--strict-mcp-config", "--mcp-config", writeMcpConfig(logDir, wid, names, undefined, env)];
     }
     if (picked.tools.length) toolsFlag = ["--tools", picked.tools.join(",")];
   }
