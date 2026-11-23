@@ -62,7 +62,14 @@ describe("workerContractPrompt — planner classes (orchestrate/plan without the
 });
 
 describe("workerContractPrompt — code graph lines", () => {
-  it("indexed repo gets the three code-graph lines; unindexed gets none", () => {
+  it("every class gets the find-code-before-grep line (issue #23)", () => {
+    for (const cls of ["implement", "simple", "spotcheck", undefined]) {
+      const p = workerContractPrompt(cls, "ag2");
+      expect(p).toContain("Find code with `pai code explore <symbol>` / `pai code search <words>` before grep");
+    }
+  });
+
+  it("indexed repo gets the code-graph lines; unindexed gets none", () => {
     const on = workerContractPrompt(undefined, "ag2", false, undefined, undefined, true);
     const off = workerContractPrompt(undefined, "ag2", false, undefined, undefined, false);
     expect(on).toContain("pai code explore");
