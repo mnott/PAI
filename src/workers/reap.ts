@@ -131,6 +131,34 @@ function pidsMentioning(needle: string, slash: boolean): number[] {
   return out;
 }
 
+export interface PsRow {
+  pid: number;
+  ppid: number;
+  args: string;
+}
+
+/** One `ps` listing: pid, ppid and the full command line of every process. */
+export function listPsRows(): PsRow[] {
+  try {
+    const raw = execFileSync("ps", ["-axo", "pid=,ppid=,args="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 });
+    const rows: PsRow[] = [];
+    for (const l of raw.split("\n")) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l);
+      if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), args: m[3] });
+    }
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+/** Orphans (ppid 1) whose command line names `dir` as a whole path token (the `--require <dir>/node_modules/...` of a test-runner fork). Never `self`, never a path that merely shares the prefix. */
+export function argvOrphansOf(rows: PsRow[], dir: string, self = process.pid): PsRow[] {
+  const d = resolve(dir);
+  const re = new RegExp(escapeRe(d) + "(?:[\\s/]|$)");
+  return rows.filter((r) => r.pid !== self && r.ppid === 1 && re.test(r.args) && !isProtectedCmd(r.args));
+}
+
 type Reason = "descendant" | "group" | "orphan+scratch" | "orphan+worktree" | "orphan+env";
 export interface Reaped extends OrphanProc {
   reason: string;
@@ -158,7 +186,10 @@ export function selectReapable(opts: { rootPid?: number; dir?: string; id?: stri
     if (table.ppid.get(p) === 1) reasons.set(p, why);
     else if (!looks.has(p)) looks.set(p, `${why.replace("orphan+", "")} match but parent ${table.ppid.get(p) ?? "?"} is live`);
   };
-  if (opts.dir) for (const p of pidsWithCwdInside(opts.dir, among)) look(p, "orphan+worktree");
+  if (opts.dir) {
+    for (const p of pidsWithCwdInside(opts.dir, among)) look(p, "orphan+worktree");
+    for (const r of argvOrphansOf(listPsRows(), opts.dir)) if (!among || among.includes(r.pid)) look(r.pid, "orphan+worktree");
+  }
   if (opts.id) {
     const sd = scratchDir(opts.id);
     for (const p of pidsWithCwdInside(sd)) look(p, "orphan+scratch");
@@ -272,6 +303,27 @@ export function findWorktreeOrphans(logDir: string): (Reaped & { dir: string })[
     const dir = join(root, ent.name);
     if (!ent.isDirectory() || liveDirs.has(resolve(dir))) continue;
     for (const o of findOrphans({ dir })) if (!seen.has(o.pid)) (seen.add(o.pid), out.push({ ...o, dir }));
+  }
+  return out;
+}
+
+/** Orphan processes whose command line names a finished worker's worktree: worktree dir -> count. One ps listing, no lsof. */
+export function argvOrphanCounts(logDir: string, rows: PsRow[] = listPsRows()): Map<string, number> {
+  const out = new Map<string, number>();
+  const root = worktreesDir(logDir);
+  if (!existsSync(root) || !rows.length) return out;
+  const liveDirs = new Set(
+    loadStatuses(logDir)
+      .filter((s) => isLive(s))
+      .map((s) => ownedTree(s)?.dir)
+      .filter((d): d is string => !!d)
+      .map((d) => resolve(d))
+  );
+  for (const ent of readdirSync(root, { withFileTypes: true })) {
+    const dir = join(root, ent.name);
+    if (!ent.isDirectory() || liveDirs.has(resolve(dir))) continue;
+    const n = argvOrphansOf(rows, dir).length;
+    if (n) out.set(dir, n);
   }
   return out;
 }

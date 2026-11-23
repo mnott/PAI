@@ -33,6 +33,8 @@ import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
 import { readAudit } from "./pane-audit.js";
 import { localIdleLine, readLocalIdle } from "./local-idle.js";
 import { readSchedFile, schedLine } from "../router/scheduler.js";
+import { basename } from "node:path";
+import { argvOrphanCounts } from "./reap.js";
 import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, statusPids, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { formatWorktreesStats, worktreesStats } from "./worktree.js";
@@ -208,6 +210,13 @@ export function psOutput(
         {}
       )
     );
+  }
+  try {
+    // a finished worker's leftovers (test-runner forks, detached children) naming its worktree
+    const orph = [...argvOrphanCounts(logDir)].map(([dir, n]) => `  ${basename(dir)}: orphan processes: ${n}`);
+    if (orph.length) parts.push(c("yellow", "finished workers with processes still running (pai worker gc):") + "\n" + orph.join("\n"));
+  } catch {
+    /* an extra line: never fail ps over it */
   }
   const stray = strayWorkerProcesses(statuses);
   if (stray.length) {
