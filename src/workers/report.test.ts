@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, checkProof } from "./report.js";
+import { workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, checkProof, verifyReportChanges } from "./report.js";
 import { repairAndValidateAg2 } from "./agentish.js";
 
 describe("workerContractPrompt — planner classes (orchestrate/plan without the flag)", () => {

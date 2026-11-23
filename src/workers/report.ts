@@ -429,8 +429,12 @@ export interface ReportVerifyResult {
   failures: ReportVerifyFailure[];
 }
 
-/** A summary that names its own deletion — the path is expected to be gone. */
-const DELETED_RE = /\b(delete|deleted|deleting|remove|removed|removing)\b/i;
+/**
+ * A summary that opens with its own deletion — the path is expected to be gone. Only the lead
+ * counts: "unused helper removed" or "churn removed" inside a summary of an edited file is not a
+ * deleted file (2026-11-22/23: two reports of edited, committed files were marked unverified).
+ */
+const DELETED_RE = /^\W*(delete|deleted|deleting|remove|removed|removing)\b/i;
 
 /**
  * Check every path a report's `changed` list claims against the filesystem:
