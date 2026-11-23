@@ -67,6 +67,7 @@ describe("workerContractPrompt — code graph lines", () => {
       const p = workerContractPrompt(cls, "ag2");
       expect(p).toContain("Find code with `pai code explore <symbol>` / `pai code search <words>` before grep");
       expect(p).toContain("Tests: extend an existing test file next to the code you change first; a new test file only with a tests/KEPT.md entry (file + evidence) written BEFORE creating it; one-off checks go under .pai-scratch/ and are never committed.");
+      expect(p).toContain("The live router/daemon/cockpit run main, not your branch: prove your change with tests or a headless render from your worktree; never poll live endpoints for it (L0 checks live after the merge).");
     }
   });
 
