@@ -256,6 +256,10 @@ export const CODE_EXPLORE_LINE =
 export const TEST_GOVERNANCE_LINE =
   "Tests: extend an existing test file next to the code you change first; a new test file only with a tests/KEPT.md entry (file + evidence) written BEFORE creating it; one-off checks go under .pai-scratch/ and are never committed.";
 
+/** One guidance line: live services run main, so workers must not poll them for their own change (2026-11-23 22:11: worker 20261123-213527-68342 curled the live router 7x waiting for its cockpit change). */
+export const LIVE_RUNS_MAIN_LINE =
+  "The live router/daemon/cockpit run main, not your branch: prove your change with tests or a headless render from your worktree; never poll live endpoints for it (L0 checks live after the merge).";
+
 /** Added when the run's repo is already indexed: the graph is current, so ask it before grepping. */
 export const CODE_GRAPH_FIRST_LINE = [
   "This repo is indexed in the code graph: locate code with `pai code explore \"<what you look for>\"`,",
@@ -291,6 +295,7 @@ export function workerContractPrompt(
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
   base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
+  base += `\n${LIVE_RUNS_MAIN_LINE}`;
   if (graphIndexed) base += `\n${CODE_GRAPH_FIRST_LINE}`;
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;

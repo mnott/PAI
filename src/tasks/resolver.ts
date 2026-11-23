@@ -31,8 +31,16 @@ export interface AliasTarget {
   rootPath: string;
 }
 
-/** Normalized alias → target. Keys are the output of `normalize()`. */
-export type AliasMap = Map<string, AliasTarget>;
+/**
+ * Everything an owner name can be matched against: registry projects (slug,
+ * alias, display name) and live session names. One index, one lookup
+ * (`lookupOwner`) for the poller, dispatch, listing and `--owner`.
+ */
+export interface OwnerIndex {
+  projects: OwnerCandidateSource[];
+  sessions: OwnerSession[];
+}
+export type AliasMap = OwnerIndex;
 
 /**
  * Fold a tracker-supplied string onto its comparable form.
@@ -54,6 +62,89 @@ export function normalize(raw: string): string {
     .toLowerCase();
 }
 
+export interface OwnerCandidateSource {
+  alias?: string;
+  slug: string;
+  displayName?: string;
+  rootPath: string;
+}
+
+export interface OwnerSession {
+  name: string;
+  directory: string;
+}
+
+export type OwnerLookup =
+  | { kind: "match"; target: AliasTarget }
+  | { kind: "ambiguous"; candidates: string[] }
+  | { kind: "none"; suggestions: string[] };
+
+/** "pai-2" -> "pai". Only the registry's numeric dedupe suffix. */
+function stripDedupe(key: string): string {
+  return key.replace(/-\d+$/, "");
+}
+
+/**
+ * Resolve an owner string against projects (slug, alias, display name) and
+ * live session names (mapped to a project by cwd).
+ *
+ * Tiers, first non-empty wins: exact alias/slug (normalized), then display
+ * name or session name, then the same with the numeric dedupe suffix stripped
+ * from the slug. A tier hitting two different root paths is ambiguous.
+ */
+export function lookupOwner(
+  name: string,
+  projects: OwnerCandidateSource[],
+  sessions: OwnerSession[] = []
+): OwnerLookup {
+  const key = normalize(name);
+  const byRoot = new Map<string, OwnerCandidateSource>();
+  for (const p of projects) if (!byRoot.has(p.rootPath)) byRoot.set(p.rootPath, p);
+  const keyed: Array<{ tier: number; key: string; p: OwnerCandidateSource }> = [];
+  for (const p of projects) {
+    if (p.alias) keyed.push({ tier: 0, key: normalize(p.alias), p });
+    keyed.push({ tier: 0, key: normalize(p.slug), p });
+    if (p.displayName) keyed.push({ tier: 1, key: normalize(p.displayName), p });
+    keyed.push({ tier: 2, key: stripDedupe(normalize(p.slug)), p });
+  }
+  for (const s of sessions) {
+    const p = byRoot.get(s.directory);
+    if (p) keyed.push({ tier: 1, key: normalize(s.name), p });
+  }
+  const toTarget = (p: OwnerCandidateSource): AliasTarget => ({
+    alias: p.alias ?? p.slug,
+    slug: p.slug,
+    rootPath: p.rootPath,
+  });
+  const queryKeys = [key];
+  const stripped = stripDedupe(key);
+  if (stripped !== key) queryKeys.push(stripped);
+  for (const tier of [0, 1, 2]) {
+    for (const qk of queryKeys) {
+      const hits = keyed.filter((k) => k.tier === tier && k.key === qk);
+      const roots = new Map(hits.map((h) => [h.p.rootPath, h.p]));
+      if (roots.size === 1) return { kind: "match", target: toTarget([...roots.values()][0]) };
+      if (roots.size > 1) {
+        return { kind: "ambiguous", candidates: [...roots.values()].map((p) => `${p.slug} (${p.rootPath})`) };
+      }
+    }
+  }
+  const names = new Set<string>();
+  for (const k of keyed) if (k.tier < 2) names.add(k.key);
+  const suggestions = [...names]
+    .filter((n) => n && (n.includes(key) || key.includes(n) || n[0] === key[0]))
+    .sort()
+    .slice(0, 5);
+  return { kind: "none", suggestions };
+}
+
+/** Human-readable error for a non-matching lookup, or null on a match. */
+export function describeOwnerLookup(name: string, r: OwnerLookup): string | null {
+  if (r.kind === "match") return null;
+  if (r.kind === "ambiguous") return `owner "${name}" is ambiguous: ${r.candidates.join(", ")}`;
+  return `owner "${name}" matches no project` + (r.suggestions.length ? `; closest: ${r.suggestions.join(", ")}` : "");
+}
+
 /**
  * Load every alias registered in the PAI registry.
  *
@@ -64,24 +155,29 @@ export function normalize(raw: string): string {
  * directory. That failure is silent, which makes it worse than no match. Bus
  * participation is opt-in via `pai project name <identifier> <shortname>`.
  */
-export async function loadAliasMap(): Promise<AliasMap> {
+export async function loadAliasMap(sessions: OwnerSession[] = []): Promise<AliasMap> {
   const registry = await getRegistryBackend();
-  const rows = await registry.listAliasMap();
-
-  const map: AliasMap = new Map();
-  for (const row of rows) {
-    const target: AliasTarget = {
-      alias: row.alias,
-      slug: row.slug,
-      rootPath: row.root_path,
-    };
-    map.set(normalize(row.alias), target);
-    // The slug is also addressable, so a task may name either.
-    // Aliases win: they are the curated, intentional handle.
-    const slugKey = normalize(row.slug);
-    if (!map.has(slugKey)) map.set(slugKey, target);
+  const aliasRows = await registry.listAliasMap();
+  const projects: OwnerCandidateSource[] = [];
+  for (const p of await registry.listProjects()) {
+    if (p.status === "archived") continue;
+    projects.push({ slug: p.slug, displayName: p.display_name, rootPath: p.root_path });
   }
-  return map;
+  for (const r of aliasRows) projects.push({ alias: r.alias, slug: r.slug, rootPath: r.root_path });
+  return { projects, sessions };
+}
+
+/**
+ * Forgiving owner lookup for an explicit owner name (`--owner`): registry
+ * projects (slug, display name), aliases, and live session names.
+ * Unambiguous or an explanatory error.
+ */
+export async function lookupOwnerName(
+  name: string,
+  sessions: OwnerSession[] = []
+): Promise<OwnerLookup> {
+  const index = await loadAliasMap(sessions);
+  return lookupOwner(name, index.projects, index.sessions);
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +224,12 @@ export function hasDefaultMarker(labels: string[]): boolean {
   return labels.some((l) => l.trim().toLowerCase() === "pai");
 }
 
+/** Single owner decision: a unique match or null (unknown and ambiguous alike). */
+function findTarget(index: AliasMap, name: string): AliasTarget | null {
+  const r = lookupOwner(name, index.projects, index.sessions);
+  return r.kind === "match" ? r.target : null;
+}
+
 /**
  * Resolve a task's owner.
  *
@@ -153,7 +255,7 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
   // whole act of re-assigning it, which is what someone dragging it between
   // projects already believes they are doing.
   if (input.container) {
-    const hit = aliases.get(normalize(input.container));
+    const hit = findTarget(aliases, input.container);
     if (hit) {
       return {
         project: hit.alias,
@@ -169,7 +271,7 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
   // else can express the intent.
   const label = ownerLabel(input.labels);
   if (label) {
-    const hit = aliases.get(normalize(label));
+    const hit = findTarget(aliases, label);
     if (hit) {
       return {
         project: hit.alias,
@@ -186,7 +288,7 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
   // anything more specific is a better answer — this is the Inbox case, where
   // there is no location to read and no owner named.
   if (input.defaultOwner && hasDefaultMarker(input.labels)) {
-    const hit = aliases.get(normalize(input.defaultOwner));
+    const hit = findTarget(aliases, input.defaultOwner);
     if (hit) {
       return { project: hit.alias, rootPath: hit.rootPath, source: "label" };
     }
