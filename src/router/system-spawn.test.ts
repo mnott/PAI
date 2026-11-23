@@ -45,7 +45,7 @@ describe("cockpit page script", () => {
     ctx.__l = { provider: "anthropic" };
     // pace present: exactly one red radial tick on the ring (r=44, stroke 10 → r±5), threshold only in its tooltip
     const under = vm.runInContext(`gauge(__l,{name:"7d",percent:21,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
-    expect(under).toContain("pace 34% · cloud first below 27%");
+    expect(under).toContain("pace 34.3% · cloud first below 27.4%");
     expect(under.match(/<line /g)).toHaveLength(1); // exactly one marker, the threshold needle is gone
     expect(under).not.toContain("cloud first below this");
     expect(under).not.toMatch(/opacity="\.3"/);
@@ -53,8 +53,15 @@ describe("cockpit page script", () => {
     expect(tick).not.toBeNull();
     const [x1, y1, x2, y2] = tick.slice(1).map(Number);
     const d1 = Math.hypot(x1 - 60, y1 - 56), d2 = Math.hypot(x2 - 60, y2 - 56);
-    expect(Math.min(d1, d2)).toBeGreaterThanOrEqual(39); // never reaches into the centre
-    expect(Math.max(d1, d2)).toBeLessThanOrEqual(49); // stays within the ring's stroke width
+    // both endpoints sit at the pace angle on the same side of the centre (a sign slip drew the tick through the number)
+    const ang = Math.PI * 34.3 / 100;
+    for (const [x, y] of [[x1, y1], [x2, y2]]) {
+      expect(Math.atan2(56 - y, 60 - x)).toBeCloseTo(ang, 1);
+      expect(Math.hypot(x - 60, y - 56)).toBeGreaterThanOrEqual(38.9);
+      expect(Math.hypot(x - 60, y - 56)).toBeLessThanOrEqual(49.1);
+    }
+    expect(Math.min(d1, d2)).toBeGreaterThanOrEqual(38.9); // never reaches into the centre
+    expect(Math.max(d1, d2)).toBeLessThanOrEqual(49.1); // stays within the ring's stroke width
     expect(under.match(/stroke="var\(--ok\)"/g)).toHaveLength(1); // green below the threshold
     const mid = vm.runInContext(`gauge(__l,{name:"7d",percent:30,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
     expect(mid).toContain("stroke=\"var(--warn)\""); // amber between threshold and pace
