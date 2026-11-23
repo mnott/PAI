@@ -1271,3 +1271,31 @@ export function startDistWatch(): void {
   const timer = setInterval(tick, DIST_POLL_MS);
   if (timer.unref) timer.unref();
 }
+
+// ---------------------------------------------------------------------------
+// Config guard: an armed config change that was not confirmed in time is reverted
+// ---------------------------------------------------------------------------
+
+const CONFIG_GUARD_TICK_MS = 15_000;
+
+/** Enforced here, not in a sleeping shell, so a pending deadline survives the session that armed it. */
+export function startConfigGuard(): void {
+  let running = false;
+  const timer = setInterval(() => {
+    if (running) return;
+    running = true;
+    void (async () => {
+      const { tickConfigGuard } = await import("../../config/config-guard.js");
+      const { liveReload, liveNotify } = await import("../../config/config-guard-live.js");
+      await tickConfigGuard({
+        now: Date.now,
+        reload: liveReload,
+        notify: liveNotify,
+        log: (l) => process.stderr.write(`[pai-daemon] ${l}\n`),
+      });
+    })()
+      .catch((e) => process.stderr.write(`[pai-daemon] config guard tick error: ${e instanceof Error ? e.message : String(e)}\n`))
+      .finally(() => { running = false; });
+  }, CONFIG_GUARD_TICK_MS);
+  if (timer.unref) timer.unref();
+}

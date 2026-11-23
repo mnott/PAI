@@ -36,6 +36,7 @@ import { COCKPIT_ACTION_EVENT } from "./cockpit-actions.js";
 import { workersConfigShadows } from "../workers/config-shadow.js";
 import { readDualFormatConfigRaw } from "../config/main-config.js";
 import { paiConfigFilePath } from "../daemon/config.js";
+import { guardedEdit, guardStatusText, type ProofDeps } from "../config/config-guard.js";
 
 export interface RegistryError {
   path: string;
@@ -56,6 +57,8 @@ export interface RegistryCtx {
   portFree?: (port: number) => boolean;
   /** instances currently running (starting/ready), for the "no removal while running" rule */
   running?: () => LocalInstance[];
+  /** config guard: when set, every save/restore is snapshotted + armed first, proven right after, and reverted on a failed proof */
+  guard?: { deps: ProofDeps; reload?: () => Promise<void> | void };
   /** ledger file; no ledger line when absent */
   ledger?: string;
   /** clock for backup names */
@@ -335,7 +338,19 @@ export function normalizeRegistryPaths(
   return { changes, backup };
 }
 
-export type SaveResult = { ok: true; backup: string } | { ok: false; error: string };
+export type SaveResult = { ok: true; backup: string; guard?: string } | { ok: false; error: string; reverted?: boolean };
+
+/** saveRegistry/restoreBackup under the config guard (workers.yaml only): proof right after the write, auto-revert on failure. */
+export async function guardedRegistryWrite(ctx: RegistryCtx, write: () => SaveResult): Promise<SaveResult> {
+  if (!ctx.guard) return write();
+  const g = await guardedEdit(write, ctx.guard.deps, ctx.guard.reload ? () => ctx.guard!.reload!() : undefined, {
+    files: ["workers.yaml"],
+    paths: { "workers.yaml": ctx.yamlPath },
+    wrote: (r) => r.ok,
+  });
+  if (g.reverted) return { ok: false, reverted: true, error: `reverted: ${g.reason ?? "the saved registry did not prove working"}` };
+  return g.value.ok ? { ...g.value, guard: guardStatusText().text } : g.value;
+}
 
 /** The 7-step save. A failure at any step leaves the registry file byte-identical. */
 export function saveRegistry(yamlText: string, baseHash: string, ctx: RegistryCtx): SaveResult {
@@ -576,14 +591,14 @@ export function handleRegistryRoute(
     return send(500, { ok: false, message: (e as Error).message }), true;
   }
   if (req.method === "GET") {
-    if (path === "/cockpit/registry") send(200, readRegistry(ctx));
+    if (path === "/cockpit/registry") send(200, { ...readRegistry(ctx), guard: guardStatusText() });
     else if (path === "/cockpit/registry/backups") send(200, { backups: listBackups(ctx) });
     else send(404, { error: "no such registry route" });
     return true;
   }
   if (!io.sameOrigin(req)) return send(403, { ok: false, message: "cross-origin action refused" }), true;
   readJsonObject(io.readBody, req)
-    .then((b) => {
+    .then(async (b) => {
       const yaml = typeof b.yaml === "string" ? b.yaml : "";
       const baseHash = typeof b.baseHash === "string" ? b.baseHash : "";
       try {
@@ -592,11 +607,11 @@ export function handleRegistryRoute(
           ledgerLine(ctx, "registry.validate", basename(ctx.yamlPath), r.ok ? "ok" : `refused ${r.errors[0]?.message ?? ""}`);
           send(200, r);
         } else if (path === "/cockpit/registry/save" && typeof b.yaml === "string") {
-          const r = saveRegistry(yaml, baseHash, ctx);
+          const r = await guardedRegistryWrite(ctx, () => saveRegistry(yaml, baseHash, ctx));
           ledgerLine(ctx, "registry.save", basename(ctx.yamlPath), r.ok ? `ok ${r.backup}` : `failed ${r.error}`);
           send(200, r);
         } else if (path === "/cockpit/registry/restore" && typeof b.name === "string") {
-          const r = restoreBackup(b.name, baseHash, ctx);
+          const r = await guardedRegistryWrite(ctx, () => restoreBackup(b.name as string, baseHash, ctx));
           ledgerLine(ctx, "registry.restore", b.name, r.ok ? `ok ${r.backup}` : `failed ${r.error}`);
           send(200, r);
         } else if (path === "/cockpit/registry/backup-diff" && typeof b.name === "string") {
