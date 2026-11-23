@@ -53,6 +53,7 @@ import {
   placeVolatile,
   DEFAULT_WORKER_TOOLS,
   headlessToolGrants,
+  workerCanEdit,
   headlessToolsFlag,
   ensureToolSearch,
   chromeGrantArgs,
@@ -197,6 +198,9 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // the guard hook locks edits for an L1 (class orchestrate/plan) until a child has failed
   delete env.PAI_WORKER_CLASS;
   if (headless && a.className) env.PAI_WORKER_CLASS = a.className;
+  // read by the no-edit-stall guard: only a code-change worker (Edit/Write and Bash granted) can be asked to edit
+  delete env.PAI_WORKER_CAN_EDIT;
+  if (headless && workerCanEdit(parsed.allowedTools)) env.PAI_WORKER_CAN_EDIT = "1";
   // read by the anti-pattern firing record (which model a pattern fired on)
   if (headless && typeof model === "string" && model) env.PAI_WORKER_MODEL = model;
 

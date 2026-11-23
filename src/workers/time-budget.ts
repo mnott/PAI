@@ -45,6 +45,16 @@ export interface BudgetSnapshot {
 
 export const emptySnapshot = (): BudgetSnapshot => ({ progressAtMs: 0, testsPassed: 0, toolsOk: 0, commits: 0 });
 
+/**
+ * Successful test runs that count as progress: a re-run of the same command with an identical result
+ * (same failed flag and output tail) counts only the first time the (command, result) pair is seen.
+ */
+export function distinctTestRuns(runs: ReadonlyArray<{ command: string; failed: boolean; output?: string }>, isTest: (command: string) => boolean): number {
+  const seen = new Set<string>();
+  for (const r of runs) if (!r.failed && isTest(r.command)) seen.add(`${r.command.trim()}\0${r.output ?? ""}`);
+  return seen.size;
+}
+
 /** What changed between two snapshots, in words; null when nothing did. */
 export function budgetProgress(prev: BudgetSnapshot, cur: BudgetSnapshot, readOnly = false): string | null {
   const parts: string[] = [];

@@ -226,7 +226,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
-    "version": 1,
+    "version": 2,
     "created": "2026-10-25",
     "category": "tool-loop",
     "detector": {
@@ -235,6 +235,9 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
         "max_repeats": 4,
         "stop_denials": 3,
         "note_message": "Same result as before. If your change is complete and its checks passed, stop checking: commit and write your R report now.",
+        "note_message_unedited": "Same result as before, and you have not changed any file yet. The answer is already above. Stop searching: make your first edit in the file the spec names (a heredoc python/cat is fine), then run the test.",
+        "deny_message_unedited": "Stop repeating it. Edit a file the spec names, or ask `pai worker help`; report only after a change exists. loop guard: you ran this command {count} times with the same result and nothing changed.",
+        "note_message_edited_red": "Same result as before. If this check fails the same way before and after your edit, it does not tell you anything about your edit; stop re-running it and check your change with a small script of your own in .pai-scratch instead.",
         "tool_message": "Stop. Write your R report now (r=~ if something is unverified, list it in x=). loop guard: you called {tool} with similar input {count} times with the same result and nothing changed. Stop repeating it; the earlier result is still valid. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
       }
     },
@@ -388,6 +391,51 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "tool-loop/missing-path-streak.yaml"
   },
   {
+    "id": "no-edit-stall",
+    "layer": "behaviour",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-11-23",
+    "category": "tool-loop",
+    "detector": {
+      "kind": "no-edit-streak",
+      "params": {
+        "note1_calls": 12,
+        "note1_min": 4,
+        "note2_calls": 25,
+        "note2_min": 8,
+        "deny_calls": 40,
+        "deny_min": 12,
+        "note1_message": "You have made {n} read-only calls in {min} min and changed no file. The spec names the files to change. Stop looking for more context: find the closest existing sibling of what you must add (same file, same shape), copy its structure, and make your first small edit now. Unknown details are cheaper to fix after the first test run than to find by reading.",
+        "note2_message": "{n} calls, {min} min, still no edit. Write your best-guess implementation now, even partial, in the file the spec names; run the test or a 10-line script once; fix what it reports. Do not search again unless the test output names something you lack."
+      }
+    },
+    "action": "deny",
+    "message": "Read-only calls are paused: {n} calls and {min} min without any edit. Make an edit to a file the spec names (Edit, or a python/cat heredoc) or run the test; then you may read again.",
+    "tests": {
+      "match": [
+        "R R G R R G R R G R R G",
+        "R R S R R S R R S R R S",
+        "R B T R B T R B T R B T"
+      ],
+      "no_match": [
+        "R R G E R R",
+        "R W R R R",
+        "R R G R R G R R G R R E R R G",
+        "R R R H R R R"
+      ]
+    },
+    "provenance": {
+      "date": "2026-11-23",
+      "model": "inkling-2-mini (mtplx, strata, locals)",
+      "observed": "12 of 22 failed bench tasks read 50 to 94 files with no edit until the 20-minute budget stopped them",
+      "ref": "failure taxonomy of the 2026-11-22/23 bench, section 4 P1"
+    },
+    "proxy": "monitor",
+    "source": "tool-loop/no-edit-stall.yaml"
+  },
+  {
     "id": "repeated-error",
     "layer": "behaviour",
     "status": "stable",
@@ -434,7 +482,9 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "kind": "repeated-failure",
       "params": {
         "deny_at": 3,
-        "stop_at": 5
+        "stop_at": 5,
+        "message_with_write": "loop guard: you ran {key} {deny_at} times and the result did not change. Read the failure, change code or the test, or report the blocker.{hang}{echo} If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).",
+        "message_baseline_red": "This test was already red before you edited anything, and its output is unchanged. It likely depends on this machine (live processes, locale, clock). Do not debug it further. Implement the spec, verify with a script of your own under .pai-scratch, and name this test in x=."
       }
     },
     "action": "deny",
