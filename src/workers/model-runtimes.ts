@@ -18,6 +18,7 @@
 
 import { spawn } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
@@ -114,6 +115,14 @@ export const RUNTIME_STOP_TIMEOUT_MS = 30_000;
 /** Exit code reported for a stop command that was killed on timeout. */
 export const RUNTIME_TIMEOUT_CODE = 124;
 
+/** Env for runtime commands: launchd gives the daemon a minimal PATH, so the usual user tool dirs are prepended when missing. */
+export function userToolEnv(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): NodeJS.ProcessEnv {
+  const have = (env.PATH ?? "").split(":").filter(Boolean);
+  const want = ["/opt/homebrew/bin", "/usr/local/bin", join(home, ".local", "bin"), join(home, ".bun", "bin")];
+  const missing = want.filter((d) => !have.includes(d));
+  return { ...env, PATH: [...missing, ...have].join(":") };
+}
+
 const killGroup = (pid: number | undefined): void => {
   if (pid === undefined) return;
   try { process.kill(-pid, "SIGKILL"); } catch { /* already gone */ }
@@ -126,7 +135,7 @@ export const liveRuntimeOpDeps: RuntimeOpDeps = {
       mkdirSync(dirname(logPath), { recursive: true });
       const fd = openSync(logPath, "a");
       appendFileSync(fd, `\n$ ${cmd}\n`, "utf8");
-      const child = spawn(cmd, { shell: true, detached: true, stdio: ["ignore", fd, fd] });
+      const child = spawn(cmd, { shell: true, env: userToolEnv(), detached: true, stdio: ["ignore", fd, fd] });
       child.unref();
       const timer = setTimeout(() => {
         appendFileSync(fd, `\n[timed out after ${timeoutMs} ms]\n`, "utf8");
@@ -150,7 +159,7 @@ export const liveRuntimeOpDeps: RuntimeOpDeps = {
     mkdirSync(dirname(logPath), { recursive: true });
     const fd = openSync(logPath, "a");
     appendFileSync(fd, `\n$ ${cmd}\n`, "utf8");
-    const child = spawn(cmd, { shell: true, detached: true, stdio: ["ignore", fd, fd] });
+    const child = spawn(cmd, { shell: true, env: userToolEnv(), detached: true, stdio: ["ignore", fd, fd] });
     child.unref();
     // the child holds its own copy of the log fd; the parent's is closed at once
     closeFd(fd);
@@ -170,7 +179,7 @@ export const liveRuntimeOpDeps: RuntimeOpDeps = {
   },
   runCmd(cmd, timeoutMs = RUNTIME_PROBE_TIMEOUT_MS) {
     return new Promise((resolve) => {
-      const child = spawn(cmd, { shell: true, detached: true, stdio: "ignore" });
+      const child = spawn(cmd, { shell: true, env: userToolEnv(), detached: true, stdio: "ignore" });
       const timer = setTimeout(() => {
         killGroup(child.pid);
         resolve(null);
@@ -246,7 +255,10 @@ export async function runRuntimeOp(
     return { ok: false, message: `${runtime} start failed: ${e instanceof Error ? e.message : String(e)}; see ${logPath}` };
   }
   const died = (): boolean => exitCode !== undefined && exitCode !== 0;
-  const diedMsg = (): string => `${runtime} start exited (${exitCode ?? "signal"}); see ${logPath}`;
+  const diedMsg = (): string =>
+    exitCode === 127
+      ? `${runtime} start exited (127): command not found — use an absolute path or fix PATH; see ${logPath}`
+      : `${runtime} start exited (${exitCode ?? "signal"}); see ${logPath}`;
   if (cmd.ready) {
     const up = await waitReady(cmd.ready, deps, opts.readyTimeoutMs, undefined, died);
     if (died()) return { ok: false, message: diedMsg() };
