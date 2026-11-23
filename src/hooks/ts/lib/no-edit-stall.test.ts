@@ -397,3 +397,36 @@ describe("repeated-failure content states (taxonomy 1.1 low r1 prune)", () => {
     expect(last?.reason).toContain("without changing anything");
   });
 });
+
+describe("growing-command: repeats need similar results", () => {
+  const G = "src/cli/commands/worker-config.ts";
+  const play = (cmds: string[], out: (i: number) => string) => {
+    let s = emptyLoopState();
+    return cmds.map((c, i) => {
+      const r = stepLoopGuard(s, "Bash", c, null, 1_000_000 + i * 5000, process.cwd());
+      s = r.state;
+      if (!r.deny) s = recordLoopResult(s, "Bash", c, { stdout: out(i), stderr: "" }, 1_000_001 + i * 5000);
+      return r;
+    });
+  };
+  it("nine different sed/grep windows with different output: no deny, no stop", () => {
+    const cmds = [`ls && sed -n 1,80p ${G}`, `sed -n 80,200p ${G}`, `grep -n policy ${G} | head`, `sed -n 1255,1310p ${G} && grep -n x ${G}`, `sed -n 560,640p ${G} && grep -n y ${G}`, `grep -n priority ${G} src/workers/workers-config.ts | head`, `sed -n 245,400p ${G}`, `sed -n 109,130p ${G} && sed -n 500,570p ${G}`, `sed -n 500,560p ${G}`];
+    const steps = play(cmds, (i) => Array.from({ length: 60 }, (_, j) => `line${i}_${j} word${i * 7 + j} foo`).join("\n"));
+    expect(steps.some((r) => r.deny || r.stop)).toBe(false);
+  });
+  it("the same windows with unrecorded results are no repeats either", () => {
+    let s = emptyLoopState();
+    for (let i = 0; i < 9; i++) {
+      const r = stepLoopGuard(s, "Bash", `sed -n ${i * 50},${i * 50 + 40}p ${G}`, null, 1_000_000 + i * 5000, process.cwd());
+      s = r.state;
+      expect(r.deny).toBe(false);
+    }
+  });
+  it("git log x7 with the same result: note, deny after 4 runs, stop on the 3rd denial", () => {
+    const steps = play(Array(7).fill("git log --oneline -3"), () => "abc123 first\ndef456 second");
+    expect(steps.map((r) => r.deny)).toEqual([false, false, false, false, true, true, true]);
+    expect(steps[2].note).toBeTruthy();
+    expect(steps.map((r) => !!r.stop)).toEqual([false, false, false, false, false, false, true]);
+  });
+});
+
