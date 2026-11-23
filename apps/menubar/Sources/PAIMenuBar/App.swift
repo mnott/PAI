@@ -17,7 +17,7 @@ final class SettingsWindowController: NSWindowController {
     convenience init() {
         let settings = SettingsView()
         let hosting = NSHostingView(rootView: AnyView(settings))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 220),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 340),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "PAI Settings"
         window.contentView = hosting
@@ -101,5 +101,23 @@ struct PAIApp: App {
             Text(poller.title).task { poller.start() }
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Admin prompts via AppleScript: no stored password.
+enum PowerPrompt {
+    static func admin(_ shell: String) -> String? {
+        let esc = shell.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        var err: NSDictionary?
+        NSAppleScript(source: "do shell script \"\(esc)\" with administrator privileges")?.executeAndReturnError(&err)
+        guard let err else { return nil }
+        return (err[NSAppleScript.errorMessage] as? String) ?? "declined"
+    }
+
+    static func setMode(_ m: PowerMode) -> String? { admin(powerModeAdminShell(m)) }
+
+    /// nil on success, else an error message.
+    static func setOptIn(_ on: Bool) -> String? {
+        admin(on ? sudoersInstallScript(user: NSUserName()) : sudoersRemoveScript)
     }
 }

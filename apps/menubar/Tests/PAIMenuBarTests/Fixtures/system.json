@@ -1,0 +1,128 @@
+{
+ "now": 1700000000000,
+ "window": "1h",
+ "bucketMs": 300000,
+ "current": {
+  "t": 1699999997000,
+  "cpu": 35.5,
+  "gpu": 70.2,
+  "socTemp": 62.1,
+  "systemW": 48.5,
+  "totalW": 48.5,
+  "memTotal": 137438953472,
+  "memUsed": 68719476736,
+  "wired": 20000000000.0,
+  "compressed": 8000000000.0,
+  "swapTotal": 8589934592,
+  "swapUsed": 1073741824,
+  "pressureLevel": 1
+ },
+ "series": {
+  "series": [
+   {
+    "t": 1699996400000,
+    "cpu": 20,
+    "gpu": 40,
+    "socTemp": 55.0,
+    "systemW": 20,
+    "memPct": 50
+   },
+   {
+    "t": 1699996700000,
+    "cpu": 21,
+    "gpu": 41,
+    "socTemp": 55.5,
+    "systemW": 21,
+    "memPct": 51
+   },
+   {
+    "t": 1699997000000,
+    "cpu": 22,
+    "gpu": 42,
+    "socTemp": 56.0,
+    "systemW": 22,
+    "memPct": 52
+   },
+   {
+    "t": 1699997300000,
+    "cpu": 23,
+    "gpu": 43,
+    "socTemp": 56.5,
+    "systemW": 23,
+    "memPct": 53
+   },
+   {
+    "t": 1699997600000,
+    "cpu": 24,
+    "gpu": 44,
+    "socTemp": 57.0,
+    "systemW": 24,
+    "memPct": 54
+   },
+   {
+    "t": 1699997900000,
+    "cpu": 25,
+    "gpu": 45,
+    "socTemp": 57.5,
+    "systemW": 25,
+    "memPct": 55
+   },
+   {
+    "t": 1699998200000,
+    "cpu": 26,
+    "gpu": 46,
+    "socTemp": 58.0,
+    "systemW": 26,
+    "memPct": 56
+   },
+   {
+    "t": 1699998500000,
+    "cpu": 27,
+    "gpu": 47,
+    "socTemp": 58.5,
+    "systemW": 27,
+    "memPct": 57
+   },
+   {
+    "t": 1699998800000,
+    "cpu": 28,
+    "gpu": 48,
+    "socTemp": 59.0,
+    "systemW": 28,
+    "memPct": 58
+   },
+   {
+    "t": 1699999100000,
+    "cpu": 29,
+    "gpu": 49,
+    "socTemp": 59.5,
+    "systemW": 29,
+    "memPct": 59
+   },
+   {
+    "t": 1699999400000,
+    "cpu": 30,
+    "gpu": 50,
+    "socTemp": 60.0,
+    "systemW": 30,
+    "memPct": 60
+   },
+   {
+    "t": 1699999700000,
+    "cpu": 31,
+    "gpu": 51,
+    "socTemp": 60.5,
+    "systemW": 31,
+    "memPct": 61
+   },
+   {
+    "t": 1700000000000,
+    "cpu": 32,
+    "gpu": 52,
+    "socTemp": 61.0,
+    "systemW": 32,
+    "memPct": 62
+   }
+  ]
+ }
+}

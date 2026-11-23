@@ -1,0 +1,224 @@
+{
+ "now": 1700000000000,
+ "machine": {
+  "state": "frozen",
+  "since": 1699996400000
+ },
+ "providers": [
+  {
+   "provider": "signal-2",
+   "cap": 4,
+   "instances": [
+    {
+     "engine": "signal-2",
+     "busy": 1,
+     "cap": 2
+    },
+    {
+     "engine": "signal-2#2",
+     "busy": 2,
+     "cap": 2
+    }
+   ]
+  },
+  {
+   "provider": "apple-fm",
+   "cap": 1,
+   "instances": [
+    {
+     "engine": "apple-fm",
+     "busy": 0,
+     "cap": 1
+    }
+   ]
+  }
+ ],
+ "table": [
+  {
+   "slot": "running",
+   "kind": "job",
+   "id": "job-1",
+   "state": "running",
+   "stateText": "running",
+   "priority": "normal",
+   "session": "alpha",
+   "topic": "demo-app",
+   "model": "cloud: sonnet",
+   "local": false,
+   "level": 2,
+   "task": "build the demo feature",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 180,
+   "summary": "example summary",
+   "actions": [
+    "pause",
+    "freeze"
+   ]
+  },
+  {
+   "slot": "running",
+   "kind": "job",
+   "id": "job-2",
+   "state": "running",
+   "stateText": "running",
+   "priority": "normal",
+   "session": "beta",
+   "topic": "docs-site",
+   "model": "cloud: haiku",
+   "local": false,
+   "level": 2,
+   "task": "write the docs index",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 240,
+   "summary": "example summary",
+   "actions": [
+    "pause",
+    "freeze"
+   ]
+  },
+  {
+   "slot": "running",
+   "kind": "job",
+   "id": "job-3",
+   "state": "running",
+   "stateText": "running",
+   "priority": "normal",
+   "session": "alpha",
+   "topic": "demo-app",
+   "model": "signal-2",
+   "local": true,
+   "level": 2,
+   "task": "local job one",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 300,
+   "summary": "example summary",
+   "actions": [
+    "pause",
+    "freeze"
+   ],
+   "instance": "signal-2 #1"
+  },
+  {
+   "slot": "running",
+   "kind": "job",
+   "id": "job-4",
+   "state": "running",
+   "stateText": "running",
+   "priority": "normal",
+   "session": "beta",
+   "topic": "docs-site",
+   "model": "signal-2",
+   "local": true,
+   "level": 2,
+   "task": "local job two",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 360,
+   "summary": "example summary",
+   "actions": [
+    "pause",
+    "freeze"
+   ],
+   "instance": "signal-2 #2"
+  },
+  {
+   "slot": "running",
+   "kind": "job",
+   "id": "job-5",
+   "state": "running",
+   "stateText": "running",
+   "priority": "normal",
+   "session": "alpha",
+   "topic": "docs-site",
+   "model": "signal-2",
+   "local": true,
+   "level": 2,
+   "task": "local job three",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 420,
+   "summary": "example summary",
+   "actions": [
+    "pause",
+    "freeze"
+   ],
+   "instance": "signal-2 #2"
+  },
+  {
+   "slot": "running",
+   "kind": "job",
+   "id": "job-6",
+   "state": "running",
+   "stateText": "running",
+   "priority": "normal",
+   "session": "beta",
+   "topic": "demo-app",
+   "model": "apple-fm",
+   "local": true,
+   "level": 2,
+   "task": "local job on the neural engine",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 480,
+   "summary": "example summary",
+   "actions": [
+    "pause",
+    "freeze"
+   ],
+   "instance": "apple-fm #1"
+  },
+  {
+   "slot": "1",
+   "kind": "job",
+   "id": "job-7",
+   "state": "waiting",
+   "stateText": "waiting",
+   "priority": "normal",
+   "session": "alpha",
+   "topic": "demo-app",
+   "model": "signal-2",
+   "local": true,
+   "level": 2,
+   "task": "waiting fixture job",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 540,
+   "summary": "example summary",
+   "actions": [
+    "pause"
+   ]
+  },
+  {
+   "slot": "-",
+   "kind": "job",
+   "id": "job-8",
+   "state": "paused",
+   "stateText": "paused",
+   "priority": "normal",
+   "session": "beta",
+   "topic": "snapshot",
+   "model": "cloud: opus",
+   "local": false,
+   "level": 2,
+   "task": "paused fixture job",
+   "activity": "active",
+   "now": "Read: example.txt",
+   "seconds": 600,
+   "summary": "example summary",
+   "actions": [
+    "continue"
+   ]
+  },
+  {
+   "slot": "-",
+   "kind": "note",
+   "id": "n1",
+   "state": "done",
+   "session": "alpha",
+   "task": "not a job"
+  }
+ ]
+}

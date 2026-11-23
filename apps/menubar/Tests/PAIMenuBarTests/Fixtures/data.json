@@ -1,0 +1,45 @@
+{
+ "speed": [
+  {
+   "provider": "anthropic",
+   "model": "example-cloud-model",
+   "local": false,
+   "h1": {
+    "requests": 10,
+    "ttftP50": 2400,
+    "ttftP90": 6400
+   },
+   "h24": {
+    "requests": 10,
+    "ttftP50": 2200,
+    "ttftP90": 5700
+   }
+  },
+  {
+   "provider": "signal-2",
+   "model": "example-model-a",
+   "local": true,
+   "h1": null,
+   "h24": {
+    "requests": 10,
+    "ttftP50": 1800,
+    "ttftP90": 4100
+   }
+  },
+  {
+   "provider": "apple-fm",
+   "model": "apple-fm",
+   "local": true,
+   "h1": {
+    "requests": 10,
+    "ttftP50": 500,
+    "ttftP90": 900
+   },
+   "h24": {
+    "requests": 10,
+    "ttftP50": 450,
+    "ttftP90": 800
+   }
+  }
+ ]
+}

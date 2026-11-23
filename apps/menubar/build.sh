@@ -2,6 +2,7 @@
 # Builds build/PAI.app (menu bar only, no Dock icon).
 set -e
 cd "$(dirname "$0")"
+VERSION=$(node -p "require('../../package.json').version")
 swift build -c release
 BIN=$(swift build -c release --show-bin-path)/PAIMenuBar
 APP=build/PAI.app
@@ -16,11 +17,18 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>org.mnsoft.pai.menubar</string>
 <key>CFBundleExecutable</key><string>PAIMenuBar</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>CFBundleShortVersionString</key><string>$VERSION</string>
+<key>CFBundleVersion</key><string>$VERSION</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
 PLIST
-codesign --force -s - "$APP" >/dev/null 2>&1 || true
-echo "built $APP"
+if [ -n "$PAI_SIGN_IDENTITY" ]; then
+  codesign --force --deep --options runtime --timestamp --entitlements PAI.entitlements -s "$PAI_SIGN_IDENTITY" "$APP"
+  echo "signed with Developer ID identity from PAI_SIGN_IDENTITY"
+else
+  codesign --force --deep -s - "$APP"
+  echo "PAI_SIGN_IDENTITY not set: ad-hoc signed (not notarizable)"
+fi
+echo "built $APP ($VERSION)"
