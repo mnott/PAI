@@ -20,7 +20,11 @@ Data comes from the router's cockpit endpoints (`/cockpit/limits`, `/system`,
 
 1. Download `PAI-MenuBar-<version>.zip` from the GitHub release of PAI.
 2. Unzip it and move `PAI.app` to `/Applications`.
-3. The app is ad-hoc signed, not notarized: open it the first time with right-click, Open. Or remove the quarantine flag: `xattr -dr com.apple.quarantine /Applications/PAI.app`.
+3. Release builds are Developer ID signed and notarized: no further steps.
+
+Self-built copies (`./package.sh` without `PAI_SIGN_IDENTITY`) are ad-hoc signed and not notarized: open them the first time with right-click, Open, or remove the quarantine flag: `xattr -dr com.apple.quarantine /Applications/PAI.app`.
+
+Release signing: set `PAI_SIGN_IDENTITY` (a `Developer ID Application: ...` identity) and `PAI_NOTARY_PROFILE` (a `notarytool store-credentials` keychain profile) before `pai build run -- ./package.sh`; it signs with the hardened runtime, notarizes, staples, re-zips and verifies with `spctl` and `stapler validate`.
 
 ## Requirements
 
@@ -32,7 +36,7 @@ macOS 13 or newer and a running PAI router: `http://127.0.0.1:8790`, or a tailne
 
     ./build.sh            # produces build/PAI.app (LSUIElement, no Dock icon)
     open build/PAI.app
-    ./package.sh          # release zip: build/PAI-MenuBar-<version>.zip (ad-hoc signed)
+    ./package.sh          # release zip: build/PAI-MenuBar-<version>.zip (Developer ID + notarized with the env vars, else ad-hoc)
     swift test            # decodes synthetic fixtures with the same shape as the live router
 
 ## Configure

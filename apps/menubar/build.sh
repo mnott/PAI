@@ -24,5 +24,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
 PLIST
-codesign --force --deep -s - "$APP"
+if [ -n "$PAI_SIGN_IDENTITY" ]; then
+  codesign --force --deep --options runtime --timestamp --entitlements PAI.entitlements -s "$PAI_SIGN_IDENTITY" "$APP"
+  echo "signed with Developer ID identity from PAI_SIGN_IDENTITY"
+else
+  codesign --force --deep -s - "$APP"
+  echo "PAI_SIGN_IDENTITY not set: ad-hoc signed (not notarizable)"
+fi
 echo "built $APP ($VERSION)"
