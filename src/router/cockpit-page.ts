@@ -6,6 +6,7 @@
  */
 
 import { cockpitLayout, type CockpitLayout } from "./cockpit-layout.js";
+import { readPaceConfig } from "../workers/pace.js";
 import { COCKPIT_FAVICON_DATA_URI, COCKPIT_FAVICON_SVG } from "./cockpit-page/favicon.js";
 import { shellHead, shellBody } from "./cockpit-page/shell.js";
 import { css } from "./cockpit-page/css.js";
@@ -42,12 +43,11 @@ function buildHtml(L: CockpitLayout): string {
     if (typeof v !== "string" || !/^#[0-9a-fA-F]{6}$/.test(v)) throw new Error(`cockpit layout: ${JSON.stringify(v)} is not a #rrggbb colour`);
     return JSON.stringify(v);
   };
+  // the cloud-first threshold fraction on the cloud gauge (workers.yaml budget.cloudUnderPace.ratio)
+  const ratio = readPaceConfig().ratio;
   const parts = [shellHead, css, shellBody, scriptCore, scriptHide, scriptWin, scriptModels, scriptMemory, scriptCharts, scriptTables, scriptBoot];
-  return parts.map((p) => p(L, n, q, hex)).join("");
+  return parts.map((p) => p(L, n, q, hex, ratio)).join("");
 }
-
-/** The full page, built once at module load from the config defaults. */
-export const COCKPIT_HTML = buildHtml(cockpitLayout());
 
 /** The page; the layout policy is re-read on every call, so a user config override changes the served page. */
 export function cockpitHtml(): string {

@@ -4,7 +4,7 @@ The cockpit is one HTML page with inline CSS and an inline script, built once pe
 
 | File | What it holds |
 |---|---|
-| `src/router/cockpit-page.ts` | `buildHtml`, the exported `cockpitHtml(sections?)`, `COCKPIT_HTML`, `COCKPIT_SECTION_IDS`; concatenates the parts below in order |
+| `src/router/cockpit-page.ts` | `buildHtml`, the exported `cockpitHtml(sections?)`, `COCKPIT_SECTION_IDS`; concatenates the parts below in order |
 | `cockpit-page/shell.ts` | document head, theme bootstrap, the header and the `<section data-section="…">` markup of every section |
 | `cockpit-page/css.ts` | the whole stylesheet |
 | `cockpit-page/script-core.ts` | colours (model palette, `assignColors`), `setHtml` (no-jump redraw), formatters, folds, layout rows and drag and drop |
