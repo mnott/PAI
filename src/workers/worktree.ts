@@ -967,6 +967,54 @@ export function assertNoNodeModules(cwd: string, from: string, branch: string, i
   }
 }
 
+/**
+ * Well-known build/dependency output paths a branch must never commit. Incidents
+ * 2026-11-23: worker branches merged `apps/menubar/.build` and `build/PAI.app`
+ * (with local home paths baked in) and a repo-root `.build/` from a swift build;
+ * all had to be filtered out of history before a public release.
+ */
+const BUILD_OUTPUT_SEGMENTS = [".build", "node_modules", "DerivedData", "__pycache__", ".venv", "target"];
+
+/**
+ * Refuse a merge whose branch ADDS files under well-known build/dependency output
+ * paths: any path segment equal to `.build`, `node_modules`, `DerivedData`,
+ * `__pycache__`, `.venv`, `target` (Rust), a `dist` directory that is gitignored in
+ * the target repo, a `*.app` bundle, or a `*.dSYM` bundle. Paths already tracked on
+ * main stay allowed — a repo that deliberately tracks `dist` is an explicit allow.
+ * Names the offending paths and the fix.
+ */
+export function assertNoBuildOutput(cwd: string, from: string, to: string): string | null {
+  const added = git(cwd, ["diff", "--name-only", "--diff-filter=A", from, to])
+    .split("\n")
+    .filter(Boolean);
+  if (!added.length) return null;
+  const hits: string[] = [];
+  for (const path of added) {
+    const segs = path.split("/");
+    if (segs.some((s) => BUILD_OUTPUT_SEGMENTS.includes(s))) {
+      hits.push(path);
+      continue;
+    }
+    if (segs.some((s) => s.endsWith(".app") || s.endsWith(".dSYM"))) {
+      hits.push(path);
+      continue;
+    }
+    // dist counts only when it is gitignored in the target repo: a tracked dist is an explicit allow
+    if (segs.includes("dist") && gitIgnored(cwd, path)) hits.push(path);
+  }
+  if (!hits.length) return null;
+  const dirs = [...new Set(hits.map((p) => p.split("/").find((s) => BUILD_OUTPUT_SEGMENTS.includes(s) || s.endsWith(".app") || s.endsWith(".dSYM") || s === "dist") ?? p.split("/")[0]))];
+  return (
+    `branch commits build output: ${hits.slice(0, 20).join(", ")}${hits.length > 20 ? ` (+${hits.length - 20} more)` : ""}. ` +
+    `Fix: git rm -r --cached ${dirs.join(" -r --cached ")} and add a .gitignore line for each, then re-commit and re-run merge`
+  );
+}
+
+/** Whether `path` is ignored by the repo's ignore rules at `to` (git check-ignore). */
+function gitIgnored(cwd: string, path: string): boolean {
+  return spawnSync("git", ["-C", cwd, "check-ignore", "-q", path]).status === 0;
+}
+
 /** A salvage commit that deletes more tracked files than this is refused. */
 const MAX_SALVAGE_DELETES = 5;
 
@@ -2289,6 +2337,8 @@ export function assertStaticScans(cwd: string, from: string, to: string): void {
       `KEPT scan failed: ${keptLoss}: nothing merged; the worker branch is kept (a governed prune deletes the test file too, or re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
     );
   }
+  const buildOutput = assertNoBuildOutput(cwd, from, to);
+  if (buildOutput) throw new Error(`build-output scan failed: ${buildOutput}: nothing merged; the worker branch is kept`);
 }
 
 /** The merge of `branch` in HEAD's history and the revert commit the gate made of it, when both exist; else null. */

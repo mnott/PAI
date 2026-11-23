@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertStaticScans, keptLossOver, scanDiffForKeptLoss } from "./worktree.js";
+import { assertNoBuildOutput, assertStaticScans, keptLossOver, scanDiffForKeptLoss } from "./worktree.js";
 import { KEPT_HEADER, renderKept, type KeptEntry } from "../testgov/kept.js";
 
 function git(cwd: string, args: string[]): string {
@@ -137,6 +137,73 @@ describe("KEPT-loss scan over a real branch", () => {
     });
     expect(keptLossOver(base, from, to)).toBeNull();
     expect(() => gate(base, from, to)).not.toThrow();
+    rmSync(base, { recursive: true, force: true });
+  });
+});
+
+describe("build-output scan over a real branch", () => {
+  it("adding .build/x fails the merge and names the path and the fix", () => {
+    const base = repo();
+    const [from, to] = branch(base, "add-build", (d) => {
+      mkdirSync(join(d, ".build"), { recursive: true });
+      writeFileSync(join(d, ".build", "x.o"), "binary");
+    });
+    expect(assertNoBuildOutput(base, from, to)).toContain(".build/x.o");
+    expect(() => gate(base, from, to)).toThrow(/branch commits build output/);
+    expect(() => gate(base, from, to)).toThrow(/git rm -r --cached/);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("adding src/a.ts passes", () => {
+    const base = repo();
+    const [from, to] = branch(base, "add-src", (d) => {
+      mkdirSync(join(d, "src"), { recursive: true });
+      writeFileSync(join(d, "src", "a.ts"), "export const a = 1;\n");
+    });
+    expect(assertNoBuildOutput(base, from, to)).toBeNull();
+    expect(() => gate(base, from, to)).not.toThrow();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("dist tracked on main + a branch change to dist passes", () => {
+    const base = repo();
+    mkdirSync(join(base, "dist"), { recursive: true });
+    writeFileSync(join(base, "dist", "index.js"), "export {};\n");
+    git(base, ["add", "-A"]);
+    git(base, ["commit", "-qm", "track dist"]);
+    const [from, to] = branch(base, "change-dist", (d) => {
+      writeFileSync(join(d, "dist", "index.js"), "export const changed = 1;\n");
+    });
+    expect(assertNoBuildOutput(base, from, to)).toBeNull();
+    expect(() => gate(base, from, to)).not.toThrow();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("adding a .app bundle and a .dSYM fails", () => {
+    const base = repo();
+    const [from, to] = branch(base, "add-app", (d) => {
+      mkdirSync(join(d, "build", "PAI.app"), { recursive: true });
+      writeFileSync(join(d, "build", "PAI.app", "Info.plist"), "<plist/>");
+      mkdirSync(join(d, "build", "PAI.dSYM", "Contents"), { recursive: true });
+      writeFileSync(join(d, "build", "PAI.dSYM", "Contents", "Mach-O"), "x");
+    });
+    expect(assertNoBuildOutput(base, from, to)).toContain("build/PAI.app/Info.plist");
+    expect(() => gate(base, from, to)).toThrow(/build\/PAI\.app/);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("adding dist when dist is gitignored fails", () => {
+    const base = repo();
+    writeFileSync(join(base, ".gitignore"), "dist/\n");
+    git(base, ["add", "-A"]);
+    git(base, ["commit", "-qm", "ignore dist"]);
+    const [from, to] = branch(base, "add-dist", (d) => {
+      mkdirSync(join(d, "dist"), { recursive: true });
+      writeFileSync(join(d, "dist", "index.js"), "export {};\n");
+      git(d, ["add", "-f", "dist"]);
+    });
+    expect(assertNoBuildOutput(base, from, to)).toContain("dist/index.js");
+    expect(() => gate(base, from, to)).toThrow(/branch commits build output/);
     rmSync(base, { recursive: true, force: true });
   });
 });
