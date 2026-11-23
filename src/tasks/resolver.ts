@@ -31,8 +31,16 @@ export interface AliasTarget {
   rootPath: string;
 }
 
-/** Normalized alias → target. Keys are the output of `normalize()`. */
-export type AliasMap = Map<string, AliasTarget>;
+/**
+ * Everything an owner name can be matched against: registry projects (slug,
+ * alias, display name) and live session names. One index, one lookup
+ * (`lookupOwner`) for the poller, dispatch, listing and `--owner`.
+ */
+export interface OwnerIndex {
+  projects: OwnerCandidateSource[];
+  sessions: OwnerSession[];
+}
+export type AliasMap = OwnerIndex;
 
 /**
  * Fold a tracker-supplied string onto its comparable form.
@@ -147,31 +155,16 @@ export function describeOwnerLookup(name: string, r: OwnerLookup): string | null
  * directory. That failure is silent, which makes it worse than no match. Bus
  * participation is opt-in via `pai project name <identifier> <shortname>`.
  */
-export async function loadAliasMap(): Promise<AliasMap> {
+export async function loadAliasMap(sessions: OwnerSession[] = []): Promise<AliasMap> {
   const registry = await getRegistryBackend();
-  const rows = await registry.listAliasMap();
-
-  const map: AliasMap = new Map();
-  for (const row of rows) {
-    const target: AliasTarget = {
-      alias: row.alias,
-      slug: row.slug,
-      rootPath: row.root_path,
-    };
-    map.set(normalize(row.alias), target);
-    // The slug is also addressable, so a task may name either.
-    // Aliases win: they are the curated, intentional handle.
-    const slugKey = normalize(row.slug);
-    if (!map.has(slugKey)) map.set(slugKey, target);
-  }
-  // Slugs are unique in the registry, so addressing a project by slug is never
-  // ambiguous even when it has no alias. Aliases still win.
+  const aliasRows = await registry.listAliasMap();
+  const projects: OwnerCandidateSource[] = [];
   for (const p of await registry.listProjects()) {
     if (p.status === "archived") continue;
-    const k = normalize(p.slug);
-    if (!map.has(k)) map.set(k, { alias: p.slug, slug: p.slug, rootPath: p.root_path });
+    projects.push({ slug: p.slug, displayName: p.display_name, rootPath: p.root_path });
   }
-  return map;
+  for (const r of aliasRows) projects.push({ alias: r.alias, slug: r.slug, rootPath: r.root_path });
+  return { projects, sessions };
 }
 
 /**
@@ -183,16 +176,8 @@ export async function lookupOwnerName(
   name: string,
   sessions: OwnerSession[] = []
 ): Promise<OwnerLookup> {
-  const registry = await getRegistryBackend();
-  const aliasRows = await registry.listAliasMap();
-  const projects = await registry.listProjects();
-  const sources: OwnerCandidateSource[] = [];
-  for (const p of projects) {
-    if (p.status === "archived") continue;
-    sources.push({ slug: p.slug, displayName: p.display_name, rootPath: p.root_path });
-  }
-  for (const r of aliasRows) sources.push({ alias: r.alias, slug: r.slug, rootPath: r.root_path });
-  return lookupOwner(name, sources, sessions);
+  const index = await loadAliasMap(sessions);
+  return lookupOwner(name, index.projects, index.sessions);
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +224,12 @@ export function hasDefaultMarker(labels: string[]): boolean {
   return labels.some((l) => l.trim().toLowerCase() === "pai");
 }
 
+/** Single owner decision: a unique match or null (unknown and ambiguous alike). */
+function findTarget(index: AliasMap, name: string): AliasTarget | null {
+  const r = lookupOwner(name, index.projects, index.sessions);
+  return r.kind === "match" ? r.target : null;
+}
+
 /**
  * Resolve a task's owner.
  *
@@ -264,7 +255,7 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
   // whole act of re-assigning it, which is what someone dragging it between
   // projects already believes they are doing.
   if (input.container) {
-    const hit = aliases.get(normalize(input.container));
+    const hit = findTarget(aliases, input.container);
     if (hit) {
       return {
         project: hit.alias,
@@ -280,7 +271,7 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
   // else can express the intent.
   const label = ownerLabel(input.labels);
   if (label) {
-    const hit = aliases.get(normalize(label));
+    const hit = findTarget(aliases, label);
     if (hit) {
       return {
         project: hit.alias,
@@ -297,7 +288,7 @@ export function resolveOwner(input: ResolveInput, aliases: AliasMap): TaskOwner 
   // anything more specific is a better answer — this is the Inbox case, where
   // there is no location to read and no owner named.
   if (input.defaultOwner && hasDefaultMarker(input.labels)) {
-    const hit = aliases.get(normalize(input.defaultOwner));
+    const hit = findTarget(aliases, input.defaultOwner);
     if (hit) {
       return { project: hit.alias, rootPath: hit.rootPath, source: "label" };
     }

@@ -120,7 +120,7 @@ async function buildProvider(): Promise<TodoistProvider | null> {
   const tasks = config.tasks;
   if (!tasks?.enabled) return null;
 
-  const aliases = await loadAliasMap();
+  const aliases = await loadAliasMap(await readSessionManifest());
   const provider = new TodoistProvider(tasks.providers.todoist, aliases, {
     defaultOwner: tasks.defaultOwner,
   });
