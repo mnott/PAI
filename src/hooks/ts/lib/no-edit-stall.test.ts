@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -537,5 +537,47 @@ describe("result-fingerprint", () => {
     const s = recordLoopResult(recordLoopResult(emptyLoopState(), "Edit", { file_path: "a" }, "No changes to make: old_string and new_string are exactly the same"), "Edit", { file_path: "a" }, "No changes to make: old_string and new_string are exactly the same");
     expect(Object.values(s.results ?? {})).toEqual([{ tool: "Edit", n: 2, d: 0 }]);
     expect(stepLoopGuard(s, "Read", { file_path: FILES[0] }, null, 1_000_000, process.cwd()).monitored).toBeUndefined();
+  });
+});
+
+describe("pai worker wait repeats (loop guard)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "wait-loop-"));
+    const st = (id: string, state: string) => writeFileSync(join(dir, `${id}.status`), JSON.stringify({ id, state, pid: process.pid }));
+    st("w-live", "running");
+    st("w-done", "done");
+    st("w-done2", "done");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** Repeats `cmd` 8 times (Pre then Post, result `out`); the index of the first denied call, or -1. */
+  function firstDeny(cmd: string, out: string): number {
+    let state: LoopState = emptyLoopState();
+    for (let i = 0; i < 8; i++) {
+      const now = 1_000_000 + i * 1000;
+      const r = stepLoopGuard(state, "Bash", cmd, null, now, process.cwd(), undefined, false, "hook", dir);
+      if (r.deny) return i;
+      state = recordLoopResult(r.state, "Bash", cmd, `Exit code 3\n${out}`, now, false, dir);
+    }
+    return -1;
+  }
+
+  it("a repeated wait on live ids is not blocked, even when any one of several ids is live", () => {
+    expect(firstDeny("pai worker wait w-live --max 100; echo rc=$?", "w-live running")).toBe(-1);
+    expect(firstDeny("pai worker wait w-done w-live --max 100; echo rc=$?", "w-live running")).toBe(-1);
+  });
+
+  it("a repeated wait after all ids finished is blocked", () => {
+    expect(firstDeny("pai worker wait w-done w-done2 --max 100; echo rc=$?", "w-done done")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("wait-on a live pid is not blocked, a dead pid is", () => {
+    expect(firstDeny(`pai worker wait-on ${process.pid} --max 100`, "still running")).toBe(-1);
+    expect(firstDeny("pai worker wait-on 2147483000 --max 100", "ended")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("other repeated commands stay blocked", () => {
+    expect(firstDeny("ls /nonexistent-dir-x", "ls: no such file")).toBeGreaterThanOrEqual(0);
   });
 });

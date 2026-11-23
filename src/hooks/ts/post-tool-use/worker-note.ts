@@ -43,14 +43,14 @@ function recordResult(raw: string, logDir: string, id: string): string | undefin
     const input = j.tool_name === "Bash" ? (j.tool_input?.command as string | undefined) : j.tool_input;
     if (j.hook_event_name === "PostToolUseFailure") {
       // a failure that never reached PreToolUse (input validation) is counted here; the 4th identical one is told to stop
-      const r = recordLoopFailure(state, j.tool_name, input, j.error ?? j.tool_response, Date.now(), undefined, !!ledger);
+      const r = recordLoopFailure(state, j.tool_name, input, j.error ?? j.tool_response, Date.now(), undefined, !!ledger, "hook", logDir);
       if (r.state !== state) saveLoopState(file, r.state);
       recordLoopTelemetry(r, { fallbackText: j.tool_name });
       if (!r.deny) return [r.note, ledger && failBlock(file, r.state, ledger.maxEntries)].filter(Boolean).join("\n") || undefined;
       if (r.stop) requestLoopStop(logDir, id, `${j.tool_name} failed ${r.count} times with the same error`);
       return r.reason;
     }
-    const next = recordLoopResult(state, j.tool_name, input, j.tool_response, Date.now(), !!ledger);
+    const next = recordLoopResult(state, j.tool_name, input, j.tool_response, Date.now(), !!ledger, logDir);
     if (next !== state) saveLoopState(file, next);
     if (ledger) return failBlock(file, next, ledger.maxEntries);
   } catch (e) {
