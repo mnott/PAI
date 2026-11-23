@@ -8,6 +8,7 @@ public struct LimitsResponse: Codable {
         public var name: String?
         public var percent: Double?
         public var resetAt: Double? // ms epoch
+        public var pace: Double?    // elapsed share of the window, percent
     }
     public struct Limit: Codable {
         public var provider: String?
@@ -17,6 +18,11 @@ public struct LimitsResponse: Codable {
         public var up: Bool?
         public var served: [String]?
         public var speed: Speed?
+        public var instances: [Instance]?
+    }
+    public struct Instance: Codable {
+        public var id: String?
+        public var inflight: Double?
     }
     public struct Speed: Codable {
         public var prefillTps: Double?
@@ -86,10 +92,13 @@ public struct QueueResponse: Codable {
         public var seconds: Double?
         public var summary: String?
         public var actions: [String]?
+        public var topic: String?
+        public var level: Int?
+        public var local: Bool?
 
         enum CodingKeys: String, CodingKey {
             case slot, kind, id, state, stateText, priority, session, model, instance
-            case task, activity, now, seconds, summary, actions
+            case task, activity, now, seconds, summary, actions, topic, level, local
         }
 
         /// `slot` is "running" or a queue position number; keep it a string.
@@ -111,13 +120,82 @@ public struct QueueResponse: Codable {
             seconds = try? c.decodeIfPresent(Double.self, forKey: .seconds)
             summary = try? c.decodeIfPresent(String.self, forKey: .summary)
             actions = try? c.decodeIfPresent([String].self, forKey: .actions)
+            topic = try? c.decodeIfPresent(String.self, forKey: .topic)
+            level = try? c.decodeIfPresent(Int.self, forKey: .level)
+            local = try? c.decodeIfPresent(Bool.self, forKey: .local)
         }
     }
+    public struct Inst: Codable {
+        public var engine: String?
+        public var busy: Int?
+        public var cap: Int?
+    }
+    public struct Provider: Codable {
+        public var provider: String?
+        public var cap: Int?
+        public var instances: [Inst]?
+    }
+    public struct Machine: Codable {
+        public var state: String?
+        public var since: Double?
+        public var until: Double?
+    }
     public var table: [Row]?
+    public var providers: [Provider]?
+    public var machine: Machine?
 
-    /// Only job rows that are running or waiting (slot is "running" or a number).
+    public struct InstanceStat: Equatable {
+        public var label: String, busy: Int, cap: Int
+    }
+
+    /// Per-instance busy/cap of a local provider ("signal-2#2" -> "#2", plain -> "#1").
+    public func instanceStats(provider: String) -> [InstanceStat] {
+        guard let ins = (providers ?? []).first(where: { $0.provider == provider })?.instances else { return [] }
+        return ins.map { i in
+            let n = (i.engine ?? "").split(separator: "#").dropFirst().first.map(String.init) ?? "1"
+            return InstanceStat(label: "#" + n, busy: i.busy ?? 0, cap: i.cap ?? 0)
+        }
+    }
+
+    /// "#1 1/2 · #2 0/2"
+    public func instanceSummary(provider: String) -> String? {
+        let st = instanceStats(provider: provider)
+        return st.isEmpty ? nil : st.map { "\($0.label) \($0.busy)/\($0.cap)" }.joined(separator: " · ")
+    }
+
+    /// Jobs running or queued on a local provider's instances.
+    public func busyTotal(provider: String) -> Int? {
+        guard let ins = (providers ?? []).first(where: { $0.provider == provider })?.instances, !ins.isEmpty else { return nil }
+        return ins.reduce(0) { $0 + ($1.busy ?? 0) }
+    }
+
+    /// Session -> hue, no two shown sessions sharing one.
+    public func sessionHues() -> [String: Double] {
+        assignHues(jobs().map { $0.session ?? "unknown" })
+    }
+
+    /// Job rows that are running, waiting, paused or frozen.
     public func jobs() -> [Row] {
-        (table ?? []).filter { $0.kind == "job" && ($0.slot == "running" || Int($0.slot ?? "") != nil) }
+        (table ?? []).filter { $0.kind == "job" && ["running", "waiting", "paused", "frozen", "deep-frozen"].contains($0.state ?? "") }
+    }
+
+    public struct Section {
+        public var name: String, state: String, rows: [Row]
+    }
+
+    /// Running / Waiting / Paused sections (frozen rows count as paused); rows
+    /// keep queue order, clustered by session (first appearance).
+    public func sections(rows: [Row]? = nil) -> [Section] {
+        let all = rows ?? jobs()
+        func cluster(_ r: [Row]) -> [Row] {
+            var order: [String] = []
+            for x in r { let k = x.session ?? "unknown"; if !order.contains(k) { order.append(k) } }
+            return order.flatMap { k in r.filter { ($0.session ?? "unknown") == k } }
+        }
+        return [("Running", "running"), ("Waiting", "waiting"), ("Paused", "paused")].map { name, st in
+            let m = all.filter { st == "paused" ? !["running", "waiting"].contains($0.state ?? "") : $0.state == st }
+            return Section(name: name, state: st, rows: cluster(m))
+        }
     }
 
     /// Job rows grouped by session, sessions sorted alphabetically.
@@ -163,6 +241,61 @@ public func formatElapsed(seconds: Double) -> String {
     let m = s / 60
     if m < 60 { return "\(m)m" }
     return "\(m / 60)h\(String(format: "%02d", m % 60))"
+}
+
+/// Model chip text: local "signal-2 #1", cloud "cloud: sonnet" (with the up arrow).
+public func modelChipText(_ r: QueueResponse.Row) -> String {
+    let m = r.model ?? "?"
+    if r.local == false { return "↑ " + (m.hasPrefix("cloud") ? m : "cloud: " + m) }
+    return r.instance ?? m
+}
+
+public func topicChipText(_ t: String) -> String { t.count > 16 ? String(t.prefix(15)) + "…" : t }
+
+/// A local engine is idle when nothing runs on its instances.
+public func localIdle(limit: LimitsResponse.Limit, busy: Int?) -> Bool {
+    if let busy { return busy == 0 }
+    if let inst = limit.instances, !inst.isEmpty { return inst.allSatisfy { ($0.inflight ?? 0) == 0 } }
+    return (limit.speed?.decodeTps ?? 0) == 0
+}
+
+/// Case-insensitive match on task, session, topic and model chip text.
+public func filterJobs(_ rows: [QueueResponse.Row], query: String) -> [QueueResponse.Row] {
+    let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+    guard !q.isEmpty else { return rows }
+    return rows.filter { r in
+        [r.task, r.session, r.topic, modelChipText(r)].compactMap { $0?.lowercased() }.contains { $0.contains(q) }
+    }
+}
+
+/// Machine state badge: "normal", "frozen since 14:05", "deep-frozen".
+public func machineBadge(_ m: QueueResponse.Machine?, timeZone: TimeZone = .current) -> String {
+    switch m?.state {
+    case "frozen":
+        guard let since = m?.since else { return "frozen" }
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; f.timeZone = timeZone
+        return "frozen since " + f.string(from: Date(timeIntervalSince1970: since / 1000))
+    case "deep-frozen": return "deep-frozen"
+    default: return "normal"
+    }
+}
+
+/// POST body for the machine-wide controls: freeze (optional duration), thaw, deep-freeze, deep-resume.
+public func machineActionRequest(baseURL: URL, action: String, forMs: Double? = nil) -> URLRequest {
+    var req = URLRequest(url: baseURL.appendingPathComponent("cockpit/queue/act"))
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    var body: [String: Any] = ["action": action, "all": true]
+    if let forMs { body["forMs"] = forMs }
+    req.httpBody = try! JSONSerialization.data(withJSONObject: body)
+    return req
+}
+
+/// The last `minutes` of a series (by t, ms), or everything when too short.
+public func tailSeries(_ s: [SystemResponse.Sample], minutes: Double = 6) -> [SystemResponse.Sample] {
+    guard let last = s.compactMap(\.t).max() else { return s }
+    let t = s.filter { ($0.t ?? 0) >= last - minutes * 60_000 }
+    return t.count >= 2 ? t : s
 }
 
 public func formatTTFT(ms: Double?) -> String {

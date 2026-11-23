@@ -20,3 +20,12 @@ popover (stored in UserDefaults, key `pai.baseURL`), e.g. the tailnet host on
 VPN. When unreachable the popover shows "cannot reach <url>".
 
 Refresh: every 2.5 s while the popover is open, every 15 s while closed.
+
+## Endpoints
+
+The app tries `127.0.0.1:8790`, then this Mac's tailnet name (read at runtime
+from `tailscale status --json`), then hosts added in Settings; the first that
+answers is used, and it re-detects when the current one stops answering. The
+queue payload carries `machine` (normal / frozen / deep-frozen); the header
+card drives `POST /cockpit/queue/act` with `all:true` (freeze, thaw,
+deep-freeze, deep-resume).

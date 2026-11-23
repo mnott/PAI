@@ -12,6 +12,8 @@ import { Worker } from "node:worker_threads";
 import type http from "node:http";
 import { tokenFailureCounts, type LimitsCache, type ProviderLimits, type LimitWindow } from "./limits.js";
 import { currentPace, paceOf } from "../workers/pace.js";
+import { freezeAll, thawAll, realFreezeDeps, isFrozen, readFreeze } from "../workers/freeze.js";
+import { readDeepfreeze } from "../workers/deepfreeze.js";
 import { createHash } from "node:crypto";
 import { cockpitHtml } from "./cockpit-page.js";
 import { resolveFromModule } from "../module-paths.js";
@@ -1210,6 +1212,15 @@ export interface CockpitBuilds {
   waiting: Array<{ kind: string; id: string; label: string; key?: string; why?: string; session: string; chip?: string; mode: string; waitedSec: number; position: number }>;
 }
 
+/** Machine-wide freeze state for the queue payload (menu bar app): normal, frozen since/until, or deep-frozen. */
+export interface MachineState { state: "normal" | "frozen" | "deep-frozen"; since?: number; until?: number }
+export function machineState(): MachineState {
+  const f = isFrozen() ? readFreeze() : null;
+  if (f) return { state: "frozen", since: f.since, until: f.until };
+  const d = readDeepfreeze();
+  if (d && d.workers.length + d.models.length > 0) return { state: "deep-frozen", since: d.at };
+  return { state: "normal" };
+}
 /** The machine-wide build queue, for its own block in the worker panel. */
 export function cockpitBuilds(now = Date.now(), sessionOf?: SessionOfWorker): CockpitBuilds {
   let tickets: ReturnType<typeof listBuildsSync> = [];
@@ -1233,7 +1244,7 @@ export function cockpitQueue(
   workers: WorkersConfig,
   now = Date.now(),
   owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPidCached
-): { now: number; sessions: SessionRow[]; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; table: TableRow[]; worktrees: string; localModel: string; localModelTitle: string } {
+): { now: number; sessions: SessionRow[]; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; table: TableRow[]; worktrees: string; localModel: string; localModelTitle: string; machine: MachineState } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
   const byProvider = new Map<string, QueueProvider>();
@@ -1307,7 +1318,7 @@ export function cockpitQueue(
   // name beats that slug; a worker's own session name tops both
   // the scheduler line is a display string: its sources (the agent-sessions registry, the job names) are read at most once per window
   const sched = sharedSchedLine(snap, logDir);
-  return { now, sessions: sessionRows(snap, now), plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now, (id) => { const w = statuses.find((x) => x.id === id); return w ? sessionGroup(w) : undefined; }), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
+  return { now, sessions: sessionRows(snap, now), plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now, (id) => { const w = statuses.find((x) => x.id === id); return w ? sessionGroup(w) : undefined; }), table, worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title, machine: machineState() };
 }
 
 /** An interactive local session as the queue card shows it. */
@@ -1604,6 +1615,12 @@ export function handleCockpit(
     readJsonObject(readBody, req).then(async (b) => {
       const { action, id, session, all } = b as { action?: unknown; id?: unknown; session?: unknown; all?: unknown };
       if (typeof action !== "string" || !ROW_ACTIONS.has(action)) return send(400, "application/json", JSON.stringify({ ok: false, message: "unknown action" }));
+      if (all === true && (action === "freeze" || action === "thaw")) {
+        const w1 = readWorkersCached(), fl = queueLogDir(w1), fd = realFreezeDeps();
+        const forMs = typeof (b as { forMs?: unknown }).forMs === "number" && (b as { forMs: number }).forMs > 0 ? (b as { forMs: number }).forMs : undefined;
+        const r1 = action === "freeze" ? await freezeAll(fl, "cockpit", forMs, fd) : thawAll(fl, fd);
+        return send(200, "application/json", JSON.stringify({ ok: true, message: r1.lines.join("\n") }));
+      }
       if (all === true && (action === "deep-freeze" || action === "deep-resume")) {
         const w0 = readWorkersCached();
         const r0 = await runGlobalDeep({ logDir: queueLogDir(w0), workers: w0, by: "cockpit" }, action === "deep-resume");
