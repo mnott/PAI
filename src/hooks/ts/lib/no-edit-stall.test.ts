@@ -1,8 +1,12 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { workerCanEdit } from "../../../workers/run/argv.js";
-import { bashWritesRepoFile, emptyLoopState, stallSequence, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
+import { bashWritesRepoFile, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
+import { activeAntipattern, resetAntipatternCache, shippedAntipattern } from "./antipatterns.js";
+import { paramsForModel, perModelEntry } from "./antipattern-lifecycle.js";
 
 const yamlDoc = parse(readFileSync("antipatterns/tool-loop/no-edit-stall.yaml", "utf8"));
 const params = yamlDoc.detector.params as Record<string, unknown>;
@@ -154,4 +158,121 @@ describe("no-edit-stall.yaml tests block", () => {
   for (const seq of yamlDoc.tests.no_match as string[]) {
     it(`no_match: ${seq}`, () => expect(stallSequence(seq, params)).toBeNull());
   }
+});
+
+// ---- growing-command: unedited / edited-red texts and per_model globs ----
+
+const gcShipped = shippedAntipattern("growing-command").detector.params;
+const UNEDITED_NOTE = gcShipped.note_message_unedited as string;
+const PLAIN_NOTE = gcShipped.note_message as string;
+const RED_NOTE = gcShipped.note_message_edited_red as string;
+const GREP = "grep -rn foo src";
+
+function gcDrive(state: LoopState, tool: string, input: string | Record<string, unknown>, out = "src/a.ts:1: foo"): { state: LoopState; step: LoopStep } {
+  const step = stepLoopGuard(state, tool, input, null, 1_000_000, process.cwd());
+  if (step.deny) return { state: step.state, step };
+  return { state: recordLoopResult(step.state, tool, input, out), step };
+}
+const gcRepeat = (state: LoopState, n: number, out?: string): { state: LoopState; steps: LoopStep[] } => {
+  const steps: LoopStep[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = gcDrive(state, "Bash", GREP, out);
+    state = r.state;
+    steps.push(r.step);
+  }
+  return { state, steps };
+};
+const gcEdit = (state: LoopState, tool = "Edit", input: Record<string, unknown> = { file_path: "src/a.ts", old_string: "a", new_string: "b" }): LoopState => gcDrive(state, tool, input).state;
+
+describe("growing-command per_model globs", () => {
+  const pm = { "inkling-2-mini*": { params: { x: 1 } }, "Inkling-2-Mini*": { params: { x: 2 } } };
+  it("matches variants, case-sensitive, not other models", () => {
+    expect(perModelEntry(pm, "inkling-2-mini-mtplx")).toBe(pm["inkling-2-mini*"]);
+    expect(perModelEntry(pm, "inkling-2-mini")).toBe(pm["inkling-2-mini*"]);
+    expect(perModelEntry(pm, "Inkling-2-Mini-MLX-nvfp4")).toBe(pm["Inkling-2-Mini*"]);
+    expect(perModelEntry(pm, "qwen3.8-flash")).toBeUndefined();
+    expect(paramsForModel({ x: 0 }, { per_model: pm }, "qwen3.8-flash")).toEqual({ x: 0 });
+  });
+});
+
+describe("looksRed", () => {
+  it("flags failing results only", () => {
+    expect(looksRed("Tests 2 failed")).toBe(true);
+    expect(looksRed("Exit code 1")).toBe(true);
+    expect(looksRed("not ok 3")).toBe(true);
+    expect(looksRed("all 12 passed")).toBe(false);
+    expect(looksRed(null)).toBe(false);
+  });
+});
+
+describe("growing-command unedited / edited texts", () => {
+  let savedHome: string | undefined;
+  let savedModel: string | undefined;
+  let savedEdit: string | undefined;
+  beforeEach(() => {
+    savedHome = process.env.PAI_HOME;
+    savedModel = process.env.PAI_WORKER_MODEL;
+    savedEdit = process.env.PAI_WORKER_CAN_EDIT;
+    delete process.env.PAI_WORKER_MODEL;
+    delete process.env.PAI_WORKER_CAN_EDIT;
+    resetAntipatternCache();
+  });
+  afterEach(() => {
+    for (const [k, v] of [["PAI_HOME", savedHome], ["PAI_WORKER_MODEL", savedModel], ["PAI_WORKER_CAN_EDIT", savedEdit]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    resetAntipatternCache();
+  });
+
+  it("no edit yet: the 3rd identical grep notes with the unedited text", () => {
+    expect(gcRepeat(emptyLoopState(), 3).steps[2].note).toBe(UNEDITED_NOTE);
+  });
+
+  it("after a repo edit the plain note is back", () => {
+    const { steps, state } = gcRepeat(gcEdit(emptyLoopState()), 3);
+    expect(state.edited).toBe(true);
+    expect(steps[2].note).toBe(PLAIN_NOTE);
+  });
+
+  it("a scratch edit does not count as edited; a bash repo write does", () => {
+    let s = gcEdit(emptyLoopState(), "Write", { file_path: ".pai-scratch/x.py", content: "1" });
+    expect(s.edited).toBeUndefined();
+    s = gcDrive(s, "Bash", "cat > src/new.ts <<'EOF'\nx\nEOF").state;
+    expect(s.edited).toBe(true);
+    expect(gcRepeat(s, 3).steps[2].note).toBe(PLAIN_NOTE);
+  });
+
+  it("after an edit and a red previous result: the edited_red text", () => {
+    expect(gcRepeat(gcEdit(emptyLoopState()), 3, "Tests 2 failed\nExit code 1").steps[2].note).toBe(RED_NOTE);
+  });
+
+  it("the 4th repeat deny drops the report line unedited, keeps it after an edit", () => {
+    const un = gcRepeat(emptyLoopState(), 5).steps[4];
+    expect(un.deny).toBe(true);
+    expect(un.reason).toContain("Edit a file the spec names");
+    expect(un.reason).toContain("4 times");
+    expect(un.reason).not.toContain("Write your R report now");
+    const ed = gcRepeat(gcEdit(emptyLoopState()), 5).steps[4];
+    expect(ed.deny).toBe(true);
+    expect(ed.reason ?? loopDenyReason("Bash")).toContain("Write your R report now");
+  });
+
+  it.skipIf(!existsSync(".pai-scratch/growing-command.user.yaml"))("user file with model globs (temp PAI_HOME) resolves the unedited text", () => {
+    const home = mkdtempSync(join(tmpdir(), "pai-home-"));
+    try {
+      mkdirSync(join(home, "antipatterns", "tool-loop"), { recursive: true });
+      copyFileSync(".pai-scratch/growing-command.user.yaml", join(home, "antipatterns", "tool-loop", "growing-command.yaml"));
+      process.env.PAI_HOME = home;
+      process.env.PAI_WORKER_MODEL = "inkling-2-mini-mtplx";
+      resetAntipatternCache();
+      const ap = activeAntipattern("growing-command");
+      expect(ap.version).toBe(3);
+      expect(paramsForModel(ap.detector.params, ap, "inkling-2-mini-mtplx").note_message_unedited).toBe(UNEDITED_NOTE);
+      expect(paramsForModel(ap.detector.params, ap, "Inkling-2-Mini-MLX-nvfp4").note_message_unedited).toBe(UNEDITED_NOTE);
+      expect(gcRepeat(emptyLoopState(), 3).steps[2].note).toBe(UNEDITED_NOTE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
