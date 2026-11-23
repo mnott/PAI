@@ -42,7 +42,7 @@ import { workersLogDir } from "./paths.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
 import { isLoopbackProvider } from "./run-env.js";
-import { admitCap, instanceUp, resolveCap } from "./capacity.js";
+import { admitCap, instanceCachedUp, resolveCap } from "./capacity.js";
 import { LOCAL_MECHANISM_LINE, probeLoopback, type PortCheck } from "./local-provider.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 
@@ -186,7 +186,7 @@ export function capText(p: WorkerProvider): string {
   const slots = p.conversationSlots;
   const admit = admitCap(p.maxConcurrent, slots, isLoopbackProvider(p));
   return (
-    `cap ${cap ?? "unlimited"}${p.instances?.length && cap !== undefined ? ` per instance, ${cap * Math.max(1, p.instances.filter((u) => instanceUp(u)).length)} admitted (${p.instances.filter((u) => instanceUp(u)).length} of ${p.instances.length} instances up)` : ""} (${source}), conversation slots ${slots ?? `${cap ?? "unlimited"} (default)`}` +
+    `cap ${cap ?? "unlimited"}${p.instances?.length && cap !== undefined ? ` per instance, ${cap * Math.max(1, p.instances.filter((u) => instanceCachedUp(u)).length)} admitted (${p.instances.filter((u) => instanceCachedUp(u)).length} of ${p.instances.length} instances up)` : ""} (${source}), conversation slots ${slots ?? `${cap ?? "unlimited"} (default)`}` +
     (slots !== undefined ? ` — admits ${admit ?? "unlimited"}` : "")
   );
 }

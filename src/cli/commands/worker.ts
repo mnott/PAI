@@ -37,7 +37,7 @@ import { ageOf, elapsedOf, loadStatus, nowStamp, saveStatus, setWorkerNote } fro
 import { parseExtendMinutes } from "../../workers/time-budget.js";
 import { appendLedger } from "../../workers/ledger.js";
 import { normalizeTopic } from "../../workers/topic.js";
-import { providerCap, instanceUp } from "../../workers/capacity.js";
+import { providerCap, instanceCachedUp } from "../../workers/capacity.js";
 import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
 import { filterBySession, filterByTopic, renderQueueTable } from "../../workers/queue-table.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
@@ -1478,7 +1478,7 @@ const capabilityCommand: CommandDef = {
 /** Resolved cap per provider name, for the queue readers. */
 export function providerCaps(workers: WorkersConfig): Record<string, number | undefined> {
   const out: Record<string, number | undefined> = {};
-  for (const name of Object.keys(workers.providers)) out[name] = providerCap(workers, name, instanceUp);
+  for (const name of Object.keys(workers.providers)) out[name] = providerCap(workers, name, instanceCachedUp);
   return out;
 }
 

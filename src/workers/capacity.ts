@@ -97,6 +97,11 @@ export function instanceUp(url: string, probe: (u: string) => Promise<boolean> =
   return hit?.ok ?? true;
 }
 
+/** Cached health only, never probes: for status and display paths, which must not touch the network. Unknown = healthy. */
+export function instanceCachedUp(url: string): boolean {
+  return urlProbe.get(url)?.ok ?? true;
+}
+
 /** Test hook: forget the cached probe answers. */
 export function resetInstanceHealth(): void {
   urlProbe.clear();

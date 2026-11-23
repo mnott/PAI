@@ -6,7 +6,7 @@
  * counters a request-level scheduler can read ("who is next" = nextSession).
  */
 import { isLocalProvider, type WorkersConfig } from "./config.js";
-import { providerCap, instanceUp, liveQueue, queueRows, sessionOf } from "./capacity.js";
+import { providerCap, instanceCachedUp, liveQueue, queueRows, sessionOf } from "./capacity.js";
 import { alive, isLive, loadStatuses, pausedFree, ownsPid, type WorkerStatus } from "./status.js";
 
 export interface SessionCounters {
@@ -77,7 +77,7 @@ export function schedulerView(
     .map(([n, p]) => ({
       provider: n,
       used: used.get(n) ?? 0,
-      cap: providerCap(workers, n, instanceUp),
+      cap: providerCap(workers, n, instanceCachedUp),
       ...(p.conversationSlots !== undefined ? { conversationSlots: p.conversationSlots } : {}),
     }));
   return { sessions: [...by.values()].sort((a, b) => a.name.localeCompare(b.name)), engines };

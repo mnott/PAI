@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { endpointRegistry, instanceEngineKey, pickInstance, type LocalInstance } from "./local-instances.js";
-import { capacityGate, currentBuildId, providerCap, instanceUp, resetInstanceHealth, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
+import { capacityGate, currentBuildId, providerCap, instanceUp, instanceCachedUp, resetInstanceHealth, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
@@ -803,6 +803,15 @@ describe("worker admission counts every instance of a provider", () => {
     expect(await tryAdmit(["a", "b"], (u) => !u.endsWith(":8045"))).toBe("waiting");
     expect(await tryAdmit(["a"], (u) => !u.endsWith(":8045"))).toBe("admitted");
     stop = true;
+  });
+  it("the status path (providerCap with instanceCachedUp) never touches the network", async () => {
+    const { vi } = await import("vitest");
+    const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network"));
+    resetInstanceHealth();
+    expect(providerCap(cfg, "sig", instanceCachedUp)).toBe(4);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
   it("instanceUp is optimistic until a probe answers", async () => {
     resetInstanceHealth();
