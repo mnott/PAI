@@ -39,7 +39,7 @@ import { httpModelsCheck, type PortCheck } from "../lib/setups.js";
 /** The real port probe of `--local` (the cached daemon answer is never trusted for "none"). */
 const probeLocal: PortCheck = httpModelsCheck;
 import { addSessionSchedulingHeaders, buildRunEnv, pinnedSettings } from "../../workers/run-env.js";
-import { CODE_GRAPH_FIRST_LINE } from "../../workers/report.js";
+import { SESSION_CODE_GRAPH_LINE } from "../../workers/report.js";
 import { resolveSessionMcp, sessionSlimArgs, SESSION_MCP_SERVERS } from "../../workers/slim-profile.js";
 import { readMcpServers } from "../../workers/mcp.js";
 import { localCompactWindow, MIN_COMPACT_WINDOW } from "../../workers/run-env.js";
@@ -892,7 +892,7 @@ export async function planLocalSession(o: {
     model,
     ...args,
     "--append-system-prompt",
-    CODE_GRAPH_FIRST_LINE,
+    SESSION_CODE_GRAPH_LINE,
     ...(o.askPermissions ? [] : ["--dangerously-skip-permissions"]),
     ...(resumeUuid ? ["--resume", resumeUuid] : []),
     ...(o.rest ?? []),

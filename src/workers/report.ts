@@ -259,6 +259,13 @@ export const CODE_GRAPH_FIRST_LINE = [
   "Fall back to grep/glob only if those return nothing.",
 ].join("\n");
 
+/** Interactive sessions have the pai MCP tools; headless workers do not, so only this variant names them. */
+export const SESSION_CODE_GRAPH_LINE = [
+  "This repo is indexed in the code graph: locate code with `pai code explore \"<what you look for>\"`,",
+  "`pai code callers <symbol>` and `pai code search <text>` (MCP: code_explore, code_callers, code_search).",
+  "Fall back to grep/glob only if those return nothing.",
+].join("\n");
+
 /**
  * The system prompt appended to every headless run, chosen by task class and
  * report format. `spotcheck`/`simple` get a short contract (no delegation
