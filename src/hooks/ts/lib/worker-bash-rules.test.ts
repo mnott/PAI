@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { renderDecision } from "../lib/render-decision.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
 import { decideTestGovernance } from "./test-governance.js";
 
@@ -504,6 +505,37 @@ describe("worker guard GNU sed X,+N range", () => {
   });
   it.skipIf(process.platform !== "darwin")("rewrites a double-quoted range with two files", () => {
     expect(run('sed -n "5,+3p" a b').updatedInput?.command).toBe('sed -n "5,8p" a b');
+  });
+  it.skipIf(process.platform !== "darwin")("rewrites GNU sed -i (no suffix) to sed -i ''", () => {
+    const cases: Array<[string, string]> = [
+      ["sed -i 's/a/b/' f", "sed -i '' 's/a/b/' f"],
+      ['sed -i "s/a/b/g" f', `sed -i '' "s/a/b/g" f`],
+      ["sed -i -e 's/a/b/' f", "sed -i '' -e 's/a/b/' f"],
+      ["sed -i -E 's/(a)/\\1/' f", "sed -i '' -E 's/(a)/\\1/' f"],
+      ["sed -i '5d' f", "sed -i '' '5d' f"],
+      ["cd x && sed -i 's/a/b/' f && echo ok", "cd x && sed -i '' 's/a/b/' f && echo ok"],
+      ["sed -i 's/a/b/' f; sed -i -e 's/c/d/' g | cat", "sed -i '' 's/a/b/' f; sed -i '' -e 's/c/d/' g | cat"],
+    ];
+    for (const [cmd, want] of cases) {
+      const d = run(cmd);
+      expect(d.decision, cmd).toBe("allow");
+      expect(d.updatedInput?.command, cmd).toBe(want);
+      expect(d.context).toContain("rewrote sed -i to sed -i '' for BSD sed");
+    }
+    const json = JSON.parse(renderDecision(run("sed -i 's/a/b/' f") as never));
+    expect(json.hookSpecificOutput.permissionDecision).toBe("allow");
+    expect(json.hookSpecificOutput.updatedInput.command).toBe("sed -i '' 's/a/b/' f");
+    expect(json.hookSpecificOutput.additionalContext).toContain("rewrote sed -i");
+  });
+  it.skipIf(process.platform !== "darwin")("leaves BSD sed -i forms untouched", () => {
+    for (const cmd of ["sed -i '' 's/a/b/' f", "sed -i.bak 's/a/b/' f", "sed -i -- '' 's/a/b/' f", "sed -i '' -e 's/a/b/' f"]) {
+      const d = run(cmd);
+      expect(d.decision, cmd).toBe("allow");
+      expect(d.updatedInput, cmd).toBeUndefined();
+    }
+  });
+  it.skipIf(process.platform !== "darwin")("keeps denying an ambiguous sed -i", () => {
+    for (const cmd of ["sed -i 's' f", "sed -i /tmp/x f"]) expect(run(cmd).decision, cmd).toBe("deny");
   });
   it.skipIf(process.platform !== "darwin")("still denies a non-numeric start", () => {
     expect(run("sed -n '/foo/,+3p' f").decision).toBe("deny");
