@@ -148,6 +148,8 @@ export interface RouterConfig {
   engineIdleSecs?: number;
   /** Daemon watchdog: restart the router after this many consecutive cloud requests failed with ENOTFOUND/ECONNREFUSED/ETIMEDOUT within 60 s while the daemon itself reaches the upstream. Default: failStreak 5. */
   watchdog?: { failStreak?: number };
+  /** Opt-in stall profiler (src/router/stall-profiler.ts): on a router stall, save a bounded CPU profile window to ~/.pai/logs/router-profiles. Env var PAI_ROUTER_PROFILE=1 also works, but does not survive `pai router restart` (the successor inherits the old router's environment). Default: false. */
+  profileStalls?: boolean;
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
   /** Cloud failure (usage limit 429, no network) -> the same request is retried on the running local model, and the session stays local for stickyMin minutes. Default: enabled true, stickyMin 30. */
