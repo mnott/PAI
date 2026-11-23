@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { paiHomePath } from "../config/pai-home.js";
+import { cachedParse } from "../config/parse-cache.js";
 import { expandHome } from "./config.js";
 
 export class LocalTierError extends Error {}
@@ -315,8 +316,12 @@ export function strataInfo(configPath: string, home = homedir()): { dir: string;
   return { dir: cwd ?? fallback, exe };
 }
 
-/** Read the local config from a workers.yaml file. */
+/** Read the local config from a workers.yaml file. Parsed once per file change (mtime/size), not per call: request-path callers (engineNameOf, tierProviderNames) hit this on every poll. */
 export function readLocalConfig(yamlPath: string): LocalConfig {
+  return cachedParse(yamlPath, () => readLocalConfigUncached(yamlPath), "local-tiers");
+}
+
+function readLocalConfigUncached(yamlPath: string): LocalConfig {
   let root: Record<string, unknown> = {};
   if (existsSync(yamlPath)) {
     const doc = parse(readFileSync(yamlPath, "utf8"));
