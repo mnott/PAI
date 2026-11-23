@@ -380,7 +380,7 @@ export async function startDetachedWorker(
  * It returns once the new process announced its worker id; it throws when that process dies or never announces —
  * rerouteWorker then leaves the old run alone (a failed restart must not drop the job).
  */
-export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession): (s: SpawnSpec) => Promise<RerouteResult["queuedAtTarget"] | void> {
+export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession, o: { attempts?: number; retryMs?: number; announceMs?: number } = {}): (s: SpawnSpec) => Promise<RerouteResult["queuedAtTarget"] | void> {
   return async (s) => {
     const st = loadStatus(logDir, s.id);
     if (!st) throw new Error(`no worker named "${s.id}" to restart`);
@@ -398,20 +398,41 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
     } catch {
       /* without the file a detached reroute start still runs; its pane falls back to any live iTerm session */
     }
-    const pid = start(process.env.PAI_BIN || "pai", args, {
-      cwd: st.cwd || process.cwd(),
-      env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
-      outPath: join(logDir, "runs", `reroute-${s.id}.out`),
-    });
-    const newId = await waitAnnouncedId(idFile, pid, 60_000);
-    if (!newId) {
+    // A start that dies or stays silent is tried once more after a few seconds (2026-11-23: #21, the first start was
+    // abandoned at the announce timeout with an empty log and the job went ORPHANED). Each attempt logs stdout+stderr
+    // to its own file next to the job's files; the failure message quotes the last lines of every attempt.
+    const attempts = Math.max(1, o.attempts ?? 2);
+    const failures: string[] = [];
+    let newId: string | null = null;
+    for (let n = 1; n <= attempts && !newId; n++) {
+      const outPath = join(logDir, "runs", n === 1 ? `reroute-${s.id}.out` : `reroute-${s.id}.${n}.out`);
+      try {
+        rmSync(idFile, { force: true });
+        rmSync(outPath, { force: true });
+      } catch {
+        /* stale files are overwritten */
+      }
+      let pid = 0;
+      let spawnErr = "";
+      try {
+        pid = start(process.env.PAI_BIN || "pai", args, {
+          cwd: st.cwd || process.cwd(),
+          env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
+          outPath,
+        });
+      } catch (e) {
+        spawnErr = `spawn error: ${(e as Error).message}`;
+      }
+      newId = spawnErr ? null : await waitAnnouncedId(idFile, pid, o.announceMs ?? 60_000);
+      if (newId) break;
       await abandonRestart(logDir, idFile, pid);
       // judged by the announced id and the process, never by the output text: the start's own stdout can carry
       // unrelated lines (a worktree gc pass) that are not a failure (2026-11-18: gc output read as "did not start").
-      const out = join(logDir, "runs", `reroute-${s.id}.out`);
-      const tail = existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").slice(-5).join(" / ") : "";
-      throw new Error(`the restart on ${s.provider} did not start${tail ? `: ${tail}` : ""}`);
+      const tail = spawnErr || (existsSync(outPath) ? readFileSync(outPath, "utf8").trim().split("\n").slice(-5).join(" / ") : "");
+      failures.push(`attempt ${n}: ${tail || "no output"} [log ${outPath}]`);
+      if (n < attempts) await new Promise((r) => setTimeout(r, o.retryMs ?? 5_000));
     }
+    if (!newId) throw new Error(`the restart on ${s.provider} did not start (${failures.join("; ")})`);
     // the target may be full: an announced id whose status says queued is a success — the continuation waits
     // there (never lost) and runs when a slot frees. The caller reports the position.
     const ns = loadStatus(logDir, newId);
@@ -544,7 +565,7 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     try {
       q = await start();
     } catch (e) {
-      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 200) });
+      appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-SKIPPED", { id, reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 600) });
       // the origin is gone: its salvaged work sits on the branch and nobody continues it — the caller must report it
       throw Object.assign(e instanceof Error ? e : new Error(String(e)), { orphaned: { branch: branch ?? null } });
     }
@@ -620,7 +641,7 @@ export async function escalateOverdue(
       done.push({ id: s.id, label: s.label, provider: r.provider, reason, session: s.spawnerSession ?? s.session?.id ?? null });
     } catch (e) {
       const orphaned = (e as { orphaned?: { branch: string | null } }).orphaned;
-      if (orphaned) done.push({ id: s.id, label: s.label, provider: "cloud", reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 160), session: s.spawnerSession ?? s.session?.id ?? null, orphaned });
+      if (orphaned) done.push({ id: s.id, label: s.label, provider: "cloud", reason: `restart failed after the stop: ${(e as Error).message}`.slice(0, 600), session: s.spawnerSession ?? s.session?.id ?? null, orphaned });
       // already on the fallback or no task copy: marked so the next tick does not try again
       const st = (d.load ?? ((x: string) => loadStatus(d.logDir, x)))(s.id);
       if (st && !st.rerouted) {

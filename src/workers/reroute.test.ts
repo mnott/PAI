@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -288,6 +289,37 @@ describe("rerouteWorker", () => {
     expect(st.state).toBe("queued");
     expect(st.rerouted).toBeUndefined(); // a later tick may try again
   });
+
+  // #21: a continuation that dies before announcing is retried once; its stderr is kept and quoted.
+  const deadPid = (): number => spawnSync(process.execPath, ["-e", ""]).pid ?? 999999;
+  it("defaultSpawn retries a failed first start once and records its stderr", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
+    let n = 0;
+    const fakeStart = ((bin: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; outPath: string }) => {
+      n++;
+      if (n === 1) {
+        writeFileSync(o.outPath, "boom: exited 1\n");
+        return deadPid();
+      }
+      writeFileSync(o.env[RERUN_ID_FILE_ENV]!, "w2");
+      return process.pid;
+    }) as typeof import("./reroute.js").spawnSession;
+    await defaultSpawn(dir, fakeStart, { retryMs: 10 })({ id: "w1", why: "x", provider: "fakeB", specFile: join(dir, "spec.txt") });
+    expect(n).toBe(2);
+    expect(readFileSync(join(dir, "runs", "reroute-w1.out"), "utf8")).toContain("boom: exited 1");
+  });
+  it("defaultSpawn with both starts failing quotes the stderr in the error", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
+    let n = 0;
+    const fakeStart = ((bin: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; outPath: string }) => {
+      n++;
+      writeFileSync(o.outPath, `stderr line ${n}\n`);
+      return deadPid();
+    }) as typeof import("./reroute.js").spawnSession;
+    await expect(defaultSpawn(dir, fakeStart, { retryMs: 10 })({ id: "w1", why: "x", provider: "fakeB", specFile: join(dir, "spec.txt") })).rejects.toThrow(/stderr line 1.*stderr line 2/);
+    expect(n).toBe(2);
+  });
+
 
   // 2026-11-16: the restart defaultSpawn starts must reach the pane launcher like a normal `pai worker run`:
   // the old id travels as PAI_RERUN_OF (and, for a starter that cannot take custom env, as PAI_RERUN_OF_FILE)
