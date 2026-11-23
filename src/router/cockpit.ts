@@ -54,7 +54,7 @@ import { loadPaneRunStatuses, paneRunRows } from "../workers/pane-run.js";
 import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
-import { readSchedFile, schedPlain, sharedScheduler, SESSION_TTL_MS, type SchedSnapshot } from "./scheduler.js";
+import { readSchedFile, instanceLabel, schedPlain, sharedScheduler, SESSION_TTL_MS, type SchedSnapshot } from "./scheduler.js";
 import { isLive, loadStatus, loadStatusesCached, ownsPidCached, type WorkerStatus } from "../workers/status.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
 import { buildSpeed, percentile } from "./speed.js";
@@ -1284,7 +1284,7 @@ export function cockpitQueue(
   // which instance serves each running job (the ticket's engine), and busy/cap per instance in its provider's line
   for (const r of table) {
     const eng = r.state === "running" ? snap?.workers[r.id]?.engine : undefined;
-    if (eng) r.instance = eng;
+    if (eng) r.instance = instanceLabel(eng, snap);
   }
   for (const [eng, e] of Object.entries(snap?.engines ?? {})) {
     const prov = eng.split("#")[0]!;

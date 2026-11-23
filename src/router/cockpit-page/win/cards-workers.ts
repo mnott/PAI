@@ -196,7 +196,7 @@ function wkSpan(t){return' <span title="'+esc(t)+'">'+esc(t)+'</span>'}
 function wkCmp(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}
 function wkBuildRow(b,i){var l=wkSpan(b.label+(b.mode==="full"?" [full]":"")+(b.key?" ["+b.key+"]":""));return[b.state==="running"?"":String(i+1),l,wkSpan(b.session),b.state==="running"?"running":"waiting"+(b.why?" ("+esc(b.why)+")":""),b.chip?wkChip(b.chip,WK_FILTERS.indexOf(b.chip)>=0):'<span class="dim">–</span>',wkDur(b.state==="running"?b.ageSec:b.waitedSec)]}
 /** The queue payload as blocks: [{id, title (plain text), head, rows}] in page order. */
-function wkInst(q){var p=(q.providers||[]).filter(function(x){return x.instances&&x.instances.length}).map(function(x){return x.provider+": "+x.instances.map(function(i){return i.engine+" "+i.busy+"/"+i.cap}).join(", ")});return p.length?" · "+p.join(" · "):""}
+function wkInst(q){var p=(q.providers||[]).filter(function(x){return x.instances&&x.instances.length}).map(function(x){return x.provider+" "+x.instances.map(function(i){var m=/#(\\d+)$/.exec(i.engine);return"#"+(m?m[1]:"1")+" "+i.busy+"/"+i.cap}).join(" · ")});return p.length?" · "+p.join(" · "):""}
 function wkBlocks(q){
  var out=[],sess={},pl=q.plans||[],pv=q.paneViolations||[],bq=q.builds;
  if(pl.length)out.push({id:"plans",title:"plans",head:["plan .txt","parts","phase .txt","in phase","running .txt","workers .txt"],rows:pl.map(function(p){return[wkSpan(p.job),p.merged+'/'+p.total,wkSpan(p.phase),wkDur(p.phaseSec),wkDur(p.ageSec),wkSpan((p.running||[]).join(", "))]})});

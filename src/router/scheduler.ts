@@ -691,6 +691,15 @@ export function readSchedFile(dir: string, now = Date.now()): SchedSnapshot | nu
   }
 }
 
+/** The instance of a provider serving a request, from the router's engine key: "signal-2 #1" / "signal-2 #2" when the provider runs several
+ *  copies (the first copy's key is the bare provider name), the plain key when it runs one. */
+export function instanceLabel(engine: string, snap: SchedSnapshot | null): string {
+  const base = engine.replace(/#\d+$/, "");
+  const n = /#(\d+)$/.exec(engine)?.[1] ?? "1";
+  const copies = Object.keys(snap?.engines ?? {}).filter((k) => k.replace(/#\d+$/, "") === base).length;
+  return copies > 1 || n !== "1" ? `${base} #${n}` : engine;
+}
+
 /** `ps` / cockpit line: "scheduler: gyro-m running (sess-a) · queued sess-b 2 · counters sess-a 1200, sess-b 300"; "" when idle.
  *  names: session id → display name — a known session reads by name, an unknown one by its first 8 chars, never a raw uuid. */
 export function schedLine(s: SchedSnapshot | null, names?: Record<string, string>): string {
@@ -705,7 +714,7 @@ export function schedLine(s: SchedSnapshot | null, names?: Record<string, string
     const base = name.replace(/#\d+$/, "");
     if (!active.has(base)) continue;
     groups.set(base, [...(groups.get(base) ?? []), e]);
-    perInstance.set(base, [...(perInstance.get(base) ?? []), `${name} ${e.flights?.length ?? (e.inflight ? 1 : 0)}/${e.slots ?? 1}`]);
+    perInstance.set(base, [...(perInstance.get(base) ?? []), `#${/#(\d+)$/.exec(name)?.[1] ?? "1"} ${e.flights?.length ?? (e.inflight ? 1 : 0)}/${e.slots ?? 1}`]);
   }
   const parts: string[] = [];
   for (const [base, es] of groups) {
@@ -721,7 +730,7 @@ export function schedLine(s: SchedSnapshot | null, names?: Record<string, string
     const q = Object.entries(queued);
     const c = Object.entries(counters).map(([k, v]) => `${label(k)} ${v} tokens served`);
     parts.push(
-      `${base}${es.length > 1 ? ` x${es.length}` : ""} ${inflight.length ? `in flight ${busy}/${cap} (${inflight.join(", ")})` : "idle"}${es.length > 1 ? ` [${perInstance.get(base)!.join(", ")}]` : ""}` +
+      `${base}${es.length > 1 ? ` x${es.length}` : ""} ${inflight.length ? `in flight ${busy}/${cap} (${inflight.join(", ")})` : "idle"}${es.length > 1 ? ` [${perInstance.get(base)!.join(" · ")}]` : ""}` +
         (q.length ? `, queued ${q.map(([k, n]) => `${label(k)} ${n}`).join(" ")}` : "") +
         (c.length ? `, ${c.join(", ")}` : "")
     );
