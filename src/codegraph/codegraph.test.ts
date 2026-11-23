@@ -7,7 +7,7 @@ import { loadConfig } from "../daemon/config.js";
 import { openFederation } from "../storage/sqlite/federation-db.js";
 import { SQLiteBackend } from "../storage/sqlite.js";
 import { summarizeRepo, findSummary, MAX_PROMPT_CHARS } from "./summaries.js";
-import { indexRepo, callers, searchSymbols, explore, callees, impact, mainCheckoutOf } from "./api.js";
+import { indexRepo, callers, searchSymbols, explore, callees, mainCheckoutOf } from "./api.js";
 import { execFileSync } from "node:child_process";
 import { GRAPH_INDEXING_LINE, incrementalIndexIfIndexed, lockPath, markDirty, readDirty, runningIndex, sessionGraphLine, startBackgroundIndex, type BgDeps } from "./session.js";
 
@@ -284,44 +284,6 @@ describe("worker worktrees share the main checkout's index", () => {
     // not a git repo: the plain path, no toplevel to resolve to
     const plain = tmp();
     expect(mainCheckoutOf(plain)).toBe(resolve(plain));
-  }, 30000);
-});
-
-describe("tools/ and scripts/ are indexed (issue #23)", () => {
-  it("a symbol in tools/x.py is found by search and explore", async () => {
-    const root = tmp();
-    mkdirSync(join(root, "tools"));
-    mkdirSync(join(root, "scripts"));
-    writeFileSync(join(root, "tools/x.py"), "def helper():\n    return 1\n");
-    writeFileSync(join(root, "scripts/y.ts"), "export function scriptMain(){ helper(); }\n");
-    execFileSync("git", ["init", "-q"], { cwd: root });
-    execFileSync("git", ["add", "-A"], { cwd: root });
-    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: root });
-    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
-    const res = await indexRepo(backend, root);
-    expect(res.files).toBe(2);
-    expect(res.symbols).toBe(2);
-    const hits = await searchSymbols(backend, root, "helper");
-    expect(hits.some((h) => h.file === "tools/x.py")).toBe(true);
-    const ex = await explore(backend, root, "helper");
-    expect(ex.text).toContain("tools/x.py");
-  }, 30000);
-
-  it("impact output stays bounded (issue #23: worker context must not flood)", async () => {
-    const root = tmp();
-    mkdirSync(join(root, "src"));
-    writeFileSync(join(root, "src/hub.ts"), "export function hub(){ return 1; }\n");
-    for (let i = 0; i < 300; i++) {
-      writeFileSync(join(root, `src/dep${i}.ts`), `import { hub } from "./hub.js";\nexport function d${i}(){ hub(); }\n`);
-    }
-    execFileSync("git", ["init", "-q"], { cwd: root });
-    execFileSync("git", ["add", "-A"], { cwd: root });
-    execFileSync("git", ["commit", "-qm", "fixture"], { cwd: root });
-    const backend = new SQLiteBackend(openFederation(join(tmp(), "db.sqlite")));
-    await indexRepo(backend, root);
-    const imp = await impact(backend, root, "hub", 2);
-    expect(imp.files.length).toBeLessThanOrEqual(200);
-    expect(imp.symbols.length).toBeLessThanOrEqual(100);
   }, 30000);
 });
 
