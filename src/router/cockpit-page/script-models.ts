@@ -15,7 +15,7 @@ function gauge(l,w,age){
  var tick="",pnote="";
  if(pc!==null){var pa=Math.PI*Math.max(0,Math.min(100,pc))/100,c=Math.cos(pa),sn=Math.sin(pa);
   // one red radial tick across the ring's stroke only (r-5 to r+5, same side of the centre): never into the centre, never over the number
-  tick='<line x1="'+(cx-(r-5)*c).toFixed(1)+'" y1="'+(cy-(r-5)*sn).toFixed(1)+'" x2="'+(cx-(r+5)*c).toFixed(1)+'" y2="'+(cy-(r+5)*sn).toFixed(1)+'" stroke="var(--bad)" stroke-width="3"><title>pace '+Math.round(pc)+'% · cloud first below '+Math.round(thr)+'%</title></line>';
+  tick='<line x1="'+(cx-(r-5)*c).toFixed(1)+'" y1="'+(cy-(r-5)*sn).toFixed(1)+'" x2="'+(cx-(r+5)*c).toFixed(1)+'" y2="'+(cy-(r+5)*sn).toFixed(1)+'" stroke="var(--bad)" stroke-width="3"><title>pace '+pc.toFixed(1)+'% · cloud first below '+thr.toFixed(1)+'%</title></line>';
   var under=w.percent<=pc;pnote='<div class="s" title="pace = elapsed share of the window">used '+Math.round(w.percent)+'% · pace '+pc.toFixed(1)+'% · <span class="'+(under?'ok':'warn')+'">'+(under?'under pace':'over pace')+'</span></div>'}
  return '<div class="gauge"><svg width="120" height="70" viewBox="0 0 120 70">'+arc+tick+'<text x="60" y="54" text-anchor="middle" style="font-size:16px;font-weight:600;fill:var(--fg)">'+Math.round(w.percent)+'%</text></svg>'+
   '<div class="n">'+esc(l.provider)+' '+esc(w.name)+(age?' <span class="warn" title="'+esc(l.error||"")+'">· '+esc(age)+' old</span>':'')+(w.estimated?' <span class="warn">estimated</span>':'')+'</div>'+

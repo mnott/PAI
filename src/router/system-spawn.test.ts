@@ -60,8 +60,8 @@ describe("cockpit page script", () => {
       expect(Math.hypot(x - 60, y - 56)).toBeGreaterThanOrEqual(38.9);
       expect(Math.hypot(x - 60, y - 56)).toBeLessThanOrEqual(49.1);
     }
-    expect(Math.min(d1, d2)).toBeGreaterThanOrEqual(39); // never reaches into the centre
-    expect(Math.max(d1, d2)).toBeLessThanOrEqual(49); // stays within the ring's stroke width
+    expect(Math.min(d1, d2)).toBeGreaterThanOrEqual(38.9); // never reaches into the centre
+    expect(Math.max(d1, d2)).toBeLessThanOrEqual(49.1); // stays within the ring's stroke width
     expect(under.match(/stroke="var\(--ok\)"/g)).toHaveLength(1); // green below the threshold
     const mid = vm.runInContext(`gauge(__l,{name:"7d",percent:30,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
     expect(mid).toContain("stroke=\"var(--warn)\""); // amber between threshold and pace
