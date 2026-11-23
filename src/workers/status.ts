@@ -132,6 +132,8 @@ export interface WorkerStatus {
   resumedBy?: string;
   /** Commit the branch started from (worktree base) for the commits count. */
   worktreeBase?: string | null;
+  /** Branch the start checkout (cwd) had when the worktree was cut; merge refuses if it changed. */
+  startBranch?: string | null;
   /** Whether `worktreeBase` is a snapshot of uncommitted checkout state, not HEAD. */
   worktreeSnapshot?: boolean | null;
   /** Commits the worker made on its branch; set with `branch` on success. */
