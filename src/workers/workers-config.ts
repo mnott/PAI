@@ -130,6 +130,8 @@ export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, un
   const raw: Record<string, unknown> = {};
   if (y.enabled !== undefined) raw.enabled = y.enabled;
   if (y.url !== undefined) raw.baseUrl = y.url;
+  // multi-instance providers: workers.yaml `url: [a, b]` or `instances: [a, b]`
+  if (y.instances !== undefined) raw.instances = y.instances;
   if (y.key_file !== undefined) raw.keyFile = y.key_file;
   if (y.key !== undefined) raw.key = y.key;
   if (y.tier !== undefined) raw.costTier = y.tier;
@@ -171,7 +173,8 @@ export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, un
 export function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   const y: Record<string, unknown> = {};
   y.enabled = p.enabled;
-  if (p.baseUrl) y.url = p.baseUrl;
+  if (p.instances && p.instances.length > 1) y.url = [...p.instances];
+  else if (p.baseUrl) y.url = p.baseUrl;
   if (p.keyFile) y.key_file = p.keyFile;
   if (p.key) y.key = p.key;
   if (p.costTier !== undefined) y.tier = p.costTier;

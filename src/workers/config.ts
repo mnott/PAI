@@ -103,7 +103,7 @@ export interface WorkerProvider {
   protocol: WorkerProtocol;
   /** Anthropic-compatible Messages API base. */
   baseUrl: string;
-  /** Several servers of the same model (workers.yaml `baseUrl: [a, b]` or `instances: [a, b]`); `baseUrl` is the first. maxConcurrent applies per instance. Absent for a single url. */
+  /** Several servers of the same model (workers.yaml `url: [a, b]` or `instances: [a, b]`); `baseUrl` is the first. maxConcurrent applies per instance. Absent for a single url. */
   instances?: string[];
   /** 0600 file holding the auth token; null for local servers ("local"). */
   keyFile: string | null;
