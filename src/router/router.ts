@@ -811,7 +811,9 @@ export function routerHandler(
         // every row resolves against the registry (managed + registered), then the least busy endpoint serves
         const registry = endpointRegistry(instancesOf(), providers, launched());
         if (health) void Promise.all([health.refresh(registry), health.refreshManaged(registry)]);
-        const picked = pickInstance(prov, resolveSelector(target.name, registry).filter(healthy), (k) => held.get(k) ?? 0);
+        const picked = pickInstance(prov, resolveSelector(target.name, registry).filter(healthy), (k) => held.get(k) ?? 0, {
+          ...(target.provider.instances ? { cap: target.provider.maxConcurrent, session: headerValue(req.headers["x-pai-session"], 80) || headerValue(req.headers["x-claude-code-session-id"], 64) || "" } : {}),
+        });
         if (picked) {
           const u = new URL(picked.url);
           up.url.protocol = u.protocol;

@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { capacityGate, currentBuildId, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
+import { endpointRegistry, instanceEngineKey, pickInstance, type LocalInstance } from "./local-instances.js";
+import { capacityGate, currentBuildId, providerCap, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
@@ -730,5 +731,49 @@ describe("session max_parallel gate", () => {
 
   it("0 running with cap 1 admits", async () => {
     expect(await race(sessGate("q3", { cap: 1, load: () => [] }))).toBe("admitted");
+  });
+});
+
+describe("providers with several instances", () => {
+  const inst = (n: number, state: LocalInstance["state"] = "ready"): LocalInstance => ({
+    id: `sig#${n}`, model: "sig", provider: "sig", url: `http://127.0.0.1:${8043 + n}`, origin: "registered", port: 8043 + n, state, startedAt: 0, log: "",
+  });
+  const provs = { sig: { enabled: true, baseUrl: "http://127.0.0.1:8044", instances: ["http://127.0.0.1:8044", "http://127.0.0.1:8045"] } };
+  const registry = (): LocalInstance[] => endpointRegistry([], provs, { tiers: {} } as never);
+
+  /** Route n jobs in sequence against a load map, the way the router does (held counts per engine key). */
+  function spread(n: number, cap: number, running: LocalInstance[]): string[] {
+    const held = new Map<string, number>();
+    return Array.from({ length: n }, (_, k) => {
+      const p = pickInstance("sig", running, (key) => held.get(key) ?? 0, { cap, session: `job${k}` })!;
+      const key = instanceEngineKey(p);
+      held.set(key, (held.get(key) ?? 0) + 1);
+      return p.id;
+    });
+  }
+
+  it("one provider entry yields N registered instances, and the cap scales per instance", () => {
+    expect(registry().map((i) => i.url)).toEqual(["http://127.0.0.1:8044", "http://127.0.0.1:8045"]);
+    const cfg = { providers: { sig: { ...provs.sig, maxConcurrent: 2 }, one: { baseUrl: "http://127.0.0.1:9", maxConcurrent: 2 } } };
+    expect(providerCap(cfg, "sig")).toBe(4);
+    expect(providerCap(cfg, "one")).toBe(2);
+  });
+
+  it("3 concurrent jobs on 2 instances with maxConcurrent 2 spread 2+1", () => {
+    const ids = spread(3, 2, registry());
+    expect(ids.filter((i) => i === "sig#1").length).toBe(2);
+    expect(ids.filter((i) => i === "sig#2").length).toBe(1);
+  });
+
+  it("a worker session keeps its instance while it has room", () => {
+    const run = registry();
+    const first = pickInstance("sig", run, (k) => (k === "sig" ? 0 : 1), { cap: 2, session: "w-keep" })!;
+    const again = pickInstance("sig", run, () => 0, { cap: 2, session: "w-keep" })!;
+    expect(again.id).toBe(first.id);
+  });
+
+  it("one instance down: every job goes to the other", () => {
+    const ids = spread(3, 2, [inst(1, "failed"), inst(2)]);
+    expect(new Set(ids)).toEqual(new Set(["sig#2"]));
   });
 });

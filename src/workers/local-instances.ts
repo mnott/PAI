@@ -228,6 +228,8 @@ export function reconcileInstances(
 }
 
 export interface RegisteredProvider {
+  /** Further urls of the same provider (multi-instance): each becomes `<name>#<n>`. */
+  instances?: string[];
   url?: string;
   characteristics?: InstanceCharacteristics;
 }
@@ -242,6 +244,17 @@ export function registeredInstances(providers: Record<string, RegisteredProvider
   const out: LocalInstance[] = [];
   for (const [name, p] of Object.entries(providers)) {
     if (!p.url || launched.has(name)) continue;
+    if (p.instances && p.instances.length > 1) {
+      p.instances.forEach((u, k) => {
+        const port = /:(\d+)(?:\/|$)/.exec(u)?.[1];
+        out.push({
+          id: `${name}#${k + 1}`, model: name, provider: name, url: u.replace(/\/+$/, ""), origin: "registered",
+          port: port ? Number(port) : 0, state: "ready", startedAt: 0, log: "",
+          ...(p.characteristics ? { characteristics: p.characteristics } : {}),
+        });
+      });
+      continue;
+    }
     const port = /:(\d+)(?:\/|$)/.exec(p.url)?.[1];
     out.push({
       id: name, model: name, provider: name, url: p.url.replace(/\/+$/, ""), origin: "registered",
@@ -263,9 +276,27 @@ export function pickInstance(
   model: string,
   running: LocalInstance[],
   busy: (engineKey: string) => number,
+  opts: { session?: string; cap?: number } = {},
 ): LocalInstance | null {
   const ready = running.filter((i) => i.state === "ready");
   if (!ready.length) return null;
+  // sticky: a session keeps its instance (its prompt cache lives there) while that one is healthy and has a free slot
+  const stickKey = opts.session ? `${model}\u0000${opts.session}` : "";
+  const held = stickKey ? ready.find((i) => i.id === stickyInstance.get(stickKey)) : undefined;
+  if (held && (opts.cap === undefined || busy(instanceEngineKey(held)) < opts.cap)) return held;
+  const room = opts.cap === undefined ? ready : ready.filter((i) => busy(instanceEngineKey(i)) < opts.cap!);
+  const chosen = pickLeastLoaded(model, room.length ? room : ready, busy);
+  if (stickKey && chosen) {
+    if (stickyInstance.size > 2000) stickyInstance.delete(stickyInstance.keys().next().value as string);
+    stickyInstance.set(stickKey, chosen.id);
+  }
+  return chosen;
+}
+
+/** session (per provider) -> the instance id it last used. */
+const stickyInstance = new Map<string, string>();
+
+function pickLeastLoaded(model: string, ready: LocalInstance[], busy: (engineKey: string) => number): LocalInstance {
   const load = ready.map((i) => busy(instanceEngineKey(i)));
   const min = minOf(load);
   const tied = ready.filter((_, k) => load[k] === min);
@@ -282,13 +313,14 @@ export function pickInstance(
  */
 export function endpointRegistry(
   managed: LocalInstance[],
-  providers: Record<string, { enabled?: boolean; baseUrl?: string; characteristics?: InstanceCharacteristics }>,
+  providers: Record<string, { enabled?: boolean; baseUrl?: string; instances?: string[]; characteristics?: InstanceCharacteristics }>,
   cfg: LocalConfig,
 ): LocalInstance[] {
   const declared: Record<string, RegisteredProvider> = {};
   for (const [name, p] of Object.entries(providers)) {
-    if (p.enabled === false || !p.characteristics) continue;
-    declared[name] = { url: p.baseUrl, characteristics: p.characteristics };
+    const multi = (p.instances?.length ?? 0) > 1;
+    if (p.enabled === false || (!p.characteristics && !multi)) continue;
+    declared[name] = { url: p.baseUrl, ...(multi ? { instances: p.instances } : {}), ...(p.characteristics ? { characteristics: p.characteristics } : {}) };
   }
   const ids = new Set(managed.map((i) => i.id));
   return [...managed, ...registeredInstances(declared, cfg).filter((i) => !ids.has(i.id))];
