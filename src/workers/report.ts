@@ -49,6 +49,7 @@ function ag2ReportBlock(proofNote = false): string[] {
     "t= is proof you ran (typecheck, probe, live run, before/after), not new committed test files: a new test is",
     "one-time (.pai-scratch/ only) unless promoted in the project's tests/KEPT.md.",
     "z= the answer/note, one line, always present. x= what is left (omit if nothing).",
+    "Commit on the branch your worktree starts on; never create or switch to another branch. A c= file in the repo root is written ./name (every c= entry needs a /).",
     "Form: each key once, on one line. Many files: c=a.ts what | b.ts what. Many checks: t=Tsc+ Unit+ (Name+ tokens, no spaces or comments inside; detail goes in z).",
     "No u=/out=, no w=none (R has no such keys); a missing proof or an r not + needs y=, so say so instead of r=+.",
     "y= one line why when r is not +.",
@@ -465,7 +466,7 @@ export function verifyReportChanges(
         if (mtimeMs !== null) failures.push({ path, reason: "not-deleted" });
       } else if (mtimeMs === null) {
         failures.push({ path, reason: "missing" });
-      } else if (mtimeMs < startMs && !differsFromBase(cwd, baseRef, path)) {
+      } else if (mtimeMs < startMs && !differsFromBase(cwd, baseRef, path) && !committedSince(cwd, startMs, path)) {
         failures.push({ path, reason: "stale" });
       }
     }
@@ -497,6 +498,16 @@ export function claimedPaths(raw: string): string[] {
 }
 
 const isPathLike = (p: string): boolean => /[/.]/.test(p) && !/[(),\s]/.test(p);
+
+/** Whether the worktree's HEAD history touched `path` at or after `startMs`: a commit of the run counts even when the base ref is unknown. */
+function committedSince(cwd: string, startMs: number, path: string): boolean {
+  try {
+    const t = parseInt(execFileSync("git", ["log", "-1", "--format=%ct", "--", path], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(), 10);
+    return Number.isFinite(t) && t * 1000 >= startMs - 1000;
+  } catch {
+    return false;
+  }
+}
 
 /** Whether `path` differs between `baseRef` and the worktree's HEAD or working tree: the run's branch changed it even if the file was written before the run began. */
 function differsFromBase(cwd: string, baseRef: string | null | undefined, path: string): boolean {
@@ -570,7 +581,7 @@ function proofTokens(cmd: string): string[] {
     .replace(/["']/g, "")
     .split(" ")
     .filter(Boolean)
-    .map((t) => (t.includes("/") && !t.endsWith("/") ? t.slice(t.lastIndexOf("/") + 1) : t).replace(/:$/, ""));
+    .map((t) => (t.includes("/") && !t.endsWith("/") ? t.slice(t.lastIndexOf("/") + 1) : t).replace(/[:;,]+$/, ""));
 }
 
 /** First word of what trails a matched command in a claim: commentary on its result, not another argument. */
@@ -616,11 +627,16 @@ export function checkProof(
   let proof: string | undefined;
   if (parsed?.kind === "R" && parsed.fields.r === "+" && parsed.fields.p) {
     // a result may trail the command (`cmd → 12 passed`); only the command part is matched
-    const claimed = parsed.fields.p.split(/ (?:→|->|=>|⇒|#) /)[0].trim();
+    const arrow = / (?:→|->|=>|⇒|#) /;
+    const claimed = parsed.fields.p.split(arrow)[0].trim();
+    // `cmd → result; cmd2 → result2`: a later `; x → y` segment names another command that must have run too
+    const later = parsed.fields.p.split(arrow).length > 1 ? parsed.fields.p.split(/;\s+/).slice(1).filter((seg) => arrow.test(seg)).map((seg) => seg.split(arrow)[0].trim()) : [];
     // a compound claim (`a; b`, `a && b`) stands when every part ran, in order or not, in some passing call
-    const parts = claimed.split(/;|&&| \+ /).map(normaliseCommand).filter(Boolean);
+    const parts = [claimed, ...later].flatMap((c) => c.split(/;|&&| \+ /)).map(normaliseCommand).filter(Boolean);
     const firstWords = new Set(runs.map((r) => normaliseCommand(r.command).split(" ")[0]));
-    const isProse = (c: string): boolean => !firstWords.has(c.split(" ")[0]) && (/: |\b\d+ [a-z]/i.test(c) || !/[/.\-]/.test(c));
+    // a run of plain words ("bash build script copy (cd .)") describes a command, it is not one
+    const plainWords = (c: string): boolean => c.replace(/\([^)]*\)/g, " ").split(/\s+/).filter(Boolean).filter((w) => /^[A-Za-z]+$/.test(w)).length >= 3 && !/[/\\$|<>=]/.test(c.replace(/\([^)]*\)/g, " "));
+    const isProse = (c: string): boolean => !firstWords.has(c.split(" ")[0]) && (/: |\b\d+ [a-z]/i.test(c) || !/[/.\-]/.test(c) || plainWords(c));
     const match = (rs: BashRun[], unmasked: boolean): boolean => {
       const ok = rs.map((r) => ({ raw: squeeze(r.command), norm: normaliseCommand(r.command) }));
       const hit = (r: { raw: string; norm: string }, c: string): boolean => (r.norm.includes(c) || r.raw.includes(c)) && !(unmasked && exitMasked(r.raw, c));

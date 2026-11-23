@@ -1358,16 +1358,17 @@ function repointChildStatus(logDir: string, st: WorkerStatus, targetToplevel: st
 }
 
 /**
- * A worker that detached HEAD in its worktree and committed leaves those
- * commits off its branch. When HEAD is detached and a strict descendant of the
+ * A worker that detached HEAD in its worktree, or switched to another branch there
+ * (20261122-114839-27118 committed on worker/<id>-fix), and committed leaves those
+ * commits off its branch. When HEAD is detached or on another branch and a strict descendant of the
  * branch tip, fast-forward the branch to it. Returns the adopted sha, else null.
  */
 export function adoptDetachedHead(dir: string, branch: string): string | null {
   try {
     if (!existsSync(dir)) return null;
     try {
-      git(dir, ["symbolic-ref", "-q", "HEAD"]);
-      return null; // on a branch
+      // on the worker's own branch there is nothing to adopt; on another branch (git switch -c) or detached, its commits are adopted
+      if (git(dir, ["symbolic-ref", "-q", "HEAD"]) === `refs/heads/${branch}`) return null;
     } catch {
       // detached
     }
