@@ -120,6 +120,10 @@ export interface LoopState {
   runs?: Record<string, number>;
   /** Worktree fingerprint at the last counted run per action key; a different one is progress. */
   prints?: Record<string, string>;
+  /** Action key -> worktree fingerprints already counted (capped, newest last); a return to one of them is no progress. Survives edits. */
+  seen?: Record<string, string[]>;
+  /** Action key -> its first run of the session: false when green or after a repo edit, else the red result signature and whether every later result stayed similar. Survives edits. */
+  baseRed?: Record<string, false | { sig: string; same: boolean }>;
   /** Window key -> ms timestamp of the first "still running" result of a polling call (see isWaitResult). */
   waits?: Record<string, number>;
   /** Window key -> ms timestamp of the first call of a build-door poll (see isPollCommand); bounded by WAIT_CAP_MS. */
@@ -248,6 +252,24 @@ export function worktreeFingerprint(cwd: string): string | null {
 /** The command itself edits files before it runs the runner (the fingerprint is taken before the command runs). */
 function inlineEdit(command: string): boolean {
   return /\b(?:sed|perl)\s+(?:-\w+\s+)*-i|\bgit (?:apply|checkout|restore|reset|rm|mv|stash|merge|cherry-pick|revert|rebase|pull|clean|switch)\b|\bpatch\s+-?\w*\s*-?p\d|\btee\s+(?!\/tmp)\S|(?:^|[;&|]\s*)cat\s*>>?\s*(?!\/tmp)[\w.]/.test(command.split(/&&|;|\|/).slice(0, -1).join(";") || "");
+}
+
+const SEEN_CAP = 8;
+const RUNNER_WORDS = "vitest|jest|pytest|tsdown|tsc|xcodebuild|cargo test|go test|bun test|swift test|npm (?:run )?test|npm run build";
+/** The command without the redirects and `| tee` of its runner segments (`vitest run x > out.log` writes no repo file). */
+function withoutRunnerOutput(command: string): string {
+  return command
+    .replace(new RegExp(`(\\b(?:${RUNNER_WORDS})\\b[^\\n;&|<]*?)(?:\\s\\d*>>?\\s*&?[^\\s;&|]+)+`, "g"), "$1")
+    .replace(new RegExp(`(\\b(?:${RUNNER_WORDS})\\b[^\\n;&]*?)\\|\\s*tee\\s+\\S+`, "g"), "$1");
+}
+/** The command changes a repo file besides its runner's own output: the write is the change (WP1 classifier plus inline sed/git apply). */
+function commandChangesRepo(command: string): boolean {
+  return inlineEdit(command) || bashWritesRepoFile(withoutRunnerOutput(command));
+}
+/** Any write at all, scratch targets included (decides the deny wording). */
+function cmdHasWrite(command: string): boolean {
+  const c = withoutRunnerOutput(command).replace(/\d?>&\d?/g, " ");
+  return /(?:^|[^\d>&])\d?>>?\s*(?!\/dev\/(?:null|stdout|stderr)|&)\S|\btee\s|\bcp\s|\bmv\s|\bsed\s+(?:-\w+\s+)*-i|\bgit apply\b|writeFile|appendFile|\bopen\s*\([^)]*['"][wax]|write_(?:text|bytes)/.test(c);
 }
 
 const READ_VERB = /^(?:sed|head|tail|cat|grep|egrep|rg|awk|nl|wc|od|echo|printf|true)$/;
@@ -506,9 +528,9 @@ function countFailure(state: LoopState, tool: string, response: unknown): LoopSt
 }
 
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false): LoopState {
-  const counted = typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response);
+  const counted = trackBaseRed(typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response), tool, input, response);
   // an edit resets the window and drops everything not carried over by hand: the failure counts survive
-  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.stall ? { stall: counted.stall } : {}), ...(counted.edited ? { edited: true } : {}) };
+  const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.seen ? { seen: counted.seen } : {}), ...(counted.baseRed ? { baseRed: counted.baseRed } : {}), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.stall ? { stall: counted.stall } : {}), ...(counted.edited ? { edited: true } : {}) };
   if (!ledger) return core;
   // an edit resets the window and drops everything not carried over by hand: the ledger survives
   const next = core.fail === state.fail ? core : { ...core, fail: state.fail };
@@ -516,6 +538,24 @@ export function recordLoopResult(state: LoopState, tool: string, input: string |
   const m = /Exit code (\d+)/.exec(text);
   const code = exitCodeOf(response) ?? (m ? Number(m[1]) : null);
   return ledgerResult(next, tool, bashCommand(input), text, code, typeof response === "string" && response.startsWith("error:"));
+}
+
+/** Records the first result of a runner key in the session: red before any repo edit is the baseline; later results keep or break its sameness. */
+function trackBaseRed(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown): LoopState {
+  if (tool !== "Bash") return state;
+  const cmd = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+  const ak = typeof cmd === "string" ? actionKey(cmd) : null;
+  if (ak === null) return state;
+  const prev = state.baseRed?.[ak];
+  const sig = resultSig(response);
+  let next: false | { sig: string; same: boolean };
+  if (prev === undefined) {
+    const text = rawText(response);
+    const code = exitCodeOf(response) ?? (/Exit code (\d+)/.exec(text) ? Number(/Exit code (\d+)/.exec(text)![1]) : null);
+    next = !state.edited && (code !== null ? code !== 0 : looksRed(text)) ? { sig, same: true } : false;
+  } else if (prev === false) return state;
+  else next = prev.same && resultsSimilar(prev.sig, sig) ? prev : { sig: prev.sig, same: false };
+  return { ...state, baseRed: { ...(state.baseRed ?? {}), [ak]: next } };
 }
 
 function recordLoopResultCore(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
@@ -756,11 +796,18 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
     const ak = typeof cmd === "string" ? actionKey(cmd) : null;
     if (ak !== null) {
       // the worktree changed since the previous run of this key (Bash edit, git apply, codegen): progress
-      const changed = inlineEdit(cmd as string) || !!fingerprint && state.prints?.[ak] !== undefined && state.prints[ak] !== fingerprint;
+      // a write before the runner in the same command is the change itself; a different fingerprint is progress only when it is a state not counted before (a cp toggle back is not)
+      const wrote = commandChangesRepo(cmd as string);
+      const seen = fingerprint ? (state.seen?.[ak] ?? []) : [];
+      const differs = !!fingerprint && state.prints?.[ak] !== undefined && state.prints[ak] !== fingerprint;
+      const changed = wrote || (differs && !seen.includes(fingerprint as string));
       const n = (changed ? 0 : (state.runs?.[ak] ?? 0)) + 1;
-      state = { ...state, runs: { ...(state.runs ?? {}), [ak]: n }, ...(fingerprint ? { prints: { ...(state.prints ?? {}), [ak]: fingerprint } } : {}) };
+      const nextSeen = fingerprint && !seen.includes(fingerprint) ? [...seen, fingerprint].slice(-SEEN_CAP) : seen;
+      state = { ...state, runs: { ...(state.runs ?? {}), [ak]: n }, ...(fingerprint ? { prints: { ...(state.prints ?? {}), [ak]: fingerprint }, seen: { ...(state.seen ?? {}), [ak]: nextSeen } } : {}) };
       const rf = live("repeated-failure");
-      if (n >= (rf.params.deny_at as number))
+      if (n >= (rf.params.deny_at as number)) {
+        const base = state.baseRed?.[ak];
+        const tpl = base && base.same && typeof rf.params.message_baseline_red === "string" ? rf.params.message_baseline_red : cmdHasWrite(cmd as string) && typeof rf.params.message_with_write === "string" ? rf.params.message_with_write : rf.message;
         return {
           state,
           deny: true,
@@ -768,8 +815,9 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
           id: "repeated-failure",
           key: ak,
           count: n,
-          reason: fillMessage(rf.message, { key: ak, deny_at: rf.params.deny_at as number, hang: hangNote(state, cmd as string), echo: runnerEcho(state.runLast?.[ak], echo) }),
+          reason: fillMessage(tpl, { key: ak, deny_at: rf.params.deny_at as number, hang: hangNote(state, cmd as string), echo: runnerEcho(state.runLast?.[ak], echo) }),
         };
+      }
     }
   }
   const key = callKey(tool, input);

@@ -50,7 +50,7 @@ import { armResultGrace, leftoverNote } from "../result-grace.js";
 import { createResultFold } from "./event-fold.js";
 import { armDeadline } from "../deadline.js";
 import { fireHandoff, handoffLimit } from "./handoff.js";
-import { budgetCheck, budgetLimit, fireBudget, type BudgetSnapshot } from "../time-budget.js";
+import { budgetCheck, budgetLimit, distinctTestRuns, fireBudget, type BudgetSnapshot } from "../time-budget.js";
 import { isTestCommand } from "../hang-probe.js";
 import { blockedMsOf } from "../active-time.js";
 import { createOperatorServer } from "../operator.js";
@@ -425,7 +425,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   let toolsOk = 0;
   const snapBudget = (): BudgetSnapshot => ({
     progressAtMs: status.progressAt ? Date.parse(status.progressAt.replace(" ", "T")) : 0,
-    testsPassed: toolFold.bashRuns.filter((r) => !r.failed && isTestCommand(r.command)).length,
+    testsPassed: distinctTestRuns(toolFold.bashRuns, isTestCommand),
     toolsOk,
     commits: worktree ? commitLines(worktree.dir, worktree.base).length : (status.commits ?? 0),
   });

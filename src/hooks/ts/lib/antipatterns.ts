@@ -60,7 +60,7 @@ const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null
   },
   "growing-command": (p) => (num(p.max_repeats) && num(p.stop_denials) && typeof p.note_message === "string" && typeof p.tool_message === "string" && ["note_message_unedited", "deny_message_unedited", "note_message_edited_red"].every((k) => p[k] === undefined || typeof p[k] === "string") ? null : "needs max_repeats, stop_denials (numbers), note_message and tool_message (strings); note_message_unedited, deny_message_unedited, note_message_edited_red optional strings"),
   "no-edit-streak": (p) => (["note1_calls", "note1_min", "note2_calls", "note2_min", "deny_calls", "deny_min"].every((k) => num(p[k])) && typeof p.note1_message === "string" && typeof p.note2_message === "string" ? null : "needs note1_calls, note1_min, note2_calls, note2_min, deny_calls, deny_min (numbers), note1_message and note2_message"),
-  "repeated-failure": (p) => (num(p.deny_at) && num(p.stop_at) ? null : "needs deny_at and stop_at (numbers)"),
+  "repeated-failure": (p) => (num(p.deny_at) && num(p.stop_at) && ["message_with_write", "message_baseline_red"].every((k) => p[k] === undefined || typeof p[k] === "string") ? null : "needs deny_at and stop_at (numbers); message_with_write, message_baseline_red optional strings"),
   "failure-fingerprint": (p) => (num(p.deny_at) && num(p.stop_after) ? null : "needs deny_at and stop_after (numbers)"),
   "unparsed-tool-call": (p) => {
     if (!num(p.tail_chars) || !num(p.json_window_lines) || !Array.isArray(p.regexes) || !p.regexes.length) return "needs tail_chars, json_window_lines and regexes";

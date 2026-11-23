@@ -482,7 +482,9 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "kind": "repeated-failure",
       "params": {
         "deny_at": 3,
-        "stop_at": 5
+        "stop_at": 5,
+        "message_with_write": "loop guard: you ran {key} {deny_at} times and the result did not change. Read the failure, change code or the test, or report the blocker.{hang}{echo} If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).",
+        "message_baseline_red": "This test was already red before you edited anything, and its output is unchanged. It likely depends on this machine (live processes, locale, clock). Do not debug it further. Implement the spec, verify with a script of your own under .pai-scratch, and name this test in x=."
       }
     },
     "action": "deny",
