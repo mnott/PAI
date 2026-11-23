@@ -13,7 +13,7 @@ import { createInterface } from "node:readline";
 import { loadConfig, CONFIG_FILE } from "../../daemon/config.js";
 import { readConfigRaw, writeConfigRaw } from "../commands/setup/utils.js";
 import { getRegistryBackend } from "../../storage/factory.js";
-import { loadAliasMap } from "../../tasks/resolver.js";
+import { loadAliasMap, lookupOwnerName, describeOwnerLookup } from "../../tasks/resolver.js";
 import { TodoistProvider } from "../../tasks/providers/todoist.js";
 import { dispatchAll } from "../../tasks/dispatch.js";
 import { detectAiBroker, detectProber } from "../../tasks/transport/aibroker.js";
@@ -343,6 +343,18 @@ export async function addCommand(
   if (!provider) {
     reportUnconfigured();
     return 1;
+  }
+
+  // Resolve --owner forgivingly (slug, display name, alias, live session
+  // name); ambiguous or unknown names fail loudly instead of going unrouted.
+  if (opts.owner) {
+    const lookup = await lookupOwnerName(opts.owner, await readSessionManifest());
+    const err = describeOwnerLookup(opts.owner, lookup);
+    if (err) {
+      console.log(chalk.red(`  ${err}`));
+      return 1;
+    }
+    if (lookup.kind === "match") opts = { ...opts, owner: lookup.target.alias };
   }
 
   // A title alone is not actionable months later. Warn rather than block:

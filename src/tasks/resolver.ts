@@ -54,6 +54,89 @@ export function normalize(raw: string): string {
     .toLowerCase();
 }
 
+export interface OwnerCandidateSource {
+  alias?: string;
+  slug: string;
+  displayName?: string;
+  rootPath: string;
+}
+
+export interface OwnerSession {
+  name: string;
+  directory: string;
+}
+
+export type OwnerLookup =
+  | { kind: "match"; target: AliasTarget }
+  | { kind: "ambiguous"; candidates: string[] }
+  | { kind: "none"; suggestions: string[] };
+
+/** "pai-2" -> "pai". Only the registry's numeric dedupe suffix. */
+function stripDedupe(key: string): string {
+  return key.replace(/-\d+$/, "");
+}
+
+/**
+ * Resolve an owner string against projects (slug, alias, display name) and
+ * live session names (mapped to a project by cwd).
+ *
+ * Tiers, first non-empty wins: exact alias/slug (normalized), then display
+ * name or session name, then the same with the numeric dedupe suffix stripped
+ * from the slug. A tier hitting two different root paths is ambiguous.
+ */
+export function lookupOwner(
+  name: string,
+  projects: OwnerCandidateSource[],
+  sessions: OwnerSession[] = []
+): OwnerLookup {
+  const key = normalize(name);
+  const byRoot = new Map<string, OwnerCandidateSource>();
+  for (const p of projects) if (!byRoot.has(p.rootPath)) byRoot.set(p.rootPath, p);
+  const keyed: Array<{ tier: number; key: string; p: OwnerCandidateSource }> = [];
+  for (const p of projects) {
+    if (p.alias) keyed.push({ tier: 0, key: normalize(p.alias), p });
+    keyed.push({ tier: 0, key: normalize(p.slug), p });
+    if (p.displayName) keyed.push({ tier: 1, key: normalize(p.displayName), p });
+    keyed.push({ tier: 2, key: stripDedupe(normalize(p.slug)), p });
+  }
+  for (const s of sessions) {
+    const p = byRoot.get(s.directory);
+    if (p) keyed.push({ tier: 1, key: normalize(s.name), p });
+  }
+  const toTarget = (p: OwnerCandidateSource): AliasTarget => ({
+    alias: p.alias ?? p.slug,
+    slug: p.slug,
+    rootPath: p.rootPath,
+  });
+  const queryKeys = [key];
+  const stripped = stripDedupe(key);
+  if (stripped !== key) queryKeys.push(stripped);
+  for (const tier of [0, 1, 2]) {
+    for (const qk of queryKeys) {
+      const hits = keyed.filter((k) => k.tier === tier && k.key === qk);
+      const roots = new Map(hits.map((h) => [h.p.rootPath, h.p]));
+      if (roots.size === 1) return { kind: "match", target: toTarget([...roots.values()][0]) };
+      if (roots.size > 1) {
+        return { kind: "ambiguous", candidates: [...roots.values()].map((p) => `${p.slug} (${p.rootPath})`) };
+      }
+    }
+  }
+  const names = new Set<string>();
+  for (const k of keyed) if (k.tier < 2) names.add(k.key);
+  const suggestions = [...names]
+    .filter((n) => n && (n.includes(key) || key.includes(n) || n[0] === key[0]))
+    .sort()
+    .slice(0, 5);
+  return { kind: "none", suggestions };
+}
+
+/** Human-readable error for a non-matching lookup, or null on a match. */
+export function describeOwnerLookup(name: string, r: OwnerLookup): string | null {
+  if (r.kind === "match") return null;
+  if (r.kind === "ambiguous") return `owner "${name}" is ambiguous: ${r.candidates.join(", ")}`;
+  return `owner "${name}" matches no project` + (r.suggestions.length ? `; closest: ${r.suggestions.join(", ")}` : "");
+}
+
 /**
  * Load every alias registered in the PAI registry.
  *
@@ -81,7 +164,35 @@ export async function loadAliasMap(): Promise<AliasMap> {
     const slugKey = normalize(row.slug);
     if (!map.has(slugKey)) map.set(slugKey, target);
   }
+  // Slugs are unique in the registry, so addressing a project by slug is never
+  // ambiguous even when it has no alias. Aliases still win.
+  for (const p of await registry.listProjects()) {
+    if (p.status === "archived") continue;
+    const k = normalize(p.slug);
+    if (!map.has(k)) map.set(k, { alias: p.slug, slug: p.slug, rootPath: p.root_path });
+  }
   return map;
+}
+
+/**
+ * Forgiving owner lookup for an explicit owner name (`--owner`): registry
+ * projects (slug, display name), aliases, and live session names.
+ * Unambiguous or an explanatory error.
+ */
+export async function lookupOwnerName(
+  name: string,
+  sessions: OwnerSession[] = []
+): Promise<OwnerLookup> {
+  const registry = await getRegistryBackend();
+  const aliasRows = await registry.listAliasMap();
+  const projects = await registry.listProjects();
+  const sources: OwnerCandidateSource[] = [];
+  for (const p of projects) {
+    if (p.status === "archived") continue;
+    sources.push({ slug: p.slug, displayName: p.display_name, rootPath: p.root_path });
+  }
+  for (const r of aliasRows) sources.push({ alias: r.alias, slug: r.slug, rootPath: r.root_path });
+  return lookupOwner(name, sources, sessions);
 }
 
 // ---------------------------------------------------------------------------
