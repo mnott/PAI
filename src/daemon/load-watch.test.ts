@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshLoadWatchState, loadWatchConfig, loadWatchTick, selectSuspects, stepLoadWatch, type LoadWatchDeps, type PsRow } from "./load-watch.js";
+import { runRuntimeOp, userToolEnv, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 import {
   lowPriorityConfig,
   lowPriorityKeeperTick,
@@ -1032,5 +1033,29 @@ describe("exclusive runtime groups", () => {
     expect(r.message).not.toContain("use switch");
     expect(calls).toEqual(["stop gyro-l"]); // hy4-flash never started
     expect(resumed).toEqual(["w1"]);
+  });
+});
+
+describe("runtime start env and exit 127", () => {
+  it("userToolEnv prepends missing user tool dirs once", () => {
+    const e = userToolEnv({ PATH: "/usr/bin:/opt/homebrew/bin" }, "/home/u");
+    expect(e.PATH).toBe("/usr/local/bin:/home/u/.local/bin:/home/u/.bun/bin:/usr/bin:/opt/homebrew/bin");
+    expect(userToolEnv({}, "/h").PATH?.startsWith("/opt/homebrew/bin:")).toBe(true);
+  });
+
+  it("a start exiting 127 reports command not found", async () => {
+    const home = mkdtempSync(join(tmpdir(), "rt127-"));
+    const deps: RuntimeOpDeps = {
+      runShell: async () => ({ code: 0 }),
+      spawnDetached: () => ({ exit: Promise.resolve({ code: 127 }) }),
+      getUrl: async () => false,
+      runCmd: async () => 0,
+      now: () => 0,
+      sleep: async () => {},
+    };
+    const r = await runRuntimeOp("ollama", "start", { ollama: { start: "ollama serve", ready: "http://127.0.0.1:1/x" } }, deps, home);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("command not found — use an absolute path or fix PATH");
+    rmSync(home, { recursive: true, force: true });
   });
 });
