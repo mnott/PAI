@@ -18,6 +18,11 @@ public final class Store: ObservableObject {
     @Published public private(set) var powerMode: PowerMode = .auto
     /// charge % over time (t in ms), same window as the CPU chart
     @Published public private(set) var batteryHistory: [SystemResponse.Sample] = []
+    /// Neural Engine power (W), read from IOReport; nil when unreadable.
+    @Published public private(set) var aneWatts: Double?
+    @Published public private(set) var aneHistory: [Double] = []
+    public let aneReader = ANEReader()
+    @Published public private(set) var workMode: WorkMode?
     private var seedCount = 0
     /// Last non-zero decode/prefill reading per local provider: the router reports 0/null
     /// between measurements while requests are still in flight.
@@ -25,10 +30,33 @@ public final class Store: ObservableObject {
 
     private let session: URLSession
     private var lastDataFetch = Date.distantPast
+    /// Start of the latest poll (any trigger) and the latest poll that succeeded.
+    public private(set) var lastPoll = Date.distantPast
+    @Published public private(set) var lastSuccess: Date?
+    public static let openDebounce: TimeInterval = 1
 
     public init(session: URLSession = .shared) { self.session = session }
 
+    /// Poll everything right away when the popover opens. Skipped when a poll started under 1 s ago
+    /// (quick open/close/open). Returns whether a poll ran.
+    @discardableResult
+    public func refreshOnOpen(baseURL: URL, now: Date = Date()) async -> Bool {
+        guard now.timeIntervalSince(lastPoll) >= Store.openDebounce else { return false }
+        await refresh(baseURL: baseURL, forceData: true)
+        await loadWorkMode()
+        return true
+    }
+
+    private var inFlight = false
+    public static let openInterval: TimeInterval = 1
+    public static let closedInterval: TimeInterval = 15
+
+    /// One poll at a time: a tick that finds the previous poll still running is skipped.
     public func refresh(baseURL: URL, forceData: Bool = false) async {
+        guard !inFlight else { return }
+        inFlight = true
+        lastPoll = Date()
+        defer { inFlight = false; lastPoll = Date() }
         let heavyDue = forceData || Date().timeIntervalSince(lastDataFetch) > 15
         if heavyDue { lastDataFetch = Date() }
         do {
@@ -41,8 +69,11 @@ public final class Store: ObservableObject {
             ingest(limits: lv)
             let r = await Task.detached { PowerSystem.read() }.value
             ingest(power: r)
+            let reader = aneReader
+            ingest(ane: await Task.detached { reader.read() }.value)
             if heavyDue, let d: DataResponse = try? await get("cockpit/data?window=1h", baseURL) { data = d }
             error = nil
+            lastSuccess = Date()
         } catch {
             self.error = "cannot reach \(baseURL.absoluteString)"
         }
@@ -66,11 +97,37 @@ public final class Store: ObservableObject {
         }
     }
 
+    public func ingest(ane w: Double?) {
+        aneWatts = w
+        guard let w else { return }
+        aneHistory.append(w)
+        if aneHistory.count > Store.historyCap { aneHistory.removeFirst(aneHistory.count - Store.historyCap) }
+    }
+
+    /// In-flight requests on the apple-fm engine: the ANE activity stand-in when IOReport is unreadable.
+    public func appleFMInflight() -> Int {
+        let l = limits?.limits?.first { $0.provider == "apple-fm" }
+        return Int((l?.instances ?? []).reduce(0) { $0 + ($1.inflight ?? 0) })
+    }
+
     public func ingest(power r: PowerSystem.Reading, now: Double = Date().timeIntervalSince1970 * 1000) {
         battery = r.battery; remainingWh = r.wh; powerMode = r.mode
         guard let b = r.battery else { batteryHistory = []; return }
-        batteryHistory.append(.init(t: now, memPct: b.percent))
+        batteryHistory.append(.init(t: now, memPct: b.percent, charging: b.state == "charging"))
         if batteryHistory.count > Store.historyCap { batteryHistory.removeFirst(batteryHistory.count - Store.historyCap) }
+    }
+
+    /// "updated 12 s ago" for stale data after a failed poll; nil when there is nothing to say.
+    public func staleLine(now: Date = Date()) -> String? {
+        guard error != nil, let t = lastSuccess else { return nil }
+        let s = max(0, Int(now.timeIntervalSince(t)))
+        return s < 60 ? "updated \(s) s ago" : "updated \(s / 60) min ago"
+    }
+
+    /// Secondary text under the battery row: state and runtime at the current draw.
+    public func batteryDetail() -> String? {
+        guard let b = battery else { return nil }
+        return batteryCaption(info: b, remainingWh: remainingWh, watts: smoothedWatts(history))
     }
 
     /// Text under the battery graph: state, draw, runtime at current usage.
@@ -83,11 +140,32 @@ public final class Store: ObservableObject {
         return parts.joined(separator: " · ")
     }
 
+    public func loadWorkMode() async {
+        let out = await Task.detached { WorkModeCLI.run([]) }.value
+        if let out, let m = parseWorkMode(out) { workMode = m }
+    }
+
+    /// Returns an error message, nil on success.
+    public func setWorkMode(_ m: WorkMode) async -> String? {
+        let out = await Task.detached { WorkModeCLI.run([m.rawValue]) }.value
+        guard out != nil else { return "pai worker mode failed" }
+        workMode = m
+        return nil
+    }
+
+    /// Weekly cloud window (used %, pace %) of the first cloud provider that has one.
+    public func weeklyPace() -> (used: Double, pace: Double)? {
+        for l in limits?.activeCloud() ?? [] {
+            if let w = l.windows?.first(where: { $0.name == "7d" }), let p = w.percent, let pace = w.pace { return (p, pace) }
+        }
+        return nil
+    }
+
     public func setPowerMode(_ mode: PowerMode, viaPrompt: (PowerMode) -> String?) async -> String {
         let quiet = await Task.detached { PowerSystem.setWithoutPrompt(mode) }.value
         if !quiet, let err = viaPrompt(mode) { return err }
         powerMode = mode
-        return "power mode: \(mode.label)"
+        return ""
     }
 
     public func ingest(limits lv: LimitsResponse) {

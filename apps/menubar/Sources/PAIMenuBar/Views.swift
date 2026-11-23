@@ -82,52 +82,6 @@ struct Sparkline: View {
     }
 }
 
-/// Filled area of values 0...100 (fixed scale).
-struct Area: Shape {
-    var values: [Double]
-    func path(in r: CGRect) -> Path {
-        var p = Path()
-        guard values.count > 1 else { return p }
-        p.move(to: CGPoint(x: 0, y: r.height))
-        for (i, v) in values.enumerated() {
-            p.addLine(to: CGPoint(x: r.width * Double(i) / Double(values.count - 1),
-                                  y: r.height * (1 - min(max(v, 0), 100) / 100)))
-        }
-        p.addLine(to: CGPoint(x: r.width, y: r.height))
-        p.closeSubpath()
-        return p
-    }
-}
-
-struct AreaChart: View {
-    var history: [SystemResponse.Sample]
-    var body: some View {
-        let s = tailSeries(history)
-        let span = (s.compactMap(\.t).max() ?? 0) - (s.compactMap(\.t).min() ?? 0)
-        let mins = Int((span / 60_000).rounded())
-        VStack(spacing: 2) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .labelColor).opacity(0.05))
-                Area(values: s.compactMap(\.cpu)).fill(Color(Palette.cpu).opacity(0.45))
-                Area(values: s.compactMap(\.gpu)).fill(Color(Palette.gpu).opacity(0.45))
-                Area(values: s.compactMap(\.cpu)).stroke(Color(Palette.cpu), lineWidth: 1)
-                Area(values: s.compactMap(\.gpu)).stroke(Color(Palette.gpu), lineWidth: 1)
-            }
-            .frame(height: 44)
-            HStack {
-                Text("-\(mins):00").font(.system(size: 9)).foregroundStyle(.secondary)
-                Spacer()
-                HStack(spacing: 8) {
-                    HStack(spacing: 3) { Dot(pair: Palette.cpu); Text("CPU") }
-                    HStack(spacing: 3) { Dot(pair: Palette.gpu); Text("GPU") }
-                }.font(.system(size: 9)).foregroundStyle(.secondary)
-                Spacer()
-                Text("0:00").font(.system(size: 9)).foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
 /// Bar with an optional pace needle (elapsed share of the window).
 struct Gauge: View {
     var percent: Double
@@ -154,16 +108,23 @@ struct MetricRow: View {
     var label: String
     var value: String
     var tint: Pair
-    var fraction: Double? = nil
     var spark: [Double] = []
+    var detail: String? = nil
     var body: some View {
-        HStack(spacing: 6) {
-            Dot(pair: tint)
-            Text(label).font(.caption2).foregroundStyle(.secondary).frame(width: 50, alignment: .leading)
-            Text(value).font(.caption.monospacedDigit()).foregroundStyle(Color(tint))
-            if let fraction { Gauge(percent: fraction, tint: tint).frame(width: 60) }
-            Spacer()
-            if spark.count > 1 { Sparkline(values: spark, tint: tint).frame(width: 70) }
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Dot(pair: tint)
+                Text(label).font(.caption2).foregroundStyle(.secondary).frame(width: 50, alignment: .leading)
+                Group {
+                    if spark.count > 1 { Sparkline(values: spark, tint: tint) } else { Color.clear.frame(height: 14) }
+                }
+                .frame(maxWidth: .infinity)
+                Text(value).font(.caption.monospacedDigit()).foregroundStyle(Color(tint))
+                    .lineLimit(1).frame(width: 110, alignment: .trailing)
+            }
+            if let detail {
+                Text(detail).font(.caption2).foregroundStyle(.secondary).padding(.leading, 62)
+            }
         }
     }
 }
@@ -173,22 +134,30 @@ struct SystemCard: View {
     var history: [SystemResponse.Sample]
     var battery: BatteryInfo? = nil
     var batteryHistory: [SystemResponse.Sample] = []
-    var batteryLine = ""
+    var batteryDetail: String? = nil
+    var powerMode: PowerMode = .auto
+    var aneWatts: Double? = nil
+    var aneHistory: [Double] = []
+    var aneInflight = 0
+    @Binding var message: String?
     var body: some View {
         Card {
             if let c = sys?.current {
                 let s = tailSeries(history)
-                let memPct = (c.memTotal ?? 0) > 0 ? (c.memUsed ?? 0) / (c.memTotal ?? 1) * 100 : 0
-                MetricRow(label: "CPU", value: "\(Int(c.cpu ?? 0))%", tint: Palette.cpu, fraction: c.cpu, spark: s.compactMap(\.cpu))
-                if battery != nil {
-                    MetricRow(label: "Battery", value: batteryLine, tint: Palette.ok, fraction: battery?.percent, spark: tailSeries(batteryHistory).compactMap(\.memPct))
+                MetricRow(label: "CPU", value: "\(Int(c.cpu ?? 0))%", tint: Palette.cpu, spark: s.compactMap(\.cpu))
+                MetricRow(label: "GPU", value: "\(Int(c.gpu ?? 0))%", tint: Palette.gpu, spark: s.compactMap(\.gpu))
+                MetricRow(label: "ANE", value: aneWatts.map { String(format: "%.1f W", $0) } ?? "n/a", tint: Palette.ane,
+                          spark: Array(aneHistory.suffix(60)),
+                          detail: aneWatts == nil ? "IOReport unreadable; apple-fm in flight: \(aneInflight)" : nil)
+                if let battery {
+                    MetricRow(label: "Battery", value: "\(Int(battery.percent))%", tint: Palette.ok)
+                    BatteryChart(history: batteryHistory, caption: batteryDetail ?? "")
+                    PowerModeBar(powerMode: powerMode, message: $message)
                 }
-                MetricRow(label: "GPU", value: "\(Int(c.gpu ?? 0))%", tint: Palette.gpu, fraction: c.gpu, spark: s.compactMap(\.gpu))
-                MetricRow(label: "SoC", value: String(format: "%.1f°C", c.socTemp ?? 0), tint: Palette.soc, fraction: c.socTemp, spark: s.compactMap(\.socTemp))
+                MetricRow(label: "SoC", value: String(format: "%.1f°C", c.socTemp ?? 0), tint: Palette.soc, spark: s.compactMap(\.socTemp))
                 MetricRow(label: "Power", value: String(format: "%.0f W", c.systemW ?? c.totalW ?? 0), tint: Palette.power, spark: s.compactMap(\.systemW))
-                MetricRow(label: "Mem", value: "\(Int((c.memUsed ?? 0) / 1e9))/\(Int((c.memTotal ?? 0) / 1e9)) GB · L\(Int(c.pressureLevel ?? 0))", tint: Palette.mem, fraction: memPct, spark: s.compactMap(\.memPct))
+                MetricRow(label: "Mem", value: "\(Int((c.memUsed ?? 0) / 1e9))/\(Int((c.memTotal ?? 0) / 1e9)) GB · L\(Int(c.pressureLevel ?? 0))", tint: Palette.mem, spark: s.compactMap(\.memPct))
                 MetricRow(label: "Swap", value: "\(Int((c.swapUsed ?? 0) / 1e9))/\(Int((c.swapTotal ?? 0) / 1e9)) GB", tint: Palette.swap)
-                AreaChart(history: history)
             } else {
                 Text("no system data").font(.caption).foregroundStyle(.secondary)
             }
@@ -203,8 +172,12 @@ struct LimitsCard: View {
     var queue: QueueResponse?
     var data: DataResponse?
     var speeds: [String: LimitsResponse.Speed] = [:]
+    var workMode: WorkMode? = nil
+    var workRule: String? = nil
+    @Binding var message: String?
     var body: some View {
         Card {
+            WorkModeBar(mode: workMode, rule: workRule, message: $message)
             if let limits {
                 ForEach(limits.activeCloud(), id: \.provider) { l in
                     Chip(text: "↑ cloud: \(l.provider ?? "?")", hue: modelHue(model: l.provider ?? "", local: false), model: true)
@@ -396,13 +369,113 @@ struct QueueCard: View {
     }
 }
 
+// MARK: battery chart, power and worker mode
+
+/// Filled area of values 0...100 (fixed scale).
+struct Area: Shape {
+    var values: [Double]
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        guard values.count > 1 else { return p }
+        p.move(to: CGPoint(x: 0, y: r.height))
+        for (i, v) in values.enumerated() {
+            p.addLine(to: CGPoint(x: r.width * Double(i) / Double(values.count - 1),
+                                  y: r.height * (1 - min(max(v, 0), 100) / 100)))
+        }
+        p.addLine(to: CGPoint(x: r.width, y: r.height))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Charge % over the same window as the CPU/GPU graphs; charging stretches are marked on the baseline.
+struct BatteryChart: View {
+    var history: [SystemResponse.Sample]
+    var caption: String
+    var body: some View {
+        let s = tailSeries(history)
+        let vals = s.compactMap(\.memPct)
+        VStack(spacing: 2) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .labelColor).opacity(0.05))
+                Area(values: vals).fill(Color(Palette.ok).opacity(0.45))
+                Area(values: vals).stroke(Color(Palette.ok), lineWidth: 1)
+                GeometryReader { g in
+                    ForEach(Array(chargingRuns(s).enumerated()), id: \.offset) { _, r in
+                        let n = Double(max(s.count - 1, 1))
+                        Rectangle().fill(Color(Palette.acc))
+                            .frame(width: max(2, g.size.width * Double(r.count - 1) / n), height: 3)
+                            .offset(x: g.size.width * Double(r.lowerBound) / n, y: g.size.height - 3)
+                    }
+                }
+            }
+            .frame(height: 44)
+            Text(caption).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+    /// Index ranges of consecutive charging samples.
+    func chargingRuns(_ s: [SystemResponse.Sample]) -> [Range<Int>] {
+        var out: [Range<Int>] = []
+        var start: Int?
+        for (i, x) in s.enumerated() {
+            if x.charging == true { if start == nil { start = i } }
+            else if let st = start { out.append(st..<i); start = nil }
+        }
+        if let st = start { out.append(st..<s.count) }
+        return out
+    }
+}
+
+struct PowerModeBar: View {
+    var powerMode: PowerMode
+    @Binding var message: String?
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Power").font(.caption2).foregroundStyle(.secondary)
+            ForEach(PowerMode.allCases, id: \.rawValue) { m in
+                Button(m.label) {
+                    Task {
+                        let r = await Store.shared.setPowerMode(m, viaPrompt: PowerPrompt.setMode)
+                        message = r.isEmpty ? nil : r
+                    }
+                }
+                .buttonStyle(.bordered).tint(m == powerMode ? Color(Palette.acc) : nil)
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(m == powerMode ? Color(Palette.acc) : .clear))
+            }
+            Spacer()
+        }
+        .controlSize(.small)
+    }
+}
+
+struct WorkModeBar: View {
+    var mode: WorkMode?
+    var rule: String?
+    @Binding var message: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text("Workers").font(.caption2).foregroundStyle(.secondary)
+                ForEach(WorkMode.allCases, id: \.rawValue) { m in
+                    Button(m.label) { Task { message = await Store.shared.setWorkMode(m) } }
+                        .buttonStyle(.bordered).tint(m == mode ? Color(Palette.acc) : nil)
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(m == mode ? Color(Palette.acc) : .clear))
+                        .help(m.tooltip)
+                }
+                Spacer()
+            }
+            .controlSize(.small)
+            if let rule { Text(rule).font(.caption2).foregroundStyle(.secondary) }
+        }
+    }
+}
+
 // MARK: machine controls
 
 struct MachineBar: View {
     var machine: QueueResponse.Machine?
     var baseURL: URL
     @Binding var message: String?
-    var powerMode: PowerMode = .auto
     @State private var armed: String?
     @State private var duration: Double = 0 // minutes, 0 = until thawed
 
@@ -438,18 +511,6 @@ struct MachineBar: View {
                     Button("Deep freeze") { armed = "deep-freeze" }
                         .help("WIP-commit and stop everything; survives a reboot")
                 }
-            }
-            .controlSize(.small)
-            HStack(spacing: 4) {
-                Text("Power").font(.caption2).foregroundStyle(.secondary)
-                ForEach(PowerMode.allCases, id: \.rawValue) { m in
-                    Button(m.label) {
-                        Task { message = await Store.shared.setPowerMode(m, viaPrompt: PowerPrompt.setMode) }
-                    }
-                    .buttonStyle(.bordered).tint(m == powerMode ? Color(Palette.acc) : nil)
-                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(m == powerMode ? Color(Palette.acc) : .clear))
-                }
-                Spacer()
             }
             .controlSize(.small)
         }
@@ -490,10 +551,14 @@ struct PopoverContent: View {
             }
             if let err = store.error {
                 Text(err).font(.caption).foregroundStyle(Color(Palette.bad))
+                if let age = store.staleLine() { Text(age).font(.caption2).foregroundStyle(.secondary) }
             }
-            Card { MachineBar(machine: store.queue?.machine, baseURL: base, message: $message, powerMode: store.powerMode) }
-            LimitsCard(limits: store.limits, queue: store.queue, data: store.data, speeds: store.lastSpeed)
-            SystemCard(sys: store.system, history: store.history, battery: store.battery, batteryHistory: store.batteryHistory, batteryLine: store.batteryLine())
+            Card { MachineBar(machine: store.queue?.machine, baseURL: base, message: $message) }
+            LimitsCard(limits: store.limits, queue: store.queue, data: store.data, speeds: store.lastSpeed,
+                       workMode: store.workMode, workRule: store.workMode.map { workModeRule($0, used: store.weeklyPace()?.used, pace: store.weeklyPace()?.pace) }, message: $message)
+            SystemCard(sys: store.system, history: store.history, battery: store.battery, batteryHistory: store.batteryHistory,
+                       batteryDetail: store.batteryDetail(), powerMode: store.powerMode,
+                       aneWatts: store.aneWatts, aneHistory: store.aneHistory, aneInflight: store.appleFMInflight(), message: $message)
             QueueCard(queue: store.queue, search: search, baseURL: base, expandedId: $expandedId, message: $message)
             if let message { Text(message).font(.caption2).foregroundStyle(.secondary).lineLimit(2) }
             Divider()
@@ -501,7 +566,7 @@ struct PopoverContent: View {
         }
         .padding(10)
         .frame(width: 420)
-        .onAppear { visible = true; Task { await store.refresh(baseURL: base, forceData: true) } }
+        .onAppear { visible = true; Task { await store.refreshOnOpen(baseURL: base) } }
         .onDisappear { visible = false }
     }
 

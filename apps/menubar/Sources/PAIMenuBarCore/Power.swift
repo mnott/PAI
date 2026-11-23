@@ -116,6 +116,18 @@ public func runtimeText(info: BatteryInfo, remainingWh: Double?, watts: Double?)
     return nil
 }
 
+/// Caption under the battery chart: runtime at current draw, charging ETA, or the AC state.
+public func batteryCaption(info: BatteryInfo, remainingWh: Double?, watts: Double?) -> String {
+    if let rt = runtimeText(info: info, remainingWh: remainingWh, watts: watts) { return rt }
+    switch info.state {
+    case "charging":
+        guard let m = info.macRemainingMin else { return "charging" }
+        return "charging, full in \(Int(m) >= 60 ? "\(Int(m) / 60)h " : "")\(Int(m) % 60)m"
+    case "discharging": return "on battery"
+    default: return "on AC"
+    }
+}
+
 /// Runs the system tools; each call is one short-lived process.
 public enum PowerSystem {
     public static func run(_ path: String, _ args: [String]) -> String? {

@@ -297,3 +297,71 @@ final class PowerTests: XCTestCase {
         XCTAssertEqual(sudoersRemoveScript, "/bin/rm -f /etc/sudoers.d/pai-powermode")
     }
 }
+
+final class CountingProtocol: URLProtocol {
+    nonisolated(unsafe) static var hits = 0
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        CountingProtocol.hits += 1
+        let r = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: r, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("{}".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+@MainActor
+final class StoreOpenRefreshTests: XCTestCase {
+    func testOpenRefreshPollsAndDebounces() async {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [CountingProtocol.self]
+        let store = Store(session: URLSession(configuration: cfg))
+        let base = URL(string: "http://localhost:1")!
+        CountingProtocol.hits = 0
+        let first = await store.refreshOnOpen(baseURL: base)
+        XCTAssertTrue(first)
+        XCTAssertGreaterThanOrEqual(CountingProtocol.hits, 3) // limits, system, queue
+        let after = CountingProtocol.hits
+        let second = await store.refreshOnOpen(baseURL: base, now: store.lastPoll.addingTimeInterval(0.5))
+        XCTAssertFalse(second)
+        XCTAssertEqual(CountingProtocol.hits, after)
+        let later = await store.refreshOnOpen(baseURL: base, now: store.lastPoll.addingTimeInterval(1.5))
+        XCTAssertTrue(later)
+        XCTAssertGreaterThan(CountingProtocol.hits, after)
+    }
+
+    func testStaleLineOnlyAfterFailure() async {
+        let store = Store()
+        XCTAssertNil(store.staleLine())
+        await store.refresh(baseURL: URL(string: "http://127.0.0.1:1")!)
+        XCTAssertNil(store.staleLine()) // never succeeded: nothing to age
+    }
+}
+
+final class ANEAndModeTests: XCTestCase {
+    func testEnergyDeltaToWatts() {
+        XCTAssertEqual(energyToWatts(delta: 1500, unit: "mJ", seconds: 1.0)!, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(energyToWatts(delta: 3_000_000, unit: "uJ", seconds: 2.0)!, 1.5, accuracy: 1e-9)
+        XCTAssertEqual(energyToWatts(delta: 2_000_000_000, unit: "nJ", seconds: 4.0)!, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(energyToWatts(delta: 6, unit: "J", seconds: 3)!, 2, accuracy: 1e-9)
+        XCTAssertNil(energyToWatts(delta: 1, unit: "mJ", seconds: 0))
+        XCTAssertNil(energyToWatts(delta: 1, unit: "furlong", seconds: 1))
+        XCTAssertNil(energyToWatts(delta: -5, unit: "mJ", seconds: 1))
+    }
+
+    func testWorkModeRuleAndParse() {
+        XCTAssertEqual(workModeRule(.balanced, used: 21, pace: 34), "cloud first: 21% < 80% of pace 34%")
+        XCTAssertEqual(workModeRule(.balanced, used: 40, pace: 34), "local first: 40% >= 80% of pace 34%")
+        XCTAssertEqual(parseWorkMode("mode: budget \u{2014} t2 = local only"), .budget)
+        XCTAssertNil(parseWorkMode("garbage"))
+    }
+
+    func testBatteryCaption() {
+        let chg = BatteryInfo(percent: 50, state: "charging", macRemainingMin: 40, onBattery: false)
+        XCTAssertEqual(batteryCaption(info: chg, remainingWh: nil, watts: nil), "charging, full in 40m")
+        let ac = BatteryInfo(percent: 100, state: "charged", macRemainingMin: nil, onBattery: false)
+        XCTAssertEqual(batteryCaption(info: ac, remainingWh: nil, watts: nil), "on AC")
+    }
+}

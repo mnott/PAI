@@ -48,6 +48,7 @@ public enum Palette {
     public static let power = Pair("#a63d66", "#b44a74")
     public static let mem = Pair("#23808c", "#2c8c99")
     public static let swap = Pair("#8a7420", "#9a8228")
+    public static let ane = Pair("#1f8a70", "#2fa085")
 
     public static func state(_ s: String?) -> Pair {
         switch s {
