@@ -344,3 +344,29 @@ describe("helper topic word", () => {
     writeFileSync(join(dir, "keep"), "");
   });
 });
+
+describe("apple-fm summaries stop failing", () => {
+  it("cleanTldr drops a chatty preface and markdown", () => {
+    expect(cleanTldr("Sure! Here is the summary: **Adds the chip.** It lands in the status file.")).toBe("Adds the chip. It lands in the status file.");
+    expect(cleanTldr("Here's the TL;DR:\n- Adds the chip to the cockpit status line.")).toBe("Adds the chip to the cockpit status line.");
+  });
+
+  it("an answer that cleans to nothing is asked once more, and the second answer is kept", async () => {
+    const answers = ["ok", "Adds the chip. It lands in the status file."];
+    const d = deps(async () => msg(answers.shift() ?? ""));
+    cachedTldr(d.logDir!, "retry1", "spec text", d);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cachedTldr(d.logDir!, "retry1", "spec text", d)).toBe("Adds the chip. It lands in the status file.");
+    expect(callsOf(d).map((c) => c.kind ?? "ok")).toEqual(["ok", "rejected", "ok"]);
+  });
+
+  it("apple-fm gets 60% of the budget, not an even share (answers at p90 5.9 s were cut at 5 s)", async () => {
+    const seen: number[] = [];
+    const d = deps(async (_w, t) => {
+      seen.push(t);
+      return msg("A summary of the task in words.");
+    });
+    await helperComplete({ task: "t", input: "i", timeoutMs: 12_000 }, d);
+    expect(seen[0]).toBeGreaterThanOrEqual(7000);
+  });
+});

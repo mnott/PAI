@@ -86,8 +86,11 @@ export function trimTldrInput(specText: string): string {
   return t.length > TLDR_INPUT_CHARS ? `${t.slice(0, TLDR_INPUT_CHARS)}\n[...truncated...]` : t;
 }
 
+/** A preface the small model puts before its answer ("Sure! Here is the summary:"), and markdown around it. */
+const TLDR_PREFACE_RE = /^(?:sure|certainly|okay|ok)\b[^.!?:]*[.!:]\s+|^here(?:'s| is| are)\b[^:\n]{0,60}:\s*/i;
+
 export function cleanTldr(text: string): string | null {
-  const t = text.replace(/\s+/g, " ").trim();
+  const t = text.replace(/[*_`#>]+/g, "").replace(/^\s*(?:[-•]|\d+[.)])\s+/gm, "").replace(/\s+/g, " ").trim().replace(TLDR_PREFACE_RE, "").replace(TLDR_PREFACE_RE, "");
   if (!t) return null;
   // complete sentences when there are any; otherwise the whole short answer — a one-liner
   // with no final period ("Adds the chip. It lands in the status file") is still usable
@@ -121,11 +124,16 @@ export function cachedTldr(logDir: string, id: string, specText: string, deps: H
       const task = "Summarize this task spec in exactly 2 plain sentences: what is to be built or fixed, and where. No lists, no markdown.";
       // the small engine answers empty now and then: one retry inside this call, before the
       // 10-minute cooldown; a model that failed outright is cooling down, so the retry skips it
-      const raw =
-        (await helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs: 8_000, task, input }, deps)) ??
-        (await helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs: 12_000, task, input }, deps));
-      const t = raw === null ? null : cleanTldr(raw);
-      if (raw !== null && !t) helperRejected("tldr", model0(deps), deps);
+      // (an answer that cleans to nothing counts like an empty one: asked again, then rejected)
+      const ask = (timeoutMs: number): Promise<string | null> => helperComplete({ label: "tldr", maxTokens: 64, keep: "head", timeoutMs, task, input }, deps);
+      let raw = await ask(12_000);
+      let t = raw === null ? null : cleanTldr(raw);
+      if (!t) {
+        if (raw !== null) helperRejected("tldr", model0(deps), deps);
+        raw = await ask(12_000);
+        t = raw === null ? null : cleanTldr(raw);
+        if (raw !== null && !t) helperRejected("tldr", model0(deps), deps);
+      }
       if (t) {
         mkdirSync(logDir, { recursive: true });
         writeFileSync(f, t + "\n");
