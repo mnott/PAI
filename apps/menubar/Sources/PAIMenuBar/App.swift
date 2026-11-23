@@ -99,13 +99,58 @@ struct PAIApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PopoverContent(store: Store.shared, endpoints: EndpointManager.shared, visible: $poller.visible)
+            // The window used to keep an old height while the content changed
+            // (sections appear/disappear), leaving an empty band. The hosting
+            // controller now sizes the window to the content's ideal height,
+            // capped at the screen's visible height with scrolling beyond it.
+            PopoverRoot(store: Store.shared, endpoints: EndpointManager.shared, visible: $poller.visible)
         } label: {
             Image(nsImage: makeMenuBarIcon())
             Text(poller.title).task { poller.start() }
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+/// Wraps the popover content so the window follows its ideal height.
+/// `sizingOptions = .preferredContentSize` makes AppKit resize the window on
+/// every content change instead of keeping a stale size.
+struct PopoverRoot: View {
+    @ObservedObject var store: Store
+    @ObservedObject var endpoints: EndpointManager
+    @Binding var visible: Bool
+
+    var body: some View {
+        Group {
+            if popoverNeedsScroll(ideal: store.contentIdealHeight, visibleHeight: visibleScreenHeight()) {
+                ScrollView { PopoverContent(store: store, endpoints: endpoints, visible: $visible) }
+            } else {
+                PopoverContent(store: store, endpoints: endpoints, visible: $visible)
+            }
+        }
+        .background(WindowConfigurator())
+    }
+}
+
+/// Screen height minus the menu bar: the cap for the popover window.
+func visibleScreenHeight() -> CGFloat {
+    guard let screen = NSScreen.main else { return 1024 }
+    return screen.visibleFrame.height
+}
+
+/// Applies the sizing options to the window that hosts the popover.
+struct WindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async {
+            guard let win = v.window else { return }
+            if let host = win.contentView as? NSHostingView<AnyView> {
+                host.sizingOptions = [.preferredContentSize]
+            }
+        }
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// Admin prompts via AppleScript: no stored password.

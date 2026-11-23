@@ -23,6 +23,8 @@ public final class Store: ObservableObject {
     @Published public private(set) var aneHistory: [Double] = []
     public let aneReader = ANEReader()
     @Published public private(set) var workMode: WorkMode?
+    /// Measured ideal height of the popover content; drives the window height.
+    @Published public var contentIdealHeight: Double = 0
     private var seedCount = 0
     /// Last non-zero decode/prefill reading per local provider: the router reports 0/null
     /// between measurements while requests are still in flight.
