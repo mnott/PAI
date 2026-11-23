@@ -28,6 +28,7 @@ import {
 } from "./config.js";
 import { isBenchmarkLabel } from "../daemon/battery-guard.js";
 import { budgetCache } from "./budget.js";
+import { paceNotes } from "./pace.js";
 import { httpModelsCheck, isLocalCandidate, providerHostPort, tierProviderNames } from "./local-provider.js";
 import { providerModelIds } from "../cli/lib/setups.js";
 import { classRoute, entryProvider } from "./route-lists.js";
@@ -315,7 +316,7 @@ async function walkList(
   const walk = localOkFirst ? [...entries.filter(isLocal), ...entries.filter((n) => !isLocal(n))] : entries;
   for (const name of walk) {
     if (!isLocal(name)) {
-      if (cloudOk(name)) return res(skipLocal || (localOkFirst ? "--local-ok: no local running" : why === "no local provider" ? "route: cloud" : `route: cloud (${why})`), null);
+      if (cloudOk(name)) return res(skipLocal || (paceNotes.get(config)?.startsWith("cloud") && walk[0] === name ? paceNotes.get(config)! : "") || (localOkFirst ? "--local-ok: no local running" : why === "no local provider" ? "route: cloud" : `route: cloud (${why})`), null);
       continue;
     }
     if (skipLocal) continue;

@@ -10,7 +10,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type http from "node:http";
-import { tokenFailureCounts, type LimitsCache, type ProviderLimits } from "./limits.js";
+import { tokenFailureCounts, type LimitsCache, type ProviderLimits, type LimitWindow } from "./limits.js";
+import { currentPace, paceOf } from "../workers/pace.js";
 import { createHash } from "node:crypto";
 import { cockpitHtml } from "./cockpit-page.js";
 import { resolveFromModule } from "../module-paths.js";
@@ -111,6 +112,12 @@ export function weightedTokens(t: Tok): number {
 }
 
 /** Status strip groups: local = provider served from this machine (kind "local"), everything else is cloud. */
+/** Each cloud window gets its pace (elapsed share of the window) so the gauge and the menu bar app can draw the needle. */
+function withPace<T extends { windows: LimitWindow[] }>(ls: T[]): T[] {
+  const now = Date.now();
+  return ls.map((l) => ({ ...l, windows: l.windows.map((w) => { const p = paceOf(w.name, w.resetAt, now); return p === null ? w : { ...w, pace: Math.round(p * 10) / 10 }; }) }));
+}
+
 export function groupLimits<T extends { kind: string }>(limits: T[]): { cloud: T[]; local: T[] } {
   return { cloud: limits.filter((l) => l.kind !== "local"), local: limits.filter((l) => l.kind === "local") };
 }
@@ -1772,7 +1779,7 @@ export function handleCockpit(
       async ([l, routing]) => {
         // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
         const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: await withInstances(withWeights(withStarting(l))), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), tokenFailures: tokenFailureCounts(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: await withInstances(withWeights(withStarting(l))).then(withPace), routing, pace: currentPace(), runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), tokenFailures: tokenFailureCounts(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
       },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );

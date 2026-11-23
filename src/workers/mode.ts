@@ -15,6 +15,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { Document, parseDocument } from "yaml";
+import { currentPace, paceNotes } from "./pace.js";
 import { readUrgency } from "./urgency.js";
 import { entryProvider, findTier, type TierDef } from "./route-lists.js";
 import { WorkersConfigError, isLocalProvider } from "./config.js";
@@ -66,6 +67,8 @@ export interface ModeCtx {
   isLocal: (entry: string) => boolean;
   /** The run is a child of an L1 (orchestrate) worker. */
   underOrchestrator?: boolean;
+  /** balanced only: the weekly window is under pace, so t2 leads with the cloud (pace.ts). */
+  cloudFirst?: boolean;
 }
 
 const SONNET = "anthropic/sonnet";
@@ -73,8 +76,11 @@ const HAIKU = "anthropic/haiku";
 
 /** The tiers as `mode` sees them. Pure: returns new tier objects, the input is untouched. */
 export function applyMode(tiers: TierDef[], mode: WorkMode, ctx: ModeCtx): TierDef[] {
-  if (mode === "balanced") return tiers;
   const worker = findTier(tiers, "implement");
+  if (mode === "balanced") {
+    if (!ctx.cloudFirst || !worker || !worker.models.includes(SONNET) || worker.models[0] === SONNET) return tiers;
+    return tiers.map((t) => (t.id === worker.id && !t.session ? { ...t, models: [SONNET, ...t.models.filter((e) => e !== SONNET)] } : t));
+  }
   return tiers.map((t) => {
     if (t.session) return t;
     const isWorker = worker !== undefined && t.id === worker.id;
@@ -105,7 +111,10 @@ export function applyModeToConfig(
   env: NodeJS.ProcessEnv = process.env
 ): WorkMode {
   const { mode } = effectiveMode(env);
+  const pace = mode === "balanced" ? currentPace() : null;
+  if (pace) paceNotes.set(config, pace.reason);
   config.tiers = applyMode(config.tiers, mode, {
+    cloudFirst: pace?.cloud === true,
     isLocal: (e) => isLocalProvider(config.providers[entryProvider(e)]?.baseUrl ?? ""),
     underOrchestrator: env.PAI_WORKER_ORCHESTRATOR === "1",
   });
