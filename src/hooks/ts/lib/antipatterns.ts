@@ -62,6 +62,15 @@ const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null
   "no-edit-streak": (p) => (["note1_calls", "note2_calls", "deny_calls"].every((k) => num(p[k])) && typeof p.note1_message === "string" && typeof p.note2_message === "string" ? null : "needs note1_calls, note2_calls, deny_calls (numbers), note1_message and note2_message"),
   "repeated-failure": (p) => (num(p.deny_at) && num(p.stop_at) && ["message_with_write", "message_baseline_red"].every((k) => p[k] === undefined || typeof p[k] === "string") ? null : "needs deny_at and stop_at (numbers); message_with_write, message_baseline_red optional strings"),
   "failure-fingerprint": (p) => (num(p.deny_at) && num(p.stop_after) ? null : "needs deny_at and stop_after (numbers)"),
+  "result-fingerprint": (p) => {
+    if (typeof p.match !== "string" || typeof p.key !== "string" || !num(p.deny_at) || !num(p.stop_after)) return "needs match, key (strings), deny_at and stop_after (numbers)";
+    try {
+      new RegExp(p.match);
+    } catch {
+      return `invalid regex ${p.match}`;
+    }
+    return null;
+  },
   "unparsed-tool-call": (p) => {
     if (!num(p.tail_chars) || !num(p.json_window_lines) || !Array.isArray(p.regexes) || !p.regexes.length) return "needs tail_chars, json_window_lines and regexes";
     for (const r of p.regexes) {

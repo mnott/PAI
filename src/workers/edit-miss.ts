@@ -6,7 +6,8 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-export const EDIT_MISS_RE = /String to replace not found/i;
+export const EDIT_MISS_RE = /String to replace not found|No changes to make: old_string and new_string are exactly the same/i;
+const EDIT_NOOP_RE = /No changes to make: old_string and new_string are exactly the same/i;
 export const EDIT_MISS_COUNT_FILE = "edit-misses.jsonl";
 export const EDIT_REWRITE_AT = 3;
 const WHOLE_FILE_LINES = 120;
@@ -17,6 +18,8 @@ export interface EditMiss {
   oldString: string;
   /** Failed Edits on this file in the scanned tail. */
   count: number;
+  /** The latest failure was an Edit whose old_string equals its new_string. */
+  noop?: boolean;
 }
 
 /** The file with the most failed Edits (latest wins a tie) in the events, or null. */
@@ -42,6 +45,7 @@ export function detectEditMiss(events: unknown[]): EditMiss | null {
         const m = per.get(file) ?? { file, oldString: "", count: 0 };
         m.count++;
         m.oldString = String(use.input.old_string ?? "");
+        m.noop = EDIT_NOOP_RE.test(text);
         per.set(file, m);
         latest = m;
       }
@@ -102,6 +106,7 @@ export function fileExcerpt(content: string, oldString: string): string {
 }
 
 export function editMissNote(miss: EditMiss, content: string | null): string {
+  if (miss.noop) return `Edit on ${miss.file} changed nothing: old_string and new_string are exactly the same. The change is probably already in the file; Read it to check, then move on.`;
   if (miss.count >= EDIT_REWRITE_AT) {
     return (
       `Edit on ${miss.file} has failed ${miss.count} times (String to replace not found). Stop using Edit on this file: ` +

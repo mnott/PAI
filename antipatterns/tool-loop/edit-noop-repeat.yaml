@@ -1,0 +1,29 @@
+id: edit-noop-repeat
+layer: behaviour
+status: experimental
+mode: monitor
+version: 1
+created: 2026-11-23
+category: tool-loop
+title: Edit with old_string equal to new_string, repeated
+description: >
+  "No changes to make: old_string and new_string are exactly the same": the model believes its edit did not apply,
+  or already applied, and sends the same Edit again; 4 workers, 3 files.
+detector:
+  kind: result-fingerprint
+  params:
+    match: "No changes to make: old_string and new_string are exactly the same"
+    key: "{tool}:noop"
+    deny_at: 2
+    stop_after: 3
+action: deny
+message: "loop guard: this Edit changes nothing ({n} times): old_string equals new_string. The change is probably already in the file; Read it to check, then move on."
+tests:
+  match:
+    - "F1 F1"
+  no_match:
+    - "F1"
+provenance:
+  date: 2026-11-20
+  model: session
+  observed: cand-f1a4a20b, 6cc69ed0, 50385abc (capacity.ts, alarm.ts, merge-live-guard.test.ts)

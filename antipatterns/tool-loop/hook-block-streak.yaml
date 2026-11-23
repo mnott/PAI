@@ -1,0 +1,30 @@
+id: hook-block-streak
+layer: behaviour
+status: experimental
+mode: monitor
+version: 1
+created: 2026-11-23
+category: tool-loop
+title: The same security-validator block hit again with a reworded command
+description: >
+  PreToolUse hook denials (no new test files, git write outside the worktree, in-place edits) repeated 3+ times by
+  the same worker with only the command reworded; 10 literal candidates, 5+ workers.
+detector:
+  kind: result-fingerprint
+  params:
+    match: "PreToolUse:\\w+ hook error: \\[[^\\]]+\\]: Blocked by PAI security validator: ([^.\\n]{0,60})"
+    key: "{tool}:hookblock:{1}"
+    deny_at: 3
+    stop_after: 2
+action: deny
+message: "loop guard: the security validator blocked this {n} times ({key}). Rewording the command will not change the rule. Read the block message, do it the allowed way, or report the blocker in R x=."
+tests:
+  match:
+    - "F1 F1 F1"
+  no_match:
+    - "F1 F1"
+    - "F1 F2 F3"
+provenance:
+  date: 2026-11-22
+  model: session
+  observed: cand-20f02c2e, 31adc23b, 654cde3e, e952e27f, 6c7a78f3, 180d553a, 4ae9bbda, 544f2597, 859399be, 1a370388

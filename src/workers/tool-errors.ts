@@ -583,6 +583,8 @@ export function recordToolErrorCandidates(records: readonly ToolErrorRecord[], n
       if (now - r.ts > TOOL_ERROR_CANDIDATE_WINDOW_MS) continue;
       const cls = classifyToolError(r).cls;
       if (cls !== "model" && cls !== "unknown") continue;
+      // router notices (tool name case corrected, arguments repaired) are not model errors worth a candidate
+      if (r.signature.startsWith("router|")) continue;
       bySig.set(r.signature, [...(bySig.get(r.signature) ?? []), r]);
     }
     for (const [, recs] of bySig) {
