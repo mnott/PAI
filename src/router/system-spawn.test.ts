@@ -35,7 +35,7 @@ describe("cockpit page script", () => {
     expect(scripts.length).toBeGreaterThan(0);
     for (const src of scripts) expect(() => new Script(src)).not.toThrow();
   });
-  it("cloud gauge draws the pace needle and cloud-first threshold when pace is present, and neither when it is absent", async () => {
+  it("cloud gauge draws one red pace tick on the ring when pace is present, and no marker when it is absent", async () => {
     const vm = await import("node:vm");
     const { cockpitLayout } = await import("./cockpit-layout.js");
     const { scriptModels } = await import("./cockpit-page/script-models.js");
@@ -43,21 +43,27 @@ describe("cockpit page script", () => {
     const ctx = vm.createContext({});
     vm.runInContext(`function esc(s){return String(s==null?"":s)}\nfunction dur(ms){return Math.round(ms/60000)+"m"}\nfunction sev(p){return p>=90?"var(--bad)":p>=70?"var(--warn)":"var(--ok)"}\n` + src, ctx);
     ctx.__l = { provider: "anthropic" };
-    // pace present: needle at pace, faint marker at ratio x pace (0.8 x 34.3 = 27.4), bands green/amber/red
+    // pace present: exactly one red radial tick on the ring (r=44, stroke 10 → r±5), threshold only in its tooltip
     const under = vm.runInContext(`gauge(__l,{name:"7d",percent:21,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
-    expect(under).toContain("pace 34%");
-    expect(under).toContain("cloud first below this");
-    expect(under).toMatch(/opacity="\.3"/);
+    expect(under).toContain("pace 34% · cloud first below 27%");
+    expect(under.match(/<line /g)).toHaveLength(1); // exactly one marker, the threshold needle is gone
+    expect(under).not.toContain("cloud first below this");
+    expect(under).not.toMatch(/opacity="\.3"/);
+    const tick = under.match(/<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)" stroke="var\(--bad\)"[^>]*>/) as RegExpMatchArray;
+    expect(tick).not.toBeNull();
+    const [x1, y1, x2, y2] = tick.slice(1).map(Number);
+    const d1 = Math.hypot(x1 - 60, y1 - 56), d2 = Math.hypot(x2 - 60, y2 - 56);
+    expect(Math.min(d1, d2)).toBeGreaterThanOrEqual(39); // never reaches into the centre
+    expect(Math.max(d1, d2)).toBeLessThanOrEqual(49); // stays within the ring's stroke width
     expect(under.match(/stroke="var\(--ok\)"/g)).toHaveLength(1); // green below the threshold
     const mid = vm.runInContext(`gauge(__l,{name:"7d",percent:30,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
     expect(mid).toContain("stroke=\"var(--warn)\""); // amber between threshold and pace
     const over = vm.runInContext(`gauge(__l,{name:"7d",percent:40,resetAt:${Date.now() + 5 * 86_400_000},pace:34.3})`, ctx) as string;
     expect(over).toContain("stroke=\"var(--bad)\""); // red above pace
-    // pace absent: no needle, no marker, old sev colours
+    // pace absent: no marker at all, old sev colours
     const none = vm.runInContext(`gauge(__l,{name:"7d",percent:21,resetAt:${Date.now() + 5 * 86_400_000}})`, ctx) as string;
     expect(none).not.toContain("pace");
     expect(none).not.toContain("<line");
-    expect(none).not.toContain("cloud first below this");
     expect(none).toContain("21%");
   });
   it("queue row renders as one line with at most three action buttons (start now, pause, menu)", async () => {
