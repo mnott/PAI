@@ -386,23 +386,6 @@ function protectedPathReason(p: string, home: string): string | null {
   return null;
 }
 
-/** True when `a` is a sed in-place flag: bare `-i`/`--in-place`, an attached suffix (`-i.bak`), or a combined short flag carrying `i` (`-ni`, `-iE`). */
-const isSedInplaceFlag = (a: string): boolean => /^-[a-zA-Z]*i[a-zA-Z]*$/.test(a) || /^--in-place(=.*)?$/.test(a);
-
-/**
- * The sed operands that are write targets (files sed edits), not scripts: the words after the
- * program options that take a separate value (`-e <script>`, `-f <scriptfile>`), minus the in-place
- * suffix BSD sed consumes when `-i`/`--in-place` is given bare (`sed -i '' 's/a/b/' f` writes f,
- * `''` is the suffix). A script is read, never written: `sed -i '' -e '/let h = dlopen/d' -e … f`
- * was denied 2026-11-24 as a write to `/let h = dlopen/d` because the script after `-e` was taken
- * as a target. GNU sed (`sed -i.bak …`) has no separate suffix word, so nothing is dropped there.
- */
-function sedWriteTargets(args: string[]): string[] {
-  const operands = sedOperands(args);
-  const bare = args.some((a) => a === "-i" || a === "--in-place");
-  return bare ? operands.slice(1) : operands;
-}
-
 /** Paths a segment writes to (redirects plus the write-side of common tools). */
 function writeTargets(words: string[], redirects: string[]): string[] {
   const [cmd, ...args] = words;
@@ -410,7 +393,11 @@ function writeTargets(words: string[], redirects: string[]): string[] {
   const out = [...redirects];
   if (cmd === "tee" || cmd === "mv") out.push(...pos);
   else if (cmd === "cp" && pos.length) out.push(pos[pos.length - 1]);
-  else if (cmd === "sed" && args.some(isSedInplaceFlag)) out.push(...sedWriteTargets(args));
+  // sed -i's write targets are the file operands only: BSD sed reads the first operand as the backup suffix when -i has no attached value (`sed -i '~' 's/a/b/' f` writes f, '~' is a suffix)
+  else if (cmd === "sed" && args.some((a) => /^-[a-zA-Z]*i|^--in-place/.test(a))) {
+    const bare = args.some((a) => a === "-i") || args.some((a) => /^--in-place$/.test(a));
+    out.push(...(bare ? pos.slice(1) : pos));
+  }
   return out;
 }
 
