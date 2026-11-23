@@ -10,7 +10,7 @@
  * of its own still counts — the probe wins over lsof.
  */
 import { execFileSync } from "node:child_process";
-import { isLocalProvider, readWorkersSection } from "./config.js";
+import { isLocalProvider, readWorkersCached } from "./config.js";
 import { fetchServedModels, readLocalConfig, type LocalTier } from "./local-tiers.js";
 import { workersYamlPath } from "./workers-config.js";
 
@@ -99,6 +99,6 @@ export async function detectModelServers(ports: ModelServerTarget[], deps: Model
 
 /** The running local model servers, named by what they serve — `pai freeze`'s model list. */
 export async function runningModelServers(): Promise<{ pid: number; label: string }[]> {
-  const section = readWorkersSection().workers;
+  const section = readWorkersCached();
   return detectModelServers(modelServerPorts(section.providers ?? {}, Object.values(readLocalConfig(workersYamlPath()).tiers)));
 }

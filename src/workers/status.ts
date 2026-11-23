@@ -533,7 +533,7 @@ interface StatusCacheEntry {
 
 const statusCache = new Map<string, StatusCacheEntry>();
 /** A cached terminal status is trusted this long without a stat: a finished worker's file no longer changes. */
-export const TERMINAL_RECHECK_MS = 5 * 60_000;
+export const TERMINAL_RECHECK_MS = 30 * 60_000;
 
 /** The cache identity of a status file: ns-precision times plus inode, from one bigint stat. */
 function statusFileIdentity(path: string): { mtimeNs: bigint; ctimeNs: bigint; ino: number } {
@@ -553,6 +553,7 @@ function statusEntryFresh(hit: StatusCacheEntry, id: { mtimeNs: bigint; ctimeNs:
  */
 export function invalidateStatusCache(logDir: string, id: string): void {
   statusCache.delete(statusPath(logDir, id));
+  sharedStatuses.delete(logDir);
 }
 
 /**
@@ -597,6 +598,24 @@ export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStat
   }
   for (const k of statusCache.keys()) if (k.startsWith(logDir) && !seen.has(k)) statusCache.delete(k);
   return out;
+}
+
+const sharedStatuses = new Map<string, { at: number; list: WorkerStatus[] }>();
+/** How long loadStatusesShared serves one scan to every caller. */
+export const STATUS_SHARE_MS = 1000;
+
+/**
+ * loadStatusesCached for request-path and tick callers that run many times a second (router samples, cockpit):
+ * one scan (readdir plus a stat per non-terminal file) per second per directory, shared by everyone, so
+ * polling pressure never multiplies the directory walk. Writers' invalidateStatusCache also drops the share.
+ * The returned list is shared: read-only.
+ */
+export function loadStatusesShared(logDir: string, now = Date.now()): WorkerStatus[] {
+  const hit = sharedStatuses.get(logDir);
+  if (hit && now >= hit.at && now - hit.at < STATUS_SHARE_MS) return hit.list;
+  const list = loadStatusesCached(logDir, now);
+  sharedStatuses.set(logDir, { at: now, list });
+  return list;
 }
 
 /**

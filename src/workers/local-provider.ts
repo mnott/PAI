@@ -27,7 +27,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import {
   getProviderOrNative,
-  readWorkersSection,
+  readWorkersCached,
   WorkersConfigError,
   type WorkerProvider,
   type WorkersConfig,
@@ -268,7 +268,7 @@ export async function currentLocalStatus(
   logDir?: string,
   opts: { check?: PortCheck; cfg?: Pick<WorkersConfig, "providers"> } = {}
 ): Promise<LocalStatus> {
-  const workers = opts.cfg ?? readWorkersSection().workers;
+  const workers = opts.cfg ?? readWorkersCached();
   const dir = logDir ?? workersLogDir(workers as WorkersConfig);
   const cached = opts.check ? null : readLocalStatus(dir);
   const tp = tierProviderNames();
@@ -285,7 +285,7 @@ export function startLocalStatusRefresh(): () => void {
     if (busy) return;
     busy = true;
     try {
-      const { workers } = readWorkersSection();
+      const workers = readWorkersCached();
       const dir = workersLogDir(workers);
       const st = await computeLocalStatus(workers, dir);
       // a busy engine (liveness alive — port accepts, or the scheduler has requests in flight — while its health check times out) is never down:
@@ -338,7 +338,7 @@ export async function resolvePlanProvider(
 export async function localProviderForDelegation(
   opts: ResolveLocalOpts = {}
 ): Promise<{ name: string; cap: number }> {
-  const { workers } = readWorkersSection();
+  const workers = readWorkersCached();
   const res = await resolveLocalProvider(workers, workersLogDir(workers), opts);
   const p = getProviderOrNative(workers, res.name);
   return { name: res.name, cap: effectiveCap(p?.maxConcurrent, true, p?.conversationSlots) };
@@ -346,7 +346,7 @@ export async function localProviderForDelegation(
 
 /** The real `resolveLocal` of the plan and queue runners: reads the workers config. */
 export function resolveRunnerProvider(provider: string): Promise<string> {
-  const { workers } = readWorkersSection();
+  const workers = readWorkersCached();
   return resolvePlanProvider(workers, workersLogDir(workers), provider);
 }
 
