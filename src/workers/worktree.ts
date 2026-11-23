@@ -38,6 +38,7 @@ import { summarizeGateFailure } from "./helper-uses.js";
 import type { SmokeStartResult } from "./smoke-start.js";
 import { asMergeReverted, mergeRevertedLine, MergeRevertedError } from "./merge-reverted.js";
 import { recordGitIdentity, restoreGitIdentity } from "./git-identity.js";
+import { parseKept } from "../testgov/kept.js";
 
 /** The smoke start of a freshly built CLI (injectable; the live one starts a real worker on an offline stub model). */
 export type SmokeRunner = (cwd: string) => Promise<SmokeStartResult>;
@@ -1182,6 +1183,7 @@ function mergeSnapshotWorker(
       () => null,
       () => null,
       () => null,
+      () => null,
       { logDir, id }
     );
     if (!keepLive) {
@@ -1242,6 +1244,7 @@ function mergeSnapshotWorker(
     revert,
     () => scanDiffForStub(git(st.cwd, ["diff", "-U0", "--no-color", snapshot, branch, "--", "src/"])),
     () => testLossOver(st.cwd, snapshot, branch),
+    () => keptLossOver(st.cwd, snapshot, branch),
     () => null,
     { logDir, id }
   );
@@ -1913,6 +1916,7 @@ async function mergeWorkerInner(
     () => null,
     () => null,
     () => null,
+    () => null,
     { logDir, id }
   );
   let related: RelatedResult | null = null;
@@ -2214,7 +2218,55 @@ async function rebuildDist(
   return `build: FAILED — dist unchanged: ${last}`;
 }
 
-/** Stub and test-loss scans over `from..to`; throws before any merge exists, so the advised re-run works. */
+/**
+ * KEPT.md rows the change removes whose test file still exists after the merge, as
+ * "<file> (KEPT.md row removed)"; null when none. A row is dropped only legitimately
+ * when the same change deletes the test file or keeps a row for the path (a move or
+ * an edit of the row's text). Incident 2026-11-23 21:45: a worker's KEPT.md change
+ * deleted 8 rows of tests that still existed; nothing stopped it.
+ */
+export function scanDiffForKeptLoss(diff: string, keptBefore: string, keptAfter: string, exists: (path: string) => boolean): string | null {
+  const after = new Set(parseKept(keptAfter).map((r) => r.file));
+  for (const row of parseKept(keptBefore)) {
+    if (after.has(row.file)) continue; // moved or edited: the path still has a row
+    if (!exists(row.file)) continue; // the same change deleted the test: a governed prune
+    return `${row.file} (KEPT.md row removed while the test file still exists)`;
+  }
+  return null;
+}
+
+/** KEPT.md rows removed by `from..to` whose test file still exists at `to`; null when none. */
+export function keptLossOver(cwd: string, from: string, to: string): string | null {
+  const changed = git(cwd, ["diff", "--name-only", from, to, "--", "tests/KEPT.md", "Tests/KEPT.md"]);
+  if (!changed.trim()) return null;
+  const read = (rev: string, path: string): string => {
+    try {
+      return git(cwd, ["show", `${rev}:${path}`]);
+    } catch {
+      return "";
+    }
+  };
+  const paths = changed.split("\n").filter(Boolean);
+  for (const path of paths) {
+    const hit = scanDiffForKeptLoss(
+      git(cwd, ["diff", "-U0", "--no-color", "--no-renames", from, to, "--", path]),
+      read(from, path),
+      read(to, path),
+      (p) => {
+        try {
+          git(cwd, ["cat-file", "-e", `${to}:${p}`]);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    );
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Stub, test-loss and KEPT-loss scans over `from..to`; throws before any merge exists, so the advised re-run works. */
 export function assertStaticScans(cwd: string, from: string, to: string): void {
   const backups = git(cwd, ["diff", "--name-only", "--diff-filter=A", from, to])
     .split("\n")
@@ -2229,6 +2281,12 @@ export function assertStaticScans(cwd: string, from: string, to: string): void {
   if (loss) {
     throw new Error(
       `test scan failed: ${loss}: nothing merged; the worker branch is kept (a deliberate removal: re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
+    );
+  }
+  const keptLoss = keptLossOver(cwd, from, to);
+  if (keptLoss) {
+    throw new Error(
+      `KEPT scan failed: ${keptLoss}: nothing merged; the worker branch is kept (a governed prune deletes the test file too, or re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
     );
   }
 }
@@ -2397,6 +2455,7 @@ function gateLines(
   verify: string | undefined, revert: () => string,
   findStub: () => string | null,
   findTestLoss: () => string | null = () => null,
+  findKeptLoss: () => string | null = () => null,
   findDuplicates: () => string | null = () => null,
   /** Worker log dir + id: a failed verify keeps its full output at <logDir>/<id>.merge-gate-<ts>.log. */
   keep?: { logDir: string; id: string }
@@ -2456,6 +2515,12 @@ function gateLines(
         `test scan failed: ${loss}: reverted ${revert()}; the worker branch is kept (a deliberate removal: re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
       );
     }
+    const keptLoss = findKeptLoss();
+    if (keptLoss) {
+      throw new Error(
+        `KEPT scan failed: ${keptLoss}: reverted ${revert()}; the worker branch is kept (a governed prune deletes the test file too, or re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
+      );
+    }
   }
   if (process.env.PAI_MERGE_ALLOW_DUPLICATES !== "1") {
     const dup = findDuplicates();
@@ -2494,7 +2559,7 @@ async function growthAlarm(logDir: string, repo: string, output: string): Promis
 /** Run --verify on a tree; a failure reverts to oldHead and throws `verify failed …` (the caller's catch classifies
  * it as a reverted merge). `keep` keeps the full gate output for a failing-test report. */
 export function runVerify(cwd: string, cmd: string, oldHead: string, keep?: { logDir: string; id: string }): string {
-  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null, () => null, () => null, keep);
+  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null, () => null, () => null, () => null, keep);
 }
 
 /** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */
@@ -2701,6 +2766,7 @@ export function testLossOver(cwd: string, from: string, to: string): string | nu
 export function stubScan(cwd: string, oldHead: string): string {
   return gateLines(cwd, undefined, () => revertMerge(cwd, oldHead), () => findAddedStub(cwd, oldHead), () =>
     testLossOver(cwd, oldHead, "HEAD"),
+    () => keptLossOver(cwd, oldHead, "HEAD"),
     () => findNewDuplicates(cwd)
   );
 }
@@ -2712,7 +2778,7 @@ export function runVerifyGated(
   oldHead: string,
   keep?: { logDir: string; id: string }
 ): string {
-  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null, () => null, () => null, keep);
+  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null, () => null, () => null, () => null, keep);
 }
 
 /**
