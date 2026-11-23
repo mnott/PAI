@@ -15,7 +15,7 @@ import { basename, dirname, join } from "node:path";
 import { parseDocument } from "yaml";
 import { paiConfigFilePath } from "../daemon/config.js";
 import { yamlSiblingPath } from "./main-config.js";
-import { workersYamlPath } from "../workers/workers-config.js";
+import { workersYamlPath, invalidProvidersOf } from "../workers/workers-config.js";
 import { paiHomePath } from "./pai-home.js";
 import { assertTestWriteAllowed } from "./test-isolation.js";
 
@@ -207,6 +207,10 @@ export async function runConfigProof(deps: ProofDeps, files: GuardFile[] = GUARD
       if (doc.errors.length) { ok = false; detail = doc.errors[0].message; }
     }
     out.push({ name: `yaml:${f}`, ok, ...(detail ? { detail } : {}) });
+    if (f === "workers.yaml" && ok && existsSync(p)) {
+      const bad = Object.entries(invalidProvidersOf(p));
+      out.push({ name: "providers", ok: !bad.length, ...(bad.length ? { detail: bad.map(([n, w]) => `provider ${n} invalid: ${w}`).join("; ") } : {}) });
+    }
   }
   const load = await safe(() => { deps.load(); return true; });
   out.push({ name: "loader", ...load });
