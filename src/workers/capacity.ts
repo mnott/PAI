@@ -76,7 +76,7 @@ export function providerCap(config: { providers: Record<string, { maxConcurrent?
   const per = admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
   if (per === undefined) return undefined;
   const urls = p.instances ?? [];
-  const n = up ? urls.filter(up).length : urls.length;
+  const n = up ? urls.filter((u) => up(u)).length : urls.length;
   return per * Math.max(1, n);
 }
 

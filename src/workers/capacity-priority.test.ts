@@ -813,6 +813,14 @@ describe("worker admission counts every instance of a provider", () => {
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
+  it("providerCap passes only the url to the health check (real instanceUp through filter)", async () => {
+    const { vi } = await import("vitest");
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    resetInstanceHealth();
+    expect(providerCap(cfg, "sig", instanceUp)).toBe(4);
+    spy.mockRestore();
+    resetInstanceHealth();
+  });
   it("instanceUp is optimistic until a probe answers", async () => {
     resetInstanceHealth();
     const probe = async () => false;
