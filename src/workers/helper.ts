@@ -23,6 +23,7 @@ import { Worker, receiveMessageOnPort, MessageChannel } from "node:worker_thread
 import { loadConfig } from "../daemon/config.js";
 import { isLocalProvider, readWorkersSection } from "./config.js";
 import { workersLogDir } from "./paths.js";
+import { readSchedFile } from "../router/scheduler.js";
 
 export interface HelperConfig {
   enabled: boolean;
@@ -103,6 +104,8 @@ export interface HelperDeps {
   routerUrl?: string;
   /** Whether a provider name is a local one the router may serve (default: workers config). */
   routerModel?: (name: string) => string | null;
+  /** Whether a router-served model is busy with a foreign request (default: the router's scheduler snapshot). */
+  busy?: (name: string) => boolean;
 }
 
 const SYSTEM = "You do one small bounded task. Answer exactly as instructed, plain text, no preface, no markdown.";
@@ -129,7 +132,7 @@ function logDirOf(deps: HelperDeps): string | null {
 export const HELPER_CALLS_FILE = "helper-calls.jsonl";
 
 /** Why a helper call failed: the cockpit and the audit read it off the log line. */
-export type HelperFailKind = "timeout" | "error" | "empty" | "rejected";
+export type HelperFailKind = "timeout" | "error" | "empty" | "rejected" | "busy-fallback";
 
 export interface HelperCall {
   ts: number;
@@ -140,6 +143,9 @@ export interface HelperCall {
   ok: boolean;
   /** Set when ok is false: what failed (HelperFailKind). Absent on older lines. */
   kind?: HelperFailKind;
+  /** Rejected calls: why the caller could not use the answer, and a short excerpt of it. */
+  reason?: string;
+  sample?: string;
 }
 
 export function recordHelperCall(c: HelperCall, deps: HelperDeps = {}): void {
@@ -154,8 +160,28 @@ export function recordHelperCall(c: HelperCall, deps: HelperDeps = {}): void {
 }
 
 /** A caller could not use the helper's answer ("rejected"): counts as a fallback. */
-export function helperRejected(label: string, model: string, deps: HelperDeps = {}): void {
-  recordHelperCall({ ts: (deps.now ?? Date.now)(), model, label, ms: 0, ok: false, kind: "rejected" }, deps);
+export function helperRejected(label: string, model: string, deps: HelperDeps = {}, why?: { reason: string; text?: string | null }): void {
+  const sample = why?.text ? why.text.replace(/\s+/g, " ").trim().slice(0, 120) : undefined;
+  recordHelperCall({ ts: (deps.now ?? Date.now)(), model, label, ms: 0, ok: false, kind: "rejected", ...(why ? { reason: why.reason } : {}), ...(sample ? { sample } : {}) }, deps);
+}
+
+/** Router-served engine busy with a request that is not ours (a batch job holds every slot): helper calls skip it at once. */
+function engineBusy(spec: string, deps: HelperDeps): boolean {
+  if (deps.busy) return deps.busy(spec);
+  try {
+    const snap = readSchedFile(workersLogDir(readWorkersSection().workers));
+    if (!snap) return false;
+    const keys = Object.keys(snap.engines).filter((k) => k.replace(/#\d+$/, "").trim() === spec);
+    if (!keys.length) return false;
+    // busy only when no instance has a free slot and a foreign request holds one
+    return keys.every((k) => {
+      const e = snap.engines[k];
+      const flights = e.flights ?? (e.inflight ? [e.inflight] : []);
+      return flights.length >= (e.slots ?? 1) && flights.some((f) => f.worker !== "pai-helper");
+    });
+  } catch {
+    return false;
+  }
 }
 
 /** timeout / error from a thrown transport failure; empty when the model answered with nothing usable. */
@@ -346,6 +372,10 @@ export function helperCompleteSync(req: HelperRequest, deps: HelperDeps = {}): s
     const w = wireFor(spec, req, p.prompt, p.cfg, deps);
     if (!w) continue;
     const t0 = now();
+    if (w.kind === "messages" && engineBusy(spec, deps)) {
+      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: 0, ok: false, kind: "busy-fallback" }, deps);
+      continue;
+    }
     const per = attemptBudget(deadline - t0, p.specs.length - i);
     if (per < 500) break;
     try {
@@ -379,6 +409,10 @@ async function run(p: Plan, req: HelperRequest, deps: HelperDeps, send: (w: Wire
     const w = wireFor(spec, req, p.prompt, p.cfg, deps);
     if (!w) continue;
     const t0 = now();
+    if (w.kind === "messages" && engineBusy(spec, deps)) {
+      recordHelperCall({ ts: t0, model: spec, label: req.label ?? "", ms: 0, ok: false, kind: "busy-fallback" }, deps);
+      continue;
+    }
     const per = attemptBudget(deadline - t0, p.specs.length - i);
     if (per < 500) break;
     try {

@@ -46,7 +46,7 @@ export async function classifyAlert(g: Pick<ToolErrorGroup, "signature" | "sampl
   if (text === null) return null;
   const v = parseAlertVerdict(text);
   if (!v) {
-    helperRejected("alert", model0(deps), deps);
+    helperRejected("alert", model0(deps), deps, { reason: "no-verdict", text });
     return null;
   }
   // The helper may only refine an [unknown]; it may not invent a harness fault.
@@ -89,18 +89,39 @@ export function trimTldrInput(specText: string): string {
 /** A preface the small model puts before its answer ("Sure! Here is the summary:"), and markdown around it. */
 const TLDR_PREFACE_RE = /^(?:sure|certainly|okay|ok)\b[^.!?:]*[.!:]\s+|^here(?:'s| is| are)\b[^:\n]{0,60}:\s*/i;
 
-export function cleanTldr(text: string): string | null {
-  const t = text.replace(/[*_`#>]+/g, "").replace(/^\s*(?:[-•]|\d+[.)])\s+/gm, "").replace(/\s+/g, " ").trim().replace(TLDR_PREFACE_RE, "").replace(TLDR_PREFACE_RE, "");
-  if (!t) return null;
+/** A refusal of the model's safety layer: not a summary, whatever its length. */
+const GUARDRAIL_RE = /may contain unsafe content|\b(?:i(?:'m| am) sorry|i can(?:no|')t (?:assist|help|summari[sz]e|fulfill|comply|provide))\b|\bagainst (?:my|the) guidelines\b/i;
+
+export type TldrClean = { text: string } | { reason: "empty" | "guardrail" | "too-short" };
+
+/** cleanTldr with the reason an answer was dropped (logged on the rejected line). */
+export function cleanTldrWhy(text: string): TldrClean {
+  if (GUARDRAIL_RE.test(text)) return { reason: "guardrail" };
+  // markdown marks go; underscores stay (snake_case names are content), a list marker or quote prefix goes
+  const t = text.replace(/[*`#]+/g, "").replace(/^\s*>\s?/gm, "").replace(/^\s*(?:[-•]|\d+[.)])\s+/gm, "").replace(/\s+/g, " ").trim().replace(TLDR_PREFACE_RE, "").replace(TLDR_PREFACE_RE, "");
+  if (!t) return { reason: "empty" };
   // complete sentences when there are any; otherwise the whole short answer — a one-liner
   // with no final period ("Adds the chip. It lands in the status file") is still usable
   const sentences = t.match(/[^.!?]+[.!?]+(?=\s|$)/g);
   let out = sentences?.length ? sentences.slice(0, 2).map((x) => x.trim()).join(" ") : t;
-  if (out.length < 15 && sentences?.length) {
+  if (sentences?.length && sentences.length < 2) {
     const rest = t.slice(sentences.reduce((n, s) => n + s.length, 0)).trim();
     if (rest) out += ` ${rest}`;
   }
-  return out.length >= 15 ? out.slice(0, 400) : null;
+  return out.length >= TLDR_MIN ? { text: out.slice(0, 400) } : { reason: "too-short" };
+}
+
+/** Shortest usable summary: "Fixes the typo." is a fine one; one or two words are not. */
+const TLDR_MIN = 10;
+
+function tldrReason(raw: string): string {
+  const r = cleanTldrWhy(raw);
+  return "reason" in r ? r.reason : "unusable";
+}
+
+export function cleanTldr(text: string): string | null {
+  const r = cleanTldrWhy(text);
+  return "text" in r ? r.text : null;
 }
 
 /**
@@ -129,10 +150,10 @@ export function cachedTldr(logDir: string, id: string, specText: string, deps: H
       let raw = await ask(12_000);
       let t = raw === null ? null : cleanTldr(raw);
       if (!t) {
-        if (raw !== null) helperRejected("tldr", model0(deps), deps);
+        if (raw !== null) helperRejected("tldr", model0(deps), deps, { reason: tldrReason(raw), text: raw });
         raw = await ask(12_000);
         t = raw === null ? null : cleanTldr(raw);
-        if (raw !== null && !t) helperRejected("tldr", model0(deps), deps);
+        if (raw !== null && !t) helperRejected("tldr", model0(deps), deps, { reason: tldrReason(raw), text: raw });
       }
       if (t) {
         mkdirSync(logDir, { recursive: true });
@@ -179,7 +200,7 @@ export function summarizeGateFailure(output: string, deps: HelperDeps = {}): str
   );
   if (text === null) return null;
   const s = cleanGateSummary(text);
-  if (!s) helperRejected("gate", model0(deps), deps);
+  if (!s) helperRejected("gate", model0(deps), deps, { reason: "empty", text });
   return s;
 }
 
@@ -215,7 +236,7 @@ export async function routeSecondOpinion(taskText: string, deps: HelperDeps = {}
   if (text === null) return null;
   const v = parseRouteVerdict(text);
   if (!v) {
-    helperRejected("route", model0(deps), deps);
+    helperRejected("route", model0(deps), deps, { reason: "no-verdict", text });
     return null;
   }
   return v.where === "cloud" ? `model: ${v.reason || "needs a stronger model"}` : null;
@@ -252,7 +273,7 @@ export function proofIsEmpty(proof: string, deps: HelperDeps = {}): boolean {
   if (text === null) return false;
   const v = parseProofVerdict(text);
   if (v === null) {
-    helperRejected("report", model0(deps), deps);
+    helperRejected("report", model0(deps), deps, { reason: "no-verdict", text });
     return false;
   }
   return v;
