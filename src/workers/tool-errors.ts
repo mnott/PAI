@@ -250,6 +250,9 @@ const API_AUTH_EVIDENCE = new RegExp(
   "i"
 );
 
+/** Tools whose error text is command/file output (data), not a transport message. */
+const OUTPUT_TOOLS = new Set(["Bash", "Read", "Grep", "Glob"]);
+
 /** A 5xx status in a request context (returned/status/HTTP/error or its reason phrase). */
 const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\d.]+)?|error|code)[ :=]+5\d\d\b|\b5\d\d\s+(?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)/i;
 
@@ -334,7 +337,8 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | 
   },
   { test: (r) => /^empty-response/i.test(r.raw), c: { cls: "model", hint: "empty first reply — model stopped at once (seen with short spec prompts); one automatic relaunch already ran" } },
   { test: (r) => /Working directory .* was deleted/i.test(r.raw), c: { cls: "harness", hint: "worker cwd deleted" } },
-  { test: (r) => API_AUTH_EVIDENCE.test(r.raw), c: { cls: "harness", hint: "API/auth error" } },
+  // The worker's own API call failing, never wording inside a tool's output (a Bash/Read/Grep result may print "api_error" as data).
+  { test: (r) => !OUTPUT_TOOLS.has(r.tool) && API_AUTH_EVIDENCE.test(r.raw), c: { cls: "harness", hint: "API/auth error" } },
   { test: ungrantedTool, c: { cls: "model", hint: "used a tool it was not granted", loopAt: 5 } },
   { test: (r) => /No such tool available/i.test(r.raw), c: { cls: "harness", hint: "tool missing in the worker" } },
   { test: (r) => LOCAL_5XX_EVIDENCE.test(r.raw) && /localhost|127\.0\.0\.1/.test(r.raw), c: { cls: "harness", hint: "HTTP 5xx from a local server" } },
