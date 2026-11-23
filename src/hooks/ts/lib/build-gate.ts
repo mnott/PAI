@@ -241,6 +241,32 @@ function reasonFor(segment: string, cfg: BuildsConfig | null, cwd: string, depth
   return null;
 }
 
+/**
+ * Rewrite for a command that is ONE plain build invocation (optionally after a single `cd <dir> &&`) the gate
+ * recognises: `pai build run [--kind test] -- <cmd>`. Pipes, `;`, further `&&`, redirections, substitutions,
+ * backgrounding, env/wrapper prefixes and `sh -c` are not plain: those stay denied by buildGateReason.
+ */
+export function buildGateRewrite(command: string, cwd: string, cfg: BuildsConfig | null = loadBuildsConfig(cwd)): { command: string; note: string } | null {
+  const m = /^\s*(?:(cd\s+\S+)\s+&&\s+)?(\S[\s\S]*?)\s*$/.exec(command);
+  if (!m) return null;
+  const [, cdPart, rest] = m;
+  if (/[\n`]|\$\(/.test(rest) || splitSegments(rest).length !== 1) return null;
+  if (/[<>&|;()]/.test(rest.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, ""))) return null;
+  const ws = words(rest);
+  if (!ws.length || /^[A-Za-z_][A-Za-z0-9_]*=/.test(ws[0]) || WRAPPERS.has(base(ws[0])) || SHELLS.has(base(ws[0])) || base(ws[0]) === "pai") return null;
+  let dir = cwd;
+  if (cdPart) {
+    const t = cdPart.replace(/^cd\s+/, "");
+    if (/[$~]/.test(t)) return null;
+    dir = isAbsolute(t) ? t : resolve(cwd, t);
+  }
+  const r = reasonFor(rest, cfg, dir, 0);
+  if (!r) return null;
+  const wrapped = `pai build run${r.kind === "test" ? " --kind test" : ""} -- ${rest}`;
+  const next = cdPart ? `${cdPart} && ${wrapped}` : wrapped;
+  return { command: next, note: `routed through the build queue: ${wrapped}` };
+}
+
 /** Deny message when `command` runs a raw heavy builder outside the queue, else null. */
 export function buildGateReason(command: string, cwd: string, cfg: BuildsConfig | null = loadBuildsConfig(cwd)): string | null {
   let dir = cwd;

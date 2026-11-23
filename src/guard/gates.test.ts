@@ -239,3 +239,17 @@ describe("model-server guard matches only commands that start a server", () => {
     expect(r("mtplx serve --port 8042", { PAI_ALLOW_MODEL_SERVER: "1" })).toBeNull();
   });
 });
+
+describe("build gate routes plain builds through the queue", () => {
+  const g = { bash: { localAnswer: () => "" } };
+  const w = (command: string) => decidePreGates({ tool: "Bash", input: { command }, cwd: "/w/tree", env: {} }, g);
+  it("rewrites one plain build, with or without a cd prefix", () => {
+    expect(w("swift build")?.updatedInput).toEqual({ command: "pai build run -- swift build" });
+    expect(w("cd /w/tree/app && xcodebuild test -scheme X")?.updatedInput).toEqual({ command: "cd /w/tree/app && pai build run --kind test -- xcodebuild test -scheme X" });
+    expect(w("xcodebuild -scheme X build")?.message).toContain("routed through the build queue: pai build run -- xcodebuild");
+  });
+  it("keeps complex forms denied and wrapped commands untouched", () => {
+    for (const c of ["swift build | tail", "swift build; echo x", "swift build && echo x", "swift build > out.txt", "swift build &", "FOO=1 swift build", "cd a && cd b && swift build", "bash -c 'swift build'"]) expect(w(c)?.action, c).toBe("deny");
+    expect(w("pai build run -- swift build")).toBeNull();
+  });
+});
