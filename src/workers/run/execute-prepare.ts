@@ -143,7 +143,6 @@ export function createRunWorktree(
   try {
     const worktree = addWorktree(logDir, wid, cwd);
     if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
-    if (worktree.snapshotOmitted?.length) process.stderr.write(`pai worker: snapshot skipped untracked: ${worktree.snapshotOmitted.join("; ")}\n`);
     return worktree;
   } catch (e) {
     const why = (e as Error).message;

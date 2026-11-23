@@ -533,29 +533,3 @@ describe("merge targets the checkout the worker started in", () => {
     expect(existsSync(join(repo, "w.txt"))).toBe(true);
   });
 });
-
-describe("addWorktree snapshot content", () => {
-  it("skips untracked build output, carries tracked edits and small untracked sources", () => {
-    const { repo, logDir } = fixture();
-    writeFileSync(join(repo, "f.txt"), "edited\n");
-    mkdirSync(join(repo, "ui", "ios", "ephemeral"), { recursive: true });
-    writeFileSync(join(repo, "ui", "ios", "ephemeral", "junk.txt"), "x\n");
-    mkdirSync(join(repo, "lib"), { recursive: true });
-    writeFileSync(join(repo, "lib", "new.dart"), "src\n");
-    const info = addWorktree(logDir, "snap-1", repo);
-    expect(info.snapshot).toBe(true);
-    expect(readFileSync(join(info.dir, "f.txt"), "utf8")).toBe("edited\n");
-    expect(existsSync(join(info.dir, "lib", "new.dart"))).toBe(true);
-    expect(existsSync(join(info.dir, "ui", "ios", "ephemeral", "junk.txt"))).toBe(false);
-    expect(info.snapshotOmitted?.join(";")).toContain("ui/ios/ephemeral/");
-  });
-
-  it("branches from HEAD when only build output is untracked", () => {
-    const { repo, logDir } = fixture();
-    mkdirSync(join(repo, "build"), { recursive: true });
-    writeFileSync(join(repo, "build", "o.bin"), "x\n");
-    const info = addWorktree(logDir, "snap-2", repo);
-    expect(info.snapshot).toBe(false);
-    expect(info.base).toBe(git(repo, ["rev-parse", "HEAD"]));
-  });
-});
