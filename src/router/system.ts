@@ -34,6 +34,12 @@ const MIN = 60_000;
 const DAY = 86_400_000;
 /** direct commands are sub-second; never wait longer */
 const CMD_TIMEOUT = 8_000;
+/** sampler cadence while a /cockpit/system poll arrived in the last ACTIVE_WINDOW_MS */
+const ACTIVE_MS = 1_000;
+/** sampler cadence while nobody polls (the ring keeps filling) */
+const IDLE_MS = 10_000;
+/** a poll counts as "active" for this long after it arrives */
+const ACTIVE_WINDOW_MS = 15_000;
 
 /** a SoC total above this is a probe fault (mactop derives watts from energy deltas and can emit a bogus delta) */
 export const MAX_PLAUSIBLE_SOC_W = 1000;
@@ -71,6 +77,8 @@ export interface SystemSample {
   source: "direct" | "mactop" | "vmstat";
   /** why metrics are missing or stale, shown as tooltip */
   notes?: string[];
+  /** seconds since this sample was taken by the background sampler (the panel's "probe Ns" tag) */
+  slowAgeS?: number;
 }
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -328,6 +336,12 @@ export interface SystemDeps {
   keepMs?: number;
   /** injectable command runner (tests) */
   run?: (cmd: string, args: string[]) => Promise<string>;
+  /** sampler cadence while a /cockpit/system poll arrived recently (default 1 s) */
+  activeMs?: number;
+  /** sampler cadence while nobody polls (default 10 s) */
+  idleMs?: number;
+  /** how long after a poll the sampler stays at the active cadence (default 15 s) */
+  activeWindowMs?: number;
   /** the daemon's local-idle state dir (GPU sampler summary); default the workers logDir */
   workersLogDir?: () => string;
   now?: () => number;
@@ -355,8 +369,17 @@ export class SystemMonitor {
   private readonly run: (cmd: string, args: string[]) => Promise<string>;
   private readonly idleDir: () => string;
   private readonly now: () => number;
+  private readonly activeMs: number;
+  private readonly idleMs: number;
+  private readonly activeWindowMs: number;
   private cached: SystemSample | null = null;
   private cachedAt = 0;
+  /** when a /cockpit/system request last arrived (the sampler's activity signal) */
+  private lastRequestAt = 0;
+  /** the poll in flight, shared by everyone who asks while it runs */
+  private pending: Promise<SystemSample> | null = null;
+  /** set by `startRing`: called on every /cockpit/system request so the cadence switches at once */
+  private onRequest: (() => void) | null = null;
   private memSizeOut: string | undefined;
   private lastRingT = 0;
   private ring: SystemSample[] | null = null;
@@ -375,6 +398,9 @@ export class SystemMonitor {
     this.run = deps.run ?? sh;
     this.idleDir = deps.workersLogDir ?? defaultWorkersLogDir;
     this.now = deps.now ?? Date.now;
+    this.activeMs = deps.activeMs ?? ACTIVE_MS;
+    this.idleMs = deps.idleMs ?? IDLE_MS;
+    this.activeWindowMs = deps.activeWindowMs ?? ACTIVE_WINDOW_MS;
   }
 
   /** The daemon's local-idle state file (GPU summary + SoC temperature), null when it never wrote. */
@@ -418,14 +444,45 @@ export class SystemMonitor {
   }
 
   /**
-   * Keeps the ring filling while nobody has the cockpit open: samples are otherwise taken only when
-   * a page polls /cockpit/system, so a closed browser left a gap in the power/memory charts while
-   * the router kept serving requests. Returns the stop function.
+   * The one background sampler. Spawns run here, never on the request path: every 1 s while a
+   * /cockpit/system request arrived in the last 15 s, every 10 s otherwise (the ring keeps filling
+   * while nobody has the cockpit open). Overlapping samples are skipped — one in flight at a time.
+   * Returns the stop function.
    */
   startRing(): () => void {
-    const timer = setInterval(() => void this.current().catch(() => undefined), this.ringMs);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let active = false;
+    const reschedule = (): void => {
+      const nowActive = this.now() - this.lastRequestAt < this.activeWindowMs;
+      if (nowActive === active) return;
+      active = nowActive;
+      if (timer) clearInterval(timer);
+      timer = setInterval(tick, active ? this.activeMs : this.idleMs);
+      timer.unref();
+    };
+    const tick = (): void => {
+      void this.sample().catch(() => undefined);
+      reschedule();
+    };
+    timer = setInterval(tick, this.idleMs);
     timer.unref();
-    return () => clearInterval(timer);
+    // a request switches the cadence at once instead of waiting for the idle tick
+    const onActivity = (): void => reschedule();
+    this.onRequest = onActivity;
+    return () => {
+      if (timer) clearInterval(timer);
+      this.onRequest = null;
+    };
+  }
+
+  /**
+   * Takes one sample in the background and caches it. Skipped while one is in flight.
+   * The request path never calls this — it reads the cache.
+   */
+  async sample(): Promise<SystemSample | null> {
+    if (this.pending) return this.pending;
+    this.pending = this.poll().finally(() => (this.pending = null));
+    return this.pending;
   }
 
   /** The last served reading without polling (null before the first `current()`); for cheap periodic readers. */
@@ -434,12 +491,27 @@ export class SystemMonitor {
   }
 
   /**
-   * Latest reading, direct sources first; sample is null only when every
-   * source failed (reason in the sample notes).
+   * The request path: returns the latest cached sample immediately, with its age in `slowAgeS`.
+   * Spawns never run here — the background sampler (`startRing`) fills the cache. A cold start
+   * (no sample yet) takes one, so the panel is never empty.
    */
   async current(): Promise<{ sample: SystemSample | null; why: string }> {
+    this.lastRequestAt = this.now();
+    this.onRequest?.();
     const now = this.now();
-    if (this.cached && now - this.cachedAt < this.ttlMs) return { sample: this.cached, why: "" };
+    if (this.cached) return { sample: this.withAge(this.cached, now), why: "" };
+    const s = await this.sample();
+    return { sample: s ? this.withAge(s, this.now()) : null, why: "" };
+  }
+
+  /** The cached sample stamped with its age in seconds (the panel's "probe Ns" tag). */
+  private withAge(s: SystemSample, now: number): SystemSample {
+    return { ...s, slowAgeS: Math.max(0, Math.round((now - s.t) / 1000)) };
+  }
+
+  /** One poll of the direct sources; runs only from the background sampler. */
+  private async poll(): Promise<SystemSample> {
+    const now = this.now();
     const [vmOut, lvlOut, memOut, swOut] = await Promise.all([
       this.run("vm_stat", []).catch(() => undefined),
       this.run("sysctl", ["-n", "kern.memorystatus_level"]).catch(() => undefined),
@@ -495,7 +567,7 @@ export class SystemMonitor {
       this.lastRingT = now;
       this.appendRing(sample);
     }
-    return { sample, why: "" };
+    return sample;
   }
 
   private appendRing(s: SystemSample): void {
