@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -219,5 +220,22 @@ describe("worktree escape", () => {
     expect(deny("cd src && git commit -am x")).toBe(false);
     expect(deny("git -C . add f")).toBe(false);
     expect(deny("cd /main && git log; git commit -m x")).toBe(true);
+  });
+});
+
+describe("worktree guard expands ~ and $HOME", () => {
+  const home = homedir();
+  const root = `${home}/.pai/logs/workers/worktrees`;
+  const cwd = `${root}/20261123-160738-87282`;
+  const blocked = (c: string) => decideWorkerGitGuard(c, true, cwd, root).blocked;
+  it("allows cd ~/... into the own worktree", () => {
+    expect(blocked('cd ~/.pai/logs/workers/worktrees/20261123-160738-87282 && git add papers/p && git commit -qm "x"')).toBe(false);
+    expect(blocked("cd ~/.pai/logs/workers/worktrees/20261123-160738-87282/papers/p/experiments/structurer && git add . && git commit -qm x")).toBe(false);
+    expect(blocked("cd $HOME/.pai/logs/workers/worktrees/20261123-160738-87282 && git commit -qm x")).toBe(false);
+  });
+  it("still blocks another repo", () => {
+    expect(blocked('cd ~/dev/ai/PAI && git commit -qm "x"')).toBe(true);
+    expect(blocked('cd ~/.pai/logs/workers/worktrees/other-id && git commit -qm "x"')).toBe(true);
+    expect(blocked('cd ~/.pai/logs/workers/worktrees/20261123-160738-87282/../other && git commit -qm "x"')).toBe(true);
   });
 });
