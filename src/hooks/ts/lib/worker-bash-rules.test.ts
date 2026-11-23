@@ -537,6 +537,53 @@ describe("worker guard GNU sed X,+N range", () => {
   it.skipIf(process.platform !== "darwin")("keeps denying an ambiguous sed -i", () => {
     for (const cmd of ["sed -i 's' f", "sed -i /tmp/x f"]) expect(run(cmd).decision, cmd).toBe("deny");
   });
+
+  // the false positive of 2026-11-24 (worker 20261124-001059-70373): `sed -i '' -e '/let h = dlopen/d' …` was denied
+  // as a write to `/let h = dlopen/d` — the script after -e was read as a write target.
+  const fenceBase = mkdtempSync(join(tmpdir(), "sed-fence-"));
+  const fence = { wt: join(fenceBase, "wt"), other: join(fenceBase, "other") };
+  mkdirSync(fence.wt, { recursive: true });
+  mkdirSync(fence.other, { recursive: true });
+  writeFileSync(join(fence.other, "ANE.swift"), "let h = dlopen\n");
+  const fenceCtx = (): WorkerGuardContext => ({
+    cwd: fence.wt,
+    home: "/home/u",
+    worktreeRoot: fence.wt,
+    inWorktree: true,
+    mainCheckout: join(fenceBase, "main"),
+    testScript: () => null,
+  });
+  const fenceRun = (command: string) =>
+    decideWorkerGuard({ tool_name: "Bash", tool_input: { command } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" }, fenceCtx) as { decision: string; reason?: string; updatedInput?: { command: string }; context?: string };
+  it.skipIf(process.platform !== "darwin")("allows the exact false-positive command (scripts after -e are not write targets)", () => {
+    const cmd = `sed -i '' -e '/let h = dlopen/d' -e '/typealias F = /d' -e 's/x//' ${join(fence.wt, "ANE.swift")}`;
+    const d = fenceRun(cmd);
+    expect(d.decision, cmd).toBe("allow");
+    expect(d.reason ?? "").not.toContain("outside your worktree");
+  });
+  it.skipIf(process.platform !== "darwin")("blocks sed -i writing outside the worktree (real operands still judged)", () => {
+    const d = fenceRun(`sed -i '' -e 's/a/b/' ${join(fence.other, "ANE.swift")}`);
+    expect(d.decision).toBe("deny");
+    expect(d.reason).toContain("file writes outside your worktree are blocked");
+  });
+  it.skipIf(process.platform !== "darwin")("blocks sed -i on a literal outside path", () => {
+    expect(fenceRun("sed -i '' 's/a/b/' /etc/hosts").decision).toBe("deny");
+  });
+  it.skipIf(process.platform !== "darwin")("allows sed -i.bak inside (GNU form: no separate suffix word)", () => {
+    const d = fenceRun(`sed -i.bak 's/a/b/' ${join(fence.wt, "file.txt")}`);
+    expect(d.decision).toBe("allow");
+    expect(d.updatedInput).toBeUndefined();
+  });
+  it.skipIf(process.platform !== "darwin")("rewrites GNU sed -i with -e scripts, then judges the real operands", () => {
+    const d = fenceRun(`sed -i -e '/let h = dlopen/d' -e 's/x//' ${join(fence.wt, "ANE.swift")}`);
+    expect(d.decision).toBe("allow");
+    expect(d.updatedInput?.command).toBe(`sed -i '' -e '/let h = dlopen/d' -e 's/x//' ${join(fence.wt, "ANE.swift")}`);
+    expect(d.context).toContain("rewrote sed -i to sed -i '' for BSD sed");
+    // the same rewrite outside the worktree stays denied on its real operand
+    const out = fenceRun(`sed -i -e 's/a/b/' ${join(fence.other, "ANE.swift")}`);
+    expect(out.decision).toBe("deny");
+    expect(out.reason).toContain("file writes outside your worktree are blocked");
+  });
   it.skipIf(process.platform !== "darwin")("still denies a non-numeric start", () => {
     expect(run("sed -n '/foo/,+3p' f").decision).toBe("deny");
   });
