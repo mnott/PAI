@@ -11,6 +11,12 @@ import { REAP_TICK_MS, reapOrphansOnce, type ProcRow, type ReaperDeps, type Reap
 import { loadStatusesCached } from "./status.js";
 import { worktreesDir } from "./worktree.js";
 
+const fsReads = vi.hoisted(() => ({ n: 0 }));
+vi.mock("node:fs", async (orig) => {
+  const a = await orig<typeof import("node:fs")>();
+  return { ...a, readFileSync: ((...x: Parameters<typeof a.readFileSync>) => (String(x[0]).endsWith(".status") && fsReads.n++, a.readFileSync(...x))) as typeof a.readFileSync };
+});
+
 // Real git repos / spawned process trees: sized for a loaded machine (load 50 seen), not the 5 s default.
 vi.setConfig({ testTimeout: 120_000 });
 
@@ -336,6 +342,25 @@ describe("argv orphans of a worktree", () => {
     mkdirSync(wt);
     const counts = argvOrphanCounts(logDir, [{ pid: 20, ppid: 1, args: `node ${wt}/a.js` }, { pid: 21, ppid: 1, args: "node /other/a.js" }]);
     expect(counts.get(wt)).toBe(1);
+    rmSync(logDir, { recursive: true, force: true });
+  });
+});
+
+describe("loadStatusesShared reads", () => {
+  it("100 calls over unchanged status files read each file at most once", async () => {
+    const { loadStatusesShared, invalidateStatusCache } = await import("./status.js");
+    const logDir = fakeLogDir();
+    for (let i = 0; i < 12; i++) putStatus(logDir, `w${i}`, { state: i % 2 ? "done" : "running" });
+    fsReads.n = 0;
+    for (let i = 0; i < 100; i++) expect(loadStatusesShared(logDir, 5_000_000 + i * 20)).toHaveLength(12);
+    expect(fsReads.n).toBeLessThanOrEqual(12);
+    const before = fsReads.n;
+    // the scan after the share window re-stats but does not re-read unchanged files
+    for (let i = 0; i < 100; i++) loadStatusesShared(logDir, 5_100_000 + i * 20);
+    expect(fsReads.n).toBe(before);
+    invalidateStatusCache(logDir, "w0");
+    loadStatusesShared(logDir, 5_100_000 + 100 * 20);
+    expect(fsReads.n).toBe(before + 1);
     rmSync(logDir, { recursive: true, force: true });
   });
 });

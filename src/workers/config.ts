@@ -1943,7 +1943,9 @@ export function mergeConfigYamlProviderOverrides(
   return out;
 }
 
-let cachedWorkers: { key: string; workers: WorkersConfig } | null = null;
+let cachedWorkers: { key: string; path: string; checked: number; workers: WorkersConfig } | null = null;
+/** How long readWorkersCached trusts its stamp before statting the config files again. */
+const WORKERS_STAMP_MS = 1000;
 
 function mtimeOf(path: string): number {
   try {
@@ -1964,8 +1966,12 @@ export function workersConfigStamp(path: string = paiConfigFilePath()): string {
  * changes mtime, so a saved change applies without a restart and a poll costs two stats.
  */
 export function readWorkersCached(path: string = paiConfigFilePath()): WorkersConfig {
+  // at most one stamp (two stats) per second per path: a poller loop then costs a clock read
+  const t = Date.now();
+  if (cachedWorkers && cachedWorkers.path === path && t >= cachedWorkers.checked && t - cachedWorkers.checked < WORKERS_STAMP_MS) return cachedWorkers.workers;
   const key = workersConfigStamp(path);
-  if (cachedWorkers?.key !== key) cachedWorkers = { key, workers: readWorkersSection(path, () => {}).workers };
+  if (cachedWorkers?.key !== key) cachedWorkers = { key, path, checked: t, workers: readWorkersSection(path, () => {}).workers };
+  else cachedWorkers.checked = t;
   return cachedWorkers.workers;
 }
 

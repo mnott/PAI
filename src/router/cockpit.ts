@@ -61,7 +61,7 @@ import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
 import { readSchedFile, instanceLabel, schedPlain, sharedScheduler, SESSION_TTL_MS, type SchedSnapshot } from "./scheduler.js";
-import { isLive, loadStatus, loadStatusesCached, ownsPidCached, type WorkerStatus } from "../workers/status.js";
+import { isLive, loadStatus, loadStatusesShared, ownsPidCached, type WorkerStatus } from "../workers/status.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
@@ -1196,7 +1196,7 @@ function schedNames(logDir: string): Record<string, string> {
     /* a broken registry: the 8-char fallback stands */
   }
   try {
-    for (const s of loadStatusesCached(logDir)) if (s.session?.id && s.session.name) out[s.session.id] = s.session.name;
+    for (const s of loadStatusesShared(logDir)) if (s.session?.id && s.session.name) out[s.session.id] = s.session.name;
   } catch {
     /* no statuses: the 8-char fallback stands */
   }
@@ -1265,7 +1265,7 @@ export function cockpitQueue(
   const sessionMax: SessionLimits = {};
   // one pass over the status files per window (the single flight above calls this at most once per
   // window): the live subset is collected here and reused below, so a queue round walks the cache twice, not four times
-  const statuses = loadStatusesCached(logDir);
+  const statuses = loadStatusesShared(logDir);
   // the session cap file is passed to the table once, not re-read per worker: one stat per queue pass
   const profiles = readProfiles();
   const live: WorkerStatus[] = [];
@@ -1442,6 +1442,43 @@ function queueFromThread(logDir: string): Promise<CockpitQueue> {
       fail(e as Error);
     }
   });
+}
+
+/** Response-cache window for the polled cockpit endpoints (limits, system): pollers within it share one body. */
+export const COCKPIT_BODY_TTL_MS = 1000;
+
+const limitsBodyFlight = new Map<object, (arg: void) => Promise<SharedResult<string>>>();
+/** The /cockpit/limits body, computed at most once per COCKPIT_BODY_TTL_MS per limits cache; concurrent callers share the in-flight computation. */
+export function limitsBodyShared(limits: LimitsSource): Promise<SharedResult<string>> {
+  let f = limitsBodyFlight.get(limits);
+  if (!f) {
+    f = singleFlight<string>(async () => {
+      const l = await limits.get().then((l0) => enabledLocalLimits(l0, configuredProviders()));
+      const routing = await routingPayload(l);
+      // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
+      const failed = l.find((x) => x.error);
+      return JSON.stringify({ now: Date.now(), limits: await withInstances(withWeights(withStarting(l))).then(withPace), routing, pace: currentPace(), runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), tokenFailures: tokenFailureCounts(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) });
+    }, { ttlMs: () => COCKPIT_BODY_TTL_MS });
+    limitsBodyFlight.set(limits, f);
+  }
+  return f();
+}
+
+const systemBodyFlight = new Map<object, Map<string, (arg: void) => Promise<SharedResult<string>>>>();
+/** The /cockpit/system body per window, same one-second sharing as the limits body. */
+export function systemBodyShared(d: { system: SystemMonitor; limits: LimitsSource; win: ReturnType<typeof parseWindow> }): Promise<SharedResult<string>> {
+  let per = systemBodyFlight.get(d.system);
+  if (!per) systemBodyFlight.set(d.system, (per = new Map()));
+  let f = per.get(String(d.win));
+  if (!f) {
+    f = singleFlight<string>(async () => {
+      let limitsFailed = false;
+      const [snap, ls] = await Promise.all([d.system.snapshot(d.win), d.limits.get().catch((): ProviderLimits[] => ((limitsFailed = true), []))]);
+      return JSON.stringify({ ...snap, servers: systemServers(ls), ...(limitsFailed ? { transient: "limits unavailable" } : {}) });
+    }, { ttlMs: () => COCKPIT_BODY_TTL_MS });
+    per.set(String(d.win), f);
+  }
+  return f();
 }
 
 /** The /cockpit/queue payload through the shared window; `queueLogDir` is the handler's seam (tests redirect it). */
@@ -1762,12 +1799,9 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/system") {
     if (!system) return send(503, "application/json", '{"error":"system metrics not configured"}'), true;
-    let limitsFailed = false;
-    Promise.all([
-      system.snapshot(parseWindow(url.searchParams.get("window"))),
-      limits.get().catch((): ProviderLimits[] => ((limitsFailed = true), [])),
-    ]).then(
-      ([snap, ls]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(ls), ...(limitsFailed ? { transient: "limits unavailable" } : {}) })),
+    const win = parseWindow(url.searchParams.get("window"));
+    systemBodyShared({ system, limits, win }).then(
+      (r) => send(200, "application/json", r.value),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/models") {
@@ -1794,12 +1828,9 @@ export function handleCockpit(
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/limits") {
-    limits.get().then((l0) => enabledLocalLimits(l0, configuredProviders())).then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
-      async ([l, routing]) => {
-        // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
-        const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: await withInstances(withWeights(withStarting(l))).then(withPace), routing, pace: currentPace(), runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), tokenFailures: tokenFailureCounts(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
-      },
+    // one computation per second serves every poller (menu bar app, cockpit tabs)
+    limitsBodyShared(limits).then(
+      (r) => send(200, "application/json", r.value),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");

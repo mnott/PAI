@@ -567,3 +567,26 @@ describe("/cockpit/queue off the event loop", () => {
     }
   }, 60_000);
 });
+
+describe("cockpit polled endpoints share one computation", () => {
+  it("100 workers-config reads parse once; limits/system bodies are identical within 1 s and recomputed after", async () => {
+    const { readWorkersCached } = await import("../workers/config.js");
+    const w = readWorkersCached();
+    for (let i = 0; i < 100; i++) expect(readWorkersCached()).toBe(w);
+    const { limitsBodyShared, systemBodyShared, COCKPIT_BODY_TTL_MS } = await import("./cockpit.js");
+    let gets = 0;
+    const limits = { get: async () => (gets++, []) };
+    const bodies = await Promise.all(Array.from({ length: 100 }, () => limitsBodyShared(limits)));
+    expect(gets).toBe(1);
+    expect(new Set(bodies.map((b) => b.value)).size).toBe(1);
+    let snaps = 0;
+    const system = { snapshot: async () => ({ n: ++snaps }) } as never;
+    const a = await systemBodyShared({ system, limits, win: "1h" as never });
+    const b = await systemBodyShared({ system, limits, win: "1h" as never });
+    expect(b.value).toBe(a.value);
+    expect(snaps).toBe(1);
+    await new Promise((r) => setTimeout(r, COCKPIT_BODY_TTL_MS + 50));
+    await limitsBodyShared(limits);
+    expect(gets).toBe(3); // limits body, system body, limits body again
+  }, 30_000);
+});
