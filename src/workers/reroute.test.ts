@@ -860,3 +860,69 @@ describe("supervision does not block the event loop (#21)", () => {
     expect(worst).toBeLessThan(100);
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// lineage: A rerouted to B, B escalated to C — waits, notices and pending follow the final continuation
+describe("reroute lineage", () => {
+  const sh = (cwd: string, ...args: string[]): string => {
+    const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const mk = (id: string, over: Partial<WorkerStatus>): WorkerStatus =>
+    ({ id, pid: 0, label: "fix", cwd: "/", term: "", provider: "p", model: "m", state: "done", started: nowStamp(), updated: nowStamp(), turns: 1, tools: 0, last: "", rc: 0, secs: 1, spawnerSession: "L0", ...over }) as WorkerStatus;
+
+  it("wait on A reports C's end under finalId; the mailbox notice names C and A", async () => {
+    saveStatus(dir, mk("A", { state: "killed", rc: 143, rerouted: "cloud: stalled", fallThroughTo: "B" }));
+    saveStatus(dir, mk("B", { state: "killed", rc: 143, rerouted: "cloud: stalled", fallThroughOf: "A", fallThroughTo: "C" }));
+    saveStatus(dir, mk("C", { fallThroughOf: "B" }));
+    const { waitWorkers } = await import("./wait.js");
+    const { results } = await waitWorkers(dir, ["A"], { timeoutMs: 5_000, intervalMs: 20 });
+    expect(results[0]).toMatchObject({ id: "A", finalId: "C", followed: ["B", "C"], state: "done", ok: true });
+    const { detectSupervisionEvents } = await import("./supervision.js");
+    const ev = detectSupervisionEvents([loadStatus(dir, "A")!, loadStatus(dir, "B")!, loadStatus(dir, "C")!], { now: new Date(), stallMs: 600_000 }).find((e) => e.worker === "C");
+    expect(ev?.text).toMatch(/^continuation C of A \(fix\) finished: rc=0; merge with pai worker merge C/);
+  });
+
+  it("after merging C, pending shows neither A nor B; gc discards them only when their commits are on main", async () => {
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    sh(repo, "init", "-q", "-b", "main");
+    sh(repo, "config", "user.email", "t@t");
+    sh(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, "f"), "0");
+    sh(repo, "add", "."); sh(repo, "commit", "-qm", "init");
+    const logDir = join(dir, "logs");
+    const tree = (id: string): { dir: string; branch: string } => {
+      const d = join(logDir, "worktrees", id);
+      mkdirSync(join(logDir, "worktrees"), { recursive: true });
+      sh(repo, "worktree", "add", "-q", "-b", `pai/${id}`, d);
+      writeFileSync(join(d, `${id}.txt`), id);
+      sh(d, "add", "."); sh(d, "commit", "-qm", `work ${id}`);
+      return { dir: d, branch: `pai/${id}` };
+    };
+    const ta = tree("A"), tb = tree("B"), tc = tree("C");
+    const base = (id: string, t: { dir: string; branch: string }, over: Partial<WorkerStatus>): WorkerStatus =>
+      mk(id, { cwd: repo, worktreeDir: t.dir, branch: t.branch, ...over });
+    saveStatus(logDir, base("A", ta, { state: "killed", rc: 143, rerouted: "x", fallThroughTo: "B" }));
+    saveStatus(logDir, base("B", tb, { state: "killed", rc: 143, rerouted: "x", fallThroughOf: "A", fallThroughTo: "C" }));
+    saveStatus(logDir, base("C", tc, { fallThroughOf: "B" }));
+    const { pendingResults } = await import("./pending.js");
+    const { markSuperseded } = await import("./lineage.js");
+    const { gcWorktrees } = await import("./worktree.js");
+    expect(pendingResults(logDir, repo).map((r) => r.id).sort()).toEqual(["A", "B", "C"]);
+    // C merged: its work (and, same branch lineage, B's) lands on main; A's commits stay off main
+    sh(repo, "merge", "-q", "--no-ff", "-m", "merge C", tc.branch);
+    sh(repo, "merge", "-q", "--no-ff", "-m", "merge B", tb.branch);
+    saveStatus(logDir, { ...loadStatus(logDir, "C")!, merged: true, branch: null, worktreeDir: null } as WorkerStatus);
+    expect(markSuperseded(logDir, loadStatus(logDir, "C")!)).toEqual(["B", "A"]);
+    expect(loadStatus(logDir, "A")!.supersededBy).toBe("C");
+    expect(pendingResults(logDir, repo)).toEqual([]);
+    const res = gcWorktrees(logDir, 24 * 365, false, Date.now(), true);
+    expect(res.find((r) => r.id === "B")?.archive).toBeTruthy();
+    expect(res.find((r) => r.id === "A")?.archive).toBeUndefined();
+    expect(res.find((r) => r.id === "A")?.skipped).toMatch(/not on main/);
+    expect(existsSync(ta.dir)).toBe(true);
+    expect(existsSync(tb.dir)).toBe(false);
+  }, 60_000);
+});

@@ -231,6 +231,8 @@ export interface WorkerStatus {
   restarting?: boolean;
   /** Set when a queued origin was ended because its fall-through finished the work (reroute.ts endOriginContinued): the id that did it. */
   continuedBy?: string;
+  /** Set when a later run of its lineage (a continuation) was merged: the id that was. Hidden from pending; gc may discard it (lineage.ts). */
+  supersededBy?: string;
   /** The job admitted over the provider's cap by "start now" (queue-ops start-now): names who started it ("cockpit"), shown on its row as "started by <who> over the limit". Cleared when the run ends or drops back under the cap. */
   overCapBy?: string;
   /** Hook/permission denials the run hit (capped list, see denials.ts) and their true total. */

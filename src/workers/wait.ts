@@ -21,6 +21,8 @@ import { followChain } from "./run/follow-reroute.js";
 export interface WaitResult {
   /** The id as asked for. When the run was rerouted/escalated this stays the origin's id; the final run's result is what `state`/`rc`/`result` carry, and `followed` names the chain. */
   id: string;
+  /** The run whose end this result reports: the last continuation when the wait followed a lineage, else `id`. */
+  finalId: string;
   label: string;
   state: WorkerStatus["state"];
   rc: number | null;
@@ -114,6 +116,7 @@ function toWaitResult(logDir: string, askedId: string, st: WorkerStatus, pending
   const unconfirmed = pending ? [] : unconfirmedClaims(cur, report);
   return {
     id: askedId,
+    finalId: cur.id,
     label: cur.label,
     state: cur.state,
     rc: cur.rc,
