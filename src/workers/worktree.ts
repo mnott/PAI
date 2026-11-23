@@ -18,7 +18,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { removeScratch } from "./scratch.js";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, renameSync, cpSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, ownsPid, refreshCachedStatus, saveStatus, statusPids, UNLABELED, type WorkerStatus } from "./status.js";
@@ -641,9 +641,91 @@ export function salvageIgnored(cwd: string, wtDir: string, id: string): SalvageI
   return { lines, failed };
 }
 
+/** Regenerable directories: dropped with the worktree, never carried back. */
+export const REGENERABLE_NAMES = [
+  "node_modules", "dist", "build", ".build", "target", "__pycache__", ".venv", "venv", "DerivedData",
+  ".pai-scratch", "coverage", ".DS_Store", ".turbo", ".cache", ".next", ".gradle", ".pytest_cache", ".mypy_cache", ".tox", "Pods",
+];
+
+/** An ignored entry bigger than this goes to the leftovers dir instead of the checkout. */
+export const OUTPUT_SIZE_LIMIT = 2 * 1024 ** 3;
+
+function treeSize(p: string): number {
+  const st = lstatSync(p);
+  if (!st.isDirectory()) return st.size;
+  let n = 0;
+  for (const e of readdirSync(p)) n += treeSize(join(p, e));
+  return n;
+}
+
+function moveEntry(src: string, dest: string): void {
+  mkdirSync(dirname(dest), { recursive: true });
+  try {
+    renameSync(src, dest);
+  } catch {
+    cpSync(src, dest, { recursive: true, errorOnExist: true });
+    rmSync(src, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Gitignored non-knowledge outputs (experiment results, caches of paid calls)
+ * must not vanish with the worktree. Each top-level ignored entry that is not
+ * regenerable moves to the same relative path in `cwd` when that path is free;
+ * on a collision or above OUTPUT_SIZE_LIMIT the entry moves to
+ * <logDir>/leftovers/<id>/ instead. One line names where, with the size.
+ */
+export function salvageOutputs(cwd: string, wtDir: string, id: string): string[] {
+  const lines: string[] = [];
+  if (!existsSync(wtDir) || isSlotWorktree(wtDir)) return lines;
+  let entries: string[];
+  try {
+    entries = git(wtDir, ["status", "--porcelain", "--ignored", "-z"])
+      .split("\0")
+      .filter((l) => l.startsWith("!! "))
+      .map((l) => l.slice(3).replace(/\/$/, ""));
+  } catch {
+    return lines;
+  }
+  const leftovers = join(dirname(dirname(resolve(wtDir))), "leftovers", id);
+  let moved = 0;
+  let left = 0;
+  let leftBytes = 0;
+  for (const rel of entries) {
+    const parts = rel.split("/");
+    if (parts.some((p) => REGENERABLE_NAMES.includes(p))) continue;
+    const src = join(wtDir, rel);
+    try {
+      if (!existsSync(src)) continue;
+      // a lone knowledge file is the knowledge pass's (collision naming)
+      if (lstatSync(src).isFile() && isKnowledgeFile(rel)) continue;
+      const size = treeSize(src);
+      const dest = join(cwd, rel);
+      if (size <= OUTPUT_SIZE_LIMIT && !existsSync(dest)) {
+        moveEntry(src, dest);
+        moved++;
+        lines.push(`kept ignored ${rel} (${fmtBytes(size)}) from worker ${id} in ${cwd}`);
+      } else {
+        moveEntry(src, join(leftovers, rel));
+        left++;
+        leftBytes += size;
+      }
+    } catch (e) {
+      lines.push(`could not keep ignored ${rel} from worker ${id}: ${(e as Error).message}`);
+    }
+  }
+  if (left) lines.push(`kept ${left} ignored output(s) (${fmtBytes(leftBytes)}) from worker ${id} in ${leftovers}`);
+  return lines;
+}
+
+function fmtBytes(n: number): string {
+  return n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${Math.ceil(n / 1024)} KB`;
+}
+
 /** `salvageIgnored` for the merge path: best effort, returns the lines only. */
 export function salvageNotes(cwd: string, wtDir: string, id: string): string[] {
-  return salvageIgnored(cwd, wtDir, id).lines;
+  const out = salvageOutputs(cwd, wtDir, id);
+  return [...out, ...salvageIgnored(cwd, wtDir, id).lines];
 }
 
 /** What a worker worktree carries that nothing else does. */
