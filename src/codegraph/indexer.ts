@@ -8,6 +8,13 @@
  * directory walk. node_modules/dist/build/vendor/.git and files over 1 MB are
  * skipped. Change detection: mtime first, sha256 content hash only when the
  * mtime differs — an unchanged file never re-parses.
+ *
+ * `tools/` and `scripts/` are indexed like any other source dir: they hold
+ * real code (Swift bridges, Python report scripts) that workers must be able
+ * to find. They are NOT build output — build output lives in the SKIP_DIRS
+ * below. A nested `.gitignore` that hides a dir's own build artifacts (e.g.
+ * `tools/apple-fm-bridge/.gitignore` → `.build/`) is respected by the git
+ * listing, so generated files stay out while source stays in.
  */
 
 import { execFileSync } from "node:child_process";

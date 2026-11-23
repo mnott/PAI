@@ -250,10 +250,17 @@ export const ORCHESTRATOR_CONTRACT =
 
 /** One guidance line: map an unfamiliar repo with the code graph before grepping. */
 export const CODE_EXPLORE_LINE =
-  "Before grepping or globbing an unfamiliar repo, run `pai code explore <question or symbol names>` via Bash (or the code_explore tool where the pai MCP server is loaded); it returns definitions, source, callers and blast radius in one answer and indexes the repo on first use.";
+  "Find code with `pai code explore <symbol>` / `pai code search <words>` before grep: they return definitions, source, callers and blast radius in one answer and index the repo on first use.";
 
 /** Added when the run's repo is already indexed: the graph is current, so ask it before grepping. */
 export const CODE_GRAPH_FIRST_LINE = [
+  "This repo is indexed in the code graph: locate code with `pai code explore \"<what you look for>\"`,",
+  "`pai code callers <symbol>` and `pai code search <text>`.",
+  "Fall back to grep/glob only if those return nothing.",
+].join("\n");
+
+/** Interactive sessions have the pai MCP tools; headless workers do not, so only this variant names them. */
+export const SESSION_CODE_GRAPH_LINE = [
   "This repo is indexed in the code graph: locate code with `pai code explore \"<what you look for>\"`,",
   "`pai code callers <symbol>` and `pai code search <text>` (MCP: code_explore, code_callers, code_search).",
   "Fall back to grep/glob only if those return nothing.",

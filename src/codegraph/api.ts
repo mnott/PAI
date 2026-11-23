@@ -308,6 +308,10 @@ async function localNamesOf(rootAbs: string, s: SymbolRow): Promise<Set<string>>
 }
 
 /** Transitive dependents of the symbol `name` up to `depth` hops. */
+/** Output caps for impact(): a worker's Bash output must stay small (issue #23). */
+const IMPACT_MAX_FILES = 200;
+const IMPACT_MAX_SYMBOLS = 100;
+
 export async function impact(backend: StorageBackend, root: string, name: string, depth = 2): Promise<{ files: string[]; symbols: SymbolHit[] }> {
   await ensureFresh(backend, root);
   const store = backend.codeGraph();
@@ -334,7 +338,10 @@ export async function impact(backend: StorageBackend, root: string, name: string
     frontierFiles = nextFiles;
   }
 
-  return { files: [...visitedFiles].sort(), symbols: [...dependentSymbols.values()].map(toHit) };
+  return {
+    files: [...visitedFiles].sort().slice(0, IMPACT_MAX_FILES),
+    symbols: [...dependentSymbols.values()].map(toHit).slice(0, IMPACT_MAX_SYMBOLS),
+  };
 }
 
 export interface ExploreResult {
