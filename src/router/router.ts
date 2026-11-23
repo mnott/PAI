@@ -65,10 +65,9 @@ import { loadConfig } from "../daemon/config.js";
 import { CLOUD_RETRY_BUDGET_MS, FailoverState, LoopStallLog, cloudBackoffMs, failoverNotice, isOfflineError, isUsageExhaustion, localModelOf, probeCloud, type FailoverReason } from "./failover.js";
 import { resolveLocalProvider } from "../workers/local-provider.js";
 import { aibrokerMessenger } from "../workers/run-events.js";
-import { readWorkersCached } from "../workers/config.js";
 import { engineIdleFrom } from "./engine-idle.js";
 import { readLocalIdle } from "../workers/local-idle.js";
-import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
+import { readWorkersCached, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { tierProviderNames, withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
 import type { EndpointHealth } from "../workers/endpoint-health.js";
@@ -396,7 +395,7 @@ function stateFileInstances(): () => LocalInstance[] {
     if (Date.now() - at < 2000) return rows;
     at = Date.now();
     try {
-      rows = readInstances(workersLogDir(readWorkersSection().workers)).filter((i) => {
+      rows = readInstances(workersLogDir(readWorkersCached())).filter((i) => {
         if (i.origin === "registered" || !i.pid) return false;
         try {
           process.kill(i.pid, 0);
@@ -567,7 +566,7 @@ function defaultToolArgsFix(log: (line: string) => void): NonNullable<RouterOpti
     ruleHits.record(i.rules);
     const text = `tool arguments repaired: ${i.tool} [${i.rules.join(", ")}]${i.wire && i.wire !== "messages" ? ` wire=${i.wire}` : ""}`;
     log(`${new Date().toISOString()} ${i.model} ${i.provider} ${text}`);
-    recordToolError(workersLogDir(readWorkersSection().workers), {
+    recordToolError(workersLogDir(readWorkersCached()), {
       worker: i.session ?? "router",
       provider: i.provider,
       label: "router",
@@ -595,7 +594,7 @@ export function endRetryable(res: http.ServerResponse, message: string): void {
 /** ENGINE-SLOT-RELEASED ledger line: a scheduler slot freed because its client left or its upstream went quiet. */
 function ledgerSlotReleased(info: { reason: string; worker: string; engine: string; idleSec?: number }): void {
   try {
-    appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ENGINE-SLOT-RELEASED", info);
+    appendLedger(ledgerPath(workersLogDir(readWorkersCached())), "ENGINE-SLOT-RELEASED", info);
   } catch {
     /* the ledger is best effort */
   }
@@ -606,7 +605,7 @@ function defaultToolCaseFix(log: (line: string) => void): NonNullable<RouterOpti
   return (i) => {
     const text = `tool name case corrected: ${i.from} -> ${i.to}`;
     log(`${new Date().toISOString()} ${i.model} ${i.provider} ${text}`);
-    recordToolError(workersLogDir(readWorkersSection().workers), {
+    recordToolError(workersLogDir(readWorkersCached()), {
       worker: i.session ?? "router",
       provider: i.provider,
       label: "router",
@@ -679,7 +678,7 @@ export function createRouter(...args: Parameters<typeof routerHandler>): http.Se
  * while every entry point shares one BustDetector/GapTracker.
  */
 export function routerHandler(
-  loadProviders: () => Record<string, WorkerProvider> = () => withTierProviders(readWorkersSection().workers.providers),
+  loadProviders: () => Record<string, WorkerProvider> = () => withTierProviders(readWorkersCached().providers),
   claudeBase: string = claudeUpstream(),
   log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
   onUsage?: (row: UsageRow) => void,
@@ -948,7 +947,7 @@ export function routerHandler(
           let announce: () => void = () => {};
           let name: string;
           try {
-            name = await (options?.failover?.localProvider ?? (async () => (await resolveLocalProvider(readWorkersSection().workers, workersLogDir(readWorkersSection().workers))).name))();
+            name = await (options?.failover?.localProvider ?? (async () => (await resolveLocalProvider(readWorkersCached(), workersLogDir(readWorkersCached()))).name))();
           } catch (e) {
             return fail(502, `cloud unavailable (${reasonKey}) and no local model is running: ${(e as Error).message}`, target.model, ANTHROPIC_NATIVE);
           }
@@ -961,7 +960,7 @@ export function routerHandler(
               if (!fresh) return;
               log(`${new Date().toISOString()} ${target.model} cloud ${reason}, session ${foKey} failing over to ${name}; the cloud is retried ${reason === "offline" ? "after 30s" : `after ${foCfg().stickyMin} min`}`);
               try {
-                (options?.failover?.onFailover ?? ((i) => appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-FAILOVER", i)))({ session: foKey, reason, to: name });
+                (options?.failover?.onFailover ?? ((i) => appendLedger(ledgerPath(workersLogDir(readWorkersCached())), "ROUTER-FAILOVER", i)))({ session: foKey, reason, to: name });
               } catch {
                 /* the ledger is best effort */
               }
@@ -969,7 +968,7 @@ export function routerHandler(
               try {
                 if (options?.failover?.notify) options.failover.notify({ session: foKey, reason, text });
                 else {
-                  const msg = aibrokerMessenger(workersLogDir(readWorkersSection().workers));
+                  const msg = aibrokerMessenger(workersLogDir(readWorkersCached()));
                   void msg.toSession({ name: foKey }, text).catch(() => false);
                   void msg.toPailot(`${text} (${foKey}, ${new Date().toISOString().slice(11, 16)})`).catch(() => false);
                 }
@@ -1491,9 +1490,9 @@ export function routerHandler(
           scheduled = true;
           sched.onStale = (e, w, _s, idle) => slotReleased({ reason: "stale", worker: w, engine: e, idleSec: Math.round(idle / 1000) });
           // idle-engine watchdog: a request in flight while the GPU shows nothing is released so its client retries
-          sched.engineIdle = () => engineIdleFrom(readLocalIdle(workersLogDir(readWorkersSection().workers)), Date.now());
+          sched.engineIdle = () => engineIdleFrom(readLocalIdle(workersLogDir(readWorkersCached())), Date.now());
           sched.engineIdleSecs = () => loadConfig().router.engineIdleSecs ?? 90;
-          sched.orphanPause = (w) => releaseOrphanPause(workersLogDir(readWorkersSection().workers), w, isFrozen());
+          sched.orphanPause = (w) => releaseOrphanPause(workersLogDir(readWorkersCached()), w, isFrozen());
           sched.onEngineIdle = (e, w, _s, ms) => slotReleased({ reason: "engine-idle", worker: w, engine: e, idleSec: Math.round(ms / 1000) });
           const queue = (): void => {
             startPings();

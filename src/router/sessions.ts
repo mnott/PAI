@@ -52,7 +52,9 @@ export interface SessionSources {
 }
 
 export function defaultSources(): SessionSources {
-  return {
+  const now = Date.now();
+  if (sourcesCache && now - sourcesCache.at < SOURCES_TTL_MS) return sourcesCache.value;
+  const value = {
     workerDirs: [paiHomePath("logs", "workers"), join(claudeHomeDir(), "logs", "workers")],
     agentSessionsFile: paiHomePath("agent-sessions.json"),
     projectsDir: claudeProjectsDir(),
@@ -61,6 +63,8 @@ export function defaultSources(): SessionSources {
     // CLAUDE_CONFIG_DIR is the .claude dir itself (the jobs dir is <it>/jobs)
     jobsDir: join(claudeHomeDir(), "jobs"),
   };
+  sourcesCache = { at: now, value };
+  return value;
 }
 
 const JOB_TTL_MS = 30_000;
@@ -69,7 +73,12 @@ const jobCache = new Map<string, { at: number; name: string | null }>();
 /** Drop the job-name cache (tests flip the jobs dir mid-run). */
 export function clearJobNameCache(): void {
   jobCache.clear();
+  sourcesCache = null;
 }
+
+/** The default sources are rebuilt at most once per this window: the path builders (home dir, joins) are the hot part when a request resolves hundreds of ids. */
+const SOURCES_TTL_MS = 5_000;
+let sourcesCache: { at: number; value: SessionSources } | null = null;
 
 /**
  * Name of a Claude Code background-job session: jobs/<id8>/state.json, "name"
@@ -121,6 +130,7 @@ export function resolveSessionName(
 /** Ids the map does not carry a job name for, resolved through the order above. */
 export function withJobNames(map: Map<string, SessionInfo>, ids: Iterable<string | undefined>, jobsDir?: string): Map<string, SessionInfo> {
   let out: Map<string, SessionInfo> | undefined;
+  jobsDir ??= defaultSources().jobsDir; // once per call, not per id
   for (const id of ids) {
     if (!id) continue;
     const info = map.get(id);

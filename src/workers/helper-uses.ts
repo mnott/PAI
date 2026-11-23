@@ -8,7 +8,7 @@
 import { workerFilePath } from "./paths.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { helperComplete, helperCompleteSync, helperConfig, helperRejected, type HelperDeps } from "./helper.js";
+import { helperComplete, helperCompleteSync, helperConfig, helperRejected, recordHelperCall, type HelperDeps } from "./helper.js";
 import { harnessEvidence, type ErrorClass, type ToolErrorGroup } from "./tool-errors.js";
 
 const model0 = (deps: HelperDeps): string => (deps.config ?? helperConfig()).models[0] ?? "helper";
@@ -65,6 +65,8 @@ const retryAt = new Map<string, number>();
 const TLDR_RETRY_MS = 10 * 60_000;
 /** Chars of a spec a TL;DR is worth making from: the task body's first lines. */
 const TLDR_INPUT_CHARS = 1200;
+/** Below this many chars the input is used as its own TL;DR: no model call. */
+const TLDR_SHORT_CHARS = 200;
 
 const tldrPath = (logDir: string, id: string): string => workerFilePath(logDir, id, ".tldr");
 
@@ -139,10 +141,27 @@ export function cachedTldr(logDir: string, id: string, specText: string, deps: H
   if (!specText.trim() || !(deps.config ?? helperConfig()).uses.tldr) return null;
   const now = (deps.now ?? Date.now)();
   if (pending.has(id) || (retryAt.get(id) ?? 0) > now) return null;
+  const input = trimTldrInput(specText);
+  // Already short (a reply, a notice, one sentence): the input is its own TL;DR. Asking the
+  // model made it answer "ok" (#31). Acknowledgement-sized text is not summarised at all.
+  if (input.length < TLDR_SHORT_CHARS) {
+    recordHelperCall({ ts: now, model: model0(deps), label: "tldr", ms: 0, ok: true, kind: "skipped-short" }, deps);
+    const own = input.replace(/\s+/g, " ").trim();
+    if (own.length < TLDR_MIN) {
+      retryAt.set(id, Number.MAX_SAFE_INTEGER);
+      return null;
+    }
+    try {
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(f, own + "\n");
+      return own;
+    } catch {
+      return own;
+    }
+  }
   pending.add(id);
   void (async () => {
     try {
-      const input = trimTldrInput(specText);
       const task = "Summarize this task spec in exactly 2 plain sentences: what is to be built or fixed, and where. No lists, no markdown.";
       // the small engine answers empty now and then: one retry inside this call, before the
       // 10-minute cooldown; a model that failed outright is cooling down, so the retry skips it

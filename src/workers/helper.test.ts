@@ -55,6 +55,8 @@ const workerStatus = (id: string): WorkerStatus => ({
   outputFormat: "json",
 });
 
+const LONG_SPEC = "Add a helper for small tasks that runs on the local model. " + "Details of the work follow here. ".repeat(10);
+
 describe("truncateInput", () => {
   it("keeps the tail of a log, the head of prose", () => {
     const s = "a".repeat(50) + "TAIL";
@@ -196,19 +198,50 @@ describe("uses fall back to rules", () => {
 
   it("cachedTldr returns null at first (caller keeps first sentences), then the cached text", async () => {
     const d = deps(async () => msg("Adds a helper for small tasks. It runs on the local model."));
-    expect(cachedTldr(d.logDir!, "job1", "spec text", d)).toBeNull();
+    expect(cachedTldr(d.logDir!, "job1", LONG_SPEC, d)).toBeNull();
     await new Promise((r) => setTimeout(r, 30));
-    expect(cachedTldr(d.logDir!, "job1", "spec text", d)).toBe("Adds a helper for small tasks. It runs on the local model.");
+    expect(cachedTldr(d.logDir!, "job1", LONG_SPEC, d)).toBe("Adds a helper for small tasks. It runs on the local model.");
     expect(existsSync(join(d.logDir!, "job1.tldr"))).toBe(true);
+  });
+
+  it("cachedTldr: a short input is its own TL;DR, no model call, logged skipped-short (#31)", async () => {
+    let n = 0;
+    const d = deps(async () => {
+      n++;
+      return msg("ok");
+    });
+    const short = "  Rename the foo flag to bar in the CLI.  ";
+    expect(cachedTldr(d.logDir!, "sh1", short, d)).toBe("Rename the foo flag to bar in the CLI.");
+    expect(n).toBe(0);
+    expect(cachedTldr(d.logDir!, "sh1", short, d)).toBe("Rename the foo flag to bar in the CLI.");
+    expect(callsOf(d)[0]).toMatchObject({ label: "tldr", ok: true, kind: "skipped-short" });
+    // acknowledgement-sized: nothing summarised, nothing cached
+    expect(cachedTldr(d.logDir!, "sh2", "ok", d)).toBeNull();
+    expect(existsSync(join(d.logDir!, "sh2.tldr"))).toBe(false);
+    expect(n).toBe(0);
+    expect(helperStats(d).models["apple-fm"]?.fallbacks ?? 0).toBe(0);
+  });
+
+  it("cachedTldr: a long input makes one model call; the real prompt shape reaches the model with the text", async () => {
+    const bodies: string[] = [];
+    const d = deps(async (w) => {
+      bodies.push(String(w.body));
+      return msg("Adds a helper for small tasks. It runs locally.");
+    });
+    cachedTldr(d.logDir!, "lg1", LONG_SPEC, d);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(bodies.length).toBe(1);
+    expect(bodies[0]).toContain("Add a helper for small tasks");
+    expect(bodies[0]).toContain("Summarize this task spec");
   });
 
   it("cachedTldr stays null when the model fails", async () => {
     const d = deps(async () => {
       throw new Error("down");
     });
-    cachedTldr(d.logDir!, "job2", "spec text", d);
+    cachedTldr(d.logDir!, "job2", LONG_SPEC, d);
     await new Promise((r) => setTimeout(r, 30));
-    expect(cachedTldr(d.logDir!, "job2", "spec text", d)).toBeNull();
+    expect(cachedTldr(d.logDir!, "job2", LONG_SPEC, d)).toBeNull();
   });
 
   it("cleaners cut to the asked shape", () => {
@@ -244,7 +277,7 @@ describe("uses fall back to rules", () => {
       n++;
       return w.kind === "messages" ? msg("") : ollama("Trims the spec input. Retries an empty answer.");
     });
-    const spec = "Local worker rules:\n1. Type-check first.\n\nFix the TL;DR lane.";
+    const spec = "Local worker rules:\n1. Type-check first.\n\nFix the TL;DR lane. " + LONG_SPEC;
     cachedTldr(d.logDir!, "job3", spec, d);
     await new Promise((r) => setTimeout(r, 50));
     expect(n).toBe(2); // one empty apple-fm answer, one retry — both inside this call
@@ -262,9 +295,9 @@ describe("uses fall back to rules", () => {
     const d = deps(async () => {
       throw new Error("down");
     });
-    cachedTldr(d.logDir!, "job4", "spec text", d);
+    cachedTldr(d.logDir!, "job4", LONG_SPEC, d);
     await new Promise((r) => setTimeout(r, 50));
-    expect(cachedTldr(d.logDir!, "job4", "spec text", d)).toBeNull();
+    expect(cachedTldr(d.logDir!, "job4", LONG_SPEC, d)).toBeNull();
     // the retry skipped the cooling-down apple-fm and fell to ollama: one call per model, not two
     const by = callsOf(d);
     expect(by.filter((c) => c.model === "apple-fm").length).toBe(1);
@@ -356,9 +389,9 @@ describe("apple-fm summaries stop failing", () => {
   it("an answer that cleans to nothing is asked once more, and the second answer is kept", async () => {
     const answers = ["ok", "Adds the chip. It lands in the status file."];
     const d = deps(async () => msg(answers.shift() ?? ""));
-    cachedTldr(d.logDir!, "retry1", "spec text", d);
+    cachedTldr(d.logDir!, "retry1", LONG_SPEC, d);
     await new Promise((r) => setTimeout(r, 50));
-    expect(cachedTldr(d.logDir!, "retry1", "spec text", d)).toBe("Adds the chip. It lands in the status file.");
+    expect(cachedTldr(d.logDir!, "retry1", LONG_SPEC, d)).toBe("Adds the chip. It lands in the status file.");
     expect(callsOf(d).map((c) => c.kind ?? "ok")).toEqual(["ok", "rejected", "ok"]);
   });
 
@@ -376,7 +409,7 @@ describe("apple-fm summaries stop failing", () => {
 describe("apple-fm rejections and contention (#31)", () => {
   it("a guardrail refusal is a rejection with its reason and excerpt on the log line", async () => {
     const d = deps(async () => msg("May contain unsafe content"));
-    cachedTldr(d.logDir!, "guard1", "spec text", d);
+    cachedTldr(d.logDir!, "guard1", LONG_SPEC, d);
     await new Promise((r) => setTimeout(r, 50));
     const rej = callsOf(d).filter((c) => c.kind === "rejected");
     expect(rej.length).toBe(2);
@@ -385,7 +418,7 @@ describe("apple-fm rejections and contention (#31)", () => {
 
   it("a too-short answer logs why", async () => {
     const d = deps(async () => msg("ok."));
-    cachedTldr(d.logDir!, "short1", "spec text", d);
+    cachedTldr(d.logDir!, "short1", LONG_SPEC, d);
     await new Promise((r) => setTimeout(r, 50));
     expect(callsOf(d).find((c) => c.kind === "rejected")).toMatchObject({ reason: "too-short", sample: "ok." });
   });

@@ -368,6 +368,15 @@ final class ANEAndModeTests: XCTestCase {
         XCTAssertNil(energyToWatts(delta: -5, unit: "mJ", seconds: 1))
     }
 
+    func testChannelPrefixMatch() {
+        XCTAssertTrue(channelMatches("ANE Energy", prefix: "ANE"))
+        XCTAssertTrue(channelMatches("GPU Energy", prefix: "GPU"))
+        XCTAssertTrue(channelMatches("CPU Energy", prefix: "CPU"))
+        XCTAssertFalse(channelMatches("ANEEL", prefix: "ANE"))
+        XCTAssertFalse(channelMatches("ane energy", prefix: "ANE"))
+        XCTAssertFalse(channelMatches("Package Energy", prefix: "ANE"))
+    }
+
     func testWorkModeRuleAndParse() {
         XCTAssertEqual(workModeRule(.balanced, used: 21, pace: 34), "cloud first: 21% < 80% of pace 34%")
         XCTAssertEqual(workModeRule(.balanced, used: 40, pace: 34), "local first: 40% >= 80% of pace 34%")
@@ -380,5 +389,15 @@ final class ANEAndModeTests: XCTestCase {
         XCTAssertEqual(batteryCaption(info: chg, remainingWh: nil, watts: nil), "charging, full in 40m")
         let ac = BatteryInfo(percent: 100, state: "charged", macRemainingMin: nil, onBattery: false)
         XCTAssertEqual(batteryCaption(info: ac, remainingWh: nil, watts: nil), "on AC")
+    }
+
+    func testActivityLineAndReroute() throws {
+        let json = #"{"id":"w1","activity":"tool","now":"Edit src/a.ts","local":true,"actions":["pause","to-cloud"]}"#
+        let r = try JSONDecoder().decode(QueueResponse.Row.self, from: Data(json.utf8))
+        XCTAssertEqual(activityLine(r), "tool · Edit src/a.ts")
+        XCTAssertEqual(rerouteItems(r).map(\.action), ["to-cloud"])
+        XCTAssertEqual(rerouteItems(r).first?.label, "Run on cloud (now local)")
+        let idle = try JSONDecoder().decode(QueueResponse.Row.self, from: Data(#"{"id":"w2"}"#.utf8))
+        XCTAssertNil(activityLine(idle))
     }
 }

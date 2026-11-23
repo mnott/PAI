@@ -357,6 +357,7 @@ export class SystemMonitor {
   private readonly now: () => number;
   private cached: SystemSample | null = null;
   private cachedAt = 0;
+  private memSizeOut: string | undefined;
   private lastRingT = 0;
   private ring: SystemSample[] | null = null;
   /** CPU load and when top last reported it */
@@ -442,9 +443,11 @@ export class SystemMonitor {
     const [vmOut, lvlOut, memOut, swOut] = await Promise.all([
       this.run("vm_stat", []).catch(() => undefined),
       this.run("sysctl", ["-n", "kern.memorystatus_level"]).catch(() => undefined),
-      this.run("sysctl", ["-n", "hw.memsize"]).catch(() => undefined),
+      // hw.memsize never changes: one spawn per process, not per poll (each spawn blocks the router's event loop ~100 ms)
+      this.memSizeOut !== undefined ? Promise.resolve(this.memSizeOut) : this.run("sysctl", ["-n", "hw.memsize"]).catch(() => undefined),
       this.run("sysctl", ["vm.swapusage"]).catch(() => undefined),
     ]);
+    if (memOut !== undefined && num(Number(memOut.trim())) !== undefined) this.memSizeOut = memOut;
     const ticks = cpuTicks();
     if (ticks.total > this.prevTicks.total) this.topCpu = (100 * (ticks.busy - this.prevTicks.busy)) / (ticks.total - this.prevTicks.total);
     this.prevTicks = ticks;

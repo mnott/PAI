@@ -284,6 +284,10 @@ struct JobRow: View {
                         Spacer(minLength: 4)
                         Text(formatElapsed(seconds: row.seconds ?? 0)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                     }
+                    if let line = activityLine(row) {
+                        Text(line).font(.caption2).foregroundStyle(.secondary).opacity(0.7).lineLimit(1)
+                            .padding(.leading, 12)
+                    }
                     HStack(spacing: 4) {
                         Chip(text: session, hue: hues[session] ?? hue(for: session))
                         if let t = row.topic, !t.isEmpty { Chip(text: topicChipText(t), hue: hue(for: "topic:" + t), topic: true) }
@@ -293,6 +297,13 @@ struct JobRow: View {
                 }
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                ForEach(rerouteItems(row), id: \.action) { item in
+                    Button(item.label) {
+                        Task { message = await Store.shared.performAction(baseURL: baseURL, id: row.id ?? "", action: item.action) }
+                    }
+                }
+            }
 
             if expandedId == row.id {
                 VStack(alignment: .leading, spacing: 4) {
