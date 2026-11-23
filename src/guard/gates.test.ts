@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
 import { decidePreGates, decideWorkerGate } from "./gates.js";
 import { WORKER_CHILD_ROUTE_REASON, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 
@@ -196,5 +197,25 @@ describe("headless-browser automation is denied in the interactive session hook 
   it("denies an Edit/Write import of playwright", () => {
     expect(w("Write", { file_path: "/nonexistent-ba/x.ts", content: `import { chromium } from "playwright";` })?.action).toBe("deny");
     expect(w("Edit", { file_path: "/nonexistent-ba/x.ts", new_string: "const a = 1;" })?.action).not.toBe("deny");
+  });
+});
+
+describe("sleep-poll gate: per-step rule", () => {
+  const verdict = (tool: string, command: string) => decideSleepPollGate({ tool_name: tool, tool_input: { command } }, {}).decision;
+  const loops = [
+    'for i in $(seq 1 9); do curl -sf -m 2 127.0.0.1:8035/v1/models >/dev/null && { echo up; break; }; sleep 5; done; echo done',
+    'for i in $(seq 1 15); do curl -sf -m 1 127.0.0.1:8035/v1/models >/dev/null && { echo "up"; exit 0; }; sleep 2; done; echo "not up"',
+    'until curl -sf -m 2 127.0.0.1:8035/v1/models >/dev/null; do sleep 2; done; echo up',
+  ];
+  it("allows bounded wait loops in Bash and Monitor", () => {
+    for (const c of loops) {
+      expect(verdict("Bash", c)).toBe("allow");
+      expect(verdict("Monitor", c)).toBe("allow");
+    }
+  });
+  it("denies a single sleep over 60s and a chained sleep sequence over 60s", () => {
+    expect(verdict("Bash", "sleep 65")).toBe("deny");
+    expect(verdict("Bash", "sleep 61; curl x")).toBe("deny");
+    expect(verdict("Bash", "sleep 40; sleep 40; curl x")).toBe("deny");
   });
 });

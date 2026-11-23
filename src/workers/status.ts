@@ -992,14 +992,6 @@ function sleepSum(text: string): number {
   return sum;
 }
 
-/**
- * `while ... read ...; do ...; done < file`: a bounded loop over the file's lines. Its length is
- * unknown here, so the per-step sleep stands alone (the gate's intent is "no single wait > 60s").
- */
-function readsFromFile(header: string, afterDone: string): boolean {
-  return /\bread\b/.test(header) && /^\s*<(?!<)/.test(afterDone);
-}
-
 /** Iterations of a `for x in <words>` header, or null when not provably small. */
 function forIterations(header: string): number | null {
   const words = header.replace(/^\s*\w+\s+in\s+/, "").trim();
@@ -1012,8 +1004,8 @@ function forIterations(header: string): number | null {
 /**
  * Total sleep of one Bash command: every `sleep N` segment counted once, plus
  * loop repetition — `for x in a b c` multiplies its body by the word count;
- * `while`/`until` and any unbounded `for` count as at least SLEEP_FLOOR_SECS,
- * except a `kill -0` job-wait (the sanctioned wait-for-a-job loop). Used by
+ * `while`/`until` and any `for` of unknown length count their body once (the
+ * rule is per step; the loop's own condition ends it). Used by
  * the PreToolUse gate so `sleep 58; sleep 58` is caught as the 116 s it is.
  */
 // ponytail: loops are not nested-aware (body ends at the first `done`); upgrade to a real shell parse if that bites.
@@ -1024,9 +1016,7 @@ export function totalSleepSecs(command: string): number {
     if (body === 0) continue;
     if (m[1] === "for") {
       const n = forIterations(m[2]);
-      total += n === null ? Math.max(SLEEP_FLOOR_SECS, body) : body * (n - 1);
-    } else if (!/\bkill\s+-0\b/.test(m[2]) && !readsFromFile(m[2], command.slice(m.index + m[0].length))) {
-      total += SLEEP_FLOOR_SECS;
+      if (n !== null) total += body * (n - 1);
     }
   }
   return total;
