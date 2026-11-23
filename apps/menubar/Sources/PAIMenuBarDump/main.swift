@@ -39,6 +39,8 @@ let base = URL(string: CommandLine.arguments.dropFirst().first ?? "http://127.0.
             chart("poll \(i)")
         }
     }
+    print("== Power")
+    print("mode \(store.powerMode.label) battery \(store.battery.map { _ in store.batteryLine() } ?? "none")")
     print("== Local models")
     for l in store.limits?.localUp() ?? [] {
         let t = store.data?.ttft(provider: l.provider ?? "") ?? (nil, nil)

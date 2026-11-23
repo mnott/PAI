@@ -240,3 +240,60 @@ final class StoreLiveTests: XCTestCase {
         XCTAssertEqual(speedText("decode", live: nil, last: nil), "decode —")
     }
 }
+
+final class PowerTests: XCTestCase {
+    let custom = """
+    Battery Power:
+     lowpowermode         1
+     powermode            0
+    AC Power:
+     lowpowermode         0
+     powermode            2
+    """
+
+    func testPowerModePerSource() {
+        XCTAssertEqual(parsePowerMode(pmsetCustom: custom, onBattery: true), .low)
+        XCTAssertEqual(parsePowerMode(pmsetCustom: custom, onBattery: false), .high)
+        XCTAssertEqual(parsePowerMode(pmsetCustom: "AC Power:\n powermode 0\n", onBattery: false), .auto)
+    }
+
+    func testBatteryParse() {
+        let ac = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t80%; AC attached; not charging present: true\n"
+        XCTAssertEqual(parseBattery(pmsetBatt: ac)?.state, "ac")
+        let dis = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t55%; discharging; 3:20 remaining present: true\n"
+        let b = parseBattery(pmsetBatt: dis)!
+        XCTAssertEqual(b.percent, 55); XCTAssertEqual(b.state, "discharging")
+        XCTAssertEqual(b.macRemainingMin, 200); XCTAssertTrue(b.onBattery)
+        XCTAssertNil(parseBattery(pmsetBatt: "Now drawing from 'AC Power'\n"))
+        let chg = "Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t55%; charging; 1:10 remaining present: true\n"
+        XCTAssertEqual(parseBattery(pmsetBatt: chg)?.state, "charging")
+    }
+
+    func testRuntimeAtCurrentUsage() {
+        let info = BatteryInfo(percent: 55, state: "discharging", macRemainingMin: 200, onBattery: true)
+        XCTAssertEqual(runtimeText(info: info, remainingWh: 78.5, watts: 35), "2h 15m at 35 W")
+        XCTAssertEqual(runtimeText(info: info, remainingWh: nil, watts: 35), "3h 20m (macOS estimate)")
+        var ac = info; ac.state = "charging"
+        XCTAssertNil(runtimeText(info: ac, remainingWh: 78, watts: 35))
+        XCTAssertEqual(parseRemainingWh(ioreg: "\"Voltage\" = 12000\n\"AppleRawCurrentCapacity\" = 6000\n"), 72)
+        let s = [SystemResponse.Sample(t: 0, systemW: 100), .init(t: 100_000, systemW: 30), .init(t: 150_000, systemW: 40)]
+        XCTAssertEqual(smoothedWatts(s), 35) // last 90 s only
+    }
+
+    func testSudoersAndCommands() {
+        XCTAssertEqual(sudoersText(user: "someone"), """
+        someone ALL=(root) NOPASSWD: /usr/bin/pmset -a powermode 0
+        someone ALL=(root) NOPASSWD: /usr/bin/pmset -a powermode 1
+        someone ALL=(root) NOPASSWD: /usr/bin/pmset -a powermode 2
+
+        """)
+        XCTAssertEqual(powerModeCommand(.high), ["/usr/bin/sudo", "-n", "/usr/bin/pmset", "-a", "powermode", "2"])
+        XCTAssertEqual(powerModeAdminShell(.low), "/usr/bin/pmset -a powermode 1")
+        let script = sudoersInstallScript(user: "someone")
+        XCTAssertTrue(script.contains("visudo -cf"))
+        XCTAssertTrue(script.contains("chmod 0440"))
+        XCTAssertTrue(script.contains("root:wheel"))
+        XCTAssertTrue(script.contains(sudoersPath))
+        XCTAssertEqual(sudoersRemoveScript, "/bin/rm -f /etc/sudoers.d/pai-powermode")
+    }
+}

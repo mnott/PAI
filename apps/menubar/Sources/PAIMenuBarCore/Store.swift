@@ -13,6 +13,11 @@ public final class Store: ObservableObject {
     @Published public private(set) var history: [SystemResponse.Sample] = []
     public static let historyCap = 400
     public static let liveMin = 5
+    @Published public private(set) var battery: BatteryInfo?
+    @Published public private(set) var remainingWh: Double?
+    @Published public private(set) var powerMode: PowerMode = .auto
+    /// charge % over time (t in ms), same window as the CPU chart
+    @Published public private(set) var batteryHistory: [SystemResponse.Sample] = []
     private var seedCount = 0
     /// Last non-zero decode/prefill reading per local provider: the router reports 0/null
     /// between measurements while requests are still in flight.
@@ -34,6 +39,8 @@ public final class Store: ObservableObject {
             limits = lv; system = sv; queue = qv
             ingest(system: sv)
             ingest(limits: lv)
+            let r = await Task.detached { PowerSystem.read() }.value
+            ingest(power: r)
             if heavyDue, let d: DataResponse = try? await get("cockpit/data?window=1h", baseURL) { data = d }
             error = nil
         } catch {
@@ -57,6 +64,30 @@ public final class Store: ObservableObject {
             if seedCount > 0, history.count - seedCount >= Store.liveMin { history.removeFirst(seedCount); seedCount = 0 }
             if history.count > Store.historyCap { history.removeFirst(history.count - Store.historyCap) }
         }
+    }
+
+    public func ingest(power r: PowerSystem.Reading, now: Double = Date().timeIntervalSince1970 * 1000) {
+        battery = r.battery; remainingWh = r.wh; powerMode = r.mode
+        guard let b = r.battery else { batteryHistory = []; return }
+        batteryHistory.append(.init(t: now, memPct: b.percent))
+        if batteryHistory.count > Store.historyCap { batteryHistory.removeFirst(batteryHistory.count - Store.historyCap) }
+    }
+
+    /// Text under the battery graph: state, draw, runtime at current usage.
+    public func batteryLine() -> String {
+        guard let b = battery else { return "" }
+        let w = smoothedWatts(history)
+        var parts = ["\(Int(b.percent))%", b.state == "ac" ? "on AC" : b.state]
+        if let w { parts.append("\(Int(w.rounded())) W") }
+        if let rt = runtimeText(info: b, remainingWh: remainingWh, watts: w) { parts.append(rt) }
+        return parts.joined(separator: " · ")
+    }
+
+    public func setPowerMode(_ mode: PowerMode, viaPrompt: (PowerMode) -> String?) async -> String {
+        let quiet = await Task.detached { PowerSystem.setWithoutPrompt(mode) }.value
+        if !quiet, let err = viaPrompt(mode) { return err }
+        powerMode = mode
+        return "power mode: \(mode.label)"
     }
 
     public func ingest(limits lv: LimitsResponse) {

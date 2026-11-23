@@ -171,12 +171,18 @@ struct MetricRow: View {
 struct SystemCard: View {
     var sys: SystemResponse?
     var history: [SystemResponse.Sample]
+    var battery: BatteryInfo? = nil
+    var batteryHistory: [SystemResponse.Sample] = []
+    var batteryLine = ""
     var body: some View {
         Card {
             if let c = sys?.current {
                 let s = tailSeries(history)
                 let memPct = (c.memTotal ?? 0) > 0 ? (c.memUsed ?? 0) / (c.memTotal ?? 1) * 100 : 0
                 MetricRow(label: "CPU", value: "\(Int(c.cpu ?? 0))%", tint: Palette.cpu, fraction: c.cpu, spark: s.compactMap(\.cpu))
+                if battery != nil {
+                    MetricRow(label: "Battery", value: batteryLine, tint: Palette.ok, fraction: battery?.percent, spark: tailSeries(batteryHistory).compactMap(\.memPct))
+                }
                 MetricRow(label: "GPU", value: "\(Int(c.gpu ?? 0))%", tint: Palette.gpu, fraction: c.gpu, spark: s.compactMap(\.gpu))
                 MetricRow(label: "SoC", value: String(format: "%.1f°C", c.socTemp ?? 0), tint: Palette.soc, fraction: c.socTemp, spark: s.compactMap(\.socTemp))
                 MetricRow(label: "Power", value: String(format: "%.0f W", c.systemW ?? c.totalW ?? 0), tint: Palette.power, spark: s.compactMap(\.systemW))
@@ -396,6 +402,7 @@ struct MachineBar: View {
     var machine: QueueResponse.Machine?
     var baseURL: URL
     @Binding var message: String?
+    var powerMode: PowerMode = .auto
     @State private var armed: String?
     @State private var duration: Double = 0 // minutes, 0 = until thawed
 
@@ -431,6 +438,18 @@ struct MachineBar: View {
                     Button("Deep freeze") { armed = "deep-freeze" }
                         .help("WIP-commit and stop everything; survives a reboot")
                 }
+            }
+            .controlSize(.small)
+            HStack(spacing: 4) {
+                Text("Power").font(.caption2).foregroundStyle(.secondary)
+                ForEach(PowerMode.allCases, id: \.rawValue) { m in
+                    Button(m.label) {
+                        Task { message = await Store.shared.setPowerMode(m, viaPrompt: PowerPrompt.setMode) }
+                    }
+                    .buttonStyle(.bordered).tint(m == powerMode ? Color(Palette.acc) : nil)
+                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(m == powerMode ? Color(Palette.acc) : .clear))
+                }
+                Spacer()
             }
             .controlSize(.small)
         }
@@ -472,9 +491,9 @@ struct PopoverContent: View {
             if let err = store.error {
                 Text(err).font(.caption).foregroundStyle(Color(Palette.bad))
             }
-            Card { MachineBar(machine: store.queue?.machine, baseURL: base, message: $message) }
+            Card { MachineBar(machine: store.queue?.machine, baseURL: base, message: $message, powerMode: store.powerMode) }
             LimitsCard(limits: store.limits, queue: store.queue, data: store.data, speeds: store.lastSpeed)
-            SystemCard(sys: store.system, history: store.history)
+            SystemCard(sys: store.system, history: store.history, battery: store.battery, batteryHistory: store.batteryHistory, batteryLine: store.batteryLine())
             QueueCard(queue: store.queue, search: search, baseURL: base, expandedId: $expandedId, message: $message)
             if let message { Text(message).font(.caption2).foregroundStyle(.secondary).lineLimit(2) }
             Divider()

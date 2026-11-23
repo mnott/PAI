@@ -43,6 +43,27 @@ VPN. When unreachable the popover shows "cannot reach <url>".
 
 Refresh: every 2.5 s while the popover is open, every 15 s while closed.
 
+## Power mode and battery
+
+The machine row has Power: Low / Auto / High (the active source's mode, read with
+`pmset -g custom`). Click asks for your admin password through the system prompt
+(AppleScript, nothing stored); a declined prompt shows the error inline.
+
+Optional: Settings, "Switch power mode without asking" (off by default). Turning it on
+asks for admin once and writes `/etc/sudoers.d/pai-powermode` with exactly three
+lines allowing your user to run `/usr/bin/pmset -a powermode 0`, `1` and `2` without a
+password (written to a temp file, checked with `visudo -cf`, installed 0440 root:wheel).
+The app then runs `sudo -n /usr/bin/pmset -a powermode N`; if that fails it falls back
+to the prompt. Turning the setting off removes the file (one admin prompt). The sudoers
+rule is the interim mechanism for the ad-hoc signed build; with a Developer ID signed,
+notarised app it moves to an SMAppService privileged helper (approved once in System
+Settings > Login Items & Extensions).
+
+On Macs with a battery, a Battery row sits under CPU: charge over time (same window as
+CPU), charging state, current draw and the runtime at current usage (remaining Wh from
+`ioreg` divided by the draw smoothed over ~90 s, e.g. "2h 10m at 35 W"); macOS's own
+estimate is shown only as a labelled fallback. Hidden without a battery.
+
 ## Endpoints
 
 The app tries `127.0.0.1:8790`, then this Mac's tailnet name (read at runtime
