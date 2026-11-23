@@ -65,3 +65,7 @@ tmp/
 # One-off local debug harness
 /tmp/
 __pycache__/
+
+# menu bar app build output
+apps/menubar/.build/
+apps/menubar/build/

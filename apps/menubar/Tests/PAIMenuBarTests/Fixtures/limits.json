@@ -1,0 +1,76 @@
+{
+ "now": 1700000000000,
+ "limits": [
+  {
+   "provider": "anthropic",
+   "kind": "cloud",
+   "windows": [
+    {
+     "name": "5h",
+     "percent": 42,
+     "resetAt": 1700010800000,
+     "pace": 62.5
+    },
+    {
+     "name": "7d",
+     "percent": 18,
+     "resetAt": 1700172800000,
+     "pace": 30
+    }
+   ]
+  },
+  {
+   "provider": "example-cloud",
+   "kind": "cloud",
+   "windows": [],
+   "error": "not configured"
+  },
+  {
+   "provider": "signal-2",
+   "kind": "local",
+   "up": true,
+   "served": [
+    "example-model-a"
+   ],
+   "speed": {
+    "prefillTps": 300.5,
+    "decodeTps": 40.2
+   },
+   "instances": [
+    {
+     "id": "signal-2#1",
+     "inflight": 1
+    },
+    {
+     "id": "signal-2#2",
+     "inflight": 2
+    }
+   ]
+  },
+  {
+   "provider": "apple-fm",
+   "kind": "local",
+   "up": true,
+   "served": [
+    "apple-fm"
+   ],
+   "speed": null,
+   "instances": [
+    {
+     "id": "apple-fm#1",
+     "inflight": 0
+    }
+   ]
+  },
+  {
+   "provider": "local-down",
+   "kind": "local",
+   "up": false,
+   "served": null,
+   "speed": {
+    "prefillTps": 900,
+    "decodeTps": 90
+   }
+  }
+ ]
+}
