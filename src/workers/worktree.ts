@@ -171,6 +171,8 @@ export interface WorktreeInfo {
   startBranch?: string;
   /** Set when a dirty checkout was NOT snapshotted, and why (a running in-place worker is editing it). */
   snapshotSkipped?: string;
+  /** Untracked paths the snapshot left out (build output, oversized directories). */
+  snapshotOmitted?: string[];
 }
 
 /** Live workers running in place (no worktree of their own) in the same checkout as `cwd`. */
@@ -280,17 +282,24 @@ export function ensureScratchDir(dir: string): void {
  * caller then branches a worktree from that commit, so the worktree sees
  * exactly what was on disk, uncommitted or not.
  */
-function snapshotUncommitted(cwd: string, id: string, head: string, bookkeeping: string[]): string {
+function snapshotUncommitted(cwd: string, id: string, head: string, bookkeeping: string[]): { commit: string; omitted: string[] } {
   const idxDir = mkdtempSync(join(tmpdir(), "pai-worktree-idx-"));
   const idx = join(idxDir, "index");
   try {
     const env = { ...process.env, GIT_INDEX_FILE: idx };
     runGit(cwd, ["read-tree", head], env);
-    runGit(cwd, ["add", "-A"], env);
+    // tracked modifications and deletions, then only the untracked files worth carrying
+    runGit(cwd, ["add", "-u"], env);
+    const { keep, omitted } = selectUntracked(cwd);
+    for (let i = 0; i < keep.length; i += 500) {
+      runGit(cwd, ["--literal-pathspecs", "add", "--", ...keep.slice(i, i + 500)], env);
+    }
     // PAI's own bookkeeping stays at its HEAD state in the snapshot
     if (bookkeeping.length) runGit(cwd, ["--literal-pathspecs", "reset", "-q", head, "--", ...bookkeeping], env);
     const tree = runGit(cwd, ["write-tree"], env);
-    return runGit(cwd, [
+    // nothing worth snapshotting (only build output was untracked): branch from HEAD itself
+    if (tree === runGit(cwd, ["rev-parse", `${head}^{tree}`])) return { commit: head, omitted };
+    const commit = runGit(cwd, [
       "commit-tree",
       tree,
       "-p",
@@ -298,9 +307,54 @@ function snapshotUncommitted(cwd: string, id: string, head: string, bookkeeping:
       "-m",
       `worker ${id}: snapshot of uncommitted checkout`,
     ]);
+    return { commit, omitted };
   } finally {
     rmSync(idxDir, { recursive: true, force: true });
   }
+}
+
+/** Untracked directories that are build output, never snapshotted. */
+export const SNAPSHOT_BUILD_DIRS = ["build", "ephemeral", ".dart_tool", "node_modules", "dist", "Pods", "DerivedData"];
+/** An untracked top-level directory with more files or bytes than this is skipped. */
+export const SNAPSHOT_MAX_DIR_FILES = 200;
+export const SNAPSHOT_MAX_DIR_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Untracked, not-ignored files a snapshot may carry (`git ls-files --others
+ * --exclude-standard`), minus build output: files below a known build dir and
+ * whole untracked directories over the file-count or size threshold. Returns
+ * what it skips, one entry per directory.
+ */
+export function selectUntracked(cwd: string): { keep: string[]; omitted: string[] } {
+  const raw = runGit(cwd, ["ls-files", "--others", "--exclude-standard", "-z"], undefined, 60_000).split("\0").filter(Boolean);
+  const keep: string[] = [];
+  const omitted = new Set<string>();
+  const groups = new Map<string, string[]>(); // top-level directory -> files
+  for (const f of raw) {
+    const parts = f.split("/");
+    const bi = parts.findIndex((p, i) => i < parts.length - 1 && SNAPSHOT_BUILD_DIRS.includes(p));
+    if (bi >= 0) {
+      omitted.add(`${parts.slice(0, bi + 1).join("/")}/ (build output)`);
+      continue;
+    }
+    if (parts.length === 1) {
+      keep.push(f);
+      continue;
+    }
+    const files = groups.get(parts[0]) ?? [];
+    files.push(f);
+    groups.set(parts[0], files);
+  }
+  for (const [top, files] of groups) {
+    let bytes = 0;
+    for (const f of files) {
+      try { bytes += lstatSync(join(cwd, f)).size; } catch { /* vanished */ }
+    }
+    if (files.length > SNAPSHOT_MAX_DIR_FILES || bytes > SNAPSHOT_MAX_DIR_BYTES) {
+      omitted.add(`${top}/ (${files.length} untracked files, ${Math.round(bytes / 1024)} KB: over the snapshot threshold)`);
+    } else keep.push(...files);
+  }
+  return { keep, omitted: [...omitted].sort() };
 }
 
 /**
@@ -324,14 +378,24 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
     ? `checkout is dirty because in-place worker(s) ${editing.join(", ")} are running in it; no snapshot, branching from HEAD`
     : undefined;
   if (snapshotSkipped) dirty = false;
-  const base = dirty ? snapshotUncommitted(cwd, id, head, bookkeeping) : head;
+  let base = head;
+  let omitted: string[] = [];
+  if (dirty) {
+    const snap = snapshotUncommitted(cwd, id, head, bookkeeping);
+    base = snap.commit;
+    omitted = snap.omitted;
+    dirty = base !== head;
+    if (omitted.length) {
+      try { appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id, note: `snapshot skipped: ${omitted.join("; ")}` }); } catch { /* best effort */ }
+    }
+  }
   // -B: a reusable leftover branch is reset to base; a fresh name is simply created
   git(cwd, ["worktree", "add", "-B", branch, dir, base]);
   ensureScratchDir(dir);
   provisionDeps(logDir, id, cwd, dir);
   let startBranch = "";
   try { startBranch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"]); } catch { /* detached */ }
-  return { dir, branch, base, snapshot: dirty, ...(startBranch ? { startBranch } : {}), ...(snapshotSkipped ? { snapshotSkipped } : {}) };
+  return { dir, branch, base, snapshot: dirty, ...(startBranch ? { startBranch } : {}), ...(snapshotSkipped ? { snapshotSkipped } : {}), ...(omitted.length ? { snapshotOmitted: omitted } : {}) };
 }
 
 /**
@@ -982,7 +1046,18 @@ function mergeSnapshotWorker(
     const oldHead = git(targetTree, ["rev-parse", "HEAD"]);
     let autoNote: string | null = null;
     try {
-      git(targetTree, ["merge", "--no-ff", branch, "-m", `merge worker ${id} (${st.label})`]);
+      if (isAncestor(targetTree, snapshot, "HEAD")) {
+        git(targetTree, ["merge", "--no-ff", branch, "-m", `merge worker ${id} (${st.label})`]);
+      } else {
+        // the snapshot commit is not part of the target's history and must not land there as
+        // its own commit: replay only the worker's own commits on top of the target's HEAD
+        try {
+          git(targetTree, ["cherry-pick", "--allow-empty", "--keep-redundant-commits", `${snapshot}..${branch}`]);
+        } catch (ce) {
+          try { git(targetTree, ["cherry-pick", "--abort"]); } catch { /* none in progress */ }
+          throw ce;
+        }
+      }
     } catch (e) {
       let files: string[] = [];
       let inProgress = false;
