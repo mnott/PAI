@@ -7,11 +7,16 @@
  * - warns cloud workers (no say) when 3+ calls fail
  */
 
+import { readFileSync } from "node:fs";
 import { eventsPath, ledgerPath } from "./paths.js";
 import { requestKill } from "./endreason.js";
 import { WorkerStatus } from "./status.js";
 import { detectEchoLoop, detectRepeatLoop, echoLoopAction, loopAction, LOOP_WARN_AT, type RepeatLoop } from "./repeat-loop.js";
 import { ANTHROPIC_NATIVE } from "./config.js";
+import { detectEditMiss, editMissNote, recordEditMiss } from "./edit-miss.js";
+
+/** Failed-Edit notes already delivered, per `sent` map (supervision prunes that map by worker id, so this lives beside it). */
+const editSent = new WeakMap<object, Map<string, number>>();
 
 export const LOOP_NOTE = "you have repeated the same failing call 3 times; the file already contains this text or your old_string is wrong: re-read the file region or move on";
 
@@ -28,6 +33,7 @@ export interface LoopFinding {
 
 export interface LoopDeps {
   readEvents?: (logDir: string, id: string) => unknown[];
+  readFile?: (path: string) => string | null;
   say?: (logDir: string, id: string, text: string) => Promise<unknown>;
   kill?: (pid: number) => void;
   /** Ends the worker's live sub-workers before the worker itself is stopped. */
@@ -77,6 +83,13 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
         throw err;
       }
     },
+    readFile = (path: string): string | null => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return null;
+      }
+    },
     say = async (logDir, id, text) => {
       const { sayToWorker } = await import("./operator.js");
       return sayToWorker(logDir, id, text);
@@ -97,6 +110,27 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
 
     try {
       const events = await readEvents(logDir, status.id);
+      const miss = detectEditMiss(events);
+      if (miss) {
+        const seen = editSent.get(sent) ?? editSent.set(sent, new Map()).get(sent)!;
+        const key = `${status.id}:${miss.file}`;
+        if ((seen.get(key) ?? 0) < miss.count) {
+          const first = !seen.has(key);
+          seen.set(key, miss.count);
+          if (first || miss.count >= 3) {
+            // counted once per failed-Edit run on a file, per model, so the rate of this failure can be measured
+            recordEditMiss(logDir, { worker: status.id, model: status.model, provider: status.provider, file: miss.file, count: miss.count });
+            if (status.provider !== ANTHROPIC_NATIVE) {
+              const abs = miss.file.startsWith("/") ? miss.file : `${status.worktreeDir ?? status.cwd}/${miss.file}`;
+              try {
+                await say(logDir, status.id, editMissNote(miss, readFile(abs)));
+              } catch {
+                // errors swallowed
+              }
+            }
+          }
+        }
+      }
       const loop = detectRepeatLoop(events, LOOP_WARN_AT, status.worktreeDir ?? status.cwd) ?? detectEchoLoop(events);
       if (!loop) continue;
 

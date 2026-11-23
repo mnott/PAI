@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { classifyToolError, commandHead, harnessEvidence, lastCommand, recordToolErrorCandidates, type ToolErrorRecord } from "./tool-errors.js";
+import { checkLoops } from "./loop-watch.js";
+import { detectEditMiss, editMissNote } from "./edit-miss.js";
 
 const rec = (over: Partial<ToolErrorRecord>): ToolErrorRecord => ({
   ts: 0,
@@ -195,5 +197,49 @@ describe("repeated model tool errors become antipattern candidates", () => {
     const rec = (ts: number): ToolErrorRecord => ({ ...sedRec("w1", ts), signature: "Bash|Exit code <N>", raw: "Exit code 1", input: "grep -r zzz file.txt" });
     recordToolErrorCandidates([rec(now), rec(now + 1000), rec(now + 2000)], now + 3000);
     expect(candidateFiles().length).toBe(0);
+  });
+});
+
+describe("failed Edit note", () => {
+  const fileLines = Array.from({ length: 200 }, (_, i) => `    const line${i} = ${i};`);
+  fileLines[100] = "    expect(parse(out)).toEqual({ a: 1, b: 2 });";
+  const content = fileLines.join("\n");
+  // the model's anchor: indentation changed, one line changed
+  const oldString = "  expect(parse(out)).toEqual({ a: 1, b: 3 });\n  const line101 = 101;";
+  const transcript = (n: number) => {
+    const ev: unknown[] = [];
+    for (let i = 0; i < n; i++) {
+      ev.push({ type: "assistant", message: { content: [{ type: "tool_use", id: `t${i}`, name: "Edit", input: { file_path: "/w/a.test.ts", old_string: oldString + " ".repeat(i), new_string: "z" } }] } });
+      ev.push({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: `t${i}`, is_error: true, content: "String to replace not found in file." }] } });
+    }
+    return ev;
+  };
+  it("first failure carries the real lines around the fuzzy match", () => {
+    const note = editMissNote(detectEditMiss(transcript(1))!, content);
+    expect(note).toContain("copy your anchor from these lines");
+    expect(note).toContain("  101|     expect(parse(out)).toEqual({ a: 1, b: 2 });");
+    expect(note).toContain("const line101 = 101;");
+    expect(note).not.toContain("const line10 = 10;");
+  });
+  it("whole file when under 120 lines", () => {
+    expect(editMissNote(detectEditMiss(transcript(1))!, "a\nb\nc")).toContain("    3| c");
+  });
+  it("third failure says Write or a line-number edit", () => {
+    const note = editMissNote(detectEditMiss(transcript(3))!, content);
+    expect(note).toMatch(/with Write/);
+    expect(note).toMatch(/python\/sed/);
+  });
+  it("checkLoops says on the 1st and 3rd failure and counts per model", async () => {
+    const said: string[] = [];
+    const status: any = { id: "w1", state: "running", provider: "gyro-l", model: "m1", cwd: "/w", pid: 1 };
+    const sent: Record<string, string> = {};
+    const logDir = mkdtempSync(join(tmpdir(), "em-"));
+    for (const n of [1, 1, 2, 3]) {
+      await checkLoops(logDir, [status], sent, { say: async (_l: string, _i: string, t: string) => void said.push(t), readFile: () => content, readEvents: () => transcript(n) } as any);
+    }
+    expect(said.filter((t) => t.includes("copy your anchor"))).toHaveLength(1);
+    expect(said.filter((t) => /with Write/.test(t))).toHaveLength(1);
+    const rows = readFileSync(join(logDir, "edit-misses.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(rows.map((r) => r.model)).toEqual(["m1", "m1"]);
   });
 });
