@@ -378,6 +378,22 @@ pai worker flaky
 
 See also: `pai worker errors`
 
+### pai worker helper-check
+
+Which small helper model each side job resolves to
+
+```
+pai worker helper-check
+```
+
+Prints the helper model (apple-fm, a `role: helper` provider, ollama:<model>) that route, tldr, topic, alert, gate and report use, and warns when there is none. Main worker models are never used unless helper.allowMain is set.
+
+```sh
+pai worker helper-check
+```
+
+See also: `pai worker providers`
+
 ### pai worker status-line
 
 One-line worker summary for a status bar
@@ -2057,6 +2073,7 @@ See also: `pai worker providers`
 | `pai worker log` | Worker ledger or the raw events of one worker |
 | `pai worker errors` | Tool errors workers hit, grouped by kind |
 | `pai worker flaky` | Test files that failed in the merge gate's batch and passed alone |
+| `pai worker helper-check` | Which small helper model each side job resolves to |
 | `pai worker status-line` | One-line worker summary for a status bar |
 | `pai worker say` | Send a message to a running or queued worker |
 | `pai worker goal` | Leave a goal note on a running worker |

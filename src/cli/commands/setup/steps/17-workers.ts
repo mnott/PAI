@@ -3,9 +3,19 @@
 import { c, line, section, type Rl, promptYesNo, readConfigRaw } from "../utils.js";
 import { installWorkers } from "../../../../workers/install.js";
 import { readWorkersSection } from "../../../../workers/config.js";
+import { helperSetupWarning } from "../../../../workers/helper.js";
 import { describeProviders, setWorkersEnabled } from "../../../../workers/providers.js";
 
 export async function stepWorkers(rl: Rl): Promise<Record<string, unknown>> {
+  try {
+    return await stepWorkersInner(rl);
+  } finally {
+    const w = helperSetupWarning();
+    if (w) console.log(c.yellow(`  ${w}`));
+  }
+}
+
+async function stepWorkersInner(rl: Rl): Promise<Record<string, unknown>> {
   section("Step 16: Worker Providers (Optional)");
 
   const existing = readConfigRaw();

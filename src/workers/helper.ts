@@ -18,6 +18,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { Worker, receiveMessageOnPort, MessageChannel } from "node:worker_threads";
 import { loadConfig } from "../daemon/config.js";
@@ -29,6 +30,10 @@ export interface HelperConfig {
   enabled: boolean;
   /** Ordered: a provider name served by the router ("apple-fm") or "ollama:<model>". */
   models: string[];
+  /** Opt in: a provider that is a main worker model (no `role: helper`) may serve side jobs. Default false. */
+  allowMain: boolean;
+  /** Per-use model list override (`helper.uses.<use>.models`), keyed by use label or switch name. */
+  useModels: Record<string, string[]>;
   timeoutMs: number;
   maxInputChars: number;
   ollamaUrl: string;
@@ -36,9 +41,28 @@ export interface HelperConfig {
   uses: { toolErrors: boolean; tldr: boolean; gateSummary: boolean; routeClass: boolean; reportCheck: boolean };
 }
 
+/** In a models list: every enabled local provider of workers.yaml marked `role: helper`. */
+export const HELPER_ROLE = "@helper";
+/** In a models list: the legacy small default ollama:qwen3:8b, only when that Ollama model is installed here. */
+export const HELPER_LEGACY = "@legacy";
+const LEGACY_SPEC = "ollama:qwen3:8b";
+
+function legacyInstalled(deps: HelperDeps): boolean {
+  if (deps.ollamaInstalled) return deps.ollamaInstalled("qwen3:8b");
+  try {
+    return existsSync(join(process.env.OLLAMA_MODELS ?? join(homedir(), ".ollama", "models"), "manifests", "registry.ollama.ai", "library", "qwen3", "8b"));
+  } catch {
+    return false;
+  }
+}
+/** Use label of a helper call -> its `helper.uses` switch name. */
+const USE_KEY: Record<string, string> = { alert: "toolErrors", tldr: "tldr", gate: "gateSummary", route: "routeClass", report: "reportCheck", topic: "topic" };
+
 export const DEFAULT_HELPER: HelperConfig = {
   enabled: true,
-  models: ["apple-fm", "ollama:qwen3:8b"],
+  models: ["apple-fm", HELPER_ROLE, HELPER_LEGACY],
+  allowMain: false,
+  useModels: {},
   timeoutMs: 20_000,
   maxInputChars: 6000,
   ollamaUrl: "http://127.0.0.1:11434",
@@ -56,20 +80,29 @@ export function helperConfig(raw?: unknown): HelperConfig {
   }
   const o = (r && typeof r === "object" ? r : {}) as Record<string, unknown>;
   const u = (o.uses && typeof o.uses === "object" ? o.uses : {}) as Record<string, unknown>;
+  const strList = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((m): m is string => typeof m === "string" && !!m) : undefined);
+  const useModels: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(u)) {
+    const l = v && typeof v === "object" ? strList((v as Record<string, unknown>).models) : undefined;
+    if (l) useModels[k] = l;
+  }
+  const useOn = (k: string): boolean => (u[k] && typeof u[k] === "object" ? bool((u[k] as Record<string, unknown>).enabled, true) : bool(u[k], true));
   const num = (v: unknown, d: number): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d);
   const bool = (v: unknown, d: boolean): boolean => (typeof v === "boolean" ? v : d);
   return {
     enabled: bool(o.enabled, DEFAULT_HELPER.enabled),
-    models: Array.isArray(o.models) ? o.models.filter((m): m is string => typeof m === "string" && !!m) : DEFAULT_HELPER.models,
+    models: strList(o.models) ?? DEFAULT_HELPER.models,
+    allowMain: bool(o.allowMain, false),
+    useModels,
     timeoutMs: num(o.timeoutMs, DEFAULT_HELPER.timeoutMs),
     maxInputChars: num(o.maxInputChars, DEFAULT_HELPER.maxInputChars),
     ollamaUrl: typeof o.ollamaUrl === "string" && o.ollamaUrl ? o.ollamaUrl : DEFAULT_HELPER.ollamaUrl,
     uses: {
-      toolErrors: bool(u.toolErrors, true),
-      tldr: bool(u.tldr, true),
-      gateSummary: bool(u.gateSummary, true),
-      routeClass: bool(u.routeClass, true),
-      reportCheck: bool(u.reportCheck, true),
+      toolErrors: useOn("toolErrors"),
+      tldr: useOn("tldr"),
+      gateSummary: useOn("gateSummary"),
+      routeClass: useOn("routeClass"),
+      reportCheck: useOn("reportCheck"),
     },
   };
 }
@@ -106,6 +139,10 @@ export interface HelperDeps {
   routerModel?: (name: string) => string | null;
   /** Whether a router-served model is busy with a foreign request (default: the router's scheduler snapshot). */
   busy?: (name: string) => boolean;
+  /** workers.yaml providers as name -> role (default: the workers config). */
+  /** Whether an Ollama model tag is installed (default: its manifest exists under ~/.ollama). */
+  ollamaInstalled?: (tag: string) => boolean;
+  providerRoles?: () => Record<string, "main" | "helper">;
 }
 
 const SYSTEM = "You do one small bounded task. Answer exactly as instructed, plain text, no preface, no markdown.";
@@ -336,7 +373,46 @@ function plan(req: HelperRequest, deps: HelperDeps): Plan | null {
   const cfg = deps.config ?? helperConfig();
   if (!cfg.enabled) return null;
   const prompt = `${req.task}\n\n---\n${truncateInput(req.input, cfg.maxInputChars, req.keep ?? "tail")}`;
-  return { prompt, cfg, specs: cfg.models, start: (deps.now ?? Date.now)() };
+  return { prompt, cfg, specs: resolveHelperSpecs(req.label ?? "", cfg, deps).specs, start: (deps.now ?? Date.now)() };
+}
+
+function providerRoles(deps: HelperDeps): Record<string, "main" | "helper"> {
+  if (deps.providerRoles) return deps.providerRoles();
+  try {
+    const out: Record<string, "main" | "helper"> = {};
+    for (const [n, p] of Object.entries(readWorkersSection().workers.providers)) {
+      if (p.enabled !== false) out[n] = p.role === "helper" ? "helper" : "main";
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The ordered model specs one use may try: the use's own list, else `helper.models`. `@helper` expands to
+ * the `role: helper` providers; `ollama:<model>` is the user's explicit small model; apple-fm is the
+ * built-in helper; any other provider only with `role: helper`, or when `allowMain` is set. A main
+ * worker model never serves a side job by default (a context swap or slot taken just to classify).
+ */
+export function resolveHelperSpecs(label: string, cfg: HelperConfig, deps: HelperDeps = {}): { specs: string[]; refused: string[] } {
+  const key = USE_KEY[label] ?? label;
+  const list = cfg.useModels[label] ?? cfg.useModels[key] ?? cfg.models;
+  const roles = providerRoles(deps);
+  const specs: string[] = [];
+  const refused: string[] = [];
+  const add = (s: string): void => {
+    if (!specs.includes(s)) specs.push(s);
+  };
+  for (const m of list) {
+    if (m === HELPER_ROLE) {
+      for (const [n, r] of Object.entries(roles)) if (r === "helper") add(n);
+    } else if (m === HELPER_LEGACY) {
+      if (legacyInstalled(deps)) add(LEGACY_SPEC);
+    } else if (m.startsWith("ollama:") || m === "apple-fm" || roles[m] === "helper" || cfg.allowMain) add(m);
+    else refused.push(m);
+  }
+  return { specs, refused };
 }
 
 function usable(spec: string, now: number): boolean {
@@ -432,4 +508,33 @@ async function run(p: Plan, req: HelperRequest, deps: HelperDeps, send: (w: Wire
 export function resetHelperState(): void {
   coolUntil.clear();
   inflight = Promise.resolve();
+}
+
+/** Side-job uses (labels) that resolve a helper model. */
+export const HELPER_USES = ["alert", "tldr", "gate", "route", "report", "topic"] as const;
+
+/** Specs of a use that exist here: ollama:<m> entries and providers configured in workers.yaml (apple-fm only where its bridge is configured). */
+export function configuredHelperSpecs(label: string, cfg: HelperConfig, deps: HelperDeps = {}): string[] {
+  const roles = providerRoles(deps);
+  return resolveHelperSpecs(label, cfg, deps).specs.filter((s) => s.startsWith("ollama:") || s in roles);
+}
+
+/** Setup/doctor warning: no helper model at all (no apple-fm, no `role: helper` provider, no ollama entry). Null when fine or helpers are off. */
+export function helperSetupWarning(cfg: HelperConfig = helperConfig(), deps: HelperDeps = {}): string | null {
+  if (!cfg.enabled || HELPER_USES.some((u) => configuredHelperSpecs(u, cfg, deps).length)) return null;
+  return "no helper model: apple-fm is absent and no provider has `role: helper` in workers.yaml, so route classifier, TL;DR, topic and alert checks run on rules only. Add a small instruct model (0.6-4B, Ollama / llama.cpp / MLX) as a provider with `role: helper`; see docs/local-models/helper-model.md";
+}
+
+/** `pai worker helper-check`: which helper model each use resolves to, and why a listed one was refused. */
+export function helperReport(cfg: HelperConfig = helperConfig(), deps: HelperDeps = {}): string[] {
+  if (!cfg.enabled) return ["helper: off (helper.enabled: false)"];
+  const lines = [`helper models: ${cfg.models.join(", ")}${cfg.allowMain ? "  (allowMain: on)" : ""}`];
+  for (const u of HELPER_USES) {
+    const list = configuredHelperSpecs(u, cfg, deps);
+    const refused = resolveHelperSpecs(u, cfg, deps).refused;
+    lines.push(`  ${u.padEnd(7)} ${list.length ? list.join(" > ") : "none (rules only)"}${refused.length ? `   refused (main model, set role: helper or helper.allowMain): ${refused.join(", ")}` : ""}`);
+  }
+  const w = helperSetupWarning(cfg, deps);
+  if (w) lines.push(`warning: ${w}`);
+  return lines;
 }

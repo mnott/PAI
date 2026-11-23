@@ -115,6 +115,8 @@ export interface WorkerProvider {
    * committed. See resolveProviderKey for the one place this is read.
    */
   key?: string;
+  /** `helper`: a small model reserved for side jobs (route class, tldr, topic ...); see docs/local-models/helper-model.md. Unset = a main worker model. */
+  role?: "main" | "helper";
   /** Model id per capability; see MODEL_CAPABILITIES. Only default is required. */
   models: { default: string } & Partial<Record<ModelCapability, string>>;
   /**
@@ -1008,6 +1010,10 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     }
   }
 
+  if (p.role !== undefined && p.role !== "main" && p.role !== "helper") {
+    bad(`.providers.${name}.role`, 'must be "main" or "helper"');
+  }
+
   let hold: { since: string; reason: string } | undefined;
   if (p.hold !== undefined) {
     const h = p.hold as { since?: unknown; reason?: unknown } | null;
@@ -1128,6 +1134,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(p.router === false ? { router: false } : {}),
     ...(str(p.contract) ? { contract: str(p.contract) } : {}),
     ...(str(p.prompt) ? { prompt: str(p.prompt) } : {}),
+    ...(p.role === "helper" || p.role === "main" ? { role: p.role } : {}),
     ...(upstreamUrl ? { upstreamUrl } : {}),
     ...(engine !== "claude" ? { engine } : {}),
     ...(engine === "uhp" && str(p.harnessId) ? { harnessId: str(p.harnessId) } : {}),

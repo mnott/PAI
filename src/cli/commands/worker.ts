@@ -807,6 +807,19 @@ const errorsCommand: CommandDef = {
     }),
 };
 
+const helperCheckCommand: CommandDef = {
+  name: "helper-check",
+  summary: "Which small helper model each side job resolves to",
+  description: "Prints the helper model (apple-fm, a `role: helper` provider, ollama:<model>) that route, tldr, topic, alert, gate and report use, and warns when there is none. Main worker models are never used unless helper.allowMain is set.",
+  examples: ["pai worker helper-check"],
+  seeAlso: ["pai worker providers"],
+  run: () =>
+    guard("pai worker helper-check", async () => {
+      const { helperReport } = await import("../../workers/helper.js");
+      out(helperReport().join("\n"));
+    }),
+};
+
 const flakyCommand: CommandDef = {
   name: "flaky",
   summary: "Test files that failed in the merge gate's batch and passed alone",
@@ -1555,6 +1568,7 @@ export const workerCommand: CommandDef = {
     logCommand,
     errorsCommand,
     flakyCommand,
+    helperCheckCommand,
     statusLineCommand,
     sayCommand,
     goalCommand,
