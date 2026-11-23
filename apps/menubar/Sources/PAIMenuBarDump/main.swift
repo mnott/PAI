@@ -4,7 +4,29 @@ import PAIMenuBarCore
 // Headless check of the data layer: fetches the live router endpoints and
 // prints the four panels as the popover would show them.
 // Usage: PAIMenuBarDump [baseURL]
-let base = URL(string: CommandLine.arguments.dropFirst().first ?? "http://127.0.0.1:8790")!
+//        PAIMenuBarDump --ane-sample SECONDS   (in-process IOReport ANE power, no network)
+let args = CommandLine.arguments.dropFirst()
+
+/// True when the args ask for an ANE power sample instead of the router dump.
+func aneSampleSeconds(_ args: [String]) -> Double? {
+    guard let i = args.firstIndex(of: "--ane-sample"), i + 1 < args.count,
+          let s = Double(args[i + 1]), s > 0 else { return nil }
+    return s
+}
+
+if let secs = aneSampleSeconds(Array(args)) {
+    let reader = ANEReader()
+    print("channels: \(reader.available ? reader.matchedChannels.joined(separator: ", ") : "none (IOReport unavailable)")")
+    reader.read() // prime
+    for _ in 0..<Int(secs.rounded(.down)) {
+        Thread.sleep(forTimeInterval: 1)
+        let w = reader.read()
+        print("ane_w=\(w.map { String(format: "%.2f", $0) } ?? "n/a")")
+    }
+    exit(0)
+}
+
+let base = URL(string: args.first ?? "http://127.0.0.1:8790")!
 
 @MainActor func run() async {
     let store = Store()
@@ -23,9 +45,9 @@ let base = URL(string: CommandLine.arguments.dropFirst().first ?? "http://127.0.
     print("mem \(c?.memUsed ?? 0)/\(c?.memTotal ?? 0) swap \(c?.swapUsed ?? 0) wired \(c?.wired ?? 0) compressed \(c?.compressed ?? 0)")
     print("gpu \(c?.gpu ?? 0)% cpu \(c?.cpu ?? 0)% soc \(c?.socTemp ?? 0)C power \(c?.systemW ?? 0)W samples \(store.system?.series?.series?.count ?? 0)")
     // Optional: PAIMenuBarDump <url> <polls> <intervalSec> re-polls to show the chart series grow.
-    let args = CommandLine.arguments
-    let polls = args.count > 2 ? Int(args[2]) ?? 1 : 1
-    let gap = args.count > 3 ? Double(args[3]) ?? 3 : 3
+    let argv = CommandLine.arguments
+    let polls = argv.count > 2 ? Int(argv[2]) ?? 1 : 1
+    let gap = argv.count > 3 ? Double(argv[3]) ?? 3 : 3
     func chart(_ tag: String) {
         let h = store.history
         let tail = tailSeries(h)

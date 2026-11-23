@@ -368,6 +368,15 @@ final class ANEAndModeTests: XCTestCase {
         XCTAssertNil(energyToWatts(delta: -5, unit: "mJ", seconds: 1))
     }
 
+    func testChannelPrefixMatch() {
+        XCTAssertTrue(channelMatches("ANE Energy", prefix: "ANE"))
+        XCTAssertTrue(channelMatches("GPU Energy", prefix: "GPU"))
+        XCTAssertTrue(channelMatches("CPU Energy", prefix: "CPU"))
+        XCTAssertFalse(channelMatches("ANEEL", prefix: "ANE"))
+        XCTAssertFalse(channelMatches("ane energy", prefix: "ANE"))
+        XCTAssertFalse(channelMatches("Package Energy", prefix: "ANE"))
+    }
+
     func testWorkModeRuleAndParse() {
         XCTAssertEqual(workModeRule(.balanced, used: 21, pace: 34), "cloud first: 21% < 80% of pace 34%")
         XCTAssertEqual(workModeRule(.balanced, used: 40, pace: 34), "local first: 40% >= 80% of pace 34%")
