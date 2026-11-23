@@ -9,7 +9,7 @@
  */
 
 import { getProviderOrNative, isLocalProvider, readWorkersSection } from "./config.js";
-import { capacityGate, providerCap, instanceUp } from "./capacity.js";
+import { capacityGate, capacityOf, admitCap } from "./capacity.js";
 import { loadStatus, saveStatus, slotLent } from "./status.js";
 
 /** The worker starts a Bash command: stamp it. Only a local provider's workers hold slots worth lending. */
@@ -46,7 +46,7 @@ export async function returnFromToolWait(logDir: string, id: string, now = Date.
     r = await gate({
       logDir,
       self: { id, provider: s.provider },
-      cap: providerCap(workers, s.provider, instanceUp),
+      cap: admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(workers.capacity)),
       config: workers.capacity ?? {},
       tier: "high",
       // it already holds context and a worktree: ahead of every job that has not started

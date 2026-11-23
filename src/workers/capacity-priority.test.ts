@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { endpointRegistry, instanceEngineKey, pickInstance, type LocalInstance } from "./local-instances.js";
-import { capacityGate, currentBuildId, providerCap, instanceUp, resetInstanceHealth, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
+import { capacityGate, currentBuildId, providerCap, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
@@ -775,42 +775,6 @@ describe("providers with several instances", () => {
   it("one instance down: every job goes to the other", () => {
     const ids = spread(3, 2, [inst(1, "failed"), inst(2)]);
     expect(new Set(ids)).toEqual(new Set(["sig#2"]));
-  });
-});
-
-describe("worker admission counts every instance of a provider", () => {
-  const cfg = { providers: { sig: { baseUrl: "http://127.0.0.1:8044", maxConcurrent: 2, instances: ["http://127.0.0.1:8044", "http://127.0.0.1:8045"] } } };
-  it("2 instances x 2 admits 4", () => {
-    expect(providerCap(cfg, "sig", () => true)).toBe(4);
-    expect(providerCap(cfg, "sig")).toBe(4);
-  });
-  it("one instance unhealthy admits 2", () => {
-    expect(providerCap(cfg, "sig", (u) => !u.endsWith(":8045"))).toBe(2);
-  });
-  it("all down never drops below one instance's worth", () => {
-    expect(providerCap(cfg, "sig", () => false)).toBe(2);
-  });
-  it("the gate admits a worker while 3 hold slots on two instances (cap 4), and holds it with 2 holders when one is down (cap 2)", async () => {
-    const run = (id: string): WorkerStatus => ({ ...st(id), state: "running", started: "2026-11-18 11:00:00", provider: "sig" }) as WorkerStatus;
-    let stop = false;
-    const tryAdmit = (holders: string[], up: (u: string) => boolean) =>
-      Promise.race([
-        capacityGate({ aborted: () => stop, logDir: dir, self: { id: "wx", provider: "sig" }, cap: providerCap(cfg, "sig", up)!, config: {}, isAlive: () => true, load: () => holders.map(run), now: () => QNOW, sleep: () => new Promise((x) => setTimeout(x, 5)), engineIdle: () => false }).then(() => "admitted"),
-        new Promise((x) => setTimeout(() => x("waiting"), 250)),
-      ]);
-    expect(await tryAdmit(["a", "b", "c"], () => true)).toBe("admitted");
-    expect(await tryAdmit(["a", "b", "c", "d"], () => true)).toBe("waiting");
-    expect(await tryAdmit(["a", "b"], (u) => !u.endsWith(":8045"))).toBe("waiting");
-    expect(await tryAdmit(["a"], (u) => !u.endsWith(":8045"))).toBe("admitted");
-    stop = true;
-  });
-  it("instanceUp is optimistic until a probe answers", async () => {
-    resetInstanceHealth();
-    const probe = async () => false;
-    expect(instanceUp("http://x:1", probe)).toBe(true);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(instanceUp("http://x:1", probe)).toBe(false);
-    resetInstanceHealth();
   });
 });
 

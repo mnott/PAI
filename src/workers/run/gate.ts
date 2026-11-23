@@ -38,8 +38,6 @@ import { paneHandles } from "./pane-handles.js";
 import { committedFallThrough, fallThroughReason } from "../policy.js";
 import {
   admitCap,
-  providerCap,
-  instanceUp,
   capacityGate,
   engineIdleFor,
   capacityOf,
@@ -739,7 +737,7 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
     saveStatus(logDir, status);
   }
   inheritUrgency(logDir, wid, status, process.env);
-  const gateCap = providerCap({ providers: { [target.providerName]: target.provider }, capacity: config.capacity }, target.providerName, instanceUp);
+  const gateCap = admitCap(target.provider.maxConcurrent, target.provider.conversationSlots, isLocalProvider(target.provider.baseUrl));
   const gate: CapacityOpts = {
     logDir,
     self: { id: wid, provider: target.providerName },
@@ -748,7 +746,7 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
     capOf: () => {
       try {
         const p = readWorkersCached().providers[target.providerName] ?? target.provider;
-        return providerCap({ providers: { [target.providerName]: p }, capacity: config.capacity }, target.providerName, instanceUp);
+        return admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
       } catch {
         return gateCap;
       }
