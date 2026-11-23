@@ -246,6 +246,33 @@ describe("rerouteWorker", () => {
     expect(st.state).toBe("killed");
   });
 
+  it("a review-stopped origin is continued on the target with its branch and review reason, nothing killed, old run superseded", async () => {
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "review", needsReview: true, branch: "worker/w1", last: "no progress in its 20-min allowance" }));
+    let killed = false;
+    let spec: SpawnSpec | undefined;
+    const r = await rerouteWorker("w1", "cloud", {
+      logDir: dir,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async () => { killed = true; return []; },
+      spawn: (s: SpawnSpec) => {
+        spec = s;
+        const o = loadStatus(dir, s.id)!;
+        o.fallThroughTo = "w2";
+        saveStatus(dir, o, new Date(), true);
+      },
+    });
+    expect(killed).toBe(false);
+    expect(r.was).toBe("review");
+    const note = readFileSync(spec!.specFile, "utf8");
+    expect(note).toContain("continued from w1 on branch worker/w1");
+    expect(note).toContain("stopped for review: no progress in its 20-min allowance");
+    const st = loadStatus(dir, "w1")!;
+    expect(st.rerouted).toBe("fakeB: reroute");
+    expect(st.continuedBy).toBe("w2");
+    expect(st.needsReview).toBeUndefined();
+    expect(st.state).toBe("review");
+  });
+
   it("a running origin that cannot be stopped gets no continuation", async () => {
     saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running" }));
     let spawned = false;
