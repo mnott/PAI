@@ -35,11 +35,11 @@ import { isProbeSession } from '../lib/project-utils.js';
 import { stripFrontmatter } from '../lib/frontmatter.js';
 import { readHookInput } from '../lib/read-stdin.js';
 import { DELEGATION_BLOCK } from '../lib/delegation-gate.js';
-import { WAITER_NOTICE, deliverWaitingMail } from '../lib/session-mailbox.js';
+import { waiterNotice, aibrokerSupportsFollow, deliverWaitingMail } from '../lib/session-mailbox.js';
 
 /** Waiter instruction plus any mail already waiting; same for fresh and resumed sessions. */
 async function mailboxStart(): Promise<void> {
-  console.log(`<system-reminder>\n${WAITER_NOTICE}\n</system-reminder>`);
+  console.log(`<system-reminder>\n${waiterNotice(aibrokerSupportsFollow())}\n</system-reminder>`);
   const claudeId = (await readHookInput<{ session_id?: string }>())?.session_id;
   await deliverWaitingMail(claudeId);
 }

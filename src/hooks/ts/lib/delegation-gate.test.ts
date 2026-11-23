@@ -178,3 +178,24 @@ describe("setup strips the delegation section", () => {
     expect(stripDelegationSection("a\n<!-- PAI:delegation:start -->\nq\n<!-- PAI:delegation:end -->\nb")).toBe("a\nb");
   });
 });
+
+import { describe as describeMb, it as itMb, expect as expectMb } from "vitest";
+import { helpSupportsFollow, waiterNotice, WAITER_NOTICE } from "./session-mailbox.js";
+
+describeMb("mailbox follower instruction", () => {
+  itMb("detects --follow in help output", () => {
+    expectMb(helpSupportsFollow("Usage: aibroker mailbox wait [--timeout <s>]")).toBe(false);
+    expectMb(helpSupportsFollow("wait [--follow] [--timeout <s>]")).toBe(true);
+    expectMb(helpSupportsFollow("--follow-up")).toBe(false);
+  });
+  itMb("follower form: Monitor, no restart loop", () => {
+    const t = waiterNotice(true);
+    expectMb(t).toContain("mailbox wait --follow");
+    expectMb(t).toContain("Monitor");
+    expectMb(t).not.toContain("start a new waiter");
+  });
+  itMb("legacy form keeps the restart loop", () => {
+    expectMb(waiterNotice(false)).toContain("start a new waiter");
+    expectMb(WAITER_NOTICE).toBe(waiterNotice(false));
+  });
+});

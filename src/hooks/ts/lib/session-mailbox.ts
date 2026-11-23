@@ -8,10 +8,39 @@
  */
 
 import { connect } from "node:net";
+import { execFileSync } from "node:child_process";
 
-export const WAITER_NOTICE =
-  `Keep exactly one \`aibroker mailbox wait\` running in the background (Bash run_in_background) so machine ingress wakes this session; never two at once.\n` +
-  `When it exits, read the mailbox (aibroker_receive or the delivered text), act on it, then start a new waiter.`;
+/** True when `aibroker mailbox wait --help` output documents the --follow flag (AIBroker 0.62.24+). */
+export function helpSupportsFollow(help: string): boolean {
+  return /--follow(?![\w-])/.test(help);
+}
+
+/** Probe the installed aibroker once; false on any failure (missing binary, old version). */
+export function aibrokerSupportsFollow(): boolean {
+  try {
+    const out = execFileSync("aibroker", ["mailbox", "wait", "--help"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] });
+    return helpSupportsFollow(out);
+  } catch (e) {
+    const err = e as { stdout?: string };
+    return helpSupportsFollow(String(err.stdout ?? ""));
+  }
+}
+
+/** The session instruction for the installed AIBroker: one persistent follower, or the legacy restart loop. */
+export function waiterNotice(follow: boolean): string {
+  if (follow) {
+    return (
+      `Start \`aibroker mailbox wait --follow\` once under the Monitor tool (persistent) so machine ingress wakes this session; never two at once, no restart loop.\n` +
+      `Each line it prints is one message: read the mailbox (aibroker_receive or the delivered text) and act on it. Claude Code sessions may also reach you natively; answer those the same way.`
+    );
+  }
+  return (
+    `Keep exactly one \`aibroker mailbox wait\` running in the background (Bash run_in_background) so machine ingress wakes this session; never two at once.\n` +
+    `When it exits, read the mailbox (aibroker_receive or the delivered text), act on it, then start a new waiter.`
+  );
+}
+
+export const WAITER_NOTICE = waiterNotice(false);
 
 interface MailboxMessage { from?: string; content?: string; timestamp?: number }
 
