@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { shortText } from "./args.js";
 import { statusPath } from "./paths.js";
 import { releaseClaims, type ClaimRecord } from "../session/forge-sink.js";
+import { type Deliverable } from "./deliverable.js";
 import type { WaitingOn } from "./waiting.js";
 import type { Denial } from "./denials.js";
 
@@ -203,6 +204,8 @@ export interface WorkerStatus {
   lineAtProgressMs?: number;
   /** A read-only job (no Edit/Write grant, or a spec saying so): any successful tool call counts as progress for the stall escalation. */
   readOnly?: boolean;
+  /** What this run's result IS: "change" (a repo commit is expected) or "findings" (a report; scratch writes count as progress). Set at start from --deliverable, the inherited env, or the class gate. */
+  deliverable?: Deliverable;
   /** --no-escalate (or a run that asked for local): the stall/queue escalation never moves this run; its continuations keep it. */
   noEscalate?: boolean;
   /** Set by the supervision tick while the session's escalation switch holds back a stalled run ("stalled 12m, escalation off for this session"). */

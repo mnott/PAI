@@ -13,7 +13,7 @@ import { tail, type MergeOutcome, type StartRequest, type WorkerOutcome } from "
 import { classifySize, composeQueueSpec, move, type DiffInfo, type QueueItem, type QueueSettings, type QueueStore } from "./queue.js";
 
 export interface QueueDeps {
-  startWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "spec" | "model" | "priority" | "noPool" | "topic"> & { attempt: number; itemId: string }): Promise<WorkerOutcome>;
+  startWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "spec" | "model" | "priority" | "noPool" | "topic" | "deliverable"> & { attempt: number; itemId: string }): Promise<WorkerOutcome>;
   /** Size and stat of worker/<id> against the checkout; commits = non-empty commits on it. */
   inspect(repo: string, workerId: string): Promise<DiffInfo & { commits: number }>;
   /** Run a shell command (gate, proof, install) in `cwd`. */
@@ -92,7 +92,7 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
     let failure: string | undefined;
     for (let i = 0; i < ladder.length; i++) {
       const { tier, provider } = ladder[i];
-      const out = await deps.startWorker({ itemId: item.id, label: `queue: ${item.id}`, spec: composeQueueSpec(item, settings, failure), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}), ...(opts.noPool ? { noPool: true } : {}), ...(item.topic ? { topic: item.topic } : {}) });
+      const out = await deps.startWorker({ itemId: item.id, label: `queue: ${item.id}`, spec: composeQueueSpec(item, settings, failure), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}), ...(opts.noPool ? { noPool: true } : {}), ...(item.topic ? { topic: item.topic } : {}), ...(item.deliverable === "findings" ? { deliverable: "findings" as const } : {}) });
       if (out.id) summary.started.push(out.id);
       if (!out.ok && out.spawnRefused) {
         failure = out.failure || "worker spawn refused";
@@ -108,6 +108,13 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
       if (!out.ok) {
         failure = out.failure || "the worker ended without a valid passing report";
         continue;
+      }
+      if (item.deliverable === "findings") {
+        // the report is the result: no diff, size check or gate
+        move(store, item.id, "ready", { worker: out.id, report: out.report, why: undefined });
+        summary.ready.push(item.id);
+        opts.onEvent?.("ready", store.get(item.id) ?? item);
+        return;
       }
       const d = await deps.inspect(item.repo, out.id);
       if (!d.commits) {

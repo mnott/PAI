@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { workerCanEdit } from "../../../workers/run/argv.js";
+import { effectiveDeliverable, isCodeChangingClass } from "./stall-class.js";
 import { bashWritesRepoFile, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stallStep, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
 import { activeAntipattern, resetAntipatternCache, shippedAntipattern } from "./antipatterns.js";
 import { loadLoopState, logHookError, loopStateFile, saveLoopState } from "./loop-guard-state.js";
@@ -53,6 +54,20 @@ describe("workerCanEdit (PAI_WORKER_CAN_EDIT)", () => {
     expect(workerCanEdit(["Read,Grep,Glob,Bash"])).toBe(false);
     expect(workerCanEdit(["Read,Write"])).toBe(false);
     expect(workerCanEdit(["Edit"])).toBe(false);
+  });
+});
+
+describe("class gate (PAI_WORKER_CAN_EDIT from the class, not the tools)", () => {
+  it("isCodeChangingClass: code classes yes, read-only/analysis classes and unknown names no", () => {
+    for (const c of ["implement", "complex", "simple", "draft"]) expect(isCodeChangingClass(c)).toBe(true);
+    for (const c of ["research", "plan", "review", "spotcheck", "orchestrate", "image", "custom-tier-class", "", undefined]) expect(isCodeChangingClass(c)).toBe(false);
+  });
+  it("effectiveDeliverable: a declared value wins, else the class gate", () => {
+    expect(effectiveDeliverable("findings", "implement")).toBe("findings");
+    expect(effectiveDeliverable("change", "research")).toBe("change");
+    expect(effectiveDeliverable(undefined, "implement")).toBe("change");
+    expect(effectiveDeliverable(undefined, "research")).toBe("findings");
+    expect(effectiveDeliverable("bogus", "draft")).toBe("change");
   });
 });
 
@@ -152,6 +167,20 @@ describe("no-edit-stall in stepLoopGuard", () => {
   it("env 0: inactive", () => {
     process.env.PAI_WORKER_CAN_EDIT = "0";
     expect(stalls(run(reads(45)))).toEqual([]);
+  });
+
+  // ---- the guard follows the deliverable (PAI_WORKER_CAN_EDIT is set only for "change") ----
+  it("findings job (PAI_WORKER_CAN_EDIT unset): 50 reads and scratch writes give no note and no deny", () => {
+    delete process.env.PAI_WORKER_CAN_EDIT; // what execute-prepare sets for a findings job
+    const steps = run([...reads(25), ...reads(25)]);
+    expect(stalls(steps)).toEqual([]);
+    expect(steps[49].deny).toBe(false);
+  });
+
+  it("change job unchanged: notes and deny still fire", () => {
+    const steps = run(reads(40));
+    expect(stalls(steps)).toEqual([11, 24, 39]);
+    expect(steps[39].deny).toBe(true);
   });
 });
 

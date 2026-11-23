@@ -59,6 +59,7 @@ import {
   chromeGrantArgs,
   interactiveMcpTools,
 } from "./argv.js";
+import { effectiveDeliverable } from "../../hooks/ts/lib/stall-class.js";
 import { requireVisiblePane, runTerm } from "./pane-handles.js";
 
 /**
@@ -198,9 +199,12 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // the guard hook locks edits for an L1 (class orchestrate/plan) until a child has failed
   delete env.PAI_WORKER_CLASS;
   if (headless && a.className) env.PAI_WORKER_CLASS = a.className;
-  // read by the no-edit-stall guard: only a code-change worker (Edit/Write and Bash granted) can be asked to edit
+  // the run's declared deliverable: --deliverable, else the inherited PAI_WORKER_DELIVERABLE, else the class gate.
+  // read by the no-edit-stall guard and the progress clock: only a "change" job can be asked to edit; a
+  // "findings" job (research/review, or declared) gets write tools by default and must never be paused for reading
+  const deliverable = effectiveDeliverable(a.deliverable ?? process.env.PAI_WORKER_DELIVERABLE, a.className);
   delete env.PAI_WORKER_CAN_EDIT;
-  if (headless && workerCanEdit(parsed.allowedTools)) env.PAI_WORKER_CAN_EDIT = "1";
+  if (headless && deliverable === "change" && workerCanEdit(parsed.allowedTools)) env.PAI_WORKER_CAN_EDIT = "1";
   // read by the anti-pattern firing record (which model a pattern fired on)
   if (headless && typeof model === "string" && model) env.PAI_WORKER_MODEL = model;
 
@@ -253,6 +257,8 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (a.allowTests) env.PAI_WORKER_ALLOW_TESTS = "1";
   // --allow-db-writes: the worker Bash guard allows SQL-client writes to databases
   if (a.allowDbWrites) env.PAI_ALLOW_DB_WRITES = "1";
+  // the run's deliverable, for the hooks and any child this run spawns
+  if (headless) env.PAI_WORKER_DELIVERABLE = deliverable;
   // `pai tests prune --apply`: the local-worker delete guard allows deleting exactly the plan's tracked files
   if (a.pruneFiles?.length) env.PAI_WORKER_PRUNE_FILES = a.pruneFiles.join("\n");
 

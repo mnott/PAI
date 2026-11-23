@@ -594,6 +594,18 @@ describe("escalationReason: time in line at the local model", () => {
   });
 });
 
+describe("escalationReason follows the deliverable", () => {
+  const min = (n: number): string => new Date(NOW - n * 60_000).toISOString();
+  const run = (o: object) => job({ state: "running", started: min(60), ...o } as never);
+  it("change job: no edit or commit for 12m", () => {
+    expect(escalationReason(run({ deliverable: "change", progressAt: min(12) }), NOW, pol(0))).toBe("no edit or commit for 12m");
+  });
+  it("findings job: worded as write/report output, never as a missing commit", () => {
+    expect(escalationReason(run({ deliverable: "findings", progressAt: min(12) }), NOW, pol(0))).toBe("no write or report output for 12m");
+    expect(escalationReason(run({ deliverable: "findings", progressAt: min(3) }), NOW, pol(0))).toBeNull();
+  });
+});
+
 // 2026-11-18: a code-fix spec whose text contained "(read-only)" describing a dry-run
 // command was read as a read-only job (the old rule matched spec wording) and escalated
 // on "no successful tool call" instead of the edit rule. The tool set is the only signal.

@@ -1544,6 +1544,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
             ...(args.no_pool ? ["--no-pool"] : []),
             ...(args.priority ? ["--priority", args.priority] : []),
             ...(args.topic ? ["--topic", args.topic] : []),
+            ...(args.deliverable ? ["--deliverable", args.deliverable] : []),
             ...(args.escalate === false ? ["--no-escalate"] : []),
             ...(args.mcp ? ["--mcp", args.mcp] : []),
             ...(args.cwd ? ["--cwd", args.cwd] : []),
@@ -1663,12 +1664,13 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
   );
   server.tool(
     "queue_add",
-    "Queue one small change described in a sentence (plus likely files, optional screenshot). Use for small changes; then queue_run.",
+    "Queue one small change described in a sentence (plus likely files, optional screenshot). Use for small changes; then queue_run. Set deliverable: findings for an item whose result is an answer or report, not a commit.",
     {
       project,
       sentence: z.string().min(1),
       files: z.array(z.string()).optional(),
       image: z.string().optional(),
+      deliverable: z.enum(["change", "findings"]).optional().describe("change (default): the result is a repo commit. findings: the result is a report or answer; scratch files are fine, no commit or merge is expected."),
       topic: topicArg,
       local: localArg,
       ...whereArgs,

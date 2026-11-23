@@ -532,6 +532,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         noBrowser,
         allowTests: opts.allowTests,
         allowDbWrites: opts.allowDbWrites,
+        deliverable: opts.deliverable,
         pruneFiles: opts.pruneFiles,
         opts,
         ...(cloudApproved ? { cloudApproved: true } : {}),
