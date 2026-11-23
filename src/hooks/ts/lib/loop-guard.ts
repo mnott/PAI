@@ -527,7 +527,19 @@ function countFailure(state: LoopState, tool: string, response: unknown): LoopSt
   return { ...state, fails: { counts, denials: state.fails?.denials ?? 0 } };
 }
 
+/**
+ * The input PreToolUse saw. PostToolUse reports the input AFTER other hooks rewrote it (ztk-auto prefixes `ztk run `,
+ * the path repair swaps a file path), so the result's call key no longer equals the key Pre put in the window.
+ */
+function preInput(tool: string, input: string | Record<string, unknown> | undefined): string | Record<string, unknown> | undefined {
+  if (tool !== "Bash") return input;
+  const strip = (c: string): string => c.replace(/^(\s*)ztk run\s+/, "$1");
+  if (typeof input === "string") return strip(input);
+  return typeof input?.command === "string" ? { ...input, command: strip(input.command) } : input;
+}
+
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false): LoopState {
+  input = preInput(tool, input);
   const counted = trackBaseRed(typeof response === "string" && response.startsWith("error:") ? state : countFailure(state, tool, response), tool, input, response);
   // an edit resets the window and drops everything not carried over by hand: the failure counts survive
   const core = { ...recordLoopResultCore(counted, tool, input, response, now), ...(counted.seen ? { seen: counted.seen } : {}), ...(counted.baseRed ? { baseRed: counted.baseRed } : {}), ...(counted.fails ? { fails: counted.fails } : {}), ...(counted.stall ? { stall: counted.stall } : {}), ...(counted.edited ? { edited: true } : {}) };
@@ -559,7 +571,10 @@ function trackBaseRed(state: LoopState, tool: string, input: string | Record<str
 }
 
 function recordLoopResultCore(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
-  const key = callKey(tool, input);
+  let key = callKey(tool, input);
+  // a hook rewrote the input after Pre (path repair): the newest window entry of this tool still awaiting its result is this call
+  const tail = state.window[state.window.length - 1];
+  if (key !== null && tail !== undefined && tail !== key && !EDIT_TOOLS.has(tool) && tail.startsWith(`${tool}\t`) && (state.outs ?? [])[state.window.length - 1] == null) key = tail;
   if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks } : { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks, window: [key], outs: [null] };
   if (key !== null && tool === "Bash") {
     const waits = { ...(state.waits ?? {}) };

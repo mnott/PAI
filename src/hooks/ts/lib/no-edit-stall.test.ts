@@ -6,6 +6,7 @@ import { parse } from "yaml";
 import { workerCanEdit } from "../../../workers/run/argv.js";
 import { bashWritesRepoFile, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stallStep, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
 import { activeAntipattern, resetAntipatternCache, shippedAntipattern } from "./antipatterns.js";
+import { loadLoopState, logHookError, loopStateFile, saveLoopState } from "./loop-guard-state.js";
 import { paramsForModel, perModelEntry } from "./antipattern-lifecycle.js";
 
 const yamlDoc = parse(readFileSync("antipatterns/tool-loop/no-edit-stall.yaml", "utf8"));
@@ -430,3 +431,30 @@ describe("growing-command: repeats need similar results", () => {
   });
 });
 
+
+describe("result recording when hooks rewrote the input after Pre (loop guard recorded no results)", () => {
+  const post = (state: LoopState, tool: string, pre: string | Record<string, unknown>, seen: string | Record<string, unknown>, out: string, i: number): LoopState => {
+    const step = stepLoopGuard(state, tool, pre, null, 1_000_000 + i, process.cwd());
+    return recordLoopResult(step.state, tool, seen, out, 1_000_000 + i);
+  };
+  it("a ztk-rewritten Bash command and a path-repaired Read still get their result in outs", () => {
+    let s = emptyLoopState();
+    s = post(s, "Bash", "ls && sed -n 1,80p src/a.ts", "ztk run ls && sed -n 1,80p src/a.ts", "out one", 0);
+    s = post(s, "Bash", "grep -n x src/a.ts | head -5", "ztk run grep -n x src/a.ts | head -5", "out two", 1);
+    s = post(s, "Read", { file_path: "/repo/src/b.ts" }, { file_path: "/tree/src/b.ts" }, "out three", 2);
+    s = post(s, "Bash", "sed -n 1,9p src/c.ts", "sed -n 1,9p src/c.ts", "out four", 3);
+    expect(s.window).toHaveLength(4);
+    expect((s.outs ?? []).map((o) => o !== null && o !== undefined)).toEqual([true, true, true, true]);
+  });
+  it("the Post hook failure is written to the worker's hook error log", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hookerr-"));
+    try {
+      logHookError(dir, "w1", "worker-note", new Error("boom"));
+      expect(readFileSync(join(dir, "hook-errors", "w1.log"), "utf8")).toMatch(/worker-note: Error: boom/);
+      saveLoopState(loopStateFile(dir, "w1"), emptyLoopState());
+      expect(loadLoopState(loopStateFile(dir, "w1")).window).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -18,7 +18,7 @@ import { recordFiring } from "../lib/antipattern-log.js";
 import { failLedgerOn, ledgerNote } from "../lib/fail-ledger.js";
 import { recordLoopFailure, recordLoopResult } from "../lib/loop-guard.js";
 import type { LoopState } from "../lib/loop-guard.js";
-import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
+import { loadLoopState, logHookError, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { returnFromToolWait } from "../../../workers/tool-wait.js";
 import { isWorkerSession } from "../lib/worker-session.js";
@@ -53,8 +53,9 @@ function recordResult(raw: string, logDir: string, id: string): string | undefin
     const next = recordLoopResult(state, j.tool_name, input, j.tool_response, Date.now(), !!ledger);
     if (next !== state) saveLoopState(file, next);
     if (ledger) return failBlock(file, next, ledger.maxEntries);
-  } catch {
-    // result tracking is best effort
+  } catch (e) {
+    // result tracking never fails the tool call, but a failure is logged: a silent one left the guard blind
+    logHookError(logDir, id, "worker-note", e);
   }
 }
 

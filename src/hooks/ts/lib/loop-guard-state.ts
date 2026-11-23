@@ -1,6 +1,6 @@
 /** loop-guard-state.ts — per-worker loop guard window on disk (<logDir>/loop-guard/<id>.json), shared by the Pre and PostToolUse hooks. */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { emptyLoopState, type LoopState } from "./loop-guard.js";
 
@@ -23,4 +23,16 @@ export function saveLoopState(file: string, state: LoopState): void {
   const dir = join(file, "..");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(file, JSON.stringify(state));
+}
+
+/** Appends one line to the worker's hook error log (<logDir>/hook-errors/<id>.log). Never throws. */
+export function logHookError(logDir: string, id: string, hook: string, err: unknown): void {
+  try {
+    const dir = join(logDir, "hook-errors");
+    mkdirSync(dir, { recursive: true });
+    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    appendFileSync(join(dir, `${id.replace(/[^\w.-]/g, "_")}.log`), `${new Date().toISOString()} ${hook}: ${msg.replace(/\n/g, " | ")}\n`);
+  } catch {
+    // the log itself is best effort
+  }
 }
