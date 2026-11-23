@@ -252,9 +252,25 @@ export interface DetectOptions {
   sched?: SchedSnapshot | null;
 }
 
+/** The first run of the lineage `s` continues (via fallThroughOf), or undefined when `s` continues nothing. */
+function continuationOrigin(statuses: WorkerStatus[], s: WorkerStatus): string | undefined {
+  let root: string | undefined;
+  const seen = new Set<string>([s.id]);
+  for (let of = s.fallThroughOf; of && !seen.has(of); of = statuses.find((x) => x.id === of)?.fallThroughOf) {
+    seen.add(of);
+    root = of;
+  }
+  return root;
+}
+
 /** One event's one-liner — the exact line the orchestrator reads. */
-function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, stalledMin: number | null): string {
+function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, stalledMin: number | null, origin?: string): string {
   const tail = `- see pai worker replay ${s.id}`;
+  // a continuation (reroute/escalation, new id, same branch) names the run it continues and how to land it
+  if (origin && (kind === "finished" || kind === "failed")) {
+    const res = kind === "finished" ? "rc=0" : rc === null ? "runner gone" : `rc=${rc}`;
+    return `continuation ${s.id} of ${origin} (${s.label}) ${kind === "finished" ? "finished" : "failed"}: ${res}; merge with pai worker merge ${s.id} ${tail}`;
+  }
   if (kind === "finished") return `worker ${s.id} ${s.label} finished rc=0 ${tail}`;
   if (kind === "stalled") return `worker ${s.id} ${s.label} stalled ${stalledMin}m no turns ${tail}`;
   if (kind === "thrashing")
@@ -366,7 +382,7 @@ export function detectSupervisionEvents(
       stalledMin,
       ...(kind === "thrashing" ? { consecFails: s.consecFails ?? 0 } : {}),
       ...(kind === "sleeping" ? { sleepSec: s.sleepSec ?? 0 } : {}),
-      text: eventText(kind, s, rc, stalledMin),
+      text: eventText(kind, s, rc, stalledMin, continuationOrigin(statuses, s)),
     });
   }
   return out;

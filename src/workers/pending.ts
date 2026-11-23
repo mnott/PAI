@@ -56,7 +56,7 @@ export function pendingResults(logDir: string, repoRoot?: string, now = Date.now
   if (repoRoot && !want) return [];
   const out: PendingResult[] = [];
   for (const st of loadStatuses(logDir)) {
-    if (st.archived || st.merged || isLive(st)) continue;
+    if (st.archived || st.merged || st.supersededBy || isLive(st)) continue;
     if (!st.worktreeDir || !existsSync(st.worktreeDir)) continue;
     const repo = toplevel(st.cwd);
     if (!repo || (want && repo !== want)) continue;

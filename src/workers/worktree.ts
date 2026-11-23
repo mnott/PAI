@@ -26,6 +26,7 @@ import { currentWorkerId } from "./worker-id.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
+import { markSuperseded } from "./lineage.js";
 import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
 import { readMergeVerify } from "./workers-config.js";
@@ -1246,6 +1247,7 @@ function mergeSnapshotWorker(
     }
     const s = { ...st, merged: true };
     saveStatus(logDir, s);
+    markSuperseded(logDir, st);
     return withGate(
       gate,
       `merged ${branch} into the caller's branch in ${targetTree}${keepLive ? " (worker still running: worktree and branch kept, gc reclaims them once it ends)" : " (worktree removed"}${autoNote ? `; auto-resolved conflicts: ${autoNote}` : ""})`
@@ -1323,6 +1325,7 @@ function mergeSnapshotWorker(
   }
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
+  markSuperseded(logDir, st);
   const base =
     diff.length > 0
       ? `merged worker ${id}'s changes (branch ${branch}) into ${st.cwd} as commit "${msg}": ` +
@@ -2034,6 +2037,7 @@ async function mergeWorkerInner(
   }
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
+  markSuperseded(logDir, st);
   invalidatePendingCache(logDir, st.cwd);
   const base = `merged ${st.branch} into ${st.cwd} (${
     live
@@ -3774,6 +3778,25 @@ export function gcWorktrees(
   // Landed work goes first, at any age; in a dry run the trees stay on disk, so they are skipped below.
   const landed = gcLandedTrees(logDir, statuses, [...new Set([...statuses.map((s) => s.cwd), foreignRepo, process.cwd()])], out, report, archive);
   const mark = out.length;
+
+  // Superseded originals (a continuation of their lineage was merged): discarded at any age, but only when every
+  // commit of their branch is on main; a tree with uncommitted work or commits not on main is kept.
+  for (const st of statuses) {
+    const tree = ownedTree(st);
+    if (!st.supersededBy || !tree || !existsSync(tree.dir) || isLive(st) || isSlotWorktree(tree.dir) || landed.has(realpathOr(tree.dir))) continue;
+    try {
+      const repo = st.cwd;
+      const branchExists = (() => { try { git(repo, ["rev-parse", "--verify", `refs/heads/${tree.branch}`]); return true; } catch { return false; } })();
+      if (git(tree.dir, ["status", "--porcelain"])) { if (report) out.push({ id: st.id, skipped: "kept: uncommitted changes" }); continue; }
+      const tips = [git(tree.dir, ["rev-parse", "HEAD"]), ...(branchExists ? [git(repo, ["rev-parse", `refs/heads/${tree.branch}`])] : [])];
+      if (!tips.every((t) => landedOnMain(repo, t))) { if (report) out.push({ id: st.id, skipped: "kept: commits not on main" }); continue; }
+    } catch (e) {
+      if (report) out.push({ id: st.id, skipped: `kept: ${(e as Error).message.split("\n")[0]}` });
+      continue;
+    }
+    archive(st.id, tree.dir, tree.branch, st);
+    landed.add(realpathOr(tree.dir));
+  }
 
   const young: { st: WorkerStatus; tree: { dir: string; branch: string }; end: number }[] = [];
   for (const st of statuses) {
