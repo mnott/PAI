@@ -1,7 +1,7 @@
 /**
  * Parse cache for the config readers. An entry is valid while the
  * (mtimeMs, size) of its file — and of any `deps` files — is unchanged, read
- * with one statSync each; no TTL. Values are handed out as structuredClone
+ * with one statSync each (cachedParseRaw: at most one per second per file, for hot read loops). Values are handed out as structuredClone
  * copies so a caller that mutates its result cannot corrupt the cached one.
  */
 import { statSync } from "node:fs";
@@ -11,7 +11,22 @@ const entries = new Map<string, { sig: string; value: unknown }>();
 /** Counts real parses, for diagnostics. */
 export const parseCacheStats = { parses: 0 };
 
-function signature(paths: string[]): string | null {
+/** A file's stat is re-read at most once per this window, so a burst of lookups costs one stat. */
+export const SIGNATURE_MEMO_MS = 1000;
+const sigMemo = new Map<string, { at: number; sig: string | null }>();
+
+function signature(paths: string[], memo = false): string | null {
+  if (!memo) return statSignature(paths);
+  const now = Date.now();
+  const memoKey = paths.join("\0");
+  const m = sigMemo.get(memoKey);
+  if (m && now - m.at >= 0 && now - m.at < SIGNATURE_MEMO_MS) return m.sig;
+  const sig = statSignature(paths);
+  sigMemo.set(memoKey, { at: now, sig });
+  return sig;
+}
+
+function statSignature(paths: string[]): string | null {
   try {
     return paths
       .map((p) => {
@@ -48,7 +63,7 @@ export function cachedParse<T>(path: string, parse: () => T, namespace = "", dep
  */
 export function cachedParseRaw<T>(path: string, parse: () => T, namespace = "", deps: string[] = []): T {
   const key = `${namespace}\0${path}`;
-  const sig = signature([path, ...deps]);
+  const sig = signature([path, ...deps], true);
   if (sig === null) {
     entries.delete(key);
     parseCacheStats.parses++;
@@ -65,10 +80,12 @@ export function cachedParseRaw<T>(path: string, parse: () => T, namespace = "", 
 /** Drops one key's entry, so the next cached read of that file re-parses. */
 export function invalidateParse(path: string, namespace = ""): void {
   entries.delete(`${namespace}\0${path}`);
+  sigMemo.clear();
 }
 
 /** Drops every entry. */
 export function clearParseCache(): void {
   entries.clear();
+  sigMemo.clear();
   parseCacheStats.parses = 0;
 }
