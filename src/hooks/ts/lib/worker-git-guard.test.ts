@@ -1,7 +1,9 @@
 import { homedir } from "node:os";
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { decideWorkerGuard, type WorkerGuardContext } from "./worker-guard.js";
+import { ownWorktreeDir } from "./own-worktree.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decideWorkerGitGuard, workerGitGuardMessage, PRIVATE_CLONE_MARKER } from "./worker-git-guard.js";
@@ -237,5 +239,43 @@ describe("worktree guard expands ~ and $HOME", () => {
     expect(blocked('cd ~/dev/ai/PAI && git commit -qm "x"')).toBe(true);
     expect(blocked('cd ~/.pai/logs/workers/worktrees/other-id && git commit -qm "x"')).toBe(true);
     expect(blocked('cd ~/.pai/logs/workers/worktrees/20261123-160738-87282/../other && git commit -qm "x"')).toBe(true);
+  });
+});
+
+describe("nested fixture repo inside the worker's worktree", () => {
+  const nbase = realpathSync(mkdtempSync(join(tmpdir(), "nested-")));
+  const nmain = join(nbase, "main");
+  const nlog = join(nbase, "logs");
+  const W = join(nlog, "worktrees", "w1");
+  const fixture = join(W, ".pai-scratch", "fixture");
+  mkdirSync(fixture, { recursive: true });
+  const nenv = { PAI_WORKER: "1", PAI_WORKER_ID: "w1", PAI_WORKER_LOOP_DIR: nlog, TMPDIR: join(nbase, "tmp") };
+  const nctx = (cwd: string, root: string): WorkerGuardContext => ({
+    cwd, home: "/home/x", worktreeRoot: root, inWorktree: true, mainCheckout: nmain, testScript: () => null,
+  });
+  const write = (file: string, root: string) =>
+    decideWorkerGuard({ tool_name: "Write", cwd: fixture, tool_input: { file_path: file, content: "x" } }, nenv, () => nctx(fixture, root)).decision;
+  const bash = (command: string, root: string) =>
+    decideWorkerGuard({ tool_name: "Bash", cwd: fixture, tool_input: { command } }, nenv, () => nctx(fixture, root)).decision;
+
+  it("ownWorktreeDir takes the root from the worker's status, whatever repo cwd is in", () => {
+    execFileSync("git", ["init", "-q", fixture]);
+    writeFileSync(join(nlog, "w1.status"), JSON.stringify({ id: "w1", worktreeDir: W }));
+    expect(ownWorktreeDir(fixture, nenv, nlog)).toBe(W);
+    expect(ownWorktreeDir(nbase, nenv, nlog)).toBe(null);
+  });
+
+  it("with the root fixed to the worktree: scratch, src, fixture git allowed; outside paths and main-checkout git blocked", () => {
+    expect(write(join(W, ".pai-scratch", "x.ts"), W)).toBe("allow");
+    expect(write(join(W, "src", "a.ts"), W)).toBe("allow");
+    expect(bash("git init -q && git add -A && git commit -qm x", W)).toBe("allow");
+    expect(write("/tmp/elsewhere-repo/a.ts", W)).toBe("deny");
+    expect(bash(`cd ${nmain}`, W)).toBe("deny");
+  });
+
+  it("git guard: nested repo writes allowed, -C at the main checkout blocked", () => {
+    const wr = join(nlog, "worktrees");
+    expect(decideWorkerGitGuard("git commit -qm x", true, fixture, wr).blocked).toBe(false);
+    expect(decideWorkerGitGuard(`git -C ${nmain} commit -qm x`, true, fixture, wr).blocked).toBe(true);
   });
 });
