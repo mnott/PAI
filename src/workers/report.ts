@@ -254,7 +254,7 @@ export const CODE_EXPLORE_LINE =
 
 /** One guidance line: state the test-file rule up front so workers are not denied learning it (2026-11-23: 4 workers blocked up to 3x each). */
 export const TEST_GOVERNANCE_LINE =
-  "Tests: extend an existing test file next to the code you change; new test files are blocked (operator rule); one-off checks go under .pai-scratch/ and are never committed.";
+  "Tests: extend an existing test file next to the code you change first; a new test file only with a tests/KEPT.md entry (file + evidence) written BEFORE creating it; one-off checks go under .pai-scratch/ and are never committed.";
 
 /** Added when the run's repo is already indexed: the graph is current, so ask it before grepping. */
 export const CODE_GRAPH_FIRST_LINE = [
