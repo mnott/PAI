@@ -89,6 +89,7 @@ import { endContinuedOrigins, escalateOverdue, escalationMessage } from "./rerou
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
 import { activeMsOf, frozenSince, ownMsOf } from "./freeze.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
+import { yieldToLoop } from "./yield.js";
 
 // ---------------------------------------------------------------------------
 // Events
@@ -656,6 +657,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   const runningSent = (state.runningErrorSent ??= {});
   for (const w of Object.keys(runningSent)) if (!statuses.some((s) => s.id === w)) delete runningSent[w];
   const byId = new Map(statuses.map((s) => [s.id, s]));
+  await yieldToLoop();
   const records = readToolErrors(logDir, now.getTime() - SAME_WORKER_WINDOW_MS);
   // a model/unknown tool-error signature repeating across runs becomes one
   // antipattern candidate (deduped by signature): the alerts alone taught nothing
@@ -719,6 +721,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
     if (line) ev.text += ` | ${line}`;
   }
 
+  await yieldToLoop();
   const loopSent = (state.loopSent ??= {});
   for (const w of Object.keys(loopSent)) if (!statuses.some((s) => s.id === w)) delete loopSent[w];
   // frozen/paused workers are skipped: a stopped or parked process produces no new transcript lines, and the pass reads transcripts itself
@@ -766,6 +769,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
 
   const written: SupervisionEvent[] = [];
   for (const ev of pending) {
+    await yieldToLoop();
     if (!claimEvent(logDir, ev)) continue; // another tick/process owns this event
     appendEventFile(logDir, ev);
     written.push(ev);
@@ -805,10 +809,12 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   }
 
   markDelivered(state, written);
+  await yieldToLoop();
   await pointUndrained(logDir, state, statuses, now, opts.pointer);
   saveSupervisionState(statePath, pruneState(state, statuses));
   // the digest pass rides the tick (the daemon interval is coarser than the
   // digest interval, so a due digest leaves on the next tick)
+  await yieldToLoop();
   await flushDigests(logDir, statuses, now.getTime(), opts.digest);
   return { events: written, pushed };
 }

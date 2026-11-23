@@ -31,6 +31,7 @@ import { readLocalOnly } from "./local-only-state.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { markHandover } from "./run/follow-reroute.js";
 import { escalationOff, getProfile } from "./session-profile-store.js";
+import { yieldToLoop } from "./yield.js";
 
 export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
 
@@ -620,6 +621,7 @@ export async function escalateOverdue(
   const done: Escalation[] = [];
   const sched = readSchedFile(d.logDir, nowMs);
   for (const s of statuses) {
+    await yieldToLoop(); // one worker per slice: an IPC request waits for one item, not the pass
     // the local-only window blocks automatic cloud moves: an overdue job stays where it is until the window ends (rerouteWorker would refuse it anyway — this keeps its marker clean and the retry honest)
     if (readLocalOnly(nowMs)) continue;
     const reason = escalationReason(s, nowMs, policy, sched);

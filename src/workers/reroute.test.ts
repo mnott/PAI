@@ -773,3 +773,28 @@ describe("speed-scaled backstop (speed-scale.ts + deadline.ts)", () => {
     expect(escalationReason(job(s), NOW, pol(0))).toBe("no edit or commit for 60 turns");
   });
 });
+
+describe("supervision does not block the event loop (#21)", () => {
+  it("a request arriving during 5 s of sync per-worker work is served within 100 ms", async () => {
+    const { runSupervisionTick } = await import("./supervision.js");
+    const mk = (id: string): WorkerStatus =>
+      ({ id, pid: process.pid, label: "l", cwd: "/", term: "", provider: "local", model: "m", state: "running", started: "2026-11-23 12:00:00", updated: "2026-11-23 12:00:01", turns: 1, tools: 0, last: "", rc: null, secs: 1, spawnerSession: "owner" }) as unknown as WorkerStatus;
+    const statuses = Array.from({ length: 100 }, (_, i) => mk(`w${i}`));
+    const busy = (ms: number): void => { const t = Date.now(); while (Date.now() - t < ms); };
+    let worst = 0;
+    let last = Date.now();
+    const probe = setInterval(() => { const n = Date.now(); worst = Math.max(worst, n - last); last = n; }, 5);
+    const tick = runSupervisionTick(dir, {
+      statuses, reroute: false, push: (async () => true) as never, isAlive: () => true,
+      loops: { readEvents: (() => { busy(50); return []; }) as never },
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const t0 = Date.now();
+    await new Promise<void>((r) => setImmediate(r));
+    const answered = Date.now() - t0;
+    await tick;
+    clearInterval(probe);
+    expect(answered).toBeLessThan(100);
+    expect(worst).toBeLessThan(100);
+  }, 30_000);
+});

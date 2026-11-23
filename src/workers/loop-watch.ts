@@ -8,6 +8,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { yieldToLoop } from "./yield.js";
 import { eventsPath, ledgerPath } from "./paths.js";
 import { requestKill } from "./endreason.js";
 import { WorkerStatus } from "./status.js";
@@ -107,6 +108,7 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
 
   for (const status of statuses) {
     if (status.state !== "running") continue;
+    await yieldToLoop();
 
     try {
       const events = await readEvents(logDir, status.id);
