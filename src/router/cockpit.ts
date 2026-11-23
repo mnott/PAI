@@ -1283,7 +1283,7 @@ export function cockpitQueue(
   }
   // which instance serves each running job (the ticket's engine), and busy/cap per instance in its provider's line
   for (const r of table) {
-    const eng = r.state === "running" ? snap?.workers[r.id]?.engine : undefined;
+    const eng = snap?.workers[r.id]?.engine;
     if (eng) r.instance = instanceLabel(eng, snap);
   }
   for (const [eng, e] of Object.entries(snap?.engines ?? {})) {
