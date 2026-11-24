@@ -90,8 +90,17 @@ export async function parkInMailbox(
     warn(`run report for ${target} parked in mailbox of ${target}: not running Claude`);
     return true;
   }
-  warn(`run report for ${target} could not be parked in mailbox: ${r.error ?? "unknown"}`);
+  warn(`run report for ${target} could not be parked in mailbox: ${(r.error ?? "unknown").slice(0, 120)}`);
   return false;
+}
+
+/** How long a target that is not running Claude is left alone. */
+export const UNDELIVERABLE_MS = 30 * 60_000;
+
+/** Targets that answered "not running Claude" and until when. Process-wide: callers build a messenger per tick. */
+const dead = new Map<string, number>();
+export function resetUndeliverable(): void {
+  dead.clear();
 }
 
 /** Real messenger over AIBroker's socket; unreachable AIBroker is logged and ignored. */
@@ -119,6 +128,7 @@ export function aibrokerMessenger(
         return false;
       }
     }),
+  now: () => number = Date.now,
 ): Messenger {
   const self: Messenger = {
     async toSession(origin, text) {
@@ -135,11 +145,20 @@ export function aibrokerMessenger(
         if (!target) {
           return fail("the run has no originating session");
         }
+        const until = dead.get(target);
+        if (until !== undefined) {
+          if (now() < until) {
+            self.lastError = "target is not running Claude (skipped)";
+            return false;
+          }
+          dead.delete(target);
+        }
         const r = await send(target, text);
         if (!r.ok && !r.timedOut) {
           // the session cannot take the message: park it in the mailbox once
           // instead of retrying forever (the 16k-line log loop).
           if (isUndeliverableError(r.error ?? "")) {
+            dead.set(target, now() + UNDELIVERABLE_MS);
             await parkInMailbox(target, text, warn, deposit);
             self.lastError = r.error;
             return false;

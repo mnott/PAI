@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { aibrokerMessenger, sweepRuns, isUndeliverableError, parkInMailbox, type Messenger, type RunOrigin } from "./run-events.js";
+import { aibrokerMessenger, resetUndeliverable, sweepRuns, isUndeliverableError, parkInMailbox, type Messenger, type RunOrigin } from "./run-events.js";
 
 const NOT_RUNNING = 'Error: Session "FE2552A8" is not running Claude — its terminal is at a shell prompt, so nothing was sent (a shell would execute the message rather than read it). An ended session leaves its tab behind; close it, or target a session that is running.';
 
@@ -59,6 +59,7 @@ describe("parkInMailbox", () => {
 });
 
 describe("aibrokerMessenger.toSession", () => {
+  beforeEach(() => resetUndeliverable());
   it("not running Claude: exactly one mailbox deposit, one log line, no typed retry", async () => {
     const logs: string[] = [];
     const typed: string[] = [];
@@ -89,6 +90,41 @@ describe("aibrokerMessenger.toSession", () => {
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain("run report not delivered to the session");
     expect(logs[0]).not.toContain("parked");
+  });
+});
+
+describe("aibrokerMessenger undeliverable memory", () => {
+  beforeEach(() => resetUndeliverable());
+  it("100 calls to a dead target: one send, one deposit, one log line; others unaffected; retries after the window", async () => {
+    const logs: string[] = [];
+    const typed: string[] = [];
+    const deposits: string[] = [];
+    let t = 1_000_000;
+    const msg = aibrokerMessenger(
+      dir,
+      (s) => logs.push(s),
+      async () => "",
+      async (target, x) => {
+        typed.push(`${target}:${x}`);
+        return target === "DEAD" ? { ok: false, error: NOT_RUNNING } : { ok: true };
+      },
+      async (target, x) => {
+        deposits.push(`${target}:${x}`);
+        return { ok: false, error: NOT_RUNNING };
+      },
+      undefined,
+      () => t,
+    );
+    for (let i = 0; i < 100; i++) expect(await msg.toSession({ iterm: "DEAD" }, `r${i}`)).toBe(false);
+    expect(typed).toHaveLength(1);
+    expect(deposits).toHaveLength(1);
+    expect(logs).toHaveLength(1);
+    expect(await msg.toSession({ iterm: "LIVE" }, "x")).toBe(true);
+    expect(typed).toHaveLength(2);
+    t += 31 * 60_000;
+    await msg.toSession({ iterm: "DEAD" }, "again");
+    expect(typed).toHaveLength(3);
+    expect(deposits).toHaveLength(2);
   });
 });
 
