@@ -517,7 +517,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         ...(topic ? { topic } : {}),
         reroutes: opts._reroutes ?? 0,
         emptyRetried: opts._emptyRetried ?? false,
-        route,
+        // an explicit --provider / resume has no policy route: the provider itself says whether the run is local
+        route: route ?? (!target.provider.native && isLoopbackProvider(target.provider) ? { policy: "prefer-local", reason: routeWhy ?? "explicit provider", local: true } : undefined),
         routeWhy,
         noEscalate: opts.noEscalate,
         fallThroughOf: opts._fallThroughOf,
