@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bashResultHint, isLocalWorkerProvider, EMPTY_SUCCESS_HINT, SEARCH_MISS_HINT, NO_OUTPUT_SENTINEL } from "./worker-result-hint.js";
+import { bashResultHint, isLocalWorkerProvider, toolResultText, EMPTY_SUCCESS_HINT, SEARCH_MISS_HINT, NO_OUTPUT_SENTINEL } from "./worker-result-hint.js";
 import type { WorkersConfig } from "../../../workers/config.js";
 
 const cfg = (providers: Record<string, { baseUrl: string }>): WorkersConfig =>
@@ -36,6 +36,31 @@ describe("bashResultHint", () => {
     const out = "src/foo.ts:1:other";
     expect(bashResultHint("ls; grep handleMqttCommand src/foo.ts", out)).toBe(SEARCH_MISS_HINT);
     expect(bashResultHint("grep handleMqttCommand src/foo.ts; ls", out)).toBe(SEARCH_MISS_HINT);
+  });
+});
+
+describe("toolResultText", () => {
+  it("reads stdout+stderr from the Bash result object (the shape Claude Code sends)", () => {
+    expect(toolResultText({ stdout: "", stderr: "", interrupted: false })).toBe("");
+    expect(toolResultText({ stdout: "   \n", stderr: "", interrupted: false })).toBe("   \n");
+    expect(toolResultText({ stdout: "out", stderr: "err", interrupted: false })).toBe("out\nerr");
+    expect(toolResultText({ stdout: "out", stderr: "", interrupted: false })).toBe("out");
+  });
+
+  it("never treats an interrupted result as empty", () => {
+    expect(toolResultText({ stdout: "", stderr: "", interrupted: true })).toBe("(interrupted)");
+    expect(toolResultText({ stdout: "partial", stderr: "", interrupted: true })).toBe("partial");
+  });
+
+  it("keeps accepting the string shape", () => {
+    expect(toolResultText("(Bash completed with no output)")).toBe("(Bash completed with no output)");
+    expect(toolResultText("plain output")).toBe("plain output");
+  });
+
+  it("returns empty for missing or non-object shapes", () => {
+    expect(toolResultText(undefined)).toBe("");
+    expect(toolResultText(null)).toBe("");
+    expect(toolResultText(42)).toBe("");
   });
 });
 

@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { isWorkerSession } from "../lib/worker-session.js";
-import { bashResultHint, isLocalWorkerProvider } from "../lib/worker-result-hint.js";
+import { bashResultHint, isLocalWorkerProvider, toolResultText } from "../lib/worker-result-hint.js";
 
 function readStdin(): string {
   try {
@@ -35,7 +35,7 @@ function main(): void {
   if (j.tool_name !== "Bash") return;
   const command = typeof j.tool_input?.command === "string" ? j.tool_input.command : "";
   if (!command) return;
-  const output = typeof j.tool_response === "string" ? j.tool_response : JSON.stringify(j.tool_response ?? "");
+  const output = toolResultText(j.tool_response);
   const hint = bashResultHint(command, output);
   if (!hint) return;
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: hint } }) + "\n");
