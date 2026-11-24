@@ -24,8 +24,8 @@ export function paceOf(name: string, resetAt: number | undefined, now: number): 
   return Math.max(0, Math.min(100, p));
 }
 
-export interface PaceConfig { enabled: boolean; ratio: number; hysteresis: number }
-export const DEFAULT_PACE: PaceConfig = { enabled: true, ratio: 0.8, hysteresis: 0.1 };
+export interface PaceConfig { enabled: boolean; ratio: number; hysteresis: number; classes: string[] }
+export const DEFAULT_PACE: PaceConfig = { enabled: true, ratio: 0.8, hysteresis: 0.1, classes: ["orchestrate", "plan"] };
 
 export function readPaceConfig(yamlPath: string = workersYamlPath()): PaceConfig {
   // parsed once per file change (mtime/size): the /cockpit/limits poller hits this every second
@@ -39,22 +39,23 @@ function readPaceConfigUncached(yamlPath: string): PaceConfig {
     const j = (c && typeof c.toJSON === "function" ? c.toJSON() : c) as Partial<PaceConfig> | null;
     if (!j || typeof j !== "object") return DEFAULT_PACE;
     const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : d);
-    return { enabled: j.enabled !== false, ratio: num(j.ratio, DEFAULT_PACE.ratio), hysteresis: num(j.hysteresis, DEFAULT_PACE.hysteresis) };
+    const classes = Array.isArray(j.classes) ? j.classes.filter((x) => typeof x === "string") : DEFAULT_PACE.classes;
+    return { enabled: j.enabled !== false, ratio: num(j.ratio, DEFAULT_PACE.ratio), hysteresis: num(j.hysteresis, DEFAULT_PACE.hysteresis), classes };
   } catch {
     return DEFAULT_PACE;
   }
 }
 
-export interface PaceDecision { cloud: boolean; reason: string }
+export interface PaceDecision { cloud: boolean; reason: string; classes: string[] }
 
 /** The switch with hysteresis: cloud below ratio x pace, stays cloud until used reaches (ratio + hysteresis) x pace. */
 export function decidePace(used: number, pace: number, cfg: PaceConfig, wasCloud: boolean): PaceDecision {
   const low = cfg.ratio * pace;
   const high = (cfg.ratio + cfg.hysteresis) * pace;
   const r = (n: number) => Math.round(n);
-  if (used < low) return { cloud: true, reason: `cloud: under pace ${r(used)} % < ${cfg.ratio} x ${r(pace)} %` };
-  if (wasCloud && used < high) return { cloud: true, reason: `cloud: under pace ${r(used)} % < ${+(cfg.ratio + cfg.hysteresis).toFixed(2)} x ${r(pace)} % (hysteresis)` };
-  return { cloud: false, reason: `local: used ${r(used)} % >= ${wasCloud ? +(cfg.ratio + cfg.hysteresis).toFixed(2) : cfg.ratio} x pace ${r(pace)} %` };
+  if (used < low) return { cloud: true, reason: `cloud: under pace ${r(used)} % < ${cfg.ratio} x ${r(pace)} %`, classes: cfg.classes };
+  if (wasCloud && used < high) return { cloud: true, reason: `cloud: under pace ${r(used)} % < ${+(cfg.ratio + cfg.hysteresis).toFixed(2)} x ${r(pace)} % (hysteresis)`, classes: cfg.classes };
+  return { cloud: false, reason: `local: used ${r(used)} % >= ${wasCloud ? +(cfg.ratio + cfg.hysteresis).toFixed(2) : cfg.ratio} x pace ${r(pace)} %`, classes: cfg.classes };
 }
 
 const stateFile = (): string => paiHomePath("logs", "pace-state.json");

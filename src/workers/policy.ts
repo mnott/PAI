@@ -321,7 +321,12 @@ async function walkList(
     }
     if (skipLocal) continue;
     const found = await findLocal(config, logDir, deps.ping, [name]);
-    if (found.name) return res(localOkFirst ? "--local-ok" : `route: ${found.name}`, found.name);
+    if (found.name) {
+      const note = paceNotes.get(config);
+      // the under-pace cloud lead does not apply to this class: say why local still leads
+      const paceWhy = note?.startsWith("cloud") && !localOkFirst ? `local: class ${flags.className ?? "implement"} not in cloudUnderPace.classes` : "";
+      return res(localOkFirst ? "--local-ok" : paceWhy || `route: ${found.name}`, found.name);
+    }
     why = found.why;
   }
   if (!hasCloud && !skipLocal) throw new WorkersConfigError(`route: ${why} — start a local server or change the route (pai worker route)`);

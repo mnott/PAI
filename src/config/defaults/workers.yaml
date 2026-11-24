@@ -278,6 +278,20 @@ workers:
   # Budget-routing skip percentage used when a provider names none.
   quotaSkipAt: 95
 
+# The under-pace cloud lead (balanced mode): while the weekly anthropic window
+# is used less than ratio x pace, the classes listed here lead with the cloud;
+# every other class stays local first and reaches the cloud only on fall-through
+# after a failed local run. An explicit --where cloud / --where local wins over
+# all of this.
+budget:
+  cloudUnderPace:
+    enabled: true
+    # Used < ratio x pace -> cloud lead; used >= (ratio + hysteresis) x pace -> back to local.
+    ratio: 0.8
+    hysteresis: 0.1
+    # Classes the cloud lead applies to; everything else keeps local first.
+    classes: [orchestrate, plan]
+
 # Providers PAI can run workers on. The built-in `anthropic` provider is
 # Claude Code's own login; its model table is the shipped default below (a
 # user's providers.anthropic.models merges over it).
