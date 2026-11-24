@@ -76,3 +76,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/daemon/log-rotate.test.ts | a | copytruncate rotation of fd-owned logs: archive, tail kept, keep=3 drop, live append fd survives |
 | src/workers/pane-nonblocking.test.ts | a | proves daemon pane tasks time out slow ps/osascript without blocking the loop |
 | src/daemon/session-summary-worker.test.ts | a | regression: Stop spam re-summarized 281MB transcripts 259x; covers debounce, incremental offset, queue dedupe |
+| src/workers/merge-revert-stdin.test.ts | a | merge hung 13 min at 05:12-05:25 2026-11-24: findRevertedMerge fed a failed git diff (null stdout) to git apply --check, which inherited the parent's stdin and blocked forever; pins that a revert whose diff cannot be read is skipped and apply always gets explicit piped stdin |
