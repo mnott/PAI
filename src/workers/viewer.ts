@@ -1339,9 +1339,21 @@ export async function followWorkers(
         out(c("dim", "closing"));
         return { done: true, reason: "worker-ended" };
       }
-      // no auto-exit: only a terminal follow with no wired stdin is done —
-      // an interactive one stays up for say / resume input
-      if (rlIn === null) return { done: true, reason: "worker-ended" };
+      // no auto-exit: the worker's process is gone (terminal state, or a
+      // running/queued status whose pid is no longer owned — a stale ghost),
+      // so the pane has nothing left to follow: close it, interactive or not.
+      // A same-id restart (status back to running, pid owned) revives the run
+      // in this pane instead. (2026-11-24: a killed worker's pane kept
+      // following forever because an interactive follow never exited here.)
+      const now = loadStatus(logDir, lingerOn);
+      if (!now || (isTerminal(now.state) && !ownsPid(now))) return { done: true, reason: "worker-ended" };
+      if (!isTerminal(now.state) && !ownsPid(now)) {
+        // a live-marked status whose runner is gone: the worker is over
+        markFinished(lingerOn, now, target === null || handles.size > 0);
+        return { done: true, reason: "worker-ended" };
+      }
+      // still owned (a same-id restart revived it): follow on
+      finished.delete(lingerOn);
     }
     if (autoExit && !target) {
       if ([...(scanCache?.values() ?? [])].some((s) => isLive(s))) {

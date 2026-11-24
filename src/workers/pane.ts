@@ -1523,6 +1523,35 @@ function planEnded(logDir: string, wid: string): boolean {
 }
 
 /**
+ * Whether a live pid still belongs to the worker itself (status.ts ownsPid's rule,
+ * replicated here because pane.ts cannot import status.ts): its start time is
+ * within 120 s of the worker's recorded start, or its command line names the
+ * worker's id or label. A reused pid matches neither.
+ */
+function pidNamesWorker(st: { id?: string; label?: string; pid?: number; started?: string; procStart?: number }): boolean {
+  if (typeof st.pid !== "number" || st.pid <= 0) return false;
+  const started = st.procStart ?? (st.started ? Date.parse(st.started.replace(" ", "T")) : NaN);
+  if (!Number.isNaN(started)) {
+    try {
+      const out = execFileSync("ps", ["-o", "lstart=", "-p", String(st.pid)], { encoding: "utf8" }).trim();
+      if (out && out.toUpperCase() !== "STARTED") {
+        const psStart = Date.parse(out.split("\n")[0] ?? "");
+        if (!Number.isNaN(psStart) && Math.abs(psStart - started) <= 120_000) return true;
+      }
+    } catch {
+      /* ps unreadable: fall through to the command-line check */
+    }
+  }
+  let cmd = "";
+  try {
+    cmd = execFileSync("ps", ["-ww", "-o", "command=", "-p", String(st.pid)], { encoding: "utf8" });
+  } catch {
+    return false;
+  }
+  return (!!st.id && cmd.includes(st.id)) || (!!st.label && st.label.length >= 8 && cmd.includes(st.label));
+}
+
+/**
  * The single rule for closing a worker's pane from outside: its own process has exited AND the worker ended
  * (done, failed, killed or lost; a failed one lingers longer, see paneReapable). A same-id restart reuses the pane, so a pane whose process is still alive is never closed. The pane's
  * process is the one the pane-exec wrapper ran (exit file written) or, for a pane without a wrapper record,
@@ -1534,7 +1563,13 @@ export function paneMayClose(logDir: string, wid: string): boolean {
     const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string; pid?: number };
     if (!st.state || st.state === "running" || st.state === "queued") return false;
     if (readRecord(wid)) return readExit(wid) !== null;
-    return !(typeof st.pid === "number" && st.pid > 0 && pidAlive(st.pid));
+    // reuse-aware: a plain pidAlive keeps the pane open forever when the killed
+    // worker's pid was taken by an unrelated process (2026-11-24). Same rule as
+    // status.ts ownsPid — pane.ts cannot import it (status.ts imports us), so
+    // it is replicated here: the pid must match the worker's start time, or
+    // name the worker in its own command line.
+    if (typeof st.pid !== "number" || st.pid <= 0 || !pidAlive(st.pid)) return true;
+    return !pidNamesWorker(st);
   } catch {
     return false;
   }
