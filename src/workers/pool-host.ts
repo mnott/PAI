@@ -43,7 +43,7 @@ import { routeRun } from "./policy.js";
 import { takeLoopStop } from "./loop-stop.js";
 import { recordRunOutcomes } from "../hooks/ts/lib/antipattern-log.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
-import { nowStamp, saveStatus, loadStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
+import { nowStamp, saveStatus, loadStatus, describeTool, parseSleepSecs, pooledOrigin, type WorkerStatus } from "./status.js";
 import { loadContractAddendum } from "./contract-addendum.js";
 import { poolSlotSettingsId, slimProfileArgs, WORKER_BRIEF } from "./slim-profile.js";
 import { removePinFilesOfProcess } from "./settings-file.js";
@@ -1099,7 +1099,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       last: "starting (pooled)",
       rc: null,
       secs: null,
-      origin: "spawn",
+      origin: pooledOrigin(prior),
       outputFormat: task.outputFormat,
       ...(task.className || prior?.className ? { className: task.className ?? prior?.className } : {}),
       ...(prior?.topic ? { topic: prior.topic } : {}),

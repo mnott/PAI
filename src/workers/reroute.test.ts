@@ -1001,4 +1001,37 @@ describe("harness runs stay out of L0 notices", () => {
     expect(seen?.PAI_WORKER_ORCHESTRATOR).toBeUndefined();
     expect(seen?.CLAUDE_CODE_SESSION_ID).toBeUndefined();
   });
+
+  it("the smoke start's production spawn path (startDetachedWorker) hands PAI_HARNESS_RUN=1 to the child; pooled and rerouted runs keep harness", async () => {
+    const { smokeStart } = await import("./smoke-start.js");
+    const { pooledOrigin } = await import("./status.js");
+    const { workersLogDir } = await import("./paths.js");
+    const { readWorkersSection } = await import("./config.js");
+    let seen: NodeJS.ProcessEnv | undefined;
+    const spawnFake = ((bin: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; outPath: string }) => {
+      seen = o.env;
+      writeFileSync(o.env[ID_FILE_ENV]!, JSON.stringify({ id: "smoke-x", state: "running" }));
+      saveStatus(workersLogDir(readWorkersSection().workers), { ...queued({ id: "smoke-x", state: "failed" }), rc: 1, origin: "harness" });
+      return process.pid;
+    }) as typeof import("./reroute.js").spawnSession;
+    await smokeStart(
+      { cwd: dir, timeoutMs: 3_000 },
+      { serve: async () => ({ url: "http://127.0.0.1:1/v1", close: async () => {} }), addProvider: () => {}, removeProvider: () => {}, env: { PAI_HARNESS_RUN: "0" }, spawn: spawnFake }
+    );
+    expect(seen?.PAI_HARNESS_RUN).toBe("1");
+    expect(pooledOrigin({ origin: "harness" })).toBe("harness");
+    expect(pooledOrigin({ origin: "spawn" })).toBe("spawn");
+    expect(pooledOrigin(null)).toBe("spawn");
+    // a continuation of a harness run (fall-through) is spawned with the marker too
+    saveStatus(dir, queued({ promptFile: join(dir, "spec.txt"), state: "running", origin: "harness" }));
+    const seen2: NodeJS.ProcessEnv[] = [];
+    const fakeStart = ((bin: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; outPath: string }) => {
+      seen2.push(o.env);
+      writeFileSync(o.env[RERUN_ID_FILE_ENV]!, "w2");
+      writeFileSync(o.env[ID_FILE_ENV]!, "w2");
+      return 4242;
+    }) as typeof import("./reroute.js").spawnSession;
+    await defaultSpawn(dir, fakeStart)({ id: "w1", why: "x", provider: "fakeB", specFile: join(dir, "spec.txt") });
+    expect(seen2[0]?.PAI_HARNESS_RUN).toBe("1");
+  });
 });

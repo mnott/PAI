@@ -442,7 +442,7 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
       try {
         pid = start(process.env.PAI_BIN || "pai", args, {
           cwd: st.cwd || process.cwd(),
-          env: { ...withCallerPath(process.env, st.callerPath), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
+          env: { ...withCallerPath(process.env, st.callerPath), ...(st.origin === "harness" ? { PAI_HARNESS_RUN: "1" } : {}), [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why, [RERUN_ID_FILE_ENV]: idFile, [RERUN_OF_FILE_ENV]: join(logDir, "runs", `rerun-${s.id}.of`), [ID_FILE_ENV]: idFile },
           outPath,
         });
       } catch (e) {
