@@ -13,6 +13,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';
 import { analyzeSession, formatSessionDocument } from '../lib/session-summary.js';
+import { enqueueWork } from '../lib/socket-request.js';
 
 interface SessionData {
   session_id: string;
@@ -89,12 +90,42 @@ async function main() {
     // Also store structured summary via daemon IPC for the observations system
     await storeStructuredSummary(data.session_id, sessionInfo);
 
+    // Enqueue the final AI-powered session summary. `final: true` bypasses the
+    // 30-minute debounce so a real session end is never skipped because a Stop
+    // summary ran recently; the worker still sends only the transcript part
+    // after the last summarized offset (incremental).
+    await enqueueFinalSessionSummary(data.session_id);
+
     // Exit successfully
     process.exit(0);
   } catch (error) {
     // Silent failure - don't disrupt workflow
     console.error(`[UOCS] SessionEnd hook error: ${error}`);
     process.exit(0);
+  }
+}
+
+/**
+ * Enqueue a `session-summary` work item with `final: true` so the worker
+ * summarizes once at real session end regardless of the debounce. Non-blocking:
+ * if the daemon is unavailable the mechanical session document above is enough.
+ * transcriptPath is intentionally omitted — the worker resolves the transcript
+ * itself (Claude Code may still be moving the JSONL at session end).
+ */
+async function enqueueFinalSessionSummary(sessionId: string): Promise<void> {
+  try {
+    await enqueueWork<boolean>(paiSocketPath(), 3000, 'session-summary', 2, {
+      cwd: process.cwd(),
+      sessionId: sessionId || undefined,
+      final: true,
+    }, {
+      onReply: () => true,
+      onError: () => false,
+      onTimeout: () => false,
+      fallback: false,
+    });
+  } catch {
+    // Silent failure — don't disrupt session end
   }
 }
 
