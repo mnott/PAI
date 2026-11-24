@@ -50,6 +50,8 @@ export interface AnthropicRequest {
   system?: string | AnthropicContentBlock[];
   messages?: AnthropicMessage[];
   tools?: Array<{ name?: string; description?: string; input_schema?: unknown }>;
+  /** Claude Code carries the session id here; the loop capture keys runs on it. */
+  metadata?: { user_id?: string };
 }
 
 export interface OpenAiFunctionCall {

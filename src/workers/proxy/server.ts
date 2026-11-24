@@ -39,6 +39,12 @@ import {
   parseOpenAiReply,
   type ProxyGuardDeps,
 } from "../../router/proxy-guard.js";
+import {
+  captureLogDir,
+  defaultLoopCaptureRing,
+  maybeFlushLoopCapture,
+  type LoopCaptureRing,
+} from "./loop-capture.js";
 
 /** The configured proxy port (workers.proxy.port; shipped default in defaults/workers.yaml). */
 export function proxyPort(): number {
@@ -66,6 +72,10 @@ interface ProxyServerOptions {
   onUpstreamRequest?: (url: string, body: unknown) => void;
   /** Guard on replies; default router.guard.mode (off). monitor records only; enforce rewrites a tool call the rules deny. `deps` replaces evaluate/rules (tests). */
   guard?: { mode?: "off" | "monitor" | "enforce"; deps?: ProxyGuardDeps };
+  /** Loop-capture ring (last translated turns per run); default: the process-wide ring. */
+  captureRing?: LoopCaptureRing;
+  /** Log dir for loop captures; default: the workers log dir. */
+  captureLogDir?: string;
 }
 
 function guardMode(opts: ProxyServerOptions): "off" | "monitor" | "enforce" {
@@ -162,6 +172,16 @@ async function handleMessages(
   const model = provider.models.default;
   const openaiBody = anthropicToOpenAi(reqBody, model);
   opts.onUpstreamRequest?.(`${provider.upstreamUrl}/chat/completions`, openaiBody);
+
+  // loop capture: the run id Claude Code carries (metadata.user_id = session id);
+  // flush any pending loop-stop first, then keep this turn once its reply lands
+  const runId = typeof reqBody.metadata?.user_id === "string" ? reqBody.metadata.user_id : null;
+  const ring = opts.captureRing ?? defaultLoopCaptureRing;
+  const logDir = opts.captureLogDir ?? captureLogDir();
+  if (runId) maybeFlushLoopCapture(logDir, runId, provider.baseUrl ?? "", ring);
+  const record = (raw: string): void => {
+    if (runId) ring.record(runId, openaiBody, raw);
+  };
 
   let upstream: Response;
   try {
@@ -273,12 +293,14 @@ async function handleMessages(
     } finally {
       res.write(translator.finish()); // no-op when [DONE] already finished it
       res.end();
+      record(tapped);
       if (mode !== "enforce") tapReply(opts, tapped, "text/event-stream", model, providerName, reqBody);
     }
     return;
   }
 
   const rawText = await upstream.text().catch(() => "");
+  record(rawText);
   const json = ((): unknown => {
     try {
       return JSON.parse(rawText);
