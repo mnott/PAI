@@ -19,9 +19,18 @@ import { routerUrl } from "./run-env.js";
 
 export const loopStopMarkerPath = (logDir: string, id: string): string => join(logDir, `${id}.loop-stop`);
 
+/** The repeated call a loop stop names: tool, first chars of its command/input, repeat count, first chars of the result it kept getting. */
+export interface LoopStopCall {
+  tool: string;
+  input: string;
+  count: number;
+  result: string;
+}
+
 export interface LoopStopMarker {
   ts: string;
   reason: string;
+  call?: LoopStopCall;
 }
 
 export interface LoopStopDeps {
@@ -30,6 +39,8 @@ export interface LoopStopDeps {
   claudePid?: () => number | undefined;
   /** Router base URL for the capture-flush notification; default: the loopback router. */
   routerBase?: () => string;
+  /** The repeated call, carried into the marker for the L0 notice. */
+  call?: LoopStopCall;
 }
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
@@ -55,9 +66,9 @@ export function defaultClaudePid(): number | undefined {
 
 /** Mark the worker loop-stopped (marker file + status note) and SIGTERM its claude process. Never throws. */
 export function requestLoopStop(logDir: string, id: string, reason: string, deps: LoopStopDeps = {}): void {
-  const { kill = (pid, sig) => process.kill(pid, sig), claudePid = defaultClaudePid, routerBase = routerUrl } = deps;
+  const { kill = (pid, sig) => process.kill(pid, sig), claudePid = defaultClaudePid, routerBase = routerUrl, call } = deps;
   try {
-    const m: LoopStopMarker = { ts: new Date().toISOString(), reason };
+    const m: LoopStopMarker = { ts: new Date().toISOString(), reason, ...(call ? { call } : {}) };
     writeFileAtomic(loopStopMarkerPath(logDir, id), JSON.stringify(m));
   } catch {
     // the signal below still ends the run
