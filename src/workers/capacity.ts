@@ -23,7 +23,7 @@ import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
-import { alive, isLive, loadStatus, loadStatusCached, loadStatuses, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatus, loadStatusCached, loadStatusesCached, ownsPidCached, slotLent, holdsSlot, pausedFree, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig, QueuePriority };
 
@@ -286,7 +286,9 @@ function lastServed(all: WorkerStatus[], provider: string): Map<string, number> 
 function fairEntries(logDir: string, key: string, isAlive: (pid: number) => boolean, statuses?: WorkerStatus[], now: number = Date.now(), agingMs?: number): QueueEntry[] {
   const entries = liveEntries(logDir, key, isAlive);
   if (key.startsWith("session~")) return entries;
-  const all = statuses ?? loadStatuses(logDir);
+  // the cached read by default: an uncached fallback here re-parsed every status file on every queue walk
+  // (~3 s on a busy log dir, 2026-11-24) — callers that need a fresh read pass `statuses` explicitly.
+  const all = statuses ?? loadStatusesCached(logDir);
   const byId = new Map(all.map((s) => [s.id, s]));
   return fairOrder({
     entries,
