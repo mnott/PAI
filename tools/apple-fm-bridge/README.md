@@ -24,8 +24,9 @@ opt-in local worker provider (`apple-fm`).
 
 ```sh
 cd tools/apple-fm-bridge
-swift build -c release          # needs macOS 27 SDK + Swift 6.4 toolchain
-.build/out/Products/Release/apple-fm-bridge   # or .build/release/apple-fm-bridge
+SCRATCH=${PAI_SWIFT_SCRATCH:-$HOME/.cache/pai/swift/apple-fm-bridge}  # keep .build out of the synced checkout
+swift build -c release --scratch-path "$SCRATCH"   # needs macOS 27 SDK + Swift 6.4 toolchain
+$(swift build -c release --scratch-path "$SCRATCH" --show-bin-path)/apple-fm-bridge
 ```
 
 MIT licensed; Foundation + Network only, no dependencies.
