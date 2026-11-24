@@ -215,6 +215,59 @@ final class CoreTests: XCTestCase {
         // never below the floor
         XCTAssertEqual(popoverHeight(ideal: 40, visibleHeight: 900), 120)
     }
+
+    // A fresh popover measures 0 before its first layout; feeding that back
+    // would collapse the window. Any real measurement replaces the size and
+    // the top edge stays anchored under the menu bar.
+    func testPopoverWindowSizeAndAnchoring() {
+        XCTAssertNil(popoverWindowSize(measured: 0, visibleHeight: 900)) // not measured yet
+        XCTAssertEqual(popoverWindowSize(measured: 300, visibleHeight: 900), 300)
+        XCTAssertEqual(popoverWindowSize(measured: 1200, visibleHeight: 900), 900) // capped
+        let f = CGRect(x: 100, y: 400, width: 420, height: 700) // top edge at 1100
+        XCTAssertEqual(anchoredTop(f, newHeight: 300), 1100)
+        let grown = resizedFrame(f, height: 900)
+        XCTAssertEqual(grown.maxY, 1100) // grows downward, top stays put
+        XCTAssertEqual(grown.height, 900)
+        let shrunk = resizedFrame(f, height: 300)
+        XCTAssertEqual(shrunk.maxY, 1100)
+        XCTAssertEqual(shrunk.minY, 800)
+        XCTAssertTrue(frameMatches(f, size: CGSize(width: 420, height: 700)))
+        XCTAssertFalse(frameMatches(f, size: CGSize(width: 420, height: 300)))
+    }
+
+    // A flat or single-sample series must never render as a filled block.
+    func testFlatSeriesIsNotFilled() {
+        XCTAssertEqual(drawableSeries([50]), [])           // one sample: nothing to draw
+        XCTAssertEqual(drawableSeries([]), [])
+        XCTAssertEqual(drawableSeries([50, 50, 50]), [50, 50, 50]) // flat: drawn as a line
+    }
+
+    // Notes of resolved/finished deep-freeze records must not be shown; the
+    // router only keeps a record while a worker is pending, so its note is live.
+    func testMachineBadgeShowsPendingNoteOnly() {
+        XCTAssertEqual(machineBadge(nil), "normal")
+        let pending = QueueResponse.Machine(state: "deep-frozen", since: nil, until: nil,
+                                           note: "resume 20261124-112759-66734: announced 20261124-113037-79994 but it never started")
+        XCTAssertEqual(machineBadge(pending), "resume 20261124-112759-66734: announced 20261124-113037-79994 but it never started")
+        // resolved record: no note, plain badge — and a cleared note field renders nothing stale
+        XCTAssertEqual(machineBadge(.init(state: "deep-frozen", since: nil, until: nil)), "deep-frozen")
+        XCTAssertEqual(machineBadge(.init(state: "deep-frozen", since: nil, until: nil, note: "")), "deep-frozen")
+    }
+}
+
+// The battery chart's fill rule lives in the view layer; mirrored here as a pure
+// predicate so it is unit-testable without AppKit.
+func areaShouldFill(_ values: [Double]) -> Bool {
+    let v = drawableSeries(values)
+    return v.count >= 2 && Set(v).count > 1
+}
+
+extension CoreTests {
+    func testAreaFillsOnlyWithVariation() {
+        XCTAssertFalse(areaShouldFill([50]))          // single sample: no block
+        XCTAssertFalse(areaShouldFill([50, 50, 50]))  // flat: line only
+        XCTAssertTrue(areaShouldFill([40, 55, 62]))   // real variation: fill
+    }
 }
 
 @MainActor

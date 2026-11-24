@@ -149,6 +149,8 @@ public struct QueueResponse: Codable {
         public var state: String?
         public var since: Double?
         public var until: Double?
+        /// The router's pending deep-freeze note (e.g. a resume that never started); nil when nothing is pending.
+        public var note: String?
     }
     public var table: [Row]?
     public var providers: [Provider]?
@@ -308,14 +310,20 @@ public func rerouteItems(_ r: QueueResponse.Row) -> [(label: String, action: Str
     return out
 }
 
-/// Machine state badge: "normal", "frozen since 14:05", "deep-frozen".
+/// Machine state badge: "normal", "frozen since 14:05", or the deep-freeze
+/// record's own note (e.g. "resume 20261124-…: announced … but it never
+/// started"). The router keeps a deep-frozen record only while a worker is
+/// still pending, so its note always describes a live problem; a resolved
+/// record is gone and nothing stale is shown.
 public func machineBadge(_ m: QueueResponse.Machine?, timeZone: TimeZone = .current) -> String {
     switch m?.state {
     case "frozen":
         guard let since = m?.since else { return "frozen" }
         let f = DateFormatter(); f.dateFormat = "HH:mm"; f.timeZone = timeZone
         return "frozen since " + f.string(from: Date(timeIntervalSince1970: since / 1000))
-    case "deep-frozen": return "deep-frozen"
+    case "deep-frozen":
+        if let note = m?.note, !note.isEmpty { return note }
+        return "deep-frozen"
     default: return "normal"
     }
 }
@@ -330,6 +338,10 @@ public func machineActionRequest(baseURL: URL, action: String, forMs: Double? = 
     req.httpBody = try! JSONSerialization.data(withJSONObject: body)
     return req
 }
+
+/// A chart series is only worth drawing once it has samples to connect: fewer
+/// than two points render as a line (or nothing), never as a filled block.
+public func drawableSeries(_ values: [Double]) -> [Double] { values.count >= 2 ? values : [] }
 
 /// The last `minutes` of a series (by t, ms), or everything when too short.
 public func tailSeries(_ s: [SystemResponse.Sample], minutes: Double = 6) -> [SystemResponse.Sample] {

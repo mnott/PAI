@@ -383,9 +383,15 @@ struct QueueCard: View {
 
 // MARK: battery chart, power and worker mode
 
-/// Filled area of values 0...100 (fixed scale).
+/// Filled area of values 0...100 (fixed scale). A flat or single-sample series
+/// is drawn as a line, not a block: a filled path with no variation reads as a
+/// solid rectangle.
 struct Area: Shape {
     var values: [Double]
+
+    /// True when the series has no variation to fill between.
+    var flat: Bool { values.count < 2 || Set(values).count <= 1 }
+
     func path(in r: CGRect) -> Path {
         var p = Path()
         guard values.count > 1 else { return p }
@@ -406,12 +412,13 @@ struct BatteryChart: View {
     var caption: String
     var body: some View {
         let s = tailSeries(history)
-        let vals = s.compactMap(\.memPct)
+        let vals = drawableSeries(s.compactMap(\.memPct))
+        let flat = Area(values: vals).flat
         VStack(spacing: 2) {
             ZStack {
                 RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .labelColor).opacity(0.05))
-                Area(values: vals).fill(Color(Palette.ok).opacity(0.45))
-                Area(values: vals).stroke(Color(Palette.ok), lineWidth: 1)
+                if !flat { Area(values: vals).fill(Color(Palette.ok).opacity(0.45)) }
+                Area(values: vals).stroke(Color(Palette.ok), lineWidth: flat ? 1.5 : 1)
                 GeometryReader { g in
                     ForEach(Array(chargingRuns(s).enumerated()), id: \.offset) { _, r in
                         let n = Double(max(s.count - 1, 1))
