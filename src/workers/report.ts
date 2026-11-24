@@ -298,11 +298,14 @@ export function workerContractPrompt(
   const short = SHORT_CONTRACT_CLASSES.has(cls ?? "");
   const planner = !short && (PLANNER_CLASSES.has(cls ?? "") || Boolean(orchestrate));
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
-  base += `\n${CODE_EXPLORE_LINE}`;
+  // A/B #23: PAI_BRIEF_CODE_GRAPH=0 in the environment of `pai worker run` drops both code-graph
+  // guidance lines from the brief. Read here, not forwarded: the worker's own env is untouched.
+  const codeGraphOff = process.env.PAI_BRIEF_CODE_GRAPH === "0";
+  if (!codeGraphOff) base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
   base += `\n${LIVE_RUNS_MAIN_LINE}`;
   if (localProvider) base += `\n${REPEAT_STOP_LINE}`;
-  if (graphIndexed) base += `\n${CODE_GRAPH_FIRST_LINE}`;
+  if (graphIndexed && !codeGraphOff) base += `\n${CODE_GRAPH_FIRST_LINE}`;
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;
   // a planner without the flag still gets the exact start/wait/merge commands.
