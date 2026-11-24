@@ -293,12 +293,10 @@ export function workerContractPrompt(
   const short = SHORT_CONTRACT_CLASSES.has(cls ?? "");
   const planner = !short && (PLANNER_CLASSES.has(cls ?? "") || Boolean(orchestrate));
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
-  // A/B switch (forge #23): PAI_BRIEF_CODE_GRAPH=0 in the `pai worker run` environment drops both code-graph lines.
-  const graphLines = process.env.PAI_BRIEF_CODE_GRAPH !== "0";
-  if (graphLines) base += `\n${CODE_EXPLORE_LINE}`;
+  base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
   base += `\n${LIVE_RUNS_MAIN_LINE}`;
-  if (graphIndexed && graphLines) base += `\n${CODE_GRAPH_FIRST_LINE}`;
+  if (graphIndexed) base += `\n${CODE_GRAPH_FIRST_LINE}`;
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;
   // a planner without the flag still gets the exact start/wait/merge commands.
