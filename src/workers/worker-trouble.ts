@@ -97,9 +97,15 @@ export class TroubleWatcher {
     this.send("guard-denials", { denied: n, guard }, `${this.who} blocked ${n}x by ${guard} in ${Math.round(policy.denialWindowMs / 60_000)} min: ${short(reason, 120)}`);
   }
 
-  /** The loop guard's hard stop; always sent. */
-  onLoopStop(reason: string): void {
-    this.send("loop-stopped", {}, `${this.who} was stopped by the loop guard: ${short(reason, 160)}`, true);
+  /**
+   * The loop guard's hard stop; always sent. `escalation` is the clause naming what the harness
+   * decided after the stop — the continuation id ("; escalating to <provider> as <newid> (same
+   * branch) - wait for it, do not restart") or "no escalation: <reason>". The caller sends this only
+   * once the escalation is decided, so the notice never precedes the continuation it describes.
+   */
+  onLoopStop(reason: string, escalation?: string): void {
+    const clause = escalation ? `; ${escalation}` : "";
+    this.send("loop-stopped", {}, `${this.who} was stopped by the loop guard: ${short(reason, 160)}${clause}`, true);
   }
 
   /** Timer tick while running: no activity for notices.trouble.stallMinutes tells once per quiet spell (throttled). A worker stopped by the operator — listed in the active freeze marker, or paused (a --now preemption or `pai worker pause`) — is not stalled: it tells nothing, and its quiet clock restarts at the thaw or resume. */

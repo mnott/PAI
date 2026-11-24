@@ -100,6 +100,7 @@ import {
   loopStopResult,
 } from "./finalise.js";
 import { CLOUD, continuedLocally, fallThroughTarget, tryEscalate, rerunOn, ranLocal } from "./escalate.js";
+import { isTerminal } from "../status.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
 import { readSchedFile } from "../../router/scheduler.js";
@@ -637,11 +638,11 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     });
   });
   if (state.troubleTimer) clearInterval(state.troubleTimer);
-  if (state.trouble) {
-    const stop = peekLoopStop(logDir, wid);
-    if (stop) state.trouble.onLoopStop(stop.reason);
-    await state.trouble.flush();
-  }
+  // The loop-stop notice is NOT sent here: the escalation decision (tryEscalate / rerunOn inside
+  // finaliseRun's beforeHandoff) runs after this point, and a notice that names no continuation is
+  // what let L0 start a duplicate cloud worker in the gap (2026-11-24, twice). The stop reason is
+  // read here and the notice goes out after finaliseRun, enriched with the continuation id.
+  const loopStopReason = state.trouble ? peekLoopStop(logDir, wid)?.reason ?? null : null;
   resultGrace.cancel();
   await resultGrace.settled();
   // the result already received is the outcome; the signal that ended the leftovers is not
@@ -804,7 +805,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     appendLedger(ledger, "WORKER-LEFTOVER-ENDED", { id: wid, processes: resultGrace.leftover });
   }
   let reviewed = false;
-  return finaliseRun({
+  const finalRc = await finaliseRun({
     logDir,
     ledger,
     status,
@@ -900,4 +901,32 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     }
     },
   });
+  // The loop-stop notice goes out only now, after the escalation decision: it names the continuation
+  // the harness already started (same branch) so the owning session waits instead of restarting a
+  // duplicate, or says plainly that nothing follows.
+  if (state.trouble) {
+    if (loopStopReason) state.trouble.onLoopStop(loopStopReason, continuationNote(logDir, wid));
+    await state.trouble.flush();
+  }
+  return finalRc;
+}
+
+/**
+ * What follows a failed/loop-stopped run, read from its final status: the continuation the harness
+ * started (escalatedTo / fallThroughTo, same branch) named so the owning session waits for it, or a
+ * plain "no escalation: <reason>". The notice must carry this so the orchestrator never starts a
+ * duplicate cloud worker in the gap between the failure notice and the continuation appearing in
+ * `pai worker ps` (2026-11-24, twice).
+ */
+export function continuationNote(logDir: string, wid: string): string {
+  const st = loadStatus(logDir, wid);
+  if (!st) return "no escalation: status gone";
+  const to = st.escalatedTo ?? st.fallThroughTo;
+  if (to) {
+    const cont = loadStatus(logDir, to);
+    if (cont && !isTerminal(cont.state)) return `escalating to ${cont.provider ?? "the cloud"} as ${to} (same branch) - wait for it, do not restart`;
+    return `no escalation: continuation ${to} is gone`;
+  }
+  if (st.escalated) return `no escalation: ${st.escalated.slice(0, 120)}`;
+  return "no escalation: the run ended without a continuation";
 }

@@ -288,8 +288,28 @@ function continuationOrigin(statuses: WorkerStatus[], s: WorkerStatus): string |
   return root;
 }
 
+/**
+ * The clause a failed notice carries about what follows the failure: the continuation the harness
+ * already started (escalatedTo / fallThroughTo, same branch) so the orchestrator waits for it, or a
+ * plain "no escalation: <reason>". Without this, L0 saw the bare failure and started a duplicate
+ * cloud worker in the gap before the continuation appeared in `pai worker ps` (2026-11-24, twice).
+ */
+export function escalationClause(s: WorkerStatus, statuses: WorkerStatus[]): string {
+  const to = s.escalatedTo ?? s.fallThroughTo;
+  if (to) {
+    const cont = statuses.find((x) => x.id === to);
+    if (cont && !isTerminal(cont)) {
+      const where = cont.provider ?? "the cloud";
+      return `escalating to ${where} as ${to} (same branch) - wait for it, do not restart`;
+    }
+    return `no escalation: continuation ${to} is gone`;
+  }
+  if (s.escalated) return `no escalation: ${s.escalated.slice(0, 120)}`;
+  return "no escalation: the run ended without a continuation";
+}
+
 /** One event's one-liner — the exact line the orchestrator reads. */
-function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, stalledMin: number | null, origin?: string): string {
+function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, stalledMin: number | null, origin?: string, statuses: WorkerStatus[] = []): string {
   const tail = `- see pai worker replay ${s.id}`;
   // a continuation (reroute/escalation, new id, same branch) names the run it continues and how to land it
   if (origin && (kind === "finished" || kind === "failed")) {
@@ -303,7 +323,7 @@ function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, st
   if (kind === "sleeping") return `worker ${s.id} ${s.label} sleeping ${s.sleepSec}s in one command ${tail}`;
   if (kind === "looping") return `worker ${s.id} ${s.label} looping: ?x identical failing ? call ${tail}`;
   const why = rc === null ? "runner gone" : `rc=${rc}`;
-  return `worker ${s.id} ${s.label} failed ${why} ${tail}`;
+  return `worker ${s.id} ${s.label} failed ${why}; ${escalationClause(s, statuses)} ${tail}`;
 }
 
 /**
@@ -409,7 +429,7 @@ export async function detectSupervisionEvents(
       stalledMin,
       ...(kind === "thrashing" ? { consecFails: s.consecFails ?? 0 } : {}),
       ...(kind === "sleeping" ? { sleepSec: s.sleepSec ?? 0 } : {}),
-      text: eventText(kind, s, rc, stalledMin, continuationOrigin(statuses, s)),
+      text: eventText(kind, s, rc, stalledMin, continuationOrigin(statuses, s), statuses),
     });
   }
   return out;

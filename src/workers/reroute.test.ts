@@ -1035,3 +1035,35 @@ describe("harness runs stay out of L0 notices", () => {
     expect(seen2[0]?.PAI_HARNESS_RUN).toBe("1");
   });
 });
+
+// ---------------------------------------------------------------------------
+// a failure notice names the continuation the harness already started, so the
+// owning session waits instead of restarting a duplicate in the gap (2026-11-24, twice)
+describe("failure notices carry the escalation decision", () => {
+  const mk = (id: string, over: Partial<WorkerStatus>): WorkerStatus =>
+    ({ id, pid: 0, label: "fix", cwd: "/", term: "", provider: "p", model: "m", state: "done", started: nowStamp(), updated: nowStamp(), turns: 1, tools: 0, last: "", rc: 0, secs: 1, spawnerSession: "L0", ...over }) as WorkerStatus;
+
+  it("a failed origin with a live cloud continuation names it; a cloud run with none says so", async () => {
+    saveStatus(dir, mk("ORIG", { state: "failed", rc: 143, provider: "gyro", escalatedTo: "CONT" }));
+    saveStatus(dir, mk("CONT", { provider: "anthropic-native", state: "running", fallThroughOf: "ORIG" }));
+    saveStatus(dir, mk("CLOUD", { state: "failed", rc: 1, provider: "anthropic-native" }));
+    const { detectSupervisionEvents } = await import("./supervision.js");
+    const ev = await detectSupervisionEvents([loadStatus(dir, "ORIG")!, loadStatus(dir, "CONT")!, loadStatus(dir, "CLOUD")!], { now: new Date(), stallMs: 600_000 });
+    const orig = ev.find((e) => e.worker === "ORIG");
+    expect(orig?.text).toMatch(/^worker ORIG fix failed rc=143; escalating to anthropic-native as CONT \(same branch\) - wait for it, do not restart/);
+    const cloud = ev.find((e) => e.worker === "CLOUD");
+    expect(cloud?.text).toContain("no escalation: the run ended without a continuation");
+  });
+
+  it("continuationNote: a live continuation is named, a dead one and a plain failure say no escalation", async () => {
+    const { continuationNote } = await import("./run/execute-fold.js");
+    saveStatus(dir, mk("ORIG", { state: "failed", rc: 143, provider: "gyro", fallThroughTo: "CONT" }));
+    saveStatus(dir, mk("CONT", { provider: "anthropic-native", state: "running", fallThroughOf: "ORIG" }));
+    expect(continuationNote(dir, "ORIG")).toBe("escalating to anthropic-native as CONT (same branch) - wait for it, do not restart");
+    saveStatus(dir, { ...loadStatus(dir, "CONT")!, state: "lost" } as WorkerStatus);
+    expect(continuationNote(dir, "ORIG")).toBe("no escalation: continuation CONT is gone");
+    saveStatus(dir, mk("PLAIN", { state: "failed", rc: 1 }));
+    expect(continuationNote(dir, "PLAIN")).toBe("no escalation: the run ended without a continuation");
+    expect(continuationNote(dir, "GONE")).toBe("no escalation: status gone");
+  });
+});
