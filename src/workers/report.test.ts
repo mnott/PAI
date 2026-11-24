@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { applyClaimCheck, claimIdentifiers, workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, checkProof, verifyReportChanges } from "./report.js";
+import { applyClaimCheck, claimIdentifiers, workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, REPEAT_STOP_LINE, checkProof, verifyReportChanges } from "./report.js";
 import { repairAndValidateAg2 } from "./agentish.js";
 
 describe("workerContractPrompt — planner classes (orchestrate/plan without the flag)", () => {
@@ -58,6 +58,20 @@ describe("workerContractPrompt — planner classes (orchestrate/plan without the
   it("the keepalive baseline stays the worker-role full contract", () => {
     expect(WORKER_CONTRACT_PROMPT).toContain("this task is yours to finish");
     expect(WORKER_CONTRACT_PROMPT).not.toContain("L1 planner");
+  });
+});
+
+describe("workerContractPrompt — local-provider repeat-stop line", () => {
+  it("a local provider gets the repeat-stop line; a cloud provider does not", () => {
+    const local = workerContractPrompt("implement", "ag2", false, undefined, undefined, false, true);
+    const cloud = workerContractPrompt("implement", "ag2", false, undefined, undefined, false, false);
+    expect(local).toContain(REPEAT_STOP_LINE);
+    expect(cloud).not.toContain(REPEAT_STOP_LINE);
+  });
+
+  it("a short-class local worker gets it too", () => {
+    const p = workerContractPrompt("simple", "ag2", false, undefined, undefined, false, true);
+    expect(p).toContain("A denied or repeated call will not change its result");
   });
 });
 
