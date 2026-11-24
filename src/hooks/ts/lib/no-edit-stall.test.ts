@@ -540,6 +540,108 @@ describe("result-fingerprint", () => {
   });
 });
 
+// ---- rewrite-unchanged-after-same-error ----
+// Worker 20261123-135804-43914 (Paperfull) rewrote a scratch proof driver byte-for-byte after
+// the same failing proof ("folder 2 not found in [data-testid=staging-list]"); identical-write
+// only counts consecutive writes of one file, so interleaving two scratch files never hit its
+// stop_at. An unchanged rewrite right after the same red result is now stopped at the 2nd such rewrite.
+
+const RW_DRIVER = ".pai-scratch/jsdom-driver.js";
+const RW_DEBUG = ".pai-scratch/debug-boot.js";
+const RW_RUN = "node .pai-scratch/jsdom-driver.js";
+const RW_FAIL = 'DRIVER FAIL: Error: folder 2 not found in [data-testid="staging-list"]     at clickFolder (/repo/.pai-scratch/jsdom-driver.js:41:11)';
+const RW_FAIL2 = "DRIVER FAIL: SyntaxError: Unexpected token } in JSON at position 42     at parse (/repo/.pai-scratch/jsdom-driver.js:12:5)";
+const RW_OK = "DRIVER OK: 12 passed";
+
+type RwCall = [string, Record<string, unknown> | string, string?];
+const rwW = (file: string, content: string): RwCall => ["Write", { file_path: file, content }];
+const rwE = (file: string, old: string, neu: string): RwCall => ["Edit", { file_path: file, old_string: old, new_string: neu }];
+const rwRun = (out: string): RwCall => ["Bash", RW_RUN, out];
+
+/** Replays a transcript (Pre then Post per call); returns the step of the last call. */
+function rwReplay(calls: RwCall[]): LoopStep {
+  let state: LoopState = emptyLoopState();
+  let last: LoopStep | undefined;
+  calls.forEach(([tool, input, out], i) => {
+    const now = 1_000_000 + i * 1000;
+    const step = stepLoopGuard(state, tool, input, null, now, process.cwd());
+    state = step.state;
+    last = step;
+    if (!step.deny) state = recordLoopResult(state, tool, input, out ?? "ok", now);
+  });
+  return last!;
+}
+
+describe("rewrite-unchanged-after-same-error", () => {
+  it("stops at the 2nd unchanged rewrite after the same failing result", () => {
+    const steps = [
+      rwReplay([rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL)]), // first write: allowed
+      rwReplay([rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v1")]), // 1st unchanged rewrite after the same failure: allowed
+      rwReplay([rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v1")]), // 2nd: stopped
+    ];
+    expect(steps[0].deny).toBe(false);
+    expect(steps[1].deny).toBe(false);
+    expect(steps[2].deny).toBe(true);
+    expect(steps[2].stop).toBe(true);
+    expect(steps[2].id).toBe("rewrite-unchanged-after-same-error");
+    expect(steps[2].reason).toContain(RW_DRIVER);
+    expect(steps[2].reason).toContain("unchanged after the same failure");
+    expect(steps[2].reason).toContain("Read the code the proof drives and change that, not the driver.");
+  });
+
+  it("a rewrite after a different failure is not counted by this rule (identical-write still notes it)", () => {
+    const s = rwReplay([rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL2), rwW(RW_DRIVER, "v1")]);
+    expect(s.id).not.toBe("rewrite-unchanged-after-same-error");
+    expect(s.stop).toBeFalsy();
+  });
+
+  it("a rewrite after a green result is not counted", () => {
+    const s = rwReplay([rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v1"), rwRun(RW_OK), rwW(RW_DRIVER, "v1")]);
+    expect(s.deny).toBe(false);
+    expect(s.stop).toBeFalsy();
+  });
+
+  it("a rewrite with different content is not counted", () => {
+    const s = rwReplay([rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v2"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v2")]);
+    expect(s.deny).toBe(false);
+    expect(s.stop).toBeFalsy();
+  });
+
+  it("two identical writes with no run between them are not counted", () => {
+    const s = rwReplay([rwW(RW_DRIVER, "v1"), rwW(RW_DRIVER, "v1"), rwW(RW_DRIVER, "v1")]);
+    expect(s.deny).toBe(false);
+    expect(s.stop).toBeFalsy();
+  });
+
+  it("interleaving a second scratch file does not dodge the guard (the transcript case)", () => {
+    const s = rwReplay([
+      rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL),
+      rwW(RW_DEBUG, "d1"), rwRun(RW_FAIL),
+      rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL),
+      rwW(RW_DEBUG, "d1"), rwRun(RW_FAIL),
+      rwW(RW_DRIVER, "v1"),
+    ]);
+    expect(s.deny).toBe(true);
+    expect(s.stop).toBe(true);
+    expect(s.id).toBe("rewrite-unchanged-after-same-error");
+  });
+
+  it("an edit to the driver between the runs breaks the chain", () => {
+    const s = rwReplay([rwW(RW_DRIVER, "v1"), rwRun(RW_FAIL), rwE(RW_DRIVER, "v1", "v2"), rwRun(RW_FAIL), rwW(RW_DRIVER, "v1")]);
+    expect(s.deny).toBe(false);
+    expect(s.stop).toBeFalsy();
+  });
+});
+
+describe("rewrite-unchanged-after-same-error.yaml", () => {
+  const doc = parse(readFileSync("antipatterns/tool-loop/rewrite-unchanged-after-same-error.yaml", "utf8"));
+  it("is shipped with the required note", () => {
+    expect(doc.detector.kind).toBe("identical-write");
+    expect(doc.detector.params.stop_at).toBe(2);
+    expect(doc.message).toContain("Read the code the proof drives and change that, not the driver.");
+  });
+});
+
 describe("pai worker wait repeats (loop guard)", () => {
   let dir: string;
   beforeEach(() => {
