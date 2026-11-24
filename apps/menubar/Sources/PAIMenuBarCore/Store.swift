@@ -155,6 +155,9 @@ public final class Store: ObservableObject {
         return nil
     }
 
+    /// The classes the under-pace cloud lead applies to (budget.cloudUnderPace.classes), nil when the router sent none.
+    public func paceClasses() -> [String]? { limits?.pace?.classes }
+
     /// Weekly cloud window (used %, pace %) of the first cloud provider that has one.
     public func weeklyPace() -> (used: Double, pace: Double)? {
         for l in limits?.activeCloud() ?? [] {

@@ -579,7 +579,7 @@ struct PopoverContent: View {
             }
             Card { MachineBar(machine: store.queue?.machine, baseURL: base, message: $message) }
             LimitsCard(limits: store.limits, queue: store.queue, data: store.data, speeds: store.lastSpeed,
-                       workMode: store.workMode, workRule: store.workMode.map { workModeRule($0, used: store.weeklyPace()?.used, pace: store.weeklyPace()?.pace) }, message: $message)
+                       workMode: store.workMode, workRule: store.workMode.map { workModeRule($0, used: store.weeklyPace()?.used, pace: store.weeklyPace()?.pace, classes: store.paceClasses()) }, message: $message)
             SystemCard(sys: store.system, history: store.history, battery: store.battery, batteryHistory: store.batteryHistory,
                        batteryDetail: store.batteryDetail(), powerMode: store.powerMode,
                        aneWatts: store.aneWatts, aneHistory: store.aneHistory, aneInflight: store.appleFMInflight(), message: $message)

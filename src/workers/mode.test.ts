@@ -127,6 +127,16 @@ describe("under-pace cloud lead is per class (budget.cloudUnderPace.classes)", (
     expect(d.classes).toEqual(["implement"]);
   });
 
+  it("the cloud reason names the classes the lead applies to", () => {
+    const d = decidePace(10, 50, DEFAULT_PACE, false);
+    expect(d.reason).toBe("cloud: under pace for orchestrate, plan 10 % < 0.8 x 50 %");
+    const hyst = decidePace(42, 50, DEFAULT_PACE, true);
+    expect(hyst.reason).toContain("cloud: under pace for orchestrate, plan");
+    const over = decidePace(45, 50, DEFAULT_PACE, false);
+    expect(over.reason).toBe("local: used 45 % >= 0.8 x pace 50 %");
+    expect(decidePace(10, 50, { ...DEFAULT_PACE, classes: [] }, false).reason).toContain("for no classes");
+  });
+
   it("readPaceConfig reads classes from workers.yaml and defaults to the planning classes", () => {
     const dir = mkdtempSync(join(tmpdir(), "pace-"));
     const f = join(dir, "workers.yaml");

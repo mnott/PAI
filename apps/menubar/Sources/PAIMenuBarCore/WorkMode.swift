@@ -13,16 +13,18 @@ public enum WorkMode: String, CaseIterable, Sendable {
     }
 }
 
-/// The rule line under the buttons, e.g. "cloud first: 21% < 80% of pace 34%".
-public func workModeRule(_ mode: WorkMode, used: Double?, pace: Double?, ratio: Double = 0.8) -> String {
+/// The rule line under the buttons, e.g. "cloud first for orchestrate, plan: 21% < 80% of pace 34%".
+/// `classes` is budget.cloudUnderPace.classes (nil = unknown, keep the old wording).
+public func workModeRule(_ mode: WorkMode, used: Double?, pace: Double?, ratio: Double = 0.8, classes: [String]? = nil) -> String {
     switch mode {
     case .speed: return "cloud first: speed mode"
     case .budget: return "local only where possible: budget mode"
     case .balanced:
         guard let used, let pace else { return "local first: no weekly pace reading" }
         let r = "\(Int((ratio * 100).rounded()))%"
+        let scope = classes?.isEmpty == false ? " for \(classes!.joined(separator: ", "))" : ""
         return used < ratio * pace
-            ? "cloud first: \(Int(used.rounded()))% < \(r) of pace \(Int(pace.rounded()))%"
+            ? "cloud first\(scope): \(Int(used.rounded()))% < \(r) of pace \(Int(pace.rounded()))%"
             : "local first: \(Int(used.rounded()))% >= \(r) of pace \(Int(pace.rounded()))%"
     }
 }
