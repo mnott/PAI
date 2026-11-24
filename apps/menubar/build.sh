@@ -3,8 +3,12 @@
 set -e
 cd "$(dirname "$0")"
 VERSION=$(node -p "require('../../package.json').version")
-swift build -c release
-BIN=$(swift build -c release --show-bin-path)/PAIMenuBar
+# Keep SwiftPM's scratch/build dir outside the source tree: a synced checkout
+# (file-sync client watching it) stalls swift-build on .build/ file churn.
+SCRATCH=${PAI_SWIFT_SCRATCH:-$HOME/.cache/pai/swift/menubar}
+mkdir -p "$SCRATCH"
+swift build -c release --scratch-path "$SCRATCH"
+BIN=$(swift build -c release --scratch-path "$SCRATCH" --show-bin-path)/PAIMenuBar
 APP=build/PAI.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
