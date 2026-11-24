@@ -926,3 +926,79 @@ describe("reroute lineage", () => {
     expect(existsSync(tb.dir)).toBe(false);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// harness runs (the merge gate's smoke start) stay out of L0 notices, the digest and pending
+describe("harness runs stay out of L0 notices", () => {
+  const sh = (cwd: string, ...args: string[]): string => {
+    const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const mk = (id: string, over: Partial<WorkerStatus>): WorkerStatus =>
+    ({ id, pid: 0, label: "fix", cwd: "/", term: "", provider: "p", model: "m", state: "done", started: nowStamp(), updated: nowStamp(), turns: 1, tools: 0, last: "", rc: 0, secs: 1, spawnerSession: "L0", ...over }) as WorkerStatus;
+
+  it("a smoke start finishing (also as a fall-through of a rerouted origin) emits no notice; a normal continuation still notifies", async () => {
+    // the merge gate's smoke start: harness origin, no session, no worktree
+    saveStatus(dir, mk("SMOKE", { origin: "harness", label: "merge gate smoke start", spawnerSession: undefined, session: undefined }));
+    // its fall-through path: a rerouted origin whose continuation is the smoke run
+    saveStatus(dir, mk("ORIG", { state: "killed", rc: 143, rerouted: "cloud: stalled", fallThroughTo: "SMOKE" }));
+    saveStatus(dir, mk("SMOKE2", { origin: "harness", label: "merge gate smoke start", spawnerSession: undefined, session: undefined, fallThroughOf: "ORIG" }));
+    // a normal rerouted continuation of a session's worker: still notifies
+    saveStatus(dir, mk("NORM", { fallThroughOf: "ORIG" }));
+    const { detectSupervisionEvents } = await import("./supervision.js");
+    const all = [loadStatus(dir, "SMOKE")!, loadStatus(dir, "ORIG")!, loadStatus(dir, "SMOKE2")!, loadStatus(dir, "NORM")!];
+    const ev = detectSupervisionEvents(all, { now: new Date(), stallMs: 600_000 });
+    expect(ev.find((e) => e.worker === "SMOKE")).toBeUndefined();
+    expect(ev.find((e) => e.worker === "SMOKE2")).toBeUndefined();
+    // ORIG's continuation is the harness run: its failure names no merge target (the smoke is not mergeable work)
+    expect(ev.find((e) => e.worker === "ORIG")?.text).toMatch(/^worker ORIG fix failed rc=143/);
+    const norm = ev.find((e) => e.worker === "NORM");
+    expect(norm?.text).toMatch(/^continuation NORM of ORIG \(fix\) finished: rc=0; merge with pai worker merge NORM/);
+  });
+
+  it("a harness run with unmerged work is absent from pending; a session worker still shows", async () => {
+    const repo = join(dir, "repo");
+    mkdirSync(repo);
+    sh(repo, "init", "-q", "-b", "main");
+    sh(repo, "config", "user.email", "t@t");
+    sh(repo, "config", "user.name", "t");
+    writeFileSync(join(repo, "f"), "0");
+    sh(repo, "add", "."); sh(repo, "commit", "-qm", "init");
+    const logDir = join(dir, "logs");
+    const tree = (id: string): { dir: string; branch: string } => {
+      const d = join(logDir, "worktrees", id);
+      mkdirSync(join(logDir, "worktrees"), { recursive: true });
+      sh(repo, "worktree", "add", "-q", "-b", `pai/${id}`, d);
+      writeFileSync(join(d, `${id}.txt`), id);
+      sh(d, "add", "."); sh(d, "commit", "-qm", `work ${id}`);
+      return { dir: d, branch: `pai/${id}` };
+    };
+    const ts = tree("SMOKE"), tn = tree("NORM");
+    saveStatus(logDir, mk("SMOKE", { origin: "harness", label: "merge gate smoke start", cwd: repo, worktreeDir: ts.dir, branch: ts.branch }));
+    saveStatus(logDir, mk("NORM", { cwd: repo, worktreeDir: tn.dir, branch: tn.branch }));
+    const { pendingResults } = await import("./pending.js");
+    expect(pendingResults(logDir, repo).map((r) => r.id)).toEqual(["NORM"]);
+  });
+
+  it("the smoke start's env carries PAI_HARNESS_RUN=1 and drops the worker identity", async () => {
+    let seen: NodeJS.ProcessEnv | undefined;
+    const { smokeStart } = await import("./smoke-start.js");
+    const res = await smokeStart(
+      { cwd: dir, timeoutMs: 1_000 },
+      {
+        serve: async () => ({ url: "http://127.0.0.1:1/v1", close: async () => {} }),
+        addProvider: () => {},
+        removeProvider: () => {},
+        env: { PAI_WORKER: "x", PAI_WORKER_ID: "x", PAI_WORKER_ORCHESTRATOR: "1", CLAUDE_CODE_SESSION_ID: "s", PAI_HARNESS_RUN: "0" },
+        start: async (o) => { seen = o.env; return { rc: 1, id: "smoke-test" }; },
+      }
+    );
+    expect(res.ok).toBe(false);
+    expect(seen?.PAI_HARNESS_RUN).toBe("1");
+    expect(seen?.PAI_WORKER).toBeUndefined();
+    expect(seen?.PAI_WORKER_ID).toBeUndefined();
+    expect(seen?.PAI_WORKER_ORCHESTRATOR).toBeUndefined();
+    expect(seen?.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+  });
+});

@@ -890,7 +890,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     last: "starting",
     rc: null,
     secs: null,
-    origin: spawnOrigin(),
+    origin: process.env.PAI_HARNESS_RUN === "1" ? "harness" : spawnOrigin(),
     outputFormat: a.parsed.outputFormat,
     ...(sessionKey ? { sessionKey } : {}),
     ...(spawner ? { spawnerSession: spawner } : {}),

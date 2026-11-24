@@ -99,7 +99,7 @@ export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType
     last: "generating image",
     rc: null,
     secs: null,
-    origin: spawnOrigin(),
+    origin: process.env.PAI_HARNESS_RUN === "1" ? "harness" : spawnOrigin(),
     outputFormat: parsed.outputFormat,
     reportFormat: "json",
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
@@ -270,7 +270,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     last: "starting",
     rc: null,
     secs: null,
-    origin: spawnOrigin(),
+    origin: process.env.PAI_HARNESS_RUN === "1" ? "harness" : spawnOrigin(),
     outputFormat: parsed.outputFormat,
     // CLI engines take instructions through the prompt, not the AG2 contract flag
     reportFormat: "json",

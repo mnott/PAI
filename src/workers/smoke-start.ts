@@ -196,6 +196,9 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     delete env.PAI_WORKER_ORCHESTRATOR;
     // infrastructure like the keepalive beat: no spawning session, no terminal identity, so supervision has no owner to notify
     for (const k of ["CLAUDE_CODE_SESSION_ID", "ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE"]) delete env[k];
+    // the smoke is harness infrastructure, not a session's task: origin "harness" keeps it out of L0 notices,
+    // the digest and `pai worker pending` even if a session map or a reroute would otherwise claim it
+    env.PAI_HARNESS_RUN = "1";
     // the smoke's 30 s start window measures only the start: the at-start worktree gc (salvage/archive of finished
     // workers' trees) is skipped for this run — a big pass blew the window and read as "worker did not start"
     // (merge 2026-11-19 14:31). The daemon's hourly gc owns the archiving; the normal start path is unchanged.

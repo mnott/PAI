@@ -140,8 +140,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     last: headless ? "starting" : "interactive",
     rc: null,
     secs: null,
-    // interactive runs ARE the chat pane, not a spawned subagent of it
-    origin: headless ? spawnOrigin() : "chat",
+    // interactive runs ARE the chat pane, not a spawned subagent of it; a harness run (merge gate smoke start)
+    // is infrastructure started by the harness itself, not by a session
+    origin: headless ? (env.PAI_HARNESS_RUN === "1" ? "harness" : spawnOrigin()) : "chat",
     outputFormat: parsed.outputFormat,
     ...(a.route ? { route: a.route } : {}),
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),

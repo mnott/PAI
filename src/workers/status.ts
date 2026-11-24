@@ -148,7 +148,7 @@ export interface WorkerStatus {
    * (the terminal's interactive pane itself, tracked like a worker). Absent
    * on statuses written before the flag existed — read as a spawn.
    */
-  origin?: "spawn" | "chat" | "uhp";
+  origin?: "spawn" | "chat" | "uhp" | "harness";
   /**
    * Set while the start gate holds this run for the previous run on its
    * provider to warm the prompt cache (stagger.ts); state stays "running" so
@@ -316,6 +316,14 @@ export interface WorkerStatus {
 
 /** Label a worker gets when launched with neither --label nor a prompt. */
 export const UNLABELED = "unlabeled";
+
+/**
+ * Whether a run was started by the harness itself (the merge gate's smoke start, probes) rather than by a
+ * session: it is infrastructure, not a task — no session notices, no digest line, never in `pai worker pending`.
+ */
+export function isHarnessRun(s: Pick<WorkerStatus, "origin">): boolean {
+  return s.origin === "harness";
+}
 
 /**
  * Whether a status is the terminal's interactive chat pane, not a spawned

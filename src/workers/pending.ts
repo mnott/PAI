@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { join } from "node:path";
-import { isLive, loadStatus, loadStatuses } from "./status.js";
+import { isHarnessRun, isLive, loadStatus, loadStatuses } from "./status.js";
 import { statusPath } from "./paths.js";
 import { adoptDetachedHead, git, uncommittedPaths } from "./worktree.js";
 import { fmtAge } from "../utils/fmt-age.js";
@@ -56,7 +56,7 @@ export function pendingResults(logDir: string, repoRoot?: string, now = Date.now
   if (repoRoot && !want) return [];
   const out: PendingResult[] = [];
   for (const st of loadStatuses(logDir)) {
-    if (st.archived || st.merged || st.supersededBy || isLive(st)) continue;
+    if (st.archived || st.merged || st.supersededBy || isLive(st) || isHarnessRun(st)) continue;
     if (!st.worktreeDir || !existsSync(st.worktreeDir)) continue;
     const repo = toplevel(st.cwd);
     if (!repo || (want && repo !== want)) continue;
