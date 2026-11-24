@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { providerKeyPath, resolveProviderKey, type WorkerProvider } from "./config.js";
+import { stripApiKey } from "./strip-api-key.js";
 
 /** Build the codex exec argument vector (without the binary itself). */
 export function buildCodexArgs(prompt: string, model: string | undefined): string[] {
@@ -37,8 +38,7 @@ export function buildCodexArgs(prompt: string, model: string | undefined): strin
  * the run keyless: the engine gets the token and the router URL, never the key.
  */
 export function buildCodexEnv(provider: WorkerProvider, route?: { token: string; baseUrl: string }): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
+  const env: NodeJS.ProcessEnv = stripApiKey({ ...process.env });
   delete env.ANTHROPIC_BASE_URL;
   delete env.ANTHROPIC_AUTH_TOKEN;
   delete env.ANTHROPIC_DEFAULT_HAIKU_MODEL;

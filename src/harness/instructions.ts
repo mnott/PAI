@@ -41,7 +41,7 @@ Per-session models: session_profile_get / session_profile_set answer and change 
 ### Harness: Claude Code
 
 This session is Claude Code: PAI's hooks (settings.json) enforce the delegation and security rules, the Agent tool is
-denied (start workers with worker_run, not a subagent), and long Bash waits use \`pai worker wait\`, never sleep loops.
+denied (start workers with worker_run, not a subagent), and long Bash waits run with run_in_background (never a foreground \`pai worker wait\`), never sleep loops.
 <!-- /only -->
 <!-- only:opencode -->
 ### Harness: OpenCode
