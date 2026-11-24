@@ -37,6 +37,8 @@ export interface RuntimeCommands {
   autostart?: boolean;
   /** exclusive group (e.g. "heavy"): runtimes of one group never run together; start is refused while a peer is up, `switch` swaps them */
   exclusive?: string;
+  /** `pai freeze` spares this runtime (its server keeps serving); only an explicit `freeze: spare` marks one — everything else is stopped */
+  freeze?: "spare";
 }
 
 /** The other runtimes of `runtime`'s exclusive group; [] when it has none. */
@@ -74,7 +76,8 @@ export function readRuntimeCommands(configPath: string = ""): Record<string, Run
       if (typeof e.note === "string" && e.note.trim()) cmd.note = e.note;
       if (e.autostart === true) cmd.autostart = true;
       if (typeof e.exclusive === "string" && e.exclusive.trim()) cmd.exclusive = e.exclusive.trim();
-      if (cmd.start || cmd.stop || cmd.ready || cmd.note || cmd.autostart || cmd.exclusive) out[name] = cmd;
+      if (e.freeze === "spare") cmd.freeze = "spare";
+      if (cmd.start || cmd.stop || cmd.ready || cmd.note || cmd.autostart || cmd.exclusive || cmd.freeze) out[name] = cmd;
     }
     return out;
   } catch {

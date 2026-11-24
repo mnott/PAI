@@ -512,6 +512,10 @@ models:
       stop: kill $(lsof -nP -iTCP:8037 -sTCP:LISTEN -t)
       ready: http://127.0.0.1:8037/v1/models
       note: Apple on-device model (FoundationModels, ~8k context); opt-in local provider
+      # `pai freeze` spares it: the Neural Engine bridge costs near nothing idle and
+      # stopping it hangs every helper call routed to it (2026-11-24: 60 s timeouts).
+      # Only an explicit `freeze: spare` spares a runtime; every other server is stopped.
+      freeze: spare
 # Worker panes (src/workers/pane*.ts; read through src/workers/pane-policy.ts).
 panes:
   # Smallest pane a worker may be placed in; guides which pane is split. A small pane is never a violation.

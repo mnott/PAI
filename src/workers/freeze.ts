@@ -17,13 +17,13 @@
  * first again (the L1 last). `--only <id>` implies `--workers-only`: freezing one
  * worker must never stall every other worker's shared model server.
  *
- * By default only HEAVY model runtimes are stopped: a server whose runtime config
- * declares `models.runtimes.<name>.exclusive: heavy` (the GPU model servers). Light
- * runtimes (apple-fm on the Neural Engine, ollama loading on demand) cost near
- * nothing idle and SIGSTOPping them hangs every helper call routed to them — the
- * 2026-11-24 freeze froze the apple-fm bridge and its calls timed out at 60 s.
- * `--all` freezes every running server as before. A server whose runtime is not
- * configured is treated as light (spared). Thaw continues exactly what was frozen.
+ * By default every running model server is stopped EXCEPT a runtime explicitly
+ * marked light: `models.runtimes.<name>.freeze: spare`. The shipped apple-fm
+ * runtime carries that flag — the Neural Engine bridge costs near nothing idle
+ * and SIGSTOPping it hangs every helper call routed to it (2026-11-24: 60 s
+ * timeouts). Everything else (GPU servers, ollama, unconfigured runtimes) is
+ * stopped, so a freeze really frees the machine. `--all` freezes every running
+ * server including the spared ones. Thaw continues exactly what was frozen.
  *
  * Never stopped: this process and its ancestors, the daemon, router, AIBroker,
  * pool hosts, docker. Only worker pids, their descendants and model servers.
@@ -369,8 +369,8 @@ export interface FreezeDeps {
   statuses: (logDir: string) => WorkerStatus[];
   /** One entry per RUNNING model server: the listening pid and the name of what it serves (its port's /v1/models id). Async because naming a server is an HTTP probe. */
   servers: () => Promise<{ pid: number; label: string }[]>;
-  /** The runtime names whose config declares `exclusive: heavy` (the GPU model servers). Default: read from the main config. */
-  heavyRuntimes?: () => string[];
+  /** The runtime names whose config declares `freeze: spare` (kept running by a default freeze). Default: read from the main config. */
+  spareRuntimes?: () => string[];
   signal: (pid: number, sig: "SIGSTOP" | "SIGCONT") => void;
   owns: (s: WorkerStatus) => boolean;
   self: number;
@@ -400,11 +400,11 @@ export function realFreezeDeps(): FreezeDeps {
     now: () => Date.now(),
     note: (d, id, t) => void setWorkerNote(d, id, t),
     // lazy: building deps must stay free of config reads
-    heavyRuntimes: () => {
+    spareRuntimes: () => {
       try {
         const { readRuntimeCommands } = require("./model-runtimes.js") as typeof import("./model-runtimes.js");
         const cmds = readRuntimeCommands();
-        return Object.keys(cmds).filter((n) => cmds[n]?.exclusive === "heavy");
+        return Object.keys(cmds).filter((n) => cmds[n]?.freeze === "spare");
       } catch {
         return [];
       }
@@ -518,13 +518,13 @@ const serverOf = (label: string, s: WorkerStatus): boolean => !!s.provider && (l
 
 /**
  * A model-server label ("provider:port" or "provider:port serving X") names its runtime by the provider part.
- * A server is HEAVY when that runtime (or any provider sharing the port) declares `exclusive: heavy`;
- * an unconfigured runtime is light (spared).
+ * A server is SPARED only when that runtime (or any provider sharing the port) declares `freeze: spare`;
+ * everything else — including an unconfigured runtime — is stopped.
  */
-export function heavyServer(label: string, heavy: string[]): boolean {
+export function sparedServer(label: string, spare: string[]): boolean {
   const port = /:(\d+)/.exec(label)?.[1];
   const providers = label.split(":")[0].split(/\s+/)[0];
-  return heavy.some((h) => h === providers || (port && `${h}:${port}` === providers));
+  return spare.some((s) => s === providers || (port && `${s}:${port}` === providers));
 }
 
 export async function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[], except?: Except, freezeAllServers = false): Promise<FreezeReport> {
@@ -561,14 +561,14 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
   const marker: FreezeMarker = { since, by, ...(partial ? { scope: "workers" as const } : {}), ...(forMs ? { until: since + forMs } : {}), pids: stopped };
   writeJson(freezePath(), marker);
   const wanted = new Set<number>();
-  const heavy = freezeAllServers ? null : (d.heavyRuntimes?.() ?? []);
+  const spare = freezeAllServers ? null : (d.spareRuntimes?.() ?? []);
   const sparedServers: string[] = [];
   const stopPass = async (): Promise<void> => {
     const rows = d.procs();
-    // a model server an excepted worker runs on keeps serving it; a light runtime keeps serving everyone unless --all
+    // a model server an excepted worker runs on keeps serving it; a `freeze: spare` runtime keeps serving everyone unless --all
     const servers = (await d.servers()).filter((m) => {
       if (sparedLive.some((s) => serverOf(m.label, s))) return false;
-      if (heavy && !heavyServer(m.label, heavy)) {
+      if (spare && sparedServer(m.label, spare)) {
         if (!sparedServers.includes(m.label)) sparedServers.push(m.label);
         return false;
       }
@@ -596,7 +596,7 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
   for (const e of stopped.filter((x) => x.kind === "model")) (modelEntries.get(e.id) ?? modelEntries.set(e.id, []).get(e.id)!).push(e);
   for (const [label, mine] of modelEntries) lines.push(`frozen model ${label} (pid ${mine[mine.length - 1].pid}, ${mine.length} processes)`);
   if (spared.size) lines.push(`spared ${[...spared].join(", ")} (and children)`);
-  if (sparedServers.length) lines.push(`spared model ${sparedServers.join(", ")} (light runtime; \`pai freeze --all\` stops it too)`);
+  if (sparedServers.length) lines.push(`spared model ${sparedServers.join(", ")} (runtime marked freeze: spare; \`pai freeze --all\` stops it too)`);
   lines.push(`frozen ${ids.length} workers + ${modelEntries.size} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
   return { lines, total: stopped.length, marker };
 }

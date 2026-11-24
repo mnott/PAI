@@ -518,7 +518,7 @@ Alias of `pai freeze` (--all) and `pai thaw` (--resume)
 pai worker freeze [ID] [options]
 ```
 
-`pai worker freeze <id>` stops one worker's process tree (`pai worker thaw <id>` continues it); `pai worker freeze --all` is `pai freeze --all` (every worker and every local model server, light runtimes included); `--resume` is `pai thaw`; `--status` shows what is frozen.
+`pai worker freeze <id>` stops one worker's process tree (`pai worker thaw <id>` continues it); `pai worker freeze --all` is `pai freeze --all` (every worker and every local model server, including runtimes marked freeze: spare); `--resume` is `pai thaw`; `--status` shows what is frozen.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -526,7 +526,7 @@ pai worker freeze [ID] [options]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--all` | flag | — | Freeze every running worker and every local model server (light runtimes too; a plain `pai freeze` spares them) |
+| `--all` | flag | — | Freeze every running worker and every local model server (runtimes marked freeze: spare too; a plain `pai freeze` spares them) |
 | `--resume` | flag | — | Thaw (same as `pai thaw`) |
 | `--status` | flag | — | Show what is frozen |
 | `--for DURATION` | string | — | Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works |
