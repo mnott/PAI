@@ -198,6 +198,16 @@ export interface WorkerProvider {
   tags?: ProviderTag[];
   /** What a registered endpoint is good for (routing selectors class:/tag:); see local-instances.ts. */
   characteristics?: { classes?: string[]; contextTokens?: number; tags?: string[] };
+  /**
+   * Default sampling for requests through this provider that carry no
+   * `temperature` (Claude Code sends none). A local server then decodes
+   * greedy (argmax) and re-emits an identical tool call once it is in the
+   * history — the signal-2 identical-call loops. The router fills these in
+   * for loopback providers only; a temperature the client did send is never
+   * overridden. Unset = temperature 0.7 for a local provider. workers.yaml
+   * `sampling`.
+   */
+  sampling?: { temperature?: number; top_p?: number };
   /** Statusline plan-quota block; see ProviderUsage. Absent = "usage n/a". */
   usage?: ProviderUsage;
   /**
@@ -1074,6 +1084,26 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     };
   }
 
+  let sampling: WorkerProvider["sampling"];
+  if (p.sampling !== undefined) {
+    const at = `.providers.${name}.sampling`;
+    if (typeof p.sampling !== "object" || p.sampling === null || Array.isArray(p.sampling)) bad(at, "must be an object of temperature / top_p numbers");
+    const s = p.sampling as Record<string, unknown>;
+    const num = (k: string): number | undefined => {
+      if (s[k] === undefined) return undefined;
+      if (typeof s[k] !== "number" || !Number.isFinite(s[k] as number) || (s[k] as number) < 0 || (s[k] as number) > 1) {
+        bad(`${at}.${k}`, "must be a number between 0 and 1");
+      }
+      return s[k] as number;
+    };
+    const unknown = Object.keys(s).filter((k) => !["temperature", "top_p"].includes(k));
+    if (unknown.length) bad(at, `unknown key ${unknown.join(", ")} (allowed: temperature, top_p)`);
+    const temperature = num("temperature");
+    const top_p = num("top_p");
+    if (temperature === undefined && top_p === undefined) bad(at, "needs at least one of temperature, top_p");
+    sampling = { ...(temperature !== undefined ? { temperature } : {}), ...(top_p !== undefined ? { top_p } : {}) };
+  }
+
   let usage: ProviderUsage | undefined;
   if (p.usage !== undefined) {
     if (typeof p.usage !== "object" || p.usage === null || Array.isArray(p.usage)) {
@@ -1151,6 +1181,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(costTier !== undefined ? { costTier } : {}),
     ...(tags ? { tags } : {}),
     ...(characteristics ? { characteristics } : {}),
+    ...(sampling ? { sampling } : {}),
     ...(usage ? { usage } : {}),
   };
 }
