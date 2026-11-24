@@ -418,6 +418,12 @@ export interface IdentityConfig {
    */
   selfEmails: string[];
 
+  /**
+   * Further addresses mail may be sent to without review (PreToolUse mail
+   * whitelist gate). selfEmails always count as whitelisted.
+   */
+  mailWhitelist?: string[];
+
   /** The account used to send on the user's behalf, when one is configured. */
   sendingAccount?: string;
 }

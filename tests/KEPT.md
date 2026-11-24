@@ -81,3 +81,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/hooks/ts/lib/worker-result-hint.test.ts | b | PostToolUse result hints for local workers: empty output = success, grep no-match = search hint (2026-11-24 loop-guard repeats) |
 | src/cli/commands/setup/utils.test.ts | a | setup rewrote the workers section of config.yaml and turned workers off, 2026-11-24 |
 | src/workers/proxy/loop-capture.test.ts | a | loop-capture: simulated loop-guard stop writes last 3 translated bodies with auth stripped; memory bound of the ring |
+| src/hooks/ts/lib/mail-whitelist-gate.test.ts | b | mail whitelist gate: unlisted recipients must be denied, drafts allowed |
