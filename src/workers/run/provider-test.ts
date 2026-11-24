@@ -12,6 +12,7 @@ import {
 import { buildRunEnv, claudeCommand } from "../run-env.js";
 import { codexInstalled } from "../codex.js";
 import { opencodeInstalled } from "../opencode.js";
+import { withDaemonLlmMarker } from "../daemon-llm.js";
 import { ensureNoMcpConfig } from "../paths.js";
 import { proxyPort, ensureProxyRunning } from "../proxy/server.js";
 import { type StreamEvent } from "./types.js";
@@ -39,9 +40,9 @@ export interface ProviderTestDeps {
 }
 
 /** Spawn `argv` with `env`, capture stdout/stderr, kill it after `timeoutMs`. */
-function runProbeProcess(argv: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<ProbeRunResult> {
+export function runProbeProcess(argv: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<ProbeRunResult> {
   const [bin, ...rest] = argv;
-  const proc = spawn(bin, rest, { env, stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(bin, rest, { env: withDaemonLlmMarker(env), stdio: ["ignore", "pipe", "pipe"] });
   const timer = setTimeout(() => {
     try { proc.kill("SIGKILL"); } catch { /* already gone */ }
   }, timeoutMs);

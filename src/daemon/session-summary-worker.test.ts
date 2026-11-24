@@ -240,3 +240,20 @@ describe("daemon-LLM transcript backstop", () => {
     expect(isDaemonLlmTranscript("/home/u/.claude/projects/some-project/abc.jsonl", "/")).toBe(false);
   });
 });
+
+describe("every headless side-work spawn carries the daemon marker", () => {
+  it("planLlmSpawn tier fallback", async () => {
+    const plan = await planSummarySpawn("haiku", "haiku", { configPath: "/nonexistent.yaml" });
+    expect(plan.env[DAEMON_LLM_ENV_MARKER]).toBe("1");
+  });
+  it("audit ladder child env", async () => {
+    const { ladderChildEnv } = await import("../audit/ladder.js");
+    expect(ladderChildEnv({})[DAEMON_LLM_ENV_MARKER]).toBe("1");
+  });
+  it("provider probe process spawn env", async () => {
+    const { runProbeProcess } = await import("../workers/run/provider-test.js");
+    delete process.env[DAEMON_LLM_ENV_MARKER];
+    const r = await runProbeProcess(["env"], { PATH: process.env.PATH }, 10_000);
+    expect(r.stdout).toContain(`${DAEMON_LLM_ENV_MARKER}=1`);
+  });
+});
