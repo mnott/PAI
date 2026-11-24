@@ -69,6 +69,8 @@ export const AUTOSTART_EVENT = "RUNTIME-AUTOSTART";
 export const AUTOSTART_RETRY_MS = 10 * 60_000;
 /** After this many failed starts: give up until the next daemon start. */
 export const AUTOSTART_MAX_FAILURES = 3;
+/** A stopped-on-purpose runtime is logged once when the stop is first seen, then at most once this often as a reminder (2026-11-24: the line repeated every scheduler pass — 1,114 copies in 60,000 daemon log lines). */
+export const STOPPED_REMINDER_MS = 6 * 60 * 60_000;
 
 export interface AutostartConfig {
   enabled: boolean;
@@ -132,6 +134,8 @@ export interface AutostartRuntimeState {
   suspectedDownAt?: number;
   /** The exclusive-group skip was logged (once per blocking episode). */
   exclusiveLogged?: boolean;
+  /** The stopped-on-purpose line was logged (once per stopped episode; a reminder after STOPPED_REMINDER_MS). */
+  stoppedLoggedAt?: number;
 }
 
 /** The autostart state of every configured runtime, including the ones that never needed a pass (up). */
@@ -231,9 +235,14 @@ export async function runtimeAutostartTick(cfg: AutostartConfig, states: Autosta
     if (!secondRefusal && d.now() - st.suspectedDownAt < confirmMs) continue; // still inside the window: wait, start nothing
     if (st.gaveUp) continue;
     if (d.stopped?.(runtime)) {
-      d.log(`autostart ${runtime}: stopped on purpose (pai models stop), not starting; \`pai models start ${runtime}\` lifts it`);
+      // once per stopped episode, then a reminder at most every STOPPED_REMINDER_MS: the daemon ticks every minute and the line used to repeat on every pass
+      if (st.stoppedLoggedAt === undefined || d.now() - st.stoppedLoggedAt >= STOPPED_REMINDER_MS) {
+        st.stoppedLoggedAt = d.now();
+        d.log(`autostart ${runtime}: stopped on purpose (pai models stop), not starting; \`pai models start ${runtime}\` lifts it`);
+      }
       continue;
     }
+    st.stoppedLoggedAt = undefined; // the stop lifted: a future stop logs again
     const blocker = await d.exclusivePeerUp?.(runtime).catch(() => null);
     if (blocker) {
       if (!st.exclusiveLogged) d.log(`autostart ${runtime}: not starting, ${blocker} is running in exclusive group ${cmd.exclusive}; use switch`);
