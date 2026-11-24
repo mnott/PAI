@@ -5,8 +5,8 @@
  * through that made every worker start crash ("Cannot access 'toolFold' before
  * initialization", 2026-11-19 03:33–03:58, merge 2d9a628d): no gate step ever
  * started a worker. This is that step: the freshly built CLI runs one headless
- * worker on a scripted offline model — a loopback provider whose upstream is a
- * stub server answering every Chat Completions call with "ok" (never a real
+ * worker on a scripted offline model — a loopback provider whose url is a
+ * stub server answering every Messages call with "ok" (never a real
  * model, never the cloud) — prompt "reply ok", tools Read only. It must end rc 0
  * with a valid result; anything else fails the gate, which reverts the merge
  * like a failed test (`smoke start failed: <first error line>`).
@@ -47,7 +47,7 @@ export const SMOKE_TIMEOUT_MS = 60_000;
 export interface SmokeStartDeps {
   /** Runs the built CLI's `worker run …` and waits for its end; returns rc + the worker id. */
   start?: (opts: SmokeRunOpts) => Promise<{ rc: number; id: string; why?: string }>;
-  /** The offline stub model server: a loopback provider pointing here speaks OpenAI through the PAI proxy. */
+  /** The offline stub model server: a loopback provider pointing here speaks the Anthropic protocol directly (no shared proxy). */
   serve?: () => Promise<{ url: string; close: () => Promise<void> }>;
   /** Points the config at the smoke provider (tests inject; default edits a temp workers.yaml copy). */
   addProvider?: (url: string) => void;
@@ -75,37 +75,68 @@ export interface SmokeStartResult {
   id?: string;
 }
 
-/** The OpenAI Chat Completions answer Claude Code reads as "ok". */
-function stubCompletion(body: unknown): string {
-  const model = (body as { model?: string })?.model ?? SMOKE_MODEL;
-  return JSON.stringify({
-    id: "chatcmpl-smoke",
-    object: "chat.completion",
+/**
+ * The Anthropic Messages answer Claude Code reads as "ok". The stub speaks the Anthropic protocol itself: a protocol
+ * "openai" smoke provider runs through the shared PAI proxy daemon, which reads the live config, does not know the
+ * temp-copy smoke provider and answers 404 — the CLI reports that as "issue with the selected model (smoke-stub)".
+ */
+export function stubMessage(body: unknown): { json: string; sse: string } {
+  const b = body as { model?: string };
+  const model = b?.model ?? SMOKE_MODEL;
+  // a valid AG2 report: the worker contract rejects a bare "ok" as an invalid report, which the live supervision re-runs on the cloud
+  const text = "R\ni=smoke\nr=?\nt=Stub+\nc=none\nz=offline stub answer\ny=smoke stub, no work done";
+  const message = {
+    id: "msg_smoke",
+    type: "message",
+    role: "assistant",
     model,
-    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
-    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-  });
+    content: [{ type: "text", text }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  };
+  const ev = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+  const sse =
+    ev("message_start", { type: "message_start", message: { ...message, content: [], stop_reason: null } }) +
+    ev("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }) +
+    ev("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }) +
+    ev("content_block_stop", { type: "content_block_stop", index: 0 }) +
+    ev("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } }) +
+    ev("message_stop", { type: "message_stop" });
+  return { json: JSON.stringify(message), sse };
 }
 
-/** A loopback HTTP server answering /v1/chat/completions with the scripted reply. */
-async function startStubServer(): Promise<{ url: string; close: () => Promise<void> }> {
+/** A loopback HTTP server answering /v1/messages with the scripted reply and /v1/models with the stub model list. */
+export async function startStubServer(): Promise<{ url: string; close: () => Promise<void> }> {
   const srv: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       if (req.url?.endsWith("/models")) {
-        // the run gate's liveness probe of a named loopback provider
+        // the run gate's liveness probe of a named loopback provider, and the model list a client may check the model against
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ object: "list", data: [{ id: SMOKE_MODEL, object: "model" }] }));
+        res.end(JSON.stringify({ object: "list", data: [{ id: SMOKE_MODEL, object: "model", type: "model", display_name: SMOKE_MODEL }], has_more: false }));
         return;
       }
-      if (!req.url?.includes("/chat/completions")) {
+      if (req.method !== "POST" || !/\/v1\/messages(\?|$)/.test(req.url ?? "")) {
         res.writeHead(404, { "content-type": "application/json" });
-        res.end('{"error":"not found"}');
+        res.end('{"type":"error","error":{"type":"not_found_error","message":"not found"}}');
         return;
       }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(stubCompletion(Buffer.concat(chunks).toString("utf8")));
+      let body: unknown = {};
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        /* an unparsable body still gets the scripted answer */
+      }
+      const out = stubMessage(body);
+      if ((body as { stream?: boolean })?.stream) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(out.sse);
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(out.json);
+      }
     });
   });
   const port = await new Promise<number>((resolve, reject) => {
@@ -116,7 +147,7 @@ async function startStubServer(): Promise<{ url: string; close: () => Promise<vo
     });
   });
   return {
-    url: `http://${LOOPBACK_HOST}:${port}/v1`,
+    url: `http://${LOOPBACK_HOST}:${port}`,
     close: async () =>
       new Promise<void>((resolve) => {
         srv.closeAllConnections?.();
@@ -130,10 +161,9 @@ function smokeProviderYaml(url: string): string {
   return [
     `  ${SMOKE_PROVIDER_NAME}:`,
     `    enabled: true`,
-    `    protocol: "openai"`,
+    `    protocol: "anthropic"`,
     `    url: ${JSON.stringify(url)}`, // loopback: the local-only window must not read the smoke as a cloud start
     `    key_file: null`,
-    `    upstream_url: ${JSON.stringify(url)}`,
     `    router: false`,
     `    max_concurrent: 1`,
     `    models:`,
