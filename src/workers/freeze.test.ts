@@ -943,3 +943,52 @@ describe("one own-time clock: stall alert and time budget", () => {
     }
   });
 });
+
+describe("system sleep is not work time (sleep-clock)", () => {
+  it("wall +600s / mono +1s: gap recorded, ledger line once, progress clock does not burn", async () => {
+    const { detectSleepGap, resetSleepTick, sleepMsBetween } = await import("./sleep-clock.js");
+    const { readFileSync } = await import("node:fs");
+    const dir = mkdtempSync(join(tmpdir(), "sleep-"));
+    process.env.PAI_SLEEP_FILE = join(dir, "sleep.json");
+    try {
+      resetSleepTick();
+      const t0 = 1_800_000_000_000;
+      expect(detectSleepGap(t0, 1000, dir)).toBeNull();
+      expect(detectSleepGap(t0 + 600_000, 2000, dir)?.ms).toBe(599_000);
+      expect(detectSleepGap(t0 + 601_000, 3000, dir)).toBeNull();
+      const lines = readFileSync(join(dir, "ledger.log"), "utf8").split("\n").filter((l) => l.includes("MACHINE-SLEEP"));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/from=\d+ to=\d+ seconds=599/);
+      expect(sleepMsBetween(t0, t0 + 601_000)).toBe(600_000);
+      expect(activeMsOf("w-sleep-test", t0, t0 + 601_000)).toBe(1_000);
+    } finally {
+      delete process.env.PAI_SLEEP_FILE;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stall monitor labels sleep and saves no profile", async () => {
+    const { resetSleepTick } = await import("./sleep-clock.js");
+    const { startStallMonitor } = await import("../router/stall.js");
+    const dir = mkdtempSync(join(tmpdir(), "sleep-"));
+    process.env.PAI_SLEEP_FILE = join(dir, "sleep.json");
+    try {
+      resetSleepTick();
+      let wall = 1_800_000_000_000;
+      let mono = 0;
+      const logs: string[] = [];
+      let stalls = 0;
+      const m = startStallMonitor({ tickMs: 5, thresholdMs: 100, now: () => wall, mono: () => mono, log: (l) => logs.push(l), onStall: () => void stalls++, logDir: dir });
+      await new Promise((r) => setTimeout(r, 12));
+      wall += 600_000;
+      mono += 1_000;
+      await new Promise((r) => setTimeout(r, 30));
+      m.stop();
+      expect(logs.some((l) => l.includes("system sleep"))).toBe(true);
+      expect(stalls).toBe(0);
+    } finally {
+      delete process.env.PAI_SLEEP_FILE;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

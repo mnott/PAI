@@ -54,6 +54,7 @@ import { isLive, loadStatuses, ownsPid, type OwnerFields, setWorkerNote, statusP
 import { releaseFreezePauses } from "./preempt.js";
 import { appendLedger as ledgerLine } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
+import { sleepSpansBetween } from "./sleep-clock.js";
 
 /** The ledger line is a courtesy: a missing log dir never blocks a freeze or a thaw. */
 const appendLedger: typeof ledgerLine = (...a) => {
@@ -294,7 +295,7 @@ export function pausedMsBetween(s: { paused?: boolean; pausedAt?: number; paused
   return ms;
 }
 
-/** Wall ms since `since` minus everything this worker spent frozen AND paused — the one clock every quiet/stall/escalation notice runs on. A preemption or `pai worker pause` is not idleness any more than a freeze is; after either ends the spell restarts from its end. */
+/** Wall ms since `since` minus everything this worker spent frozen AND paused AND while the machine slept — the one clock every quiet/stall/escalation notice runs on. A preemption or `pai worker pause` is not idleness any more than a freeze is; after either ends the spell restarts from its end. System sleep is subtracted the same way (sleep-clock.ts): a Mac asleep for 20 min is not a worker idle for 20 min. */
 export function activeMsOf(
   id: string,
   since: number,
@@ -302,7 +303,7 @@ export function activeMsOf(
   pause: { paused?: boolean; pausedAt?: number; pausedMs?: number } = {}
 ): number {
   const frozen = frozenSpans(id, now, Math.max(now, Date.now())); // an open freeze never ends before real now: the live marker is current truth even for a back-dated tick
-  const spans = [...frozen, ...pausedSpans(pause, now)].sort((a, b) => a[0] - b[0]);
+  const spans = [...frozen, ...pausedSpans(pause, now), ...sleepSpansBetween(since, now)].sort((a, b) => a[0] - b[0]);
   const merged: Array<[number, number]> = [];
   for (const sp of spans) {
     const last = merged[merged.length - 1];
