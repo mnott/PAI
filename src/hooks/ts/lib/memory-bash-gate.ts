@@ -51,6 +51,8 @@ const MERGE_PIPE_REASON =
   "a pipe to grep/head/tail before merge hides the failure (the pipeline exits with the last command's status). Run the first command alone, or use `set -o pipefail; <cmd> | tail -20 && pai worker merge <id>`.";
 const PANE_WORKER_REASON =
   "`pai pane run -- pai worker run` is blocked: a worker opens its own pane. Run `pai worker run --label <what> -p \"$(cat spec.txt)\"` directly (run_in_background).";
+const PANE_RESUME_REASON =
+  "`pai pane run -- pai worker resume` is blocked: a resume with text starts a new worker, which opens its own pane. Run `pai worker resume <id> \"<text>\"` directly (run_in_background).";
 const TODO_SED_REASON =
   "line-number `sed -i` on Notes/TODO.md is blocked: the file shifts under concurrent edits. Anchor on text instead: `sed -i '' '/^- \\[ \\] <exact item text>/s/\\[ \\]/[x]/' Notes/TODO.md`, or use the Edit tool with the item's text as old_string.";
 const AGENT_BROWSER_REASON =
@@ -107,7 +109,10 @@ export function memoryBashRules(command: string, env: Record<string, string | un
       const i = rest.indexOf("--");
       if (i >= 0) {
         const inner = strip(rest.slice(i + 1));
-        if (base(inner[0] ?? "") === "pai" && inner[1] === "worker" && inner[2] === "run") return { deny: PANE_WORKER_REASON };
+        if (base(inner[0] ?? "") === "pai" && inner[1] === "worker") {
+          if (inner[2] === "run") return { deny: PANE_WORKER_REASON };
+          if (inner[2] === "resume") return { deny: PANE_RESUME_REASON };
+        }
       }
     }
 

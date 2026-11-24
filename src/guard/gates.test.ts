@@ -65,6 +65,25 @@ describe("L1 planner lock", () => {
   });
 });
 
+describe("background pane gate: worker verbs run in the background, everything else needs a pane", () => {
+  const bg = (command: string) => decidePreGates({ tool: "Bash", input: { command, run_in_background: true }, cwd: "/w/tree", env: {} }, { bash: { localAnswer: () => "" } });
+  it("allows a background worker run and resume (each opens its own pane)", () => {
+    expect(bg('pai worker run --class implement --label x -p "y"')).toBeNull();
+    expect(bg('pai worker resume w-20260101-abc "t"')).toBeNull();
+    expect(bg("cd /w/tree && pai worker resume w-20260101-abc \"t\"")).toBeNull();
+  });
+  it("denies a worker verb wrapped in a pane", () => {
+    const d = bg("pai pane run -- pai worker resume w-20260101-abc");
+    expect(d?.action).toBe("deny");
+    expect(d?.message).toContain("a resume with text starts a new worker");
+    expect(bg("pai pane run -- pai worker run -p x")?.action).toBe("deny");
+  });
+  it("still requires a pane for unrelated background commands", () => {
+    expect(bg("sleep 5; echo x")?.action).toBe("deny");
+    expect(bg("nohup sh go.sh &")?.action).toBe("deny"); // a plain background job still needs a pane
+  });
+});
+
 describe("queued child kill", () => {
   const states: Record<string, string> = { q1: "queued", r1: "running" };
   const kill = (cmd: string, env: NodeJS.ProcessEnv = { PAI_WORKER: "1" }) =>
