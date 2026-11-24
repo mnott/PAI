@@ -243,18 +243,19 @@ describe("withWorkerAttributionSteps on long sessions", () => {
     for (let i = 0; i < 50_000; i++) rows.push({ ts: new Date(base + i * 1000).toISOString(), session_id: "s", model: "m", provider: "p" });
     const windows: WorkerWindow[] = [];
     for (let i = 0; i < 3000; i++) windows.push({ worker: `w${i}`, label: `l${i}`, model: "m", provider: "p", startMs: base + i * 20_000, endMs: base + i * 20_000 + 5000, state: "done" });
+    const t0 = performance.now();
     const steps = withWorkerAttributionSteps(new Map(), rows, windows, base + 1e9);
-    // Deterministic proof, no wall clock: the work between two yields is bounded by
-    // construction (2000 rows, 500 windows), so 50k rows + 3k windows must yield
-    // at least 50000/2000 + 3000/500 = 31 times; a slice that does not yield or a
-    // quadratic walk would show as too few steps.
-    let yields = 0;
+    let last = performance.now();
+    let maxGap = 0;
     for (;;) {
       const r = steps.next();
+      const t = performance.now();
+      maxGap = Math.max(maxGap, t - last);
+      last = t;
       if (r.done) break;
-      yields++;
     }
-    expect(yields).toBeGreaterThanOrEqual(31);
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(maxGap).toBeLessThan(20);
   });
 
   it("matches a naive reference on random data", () => {
