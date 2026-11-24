@@ -287,6 +287,64 @@ describe("growing-command unedited / edited texts", () => {
     expect(ed.reason ?? loopDenyReason("Bash")).toContain("Write your R report now");
   });
 
+  // ---- forge #26 part 2: the unedited note replayed for an Inkling 2 Mini worker ----
+  // The note is meant for a worker that re-runs the same growing search with no edit yet.
+  // growing-command is a behaviour rule with no applies_to and no per_model, so the note is
+  // model-agnostic: it must fire for Inkling 2 Mini exactly at the documented step (the 3rd
+  // identical call = 2nd repeat), and must not fire for a non-growing sequence.
+  it("Inkling 2 Mini worker: the unedited note fires at the 3rd identical call (2nd repeat)", () => {
+    process.env.PAI_WORKER_MODEL = "inkling-2-mini-mtplx";
+    process.env.PAI_WORKER_PROVIDER = "gyro-l";
+    const { steps } = gcRepeat(emptyLoopState(), 3);
+    expect(steps[0].note).toBeUndefined();
+    expect(steps[1].note).toBeUndefined();
+    expect(steps[2].note).toBe(UNEDITED_NOTE);
+    expect(steps[2].id).toBe("growing-command");
+    expect(steps[2].deny).toBe(false);
+  });
+
+  it("Inkling 2 Mini: the documented ladder — note at the 3rd call, deny at the 4th, stop after 3 denials", () => {
+    process.env.PAI_WORKER_MODEL = "inkling-2-mini-mtplx";
+    process.env.PAI_WORKER_PROVIDER = "gyro-l";
+    const { steps } = gcRepeat(emptyLoopState(), 7);
+    expect(steps[2].note).toBe(UNEDITED_NOTE);
+    expect(steps.map((s) => s.deny)).toEqual([false, false, false, false, true, true, true]);
+    expect(steps.map((s) => !!s.stop)).toEqual([false, false, false, false, false, false, true]);
+  });
+
+  it("Inkling 2 Mini: a non-growing sequence never notes", () => {
+    process.env.PAI_WORKER_MODEL = "inkling-2-mini-mtplx";
+    process.env.PAI_WORKER_PROVIDER = "gyro-l";
+    let s = emptyLoopState();
+    const notes: (string | undefined)[] = [];
+    for (const [tool, input] of [["Bash", GREP], ["Bash", "ls docs"], ["Bash", "git status"], ["Bash", GREP], ["Bash", "ls docs"]] as const) {
+      const r = gcDrive(s, tool, input);
+      s = r.state;
+      notes.push(r.step.note);
+    }
+    expect(notes.every((n) => n === undefined)).toBe(true);
+  });
+
+  it("Inkling 2 Mini: two repeats are not enough — no note before the documented step", () => {
+    process.env.PAI_WORKER_MODEL = "inkling-2-mini-mtplx";
+    process.env.PAI_WORKER_PROVIDER = "gyro-l";
+    expect(gcRepeat(emptyLoopState(), 2).steps[1].note).toBeUndefined();
+  });
+
+  it("another model gets the same note: the rule is not model-gated (no applies_to, no per_model)", () => {
+    process.env.PAI_WORKER_MODEL = "claude-opus-5-5";
+    process.env.PAI_WORKER_PROVIDER = "anthropic";
+    expect(gcRepeat(emptyLoopState(), 3).steps[2].note).toBe(UNEDITED_NOTE);
+  });
+
+  it("shipped growing-command is a model-agnostic behaviour rule", () => {
+    const ap = shippedAntipattern("growing-command");
+    expect(ap.layer).toBe("behaviour");
+    expect(ap.mode).toBe("enforce");
+    expect(ap.applies_to).toBeUndefined();
+    expect(ap.per_model).toBeUndefined();
+  });
+
   it.skipIf(!existsSync(".pai-scratch/growing-command.user.yaml"))("user file with model globs (temp PAI_HOME) resolves the unedited text", () => {
     const home = mkdtempSync(join(tmpdir(), "pai-home-"));
     try {
