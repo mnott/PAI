@@ -461,9 +461,16 @@ const pick = (r: ToolErrorRecord) => {
   return { cls, hint };
 };
 
-export function groupToolErrors(records: ToolErrorRecord[]): ToolErrorGroup[] {
+/**
+ * Groups records by signature. `provider` keeps only errors from workers of
+ * that provider (e.g. "signal-2", "anthropic"); the filter runs before
+ * grouping so a group's counts, workers and providers reflect only that
+ * provider. Omitted (or empty) means all providers.
+ */
+export function groupToolErrors(records: ToolErrorRecord[], provider?: string): ToolErrorGroup[] {
+  const recs = provider ? records.filter((r) => r.provider === provider) : records;
   const m = new Map<string, ToolErrorGroup>();
-  for (const r of records) {
+  for (const r of recs) {
     let g = m.get(r.signature);
     if (!g) {
       g = { signature: r.signature, count: 0, workers: [], providers: [], first: r.ts, last: r.ts, sample: r.raw, sampleInput: r.input, lastWorker: r.worker, ...pick(r) };

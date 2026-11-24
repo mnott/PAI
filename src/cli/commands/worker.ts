@@ -796,8 +796,11 @@ const errorsCommand: CommandDef = {
   name: "errors",
   summary: "Tool errors workers hit, grouped by kind",
   description: "Counts the errors workers ran into, with numbers and paths removed so equal errors group together.",
-  options: [{ name: "since", type: "string", value: "AGE", default: "24h", summary: "Only errors newer than this, e.g. 30m, 2h, 1d" }],
-  examples: ["pai worker errors", "pai worker errors --since 2h"],
+  options: [
+    { name: "since", type: "string", value: "AGE", default: "24h", summary: "Only errors newer than this, e.g. 30m, 2h, 1d" },
+    { name: "provider", type: "string", value: "NAME", summary: "Only errors from workers of this provider, e.g. signal-2, anthropic" },
+  ],
+  examples: ["pai worker errors", "pai worker errors --since 2h", "pai worker errors --provider signal-2"],
   seeAlso: ["pai worker log"],
   run: (ctx) =>
     guard("pai worker errors --since 24h", async () => {
@@ -805,7 +808,8 @@ const errorsCommand: CommandDef = {
       const since = str(ctx.opts.since) ?? "24h";
       const ms = parseSince(since);
       if (ms === null) throw new Error(`bad --since "${since}" (use 30m, 2h, 1d)`);
-      out(errorsTable(groupToolErrors(readToolErrors(logDir(), Date.now() - ms))));
+      const provider = str(ctx.opts.provider);
+      out(errorsTable(groupToolErrors(readToolErrors(logDir(), Date.now() - ms), provider)));
     }),
 };
 
