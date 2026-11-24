@@ -51,7 +51,7 @@
  * that way: supervision that bills tokens to watch tokens is a bug.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { dirname, join } from "node:path";
@@ -225,6 +225,26 @@ function pgrepChildren(pid: number): number[] {
     });
 }
 
+/** pgrepChildren without holding the daemon loop: execFile'd, killed at 5 s (SIGKILL). */
+function pgrepChildrenAsync(pid: number, timeoutMs = 5_000): Promise<number[]> {
+  return new Promise((resolve) => {
+    execFile("pgrep", ["-P", String(pid)], { encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL" }, (err, stdout) => {
+      if (err) {
+        resolve([]); // pgrep gone or timed out: degrade to today's behavior (no children)
+        return;
+      }
+      resolve(
+        stdout
+          .split("\n")
+          .flatMap((l) => {
+            const n = Number(l.trim());
+            return Number.isInteger(n) && n > 0 ? [n] : [];
+          })
+      );
+    });
+  });
+}
+
 export interface DetectOptions {
   /** How long a running worker may go without a turn before "stalled". */
   stallMs: number;
@@ -239,6 +259,11 @@ export interface DetectOptions {
    * pgrep; the default is pgrepChildren.
    */
   childPids?: (pid: number) => number[];
+  /**
+   * Async childPids for the daemon loop (never blocks on a sync pgrep).
+   * Takes precedence over childPids; the default is pgrepChildrenAsync.
+   */
+  childPidsAsync?: (pid: number) => Promise<number[]>;
   /**
    * How stale `updated` must be before a dead pid counts as killed rather
    * than as a status write racing the tick.
@@ -294,10 +319,10 @@ export const BACKLOG_AGE_MS = 3_600_000;
 /** This many stale alerts collapse into one summary notice. */
 export const BACKLOG_MIN = 10;
 
-export function detectSupervisionEvents(
+export async function detectSupervisionEvents(
   statuses: WorkerStatus[],
   opts: DetectOptions
-): SupervisionEvent[] {
+): Promise<SupervisionEvent[]> {
   const isAlive = opts.isAlive ?? alive;
   const deadGraceMs = opts.deadGraceMs ?? 15_000;
   // the in-line discount of the stall clock: injected (tests), else none — runSupervisionTick passes the router's own snapshot
@@ -365,7 +390,7 @@ export function detectSupervisionEvents(
       let hasChildren = false;
       if (isAlive(s.pid)) {
         try {
-          hasChildren = (opts.childPids ?? pgrepChildren)(s.pid).length > 0;
+          hasChildren = (await (opts.childPidsAsync ?? pgrepChildrenAsync)(s.pid)).length > 0;
         } catch {
           hasChildren = false; // pgrep gone: degrade to today's behavior
         }
@@ -650,7 +675,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
   // the stall clock's in-line discount reads the router's snapshot of this log dir
   const sched = readSchedFile(logDir, now.getTime());
   const pending = filterUndelivered(
-    detectSupervisionEvents(statuses, {
+    await detectSupervisionEvents(statuses, {
       stallMs: opts.stallMs ?? stallMinutesFromConfig() * 60_000,
       thrashFails: opts.thrashFails ?? thrashFailsFromEnv(),
       now,
