@@ -82,3 +82,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/cli/commands/setup/utils.test.ts | a | setup rewrote the workers section of config.yaml and turned workers off, 2026-11-24 |
 | src/workers/proxy/loop-capture.test.ts | a | loop-capture: simulated loop-guard stop writes last 3 translated bodies with auth stripped; memory bound of the ring |
 | src/workers/run-env.test.ts | a | workers spawned with macOS /bin/bash 3.2 die at exit 126 (Claude Code refuses bash 3.2: heredocs, arrays, nested $() unreliable); the selection must prefer bash>=4, fall back to zsh, and never override an explicit CLAUDE_CODE_SHELL |
+| src/hooks/ts/lib/mail-whitelist-gate.test.ts | b | mail whitelist gate: unlisted recipients must be denied, drafts allowed |

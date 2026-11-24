@@ -448,6 +448,21 @@ describe("stable prompt prefix for local requests", () => {
     expect(r.ok && r.up.body.toString()).not.toContain("context:");
   });
 
+  it("a local request without temperature is forwarded with 0.7 (no greedy loops)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const t = await rig((q, res) => {
+      let b = "";
+      q.on("data", (c) => (b += c));
+      q.on("end", () => seen.push(JSON.parse(b)));
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+    });
+    const a = t.postMessages();
+    await until(() => a.out.done, 3000);
+    await until(() => seen.length > 0, 3000);
+    expect(seen[0].temperature).toBe(0.7);
+  });
+
   it("a large held answer passes the fixer chain whole: no mid-answer cut, slot released once", async () => {
     const ev = (n: string, d: unknown) => `event: ${n}\ndata: ${JSON.stringify(d)}\n\n`;
     let sse = ev("message_start", { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "gyro-m", content: [], usage: { input_tokens: 1, output_tokens: 1 } } });

@@ -65,6 +65,7 @@ export interface OpenAiRequest {
   model?: string;
   max_tokens?: number;
   temperature?: number;
+  top_p?: number;
   stop?: string[];
   stream?: boolean;
   stream_options?: { include_usage: boolean };
@@ -127,8 +128,17 @@ function toolResultText(b: AnthropicContentBlock): string {
   return "";
 }
 
-/** Translate an Anthropic Messages request into a Chat Completions request. */
-export function anthropicToOpenAi(req: AnthropicRequest, model: string): OpenAiRequest {
+/**
+ * Translate an Anthropic Messages request into a Chat Completions request.
+ * `sampling` is the provider's default sampling (workers.yaml `sampling`): it
+ * fills in `temperature` only when the client sent none — a client temperature
+ * is never overridden. `top_p` is passed through whenever configured.
+ */
+export function anthropicToOpenAi(
+  req: AnthropicRequest,
+  model: string,
+  sampling?: { temperature?: number; top_p?: number }
+): OpenAiRequest {
   const messages: Array<Record<string, unknown>> = [];
   const sys = systemText(req.system);
   if (sys) messages.push({ role: "system", content: sys });
@@ -169,6 +179,8 @@ export function anthropicToOpenAi(req: AnthropicRequest, model: string): OpenAiR
     messages,
   };
   if (req.temperature !== undefined) out.temperature = req.temperature;
+  else if (sampling?.temperature !== undefined) out.temperature = sampling.temperature;
+  if (sampling?.top_p !== undefined) out.top_p = sampling.top_p;
   if (req.stop_sequences?.length) out.stop = req.stop_sequences;
   if (req.stream) {
     out.stream = true;

@@ -7,6 +7,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { loadavg } from "node:os";
 import { join } from "node:path";
+import { stripApiKey } from "./strip-api-key.js";
 
 export const PROMPTS = ["task", "spec", "precise"] as const;
 export type Prompt = (typeof PROMPTS)[number];
@@ -136,7 +137,7 @@ export async function runBench(o: BenchOptions): Promise<GradeRow[]> {
     jobs.push(
       (async () => {
         try {
-          const env = { ...process.env, PROMPT: arm.prompt };
+          const env = stripApiKey({ ...process.env, PROMPT: arm.prompt });
           const started = await sh(join(o.suite, "run.sh"), [arm.task, arm.provider], o.suite, env);
           const id = /^arm (\S+) ended/m.exec(started)?.[1];
           if (!id) return o.log(`${arm.task}/${arm.provider}: no arm id in run.sh output`);

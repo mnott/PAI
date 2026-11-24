@@ -16,6 +16,7 @@ import { sessionOf } from "./capacity.js";
 import { ellipsize, queuedBarRow, queuedText, slotBackLine, slotBackPosition, waitingForSlotText, waitsForSlotBack, type QueuedFile } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, nativeAnthropicModels, readWorkersSection, type WorkersConfig } from "./config.js";
+import { workersLogDir } from "./paths.js";
 import { shortText } from "./args.js";
 import { denialMark, parseDenialText } from "./denials.js";
 import { bashExitCode, WAIT_EXIT_STILL_RUNNING } from "./wait.js";
@@ -432,7 +433,7 @@ export function renderEvent(
     // a contract-compliant final message renders as the compact report block
     const report = parseWorkerReport(String(e.result ?? ""));
     if (report) {
-      out.push(...renderReport(c, prefix, report, cwd));
+      out.push(...renderReport(c, prefix, report, cwd, (() => { try { return workersLogDir(readWorkersSection().workers); } catch { return ""; } })()));
     } else {
       for (const ln of String(e.result ?? "").trim().split("\n")) {
         out.push(`${prefix}  ${ln}`);
