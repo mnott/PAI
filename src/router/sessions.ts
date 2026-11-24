@@ -479,10 +479,30 @@ export function* withWorkerAttributionSteps(
     // a session already named by a source above the worker label (AIBroker) is not relabelled
     if (map.get(id)?.aibroker) continue;
     const hits = new Map<string, WorkerWindow>();
+    // once per session: sorted times, distinct models and providers
+    const times = reqs.map((r) => r.t).sort((a, b) => a - b);
+    const models = new Set<string>();
+    const providers = new Set<string>();
+    for (const r of reqs) {
+      if (r.model) models.add(r.model);
+      if (r.provider) providers.add(r.provider);
+    }
+    // a request with a different (set) value than the window's exists
+    const differs = (set: Set<string>, v: string | undefined): boolean => !!v && (set.size > 1 || (set.size === 1 && !set.has(v)));
+    let wn = 0;
     for (const w of windows) {
+      if (++wn % 500 === 0) yield;
       const { from, to } = windowBounds(w, now);
-      if (!reqs.some((r) => r.t >= from && r.t <= to)) continue;
-      if (reqs.some((r) => (w.model && r.model && w.model !== r.model) || (w.provider && r.provider && w.provider !== r.provider))) continue;
+      // first request time >= from, then check it is <= to
+      let lo = 0;
+      let hi = times.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (times[mid]! < from) lo = mid + 1;
+        else hi = mid;
+      }
+      if (lo >= times.length || times[lo]! > to) continue;
+      if (differs(models, w.model) || differs(providers, w.provider)) continue;
       hits.set(w.worker, w);
     }
     if (!hits.size) continue;

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { clearJobNameCache, defaultSources } from "./sessions.js";
+import { clearJobNameCache, defaultSources, withWorkerAttribution, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { clearParseCache, parseCacheStats } from "../config/parse-cache.js";
 import { readLocalConfig } from "../workers/local-tiers.js";
 import { SystemMonitor } from "./system.js";
@@ -203,5 +203,79 @@ describe("background system sampler", () => {
     const s = (await m.current()).sample;
     expect(touched).toBe(false);
     expect(s).not.toBeNull();
+  });
+});
+
+describe("withWorkerAttributionSteps on long sessions", () => {
+  type Row = { ts: string; session_id?: string; model?: string; provider?: string };
+  const naive = (map: Map<string, SessionInfo>, rows: Row[], windows: WorkerWindow[], now: number) => {
+    const unknown = new Map<string, Array<{ t: number; model?: string; provider?: string }>>();
+    for (const r of rows) {
+      if (!r.session_id || map.get(r.session_id)?.worker) continue;
+      const t = Date.parse(r.ts);
+      if (!Number.isFinite(t)) continue;
+      unknown.set(r.session_id, [...(unknown.get(r.session_id) ?? []), { t, model: r.model, provider: r.provider }]);
+    }
+    const out = new Map(map);
+    for (const [id, reqs] of unknown) {
+      if (map.get(id)?.aibroker) continue;
+      const hits = new Map<string, WorkerWindow>();
+      for (const w of windows) {
+        const finished = w.state === "done" || w.state === "failed" || w.state === "error";
+        const from = w.startMs;
+        const to = finished ? w.endMs : Math.min(w.endMs + 120_000, now + 120_000);
+        if (!reqs.some((r) => r.t >= from && r.t <= to)) continue;
+        if (reqs.some((r) => (w.model && r.model && w.model !== r.model) || (w.provider && r.provider && w.provider !== r.provider))) continue;
+        hits.set(w.worker, w);
+      }
+      if (!hits.size) continue;
+      const first = reqs.reduce((m, r) => Math.min(m, r.t), Infinity);
+      const best = [...hits.values()].sort((a, b) => b.startMs - a.startMs)[0]!;
+      if (best.startMs > first) continue;
+      out.set(id, { name: best.label, worker: best.worker, state: best.state, verdict: best.verdict, provider: best.provider });
+    }
+    return out;
+  };
+
+  it("50k requests x 3k windows: fast and yields often", () => {
+    const base = Date.parse("2026-11-01T00:00:00Z");
+    const rows: Row[] = [];
+    for (let i = 0; i < 50_000; i++) rows.push({ ts: new Date(base + i * 1000).toISOString(), session_id: "s", model: "m", provider: "p" });
+    const windows: WorkerWindow[] = [];
+    for (let i = 0; i < 3000; i++) windows.push({ worker: `w${i}`, label: `l${i}`, model: "m", provider: "p", startMs: base + i * 20_000, endMs: base + i * 20_000 + 5000, state: "done" });
+    const t0 = performance.now();
+    const steps = withWorkerAttributionSteps(new Map(), rows, windows, base + 1e9);
+    let last = performance.now();
+    let maxGap = 0;
+    for (;;) {
+      const r = steps.next();
+      const t = performance.now();
+      maxGap = Math.max(maxGap, t - last);
+      last = t;
+      if (r.done) break;
+    }
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(maxGap).toBeLessThan(20);
+  });
+
+  it("matches a naive reference on random data", () => {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const pick = <T,>(a: T[]) => a[Math.floor(rnd() * a.length)]!;
+    const base = Date.parse("2026-11-01T00:00:00Z");
+    for (let round = 0; round < 30; round++) {
+      const rows: Row[] = [];
+      for (let i = 0; i < 200; i++) {
+        rows.push({ ts: new Date(base + Math.floor(rnd() * 600) * 1000).toISOString(), session_id: pick(["a", "b", "c", "d", "e"]), model: pick(["m1", "m2", undefined]), provider: pick(["p1", "p2", undefined]) });
+      }
+      const windows: WorkerWindow[] = [];
+      for (let i = 0; i < 40; i++) {
+        const s = base + Math.floor(rnd() * 600) * 1000;
+        windows.push({ worker: `w${i}`, label: `l${i}`, model: pick(["m1", "m2", undefined]), provider: pick(["p1", "p2", undefined]), startMs: s, endMs: s + Math.floor(rnd() * 200) * 1000, state: pick(["done", "running", "failed"]) });
+      }
+      const map = new Map<string, SessionInfo>([["e", { name: "x", aibroker: true } as SessionInfo]]);
+      const now = base + 700_000;
+      expect([...withWorkerAttribution(map, rows, windows, now)]).toEqual([...naive(map, rows, windows, now)]);
+    }
   });
 });
