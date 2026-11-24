@@ -16,7 +16,6 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadStatuses, type WorkerStatus } from "./status.js";
 import { parentFromEnv } from "./tree.js";
-import { stripApiKey } from "./strip-api-key.js";
 
 export const DEFAULT_HELP_BUDGET = 2;
 export const HELP_MAX_MINUTES = 20;
@@ -203,7 +202,7 @@ export function gitChangedFiles(cwd: string): string[] {
 export function spawnPaiWorker(argv: string[], cwd: string): Promise<HelpRunResult> {
   return new Promise((resolve) => {
     const bin = process.env.PAI_BIN || "pai";
-    const child = spawn(bin, argv, { cwd, stdio: ["ignore", "pipe", "pipe"], env: stripApiKey({ ...process.env }) });
+    const child = spawn(bin, argv, { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
     let out = "";
     let errText = "";
     child.stdout.on("data", (d) => (out += d));
