@@ -402,7 +402,7 @@ const isSedInplaceFlag = (a: string): boolean => /^-[a-zA-Z]*i[a-zA-Z]*$/.test(a
  * the real mistakes (`sed -i 's/a/b/' f` never reaches here: the rewrite inserts `''` first).
  */
 function sedWriteTargets(args: string[]): string[] {
-  const operands = sedOperands(args);
+  const operands = sedOperands(args).filter((a) => !isFlag(a));
   const bare = args.some((a) => a === "-i" || a === "--in-place");
   if (!bare) return operands;
   const first = operands[0];
