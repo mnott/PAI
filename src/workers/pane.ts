@@ -691,12 +691,6 @@ function readEntry(path: string, scope: string): PaneEntry[] {
 export function loadRegistry(logDir: string, scope?: string): PaneEntry[] {
   const root = panesDir(logDir);
   const out: PaneEntry[] = [];
-  let names: string[] = [];
-  try {
-    names = readdirSync(root);
-  } catch {
-    return out;
-  }
   // one readdir with types for the whole tree: a plain readdirSync stats every entry, and the
   // scope dirs are mostly empty (622 of them) — that listing was the bulk of the reaper tick's sync fs time
   let dirents: Dirent[];
