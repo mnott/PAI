@@ -695,6 +695,18 @@ describe("deep freeze", () => {
     expect(readDeepfreeze()).toBeNull();
   });
 
+  it("a second deep freeze merges with a record not yet resumed: both workers stay, no duplicates, order after", async () => {
+    saveStatus(logDir, worker("m1", "2026-11-18 11:00:00"));
+    await deepFreeze(logDir, "first", deps());
+    expect(loadStatus(logDir, "m1")?.state).toBe("deepfrozen");
+    saveStatus(logDir, worker("m2", "2026-11-18 11:30:00"));
+    await deepFreeze(logDir, "second", deps());
+    const rec = readDeepfreeze()!;
+    expect(rec.workers.map((w) => [w.id, w.order])).toEqual([["m1", 0], ["m2", 1]]);
+    await deepFreeze(logDir, "third", deps()).catch(() => undefined);
+    expect(readDeepfreeze()!.workers.map((w) => w.id)).toEqual(["m1", "m2"]);
+  });
+
   const resumeDeps = (started: string[], over: Partial<DeepResumeDeps> = {}): DeepResumeDeps => ({
     statuses: (d) => require_loadStatuses(d),
     // the announce is not a start: stand in for a run that announced AND reached "running"

@@ -270,9 +270,13 @@ export async function deepFreeze(logDir: string, by: string, d: DeepFreezeDeps, 
     lines.push(`dry run: ${plan.length} workers would be recorded in ${deepfreezePath()}, WIP-committed, stopped; local models stopped`);
     return { lines, record: null };
   }
-  if (existing && !sel) throw new Error(`already stopped since ${new Date(existing.at).toISOString()} (${existing.workers.length} workers recorded); \`pai resume\` or \`pai resume --drop\` first`);
   d.unfreeze(logDir);
-  const record: DeepRecord = existing && sel ? { ...existing, workers: [...existing.workers, ...plan] } : { version: 1, at: d.now(), by, workers: plan, models: [] };
+  // an earlier record not yet resumed is merged, never overwritten: its still-deepfrozen workers stay (order first), new ones follow
+  const kept = (existing?.workers ?? []).filter((w) => !plan.some((p) => p.id === w.id) && loadStatus(logDir, w.id)?.state === "deepfrozen");
+  const base = kept.reduce((m, w) => Math.max(m, w.order + 1), 0);
+  for (const w of plan) w.order += base; // in place: the stop loop's wip notes land in the record
+  const merged = [...kept, ...plan];
+  const record: DeepRecord = existing ? { ...existing, at: d.now(), by, workers: merged } : { version: 1, at: d.now(), by, workers: merged, models: [] };
   // the record exists before the first worker is touched: a crash anywhere below still leaves the way back
   writeRecord(record);
   for (const w of stopOrder(plan)) {

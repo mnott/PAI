@@ -498,6 +498,12 @@ const resumeCommand: CommandDef = {
       const id = ctx.args.ID as string;
       const text = ctx.args.TEXT as string | undefined;
       const dir = logDir();
+      if (text === undefined && loadStatus(dir, id)?.state === "deepfrozen") {
+        // a deep-frozen worker (pai stop) continues through the same path as `pai resume <id>`
+        const { deepResumeRun } = await import("./freeze.js");
+        await deepResumeRun(false, { ids: [id] });
+        return;
+      }
       if (text === undefined) {
         out(resumeWorker(dir, id, "cli") ? `${id}: resumed` : `${id}: was not paused`);
         return;
