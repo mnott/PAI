@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
@@ -102,14 +102,17 @@ describe("isLocalWorkerProvider url lists", () => {
   });
 });
 
-describe("built worker-result-hint hook", () => {
-  const hook = join(process.cwd(), "dist/hooks/worker-result-hint.mjs");
+describe("worker-result-hint hook (from source)", () => {
+  // Runs the hook from this branch's own source via tsx, never a prebuilt
+  // dist/ artifact: the merge gate runs tests before the build, so a dist
+  // hook is the old build and cannot show new behaviour.
+  const hook = join(process.cwd(), "src/hooks/ts/post-tool-use/worker-result-hint.ts");
   const input = JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "npx tsc --noEmit" }, tool_response: { stdout: "", stderr: "", interrupted: false } });
   function run(yaml: string): string {
     const dir = mkdtempSync(join(tmpdir(), "wrh-"));
     try {
       writeFileSync(join(dir, "workers.yaml"), yaml);
-      return execFileSync("node", [hook], {
+      return execFileSync("npx", ["tsx", hook], {
         input,
         encoding: "utf8",
         env: { ...process.env, PAI_WORKER: "1", PAI_WORKER_PROVIDER: "signal-2", PAI_WORKERS_YAML: join(dir, "workers.yaml"), PAI_CONFIG_FILE: join(dir, "config.json") },
@@ -119,13 +122,13 @@ describe("built worker-result-hint hook", () => {
     }
   }
   const list = "providers:\n  signal-2:\n    enabled: true\n    url:\n      - http://127.0.0.1:8044\n      - http://127.0.0.1:8045\n    models:\n      default: m\n      fast: m\n";
-  it.skipIf(!existsSync(hook))("prints the success hint for a provider with a url list", () => {
+  it("prints the success hint for a provider with a url list", () => {
     expect(run(list)).toContain(EMPTY_SUCCESS_HINT);
   });
-  it.skipIf(!existsSync(hook))("still prints it when the entry fails validation (unknown key)", () => {
+  it("still prints it when the entry fails validation (unknown key)", () => {
     expect(run(list + "    bogus_key: 1\n")).toContain(EMPTY_SUCCESS_HINT);
   });
-  it.skipIf(!existsSync(hook))("prints nothing for a remote url list", () => {
+  it("prints nothing for a remote url list", () => {
     expect(run(list.replace("127.0.0.1:8045", "example.com"))).toBe("");
   });
 });
