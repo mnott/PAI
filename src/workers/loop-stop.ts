@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { appendStopEvent } from "./endreason.js";
 import { loadStatus, saveStatus } from "./status.js";
 import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
+import { captureOnLoopStop } from "./proxy/loop-capture.js";
 
 export const loopStopMarkerPath = (logDir: string, id: string): string => join(logDir, `${id}.loop-stop`);
 
@@ -58,6 +59,13 @@ export function requestLoopStop(logDir: string, id: string, reason: string, deps
     // the signal below still ends the run
   }
   appendStopEvent(logDir, id, { killed_by: "loop-guard", forced: false, reason });
+  // local runs: flush whatever the proxy still holds for this run (no-op when
+  // the ring is empty, e.g. a cloud run or a different process)
+  try {
+    captureOnLoopStop(logDir, id, reason);
+  } catch {
+    // best effort
+  }
   try {
     const st = loadStatus(logDir, id);
     if (st && st.state === "running") saveStatus(logDir, { ...st, last: `loop-stopped: ${reason}` });

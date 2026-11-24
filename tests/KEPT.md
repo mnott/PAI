@@ -80,3 +80,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/workers/merge-revert-stdin.test.ts | a | merge hung 13 min at 05:12-05:25 2026-11-24: findRevertedMerge fed a failed git diff (null stdout) to git apply --check, which inherited the parent's stdin and blocked forever; pins that a revert whose diff cannot be read is skipped and apply always gets explicit piped stdin |
 | src/hooks/ts/lib/worker-result-hint.test.ts | b | PostToolUse result hints for local workers: empty output = success, grep no-match = search hint (2026-11-24 loop-guard repeats) |
 | src/cli/commands/setup/utils.test.ts | a | setup rewrote the workers section of config.yaml and turned workers off, 2026-11-24 |
+| src/workers/proxy/loop-capture.test.ts | a | loop-capture: simulated loop-guard stop writes last 3 translated bodies with auth stripped; memory bound of the ring |
