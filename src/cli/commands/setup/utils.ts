@@ -176,13 +176,39 @@ export function writeConfigRaw(data: Record<string, unknown>): void {
   writeMainConfigRaw(data);
 }
 
+/**
+ * Deep-merge `updates` onto `current`: the user's existing values win, a
+ * missing key is added, arrays replace, objects merge recursively. `undefined`
+ * in `updates` is skipped. This is what setup writes with — the wizard may
+ * only ADD keys, never overwrite a value the user already chose (a re-run
+ * with --no-workers used to replace the whole workers section with defaults
+ * and turn workers off).
+ */
 export function mergeConfig(updates: Record<string, unknown>): void {
   const current = readConfigRaw();
-  const merged = { ...current, ...updates };
-  if (updates.postgres && typeof current.postgres === "object" && current.postgres !== null) {
-    merged.postgres = { ...(current.postgres as object), ...(updates.postgres as object) };
+  writeConfigRaw(deepMergeUserWins(current, updates));
+}
+
+/** Deep merge where existing values win: only keys missing in `base` are added. */
+export function deepMergeUserWins(base: Record<string, unknown>, over: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const key of Object.keys(over)) {
+    const srcVal = over[key];
+    if (srcVal === undefined) continue;
+    const tgtVal = result[key];
+    if (tgtVal === undefined || tgtVal === null) {
+      result[key] = srcVal;
+      continue;
+    }
+    if (
+      typeof srcVal === "object" && srcVal !== null && !Array.isArray(srcVal) &&
+      typeof tgtVal === "object" && tgtVal !== null && !Array.isArray(tgtVal)
+    ) {
+      result[key] = deepMergeUserWins(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
+    }
+    // otherwise: the user's value stands
   }
-  writeConfigRaw(merged);
+  return result;
 }
 
 // ---------------------------------------------------------------------------

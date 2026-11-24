@@ -33,7 +33,9 @@ export async function stepTaskBus(rl: Rl): Promise<Record<string, unknown>> {
     line();
     console.log(c.ok("Skipping the task bus."));
     console.log(c.dim("  Add later by re-running `pai setup`."));
-    return { tasks: { enabled: false } };
+    // A skipped step writes nothing: writing `tasks.enabled: false` here used
+    // to disable a task bus the user had already configured.
+    return {};
   }
 
   // -- Token -----------------------------------------------------------------
@@ -75,12 +77,12 @@ export async function stepTaskBus(rl: Rl): Promise<Record<string, unknown>> {
     console.log(c.warn(`Could not reach Todoist: ${e instanceof Error ? e.message : String(e)}`));
     console.log(c.dim("  The token may be wrong, or the network is unavailable."));
     console.log(c.dim("  Saved nothing. Re-run `pai setup` to try again."));
-    return { tasks: { enabled: false } };
+    return {};
   }
 
   if (projects.length === 0) {
     console.log(c.warn("  No projects found. Create one in Todoist first, then re-run setup."));
-    return { tasks: { enabled: false } };
+    return {};
   }
 
   line();
