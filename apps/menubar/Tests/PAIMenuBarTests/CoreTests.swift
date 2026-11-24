@@ -242,6 +242,17 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(drawableSeries([50, 50, 50]), [50, 50, 50]) // flat: drawn as a line
     }
 
+    // The battery chart is only worth its space when it shows a real curve; a
+    // flat series (typical on AC) must hide the whole chart, not draw an empty
+    // frame around a single horizontal line.
+    func testBatteryChartHiddenWhenFlat() {
+        XCTAssertFalse(shouldShowBatteryChart([]))              // no samples: hidden
+        XCTAssertFalse(shouldShowBatteryChart([80]))            // one sample: hidden
+        XCTAssertFalse(shouldShowBatteryChart([80, 80, 80]))    // flat on AC: hidden
+        XCTAssertTrue(shouldShowBatteryChart([79, 80, 81]))     // real variation: shown
+        XCTAssertTrue(shouldShowBatteryChart([40, 55, 62]))     // discharge curve: shown
+    }
+
     // Notes of resolved/finished deep-freeze records must not be shown; the
     // router only keeps a record while a worker is pending, so its note is live.
     func testMachineBadgeShowsPendingNoteOnly() {

@@ -343,6 +343,17 @@ public func machineActionRequest(baseURL: URL, action: String, forMs: Double? = 
 /// than two points render as a line (or nothing), never as a filled block.
 public func drawableSeries(_ values: [Double]) -> [Double] { values.count >= 2 ? values : [] }
 
+/// Whether the battery chart earns its space: it is only worth drawing when it
+/// shows a real charge/discharge curve — at least two samples and at least two
+/// distinct values. A flat series (typical on AC, fully charged, or not
+/// charging) carries no information beyond the "Battery 80%" row and the
+/// caption line, so the chart is hidden entirely instead of drawing an empty
+/// frame around a single horizontal line.
+public func shouldShowBatteryChart(_ values: [Double]) -> Bool {
+    let v = drawableSeries(values)
+    return v.count >= 2 && Set(v).count > 1
+}
+
 /// The last `minutes` of a series (by t, ms), or everything when too short.
 public func tailSeries(_ s: [SystemResponse.Sample], minutes: Double = 6) -> [SystemResponse.Sample] {
     guard let last = s.compactMap(\.t).max() else { return s }
