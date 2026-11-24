@@ -30,7 +30,8 @@ export function aibrokerSupportsFollow(): boolean {
 export function waiterNotice(follow: boolean): string {
   if (follow) {
     return (
-      `Start \`aibroker mailbox wait --follow\` once under the Monitor tool (persistent) so machine ingress wakes this session; never two at once, no restart loop.\n` +
+      `Run exactly one \`aibroker mailbox wait --follow\` under the Monitor tool (persistent) so machine ingress wakes this session; each line it prints is one event.\n` +
+      `Before starting, check \`pgrep -f "aibroker mailbox wait"\` — if one is already running, never start a second.\n` +
       `Each line it prints is one message: read the mailbox (aibroker_receive or the delivered text) and act on it. Claude Code sessions may also reach you natively; answer those the same way.`
     );
   }
