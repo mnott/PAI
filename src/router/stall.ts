@@ -1,5 +1,5 @@
 import type http from "node:http";
-import { detectSleepGap, wallNow } from "../workers/sleep-clock.js";
+import { detectSleepGap, monoNow } from "../workers/sleep-clock.js";
 
 /** One handler call that kept the event loop busy: the request path and how long its synchronous part ran. */
 interface SyncRun {
@@ -49,7 +49,7 @@ export function startStallMonitor(o: StallOptions): StallMonitor {
     // a wall gap the monotonic clock did not see is system sleep (clamshell,
     // darkwake): the loop was not blocked, the machine was. Label it, never
     // profile it (2026-11-24: 22 "event-loop stall" entries were sleep).
-    const gap = detectSleepGap(t, (o.mono ?? wallNow)(), o.logDir);
+    const gap = detectSleepGap(t, (o.mono ?? monoNow)(), o.logDir);
     if (gap) {
       o.log(`${new Date(t).toISOString()} system sleep ${gap.ms} ms (wall-vs-monotonic gap; not an event-loop stall, no profile saved)`);
       last = t;

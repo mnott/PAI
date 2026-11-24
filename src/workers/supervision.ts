@@ -88,7 +88,7 @@ import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { endContinuedOrigins, escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
 import { activeMsOf, frozenSince, ownMsOf } from "./freeze.js";
-import { detectSleepGap, wallNow } from "./sleep-clock.js";
+import { detectSleepGap, monoNow, wallNow } from "./sleep-clock.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { yieldToLoop } from "./yield.js";
 
@@ -645,6 +645,8 @@ function appendPushReceipt(logDir: string, ev: SupervisionEvent, key: string = e
 
 export interface TickOptions {
   now?: Date;
+  /** monotonic clock (test seam for sleep detection); default performance.now */
+  mono?: () => number;
   stallMs?: number;
   /** Consecutive-failure threshold for thrashing (default: PAI_WORKER_THRASH_FAILS). */
   thrashFails?: number;
@@ -683,6 +685,8 @@ export interface TickResult {
  */
 export async function runSupervisionTick(logDir: string, opts: TickOptions = {}): Promise<TickResult> {
   const now = opts.now ?? new Date();
+  // a wall-vs-monotonic gap is system sleep: record it (ledger line once) before any clock judges a worker
+  detectSleepGap(wallNow(), (opts.mono ?? monoNow)(), logDir);
   const statuses = opts.statuses ?? loadStatusesCached(logDir);
   // a queued origin whose fall-through finished clean is ended as continued before anything judges it: out of the provider queue, never rerouted again (reroute.ts). A failed fall-through ends nothing — after its recent window one more reroute may run, as before.
   endContinuedOrigins(statuses, logDir, now.getTime());
