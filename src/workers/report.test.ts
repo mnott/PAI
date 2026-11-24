@@ -93,6 +93,29 @@ describe("workerContractPrompt — code graph lines", () => {
     expect(on).toContain("pai code search <text>");
     expect(off).not.toContain("indexed in the code graph");
   });
+
+  it("PAI_BRIEF_CODE_GRAPH=0 drops both code-graph lines from the brief (A/B #23)", () => {
+    const saved = process.env.PAI_BRIEF_CODE_GRAPH;
+    try {
+      delete process.env.PAI_BRIEF_CODE_GRAPH;
+      const unset = workerContractPrompt(undefined, "ag2", false, undefined, undefined, true);
+      expect(unset).toContain("Find code with `pai code explore <symbol>`");
+      expect(unset).toContain("indexed in the code graph");
+
+      process.env.PAI_BRIEF_CODE_GRAPH = "0";
+      const zero = workerContractPrompt(undefined, "ag2", false, undefined, undefined, true);
+      expect(zero).not.toContain("Find code with `pai code explore <symbol>`");
+      expect(zero).not.toContain("indexed in the code graph");
+
+      process.env.PAI_BRIEF_CODE_GRAPH = "1";
+      const one = workerContractPrompt(undefined, "ag2", false, undefined, undefined, true);
+      expect(one).toContain("Find code with `pai code explore <symbol>`");
+      expect(one).toContain("indexed in the code graph");
+    } finally {
+      if (saved === undefined) delete process.env.PAI_BRIEF_CODE_GRAPH;
+      else process.env.PAI_BRIEF_CODE_GRAPH = saved;
+    }
+  });
 });
 
 describe("proof check and report validation credit what really ran (2026-11-22/23 false 'invalid report')", () => {
