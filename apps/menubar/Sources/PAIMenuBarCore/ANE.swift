@@ -19,8 +19,12 @@ public func energyToWatts(delta: Double, unit: String, seconds: Double) -> Doubl
 
 /// True when an IOReport channel name belongs to a given power reader: the ANE reader
 /// matches names starting with "ANE"; the GPU/CPU readers match "GPU"/"CPU" prefixes.
+/// Matching is case-sensitive and requires a word boundary after the prefix, so a
+/// longer channel name that merely starts with the prefix ("ANEEL") is not a match.
 public func channelMatches(_ name: String, prefix: String) -> Bool {
-    name.hasPrefix(prefix)
+    guard name.hasPrefix(prefix) else { return false }
+    let rest = name.dropFirst(prefix.count)
+    return rest.isEmpty || !rest.first!.isLetter
 }
 
 /// True when a channel name is the aggregate for a reader prefix ("GPU Energy", "CPU Energy").
