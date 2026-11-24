@@ -452,6 +452,16 @@ describe("supervision stands down while frozen", () => {
     expect(sent[0]).not.toContain("Stop repeating it");
     expect(sent[0]).not.toContain("\n");
   });
+
+  it("an edit tool with no recorded result is not reported as 'completed with no output' (the model saw 'updated successfully')", async () => {
+    const sent: string[] = [];
+    const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), true) } as unknown as Messenger;
+    const w = new TroubleWatcher("L2", "lbl", msg, {} as RunOrigin, "", () => now, async (_p, t) => msg.toSession({} as RunOrigin, t));
+    w.onLoopStop("loop", "x", { tool: "Write", input: '{"file_path":"out/23.py"}', count: 12, result: "" });
+    await w.flush();
+    expect(sent[0]).toContain("repeated 12x, always: (result not recorded");
+    expect(sent[0]).not.toContain("Write completed with no output");
+  });
 });
 
 describe("exceptions", () => {
