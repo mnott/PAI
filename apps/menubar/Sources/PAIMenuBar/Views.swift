@@ -407,29 +407,34 @@ struct Area: Shape {
 }
 
 /// Charge % over the same window as the CPU/GPU graphs; charging stretches are marked on the baseline.
+/// Hidden entirely when the series is flat or has fewer than two distinct points
+/// (`shouldShowBatteryChart`): on AC a flat curve adds no information beyond the
+/// "Battery 80%" row and the caption, and drawing it left an empty framed box.
 struct BatteryChart: View {
     var history: [SystemResponse.Sample]
     var caption: String
     var body: some View {
         let s = tailSeries(history)
         let vals = drawableSeries(s.compactMap(\.memPct))
-        let flat = Area(values: vals).flat
-        VStack(spacing: 2) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .labelColor).opacity(0.05))
-                if !flat { Area(values: vals).fill(Color(Palette.ok).opacity(0.45)) }
-                Area(values: vals).stroke(Color(Palette.ok), lineWidth: flat ? 1.5 : 1)
-                GeometryReader { g in
-                    ForEach(Array(chargingRuns(s).enumerated()), id: \.offset) { _, r in
-                        let n = Double(max(s.count - 1, 1))
-                        Rectangle().fill(Color(Palette.acc))
-                            .frame(width: max(2, g.size.width * Double(r.count - 1) / n), height: 3)
-                            .offset(x: g.size.width * Double(r.lowerBound) / n, y: g.size.height - 3)
+        if shouldShowBatteryChart(vals) {
+            let flat = Area(values: vals).flat
+            VStack(spacing: 2) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .labelColor).opacity(0.05))
+                    if !flat { Area(values: vals).fill(Color(Palette.ok).opacity(0.45)) }
+                    Area(values: vals).stroke(Color(Palette.ok), lineWidth: flat ? 1.5 : 1)
+                    GeometryReader { g in
+                        ForEach(Array(chargingRuns(s).enumerated()), id: \.offset) { _, r in
+                            let n = Double(max(s.count - 1, 1))
+                            Rectangle().fill(Color(Palette.acc))
+                                .frame(width: max(2, g.size.width * Double(r.count - 1) / n), height: 3)
+                                .offset(x: g.size.width * Double(r.lowerBound) / n, y: g.size.height - 3)
+                        }
                     }
                 }
+                .frame(height: 44)
+                Text(caption).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 44)
-            Text(caption).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
     /// Index ranges of consecutive charging samples.
