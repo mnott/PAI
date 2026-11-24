@@ -696,6 +696,44 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "tool-loop/revert.yaml"
   },
   {
+    "id": "rewrite-unchanged-after-same-error",
+    "layer": "behaviour",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-11-24",
+    "category": "tool-loop",
+    "detector": {
+      "kind": "identical-write",
+      "params": {
+        "note_at": 1,
+        "stop_at": 2,
+        "stop_message": "loop guard: you rewrote {file} unchanged after the same failure. Read the code the proof drives and change that, not the driver."
+      }
+    },
+    "action": "stop",
+    "message": "You rewrote {file} unchanged after the same failure. Read the code the proof drives and change that, not the driver.",
+    "tests": {
+      "match": [
+        "A fail A fail A"
+      ],
+      "no_match": [
+        "A",
+        "A fail A",
+        "A fail B fail A",
+        "A fail A ok A"
+      ]
+    },
+    "provenance": {
+      "date": "2026-11-24",
+      "model": "Paperfull",
+      "observed": "worker 20261123-135804-43914 rewrote a scratch proof driver with identical content 3 times after the same failing proof (\"folder 2 not found in [data-testid=staging-list]\"); identical-write caught it only after ~10 minutes",
+      "ref": "forge"
+    },
+    "proxy": "monitor",
+    "source": "tool-loop/rewrite-unchanged-after-same-error.yaml"
+  },
+  {
     "id": "runaway-new-files",
     "layer": "behaviour",
     "status": "stable",

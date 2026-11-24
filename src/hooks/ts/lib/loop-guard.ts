@@ -102,7 +102,7 @@ export interface LoopState {
   /** A repo (non-scratch) file was edited or written in this session; survives the edit-reset of the window. */
   edited?: boolean;
   /** File -> key of its last Write/Edit and how many times in a row that exact call was made; a Read in between does not reset it. */
-  writes?: Record<string, { key: string; n: number; /** Keys of the last versions written (oldest first, current last). */ seen?: string[]; /** Writes that went back to an earlier version. */ reverts?: number }>;
+  writes?: Record<string, { key: string; n: number; /** Keys of the last versions written (oldest first, current last). */ seen?: string[]; /** Writes that went back to an earlier version. */ reverts?: number; /** Signature of the failing result the unchanged-rewrite chain is anchored to; a rewrite after the same failure is stopped early (rewrite-unchanged-after-same-error). */ sameSig?: string; /** Times this file was rewritten unchanged right after the same failing result. */ sameErr?: number }>;
   /** File -> Writes since the last Read/Bash/Grep of anything: count, distinct content hashes, and whether distinct-rewrites already fired. */
   rewrites?: Record<string, { n: number; hashes: string[]; fired?: boolean }>;
   /** Streak counters that survive edits: Writes of new files since the last Read/Bash/Grep/Glob, and Reads of missing paths in a row. */
@@ -813,13 +813,19 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
     const file = String((input as Record<string, unknown>).file_path ?? (input as Record<string, unknown>).notebook_path ?? "");
     const prev = state.writes?.[file];
     const n = prev && prev.key === ek ? prev.n + 1 : 1;
+    // rewrite-unchanged-after-same-error: rewriting a file byte-for-byte right after the same failing
+    // result (the proof the file drives still fails) is no progress; the 2nd such rewrite is stopped
+    const lastOut = state.outs?.[state.window.length - 1];
+    const red = lastOut != null && looksRed(lastOut);
+    // the chain is anchored to the failure it saw first: a different failure after a rewrite restarts it at 1
+    const sameErr = prev && prev.key === ek && red && prev.sameSig != null && resultsSimilar(prev.sameSig, lastOut) ? (prev.sameErr ?? 0) + 1 : prev && prev.key === ek && red ? 1 : 0;
     // a Write back to an earlier version (not the current one) is a revert: A,B,A,B,... never repeats the current content
     const revert = tool === "Write" && !!prev && prev.key !== ek && !!prev.seen?.includes(ek);
     const reverts = (prev?.reverts ?? 0) + (revert ? 1 : 0);
     const rv = live("revert");
     const iw = live("identical-write");
     const seen = [...(prev?.seen ?? []).filter((k) => k !== ek), ...(tool === "Write" ? [ek] : [])].slice(-(rv.params.seen_cap as number));
-    const writes = { ...(state.writes ?? {}), [file]: { key: ek, n, seen, reverts } };
+    const writes = { ...(state.writes ?? {}), [file]: { key: ek, n, seen, reverts, ...(sameErr ? { sameErr, sameSig: lastOut ?? undefined } : {}) } };
     for (const k of Object.keys(writes).slice(0, -LAST_CAP * 8)) delete writes[k];
     if (n >= (iw.params.stop_at as number))
       return {
@@ -843,6 +849,17 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
         key: ek.split("\t")[1],
         count: total,
         reason: fillMessage((iw.params.total_stop_message ?? shippedAntipattern("identical-write").detector.params.total_stop_message) as string, { file, n: total }),
+      };
+    const rw = live("rewrite-unchanged-after-same-error");
+    if (sameErr >= (rw.params.stop_at as number))
+      return {
+        state: { ...emptyLoopState(), writes },
+        deny: true,
+        stop: true,
+        id: "rewrite-unchanged-after-same-error",
+        key: ek.split("\t")[1],
+        count: sameErr,
+        reason: fillMessage(rw.params.stop_message as string, { file, n: sameErr }),
       };
     if (reverts >= (rv.params.stop_at as number))
       return {
