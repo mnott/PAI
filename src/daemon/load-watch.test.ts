@@ -24,6 +24,7 @@ import {
 import {
   AUTOSTART_MAX_FAILURES,
   AUTOSTART_RETRY_MS,
+  STOPPED_REMINDER_MS,
   autostartBusyRuntimes,
   autostartDownInfo,
   freshAutostartStates,
@@ -204,6 +205,36 @@ describe("runtime autostart", () => {
     expect(log.lines.filter((l) => /stopped on purpose/.test(l))).toHaveLength(1);
     stopped = false; // `pai models start` cleared the marker
     expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, freshAutostartStates(), deps)).toEqual([{ kind: "start", runtime: "apple-fm" }]);
+  });
+
+  it("100 passes with an unchanged stopped-on-purpose runtime log the line once; a state change logs again", async () => {
+    const cfg = runtimeAutostartConfig({ "gyro-l": { start: "start gyro-l", ready: "http://127.0.0.1:8035/v1/models", autostart: true } }, [autostartTier("gyro-l", 48)]);
+    const log: Autolog = { starts: [], alerts: [], ledger: [], lines: [] };
+    let stopped = true;
+    let now = 0;
+    const deps = autostartDeps(log, { stopped: () => stopped, now: () => now });
+    const states = freshAutostartStates();
+    // 100 scheduler passes (60 s apart), the runtime stays stopped on purpose the whole time
+    for (let i = 0; i < 100; i++) {
+      expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, states, deps)).toEqual([]);
+      now += 60_000;
+    }
+    expect(log.starts).toEqual([]);
+    expect(log.lines.filter((l) => /stopped on purpose/.test(l))).toHaveLength(1);
+    // the stop lifts (an explicit start): the runtime is started, no stopped line
+    stopped = false;
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, states, deps)).toEqual([{ kind: "start", runtime: "gyro-l" }]);
+    expect(log.lines.filter((l) => /stopped on purpose/.test(l))).toHaveLength(1);
+    // stopped again: the new episode logs again
+    stopped = true;
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, states, deps)).toEqual([]);
+    expect(log.lines.filter((l) => /stopped on purpose/.test(l))).toHaveLength(2);
+    // a reminder after STOPPED_REMINDER_MS, then quiet again
+    now += STOPPED_REMINDER_MS;
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, states, deps)).toEqual([]);
+    expect(log.lines.filter((l) => /stopped on purpose/.test(l))).toHaveLength(3);
+    expect(await runtimeAutostartTick({ ...cfg, downConfirmMs: 0 }, states, deps)).toEqual([]);
+    expect(log.lines.filter((l) => /stopped on purpose/.test(l))).toHaveLength(3);
   });
 
   it("the stop marker is written by a successful stop and cleared by a start", async () => {
