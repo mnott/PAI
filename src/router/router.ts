@@ -76,6 +76,8 @@ import type { LocalConfig } from "../workers/local-tiers.js";
 import { resolveSelector } from "../workers/route-table.js";
 import { refuseUnlessLoopback, isTailnetOrLocalName } from "../utils/loopback-guard.js";
 import { hostAllowed, originAllowed, isCockpitPath } from "./cockpit-auth.js";
+import { captureRunId, defaultLoopCaptureRing, routerCaptureLogDir, routerFlushLoopCapture, routerRecordTurn } from "./router-loop-capture.js";
+import { LOOP_CAPTURE_MAX_BYTES, type LoopCaptureRing } from "../workers/proxy/loop-capture.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
@@ -373,6 +375,10 @@ export interface RouterOptions {
     /** ledger line; default appendLedger ROUTER-FAILOVER */
     onFailover?: (info: { session: string; reason: FailoverReason; to: string }) => void;
   };
+  /** Loop-capture ring (last forwarded turns per local run); default: the process-wide ring shared with the proxy path. */
+  captureRing?: LoopCaptureRing;
+  /** Log dir for loop captures; default: the workers log dir. */
+  captureLogDir?: string;
 }
 
 /** Catalogue shape endpointRegistry needs: which providers a managed model launches (cached 2 s). */
@@ -813,6 +819,19 @@ export function routerHandler(
       if (!prep.ok) return fail(prep.status, prep.message);
       const { up, target, requested } = prep;
       const prov = target.kind === "claude" ? ANTHROPIC_NATIVE : target.name;
+      // loop capture (local targets only): flush a pending loop-stop, then keep
+      // this turn once its reply lands; keyed by x-pai-worker, else metadata.user_id
+      const captureRing = options?.captureRing ?? defaultLoopCaptureRing;
+      const captureLog = options?.captureLogDir ?? routerCaptureLogDir();
+      const captureId = target.kind === "provider" && isLocal(up.url) && wire!.id === "messages" ? captureRunId(req.headers, safeBody(dec.body)) : null;
+      if (captureId) routerFlushLoopCapture(captureLog, captureId, target.kind === "provider" ? target.provider.baseUrl : "", captureRing);
+      const capturePort = (): number | undefined => {
+        try {
+          return new URL(up.url).port ? Number(new URL(up.url).port) : undefined;
+        } catch {
+          return undefined;
+        }
+      };
       // scheduler / parker engine: one per running instance (n=1 keeps the bare provider name)
       let engine = prov;
       let instanceTag: string | undefined;
@@ -1099,6 +1118,7 @@ export function routerHandler(
           const first = Buffer.concat(bits);
           upSniff.finish();
           upstreamTiming = upSniff.timing(started, Date.now());
+          if (captureId) captureTurn(first.toString("utf8"));
           const deliver = (status: number, headers: http.IncomingHttpHeaders, raw: Buffer) => {
             if (pings) clearInterval(pings);
             const h = { ...headers };
@@ -1143,6 +1163,14 @@ export function routerHandler(
             else deliver(200, ures0.headers, first);
           });
         });
+      };
+      // one capture per routed request: the gate's held reply, a repair retry, and the
+      // pass-through all run through respond(), so only the first raw body is kept
+      let captured = false;
+      const captureTurn = (raw: string): void => {
+        if (!captureId || captured) return;
+        captured = true;
+        routerRecordTurn(captureId, safeBody(up.body), raw, capturePort(), captureRing);
       };
       const respond = (ures: http.IncomingMessage): void => {
         streamed = true;
@@ -1193,6 +1221,20 @@ export function routerHandler(
           const schemas = isCount || ures.statusCode !== 200 ? undefined : wire!.schemas(up.body);
           const jsonReply = target.kind === "provider" && !!schemas?.size && /json/i.test(ctype) && !plainSse && !ures.headers["content-encoding"];
           if (jsonReply) delete rh["content-length"];
+          // loop capture on the held-reply paths (repair/rewrite): the raw upstream body, before any fix
+          // loop capture on the held-reply paths (repair/rewrite): the raw upstream body, before any fix
+          if (captureId && !captured) {
+            const rawCopy: Buffer[] = [];
+            let rawKept = 0;
+            ures.on("data", (c: Buffer) => {
+              if (rawKept <= LOOP_CAPTURE_MAX_BYTES) rawCopy.push(c);
+              rawKept += c.length;
+            });
+            ures.on("end", () => {
+              if (rawKept > LOOP_CAPTURE_MAX_BYTES) return;
+              captureTurn(Buffer.concat(rawCopy).toString("utf8"));
+            });
+          }
           if (!res.headersSent) res.writeHead(ures.statusCode ?? 502, rh);
           const fixer =
             declared.length && plainSse
@@ -1313,6 +1355,19 @@ export function routerHandler(
               }
             );
           });
+          // loop capture on the pass-through path: a bounded copy of the raw upstream reply
+          if (captureId && !captured) {
+            const copy: Buffer[] = [];
+            let kept = 0;
+            ures.on("data", (c: Buffer) => {
+              if (kept <= LOOP_CAPTURE_MAX_BYTES) copy.push(c);
+              kept += c.length;
+            });
+            ures.on("end", () => {
+              if (kept > LOOP_CAPTURE_MAX_BYTES) return;
+              captureTurn(Buffer.concat(copy).toString("utf8"));
+            });
+          }
       };
       const localEngine = target.kind === "provider" && !isCount && isLocal(up.url) && up.url.protocol === "http:";
       let ureq!: http.ClientRequest;
