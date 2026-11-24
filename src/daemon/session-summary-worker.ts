@@ -48,7 +48,8 @@ import { getRegistryBackend } from "../storage/factory.js";
 import { drainRenameQueue } from "../storage/session-note-registry.js";
 import { storageBackend, daemonConfig } from "./daemon/state.js";
 import { recordSystemJobStart } from "../workers/pane-waiver.js";
-import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
+import { planSummarySpawn, type ModelTier } from "../workers/daemon-llm.js";
+import { helperComplete } from "../workers/helper.js";
 import { claudeProjectsDir, legacyConfigDir, paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import { findClaudeBinary } from "../memory/kg-extraction.js";
 import { addNoteSession } from "../session/note-sessions.js";
@@ -74,6 +75,13 @@ const MIN_NEW_TEXT_CHARS = 20_000;
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_EXISTING_NOTE_CHARS = 40_000;
 const MAX_GIT_CHARS = 20_000;
+
+/** A Stop the debounce skips probes the topic once this much new text arrived since the last check. */
+const TOPIC_PROBE_MIN_CHARS = 8_000;
+/** At most one probe per session per this interval. */
+const TOPIC_PROBE_INTERVAL_MS = 5 * 60 * 1000;
+/** The probe sees only the newest part, capped. */
+const TOPIC_PROBE_CHARS = 6_000;
 
 /** Per-session summary state: when it last ran and how far into the transcript. */
 export interface SessionSummaryState { at: number; offset: number }
@@ -314,6 +322,8 @@ export interface ExtractedContent {
   userMessages: string[];
   filesModified: string[];
   sessionStartTime: string;
+  /** Newest user/assistant text of the extracted part (tail, capped at TOPIC_PROBE_CHARS). */
+  recentText: string;
 }
 
 /**
@@ -327,6 +337,7 @@ export function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet", 
     sessionStartTime: "",
     textChars: 0,
     endOffset: 0,
+    recentText: "",
   };
 
   // Only the part after the last summarized offset is read, never the whole
@@ -364,7 +375,10 @@ export function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet", 
       const m = entry.message as Record<string, unknown> | undefined;
       if (m?.content) {
         const t = contentToText(m.content);
-        if (t && !isNoise(t)) result.textChars += t.length;
+        if (t && !isNoise(t)) {
+          result.textChars += t.length;
+          result.recentText = (result.recentText + "\n" + t).slice(-TOPIC_PROBE_CHARS);
+        }
       }
     }
     if (entry.type === "user") {
@@ -463,6 +477,12 @@ export async function getGitContext(cwd: string, sinceTime?: string): Promise<st
 // Claude CLI spawning
 // ---------------------------------------------------------------------------
 
+/** `sessionSummary.model` of the PAI config (default `local`). */
+function configuredSummaryModel(): string | undefined {
+  const m = (daemonConfig as { sessionSummary?: { model?: unknown } } | undefined)?.sessionSummary?.model;
+  return typeof m === "string" && m.trim() ? m.trim() : undefined;
+}
+
 /**
  * Spawn a Claude model via the CLI to generate a session summary.
  * Pipes the prompt via stdin. Tier selection (resolved to the configured
@@ -473,7 +493,7 @@ export async function getGitContext(cwd: string, sinceTime?: string): Promise<st
  *   - haiku: fallback / budget mode
  * Returns the generated text, or null if spawning fails.
  */
-export async function spawnSummarizer(prompt: string, tier: ModelTier = "sonnet"): Promise<string | null> {
+export async function spawnSummarizer(prompt: string, tier: ModelTier = "sonnet", modelSpec?: string): Promise<string | null> {
   const claudeBin = findClaudeBinary();
   if (!claudeBin) {
     process.stderr.write(
@@ -484,11 +504,15 @@ export async function spawnSummarizer(prompt: string, tier: ModelTier = "sonnet"
 
   let plan;
   try {
-    plan = await planLlmSpawn(tier);
+    plan = await planSummarySpawn(modelSpec ?? configuredSummaryModel(), tier);
   } catch (e) {
     process.stderr.write(`[session-summary] could not plan ${tier} spawn: ${e}\n`);
     return null;
   }
+
+  process.stderr.write(
+    `[session-summary] model=${plan.model} via ${plan.provider ?? "cloud"} chars=${prompt.length}\n`
+  );
 
   const { spawn } = await import("node:child_process");
   recordSystemJobStart("session-summary");
@@ -626,8 +650,85 @@ function computeTopicOverlap(topicA: string, topicB: string): number {
 const TOPIC_OVERLAP_THRESHOLD = 0.15;
 
 // ---------------------------------------------------------------------------
+// Topic probe between debounced summaries
+// ---------------------------------------------------------------------------
+
+const probeState = new Map<string, { at: number; offset: number }>();
+
+/** Test hook: forget the per-session probe state. */
+export function resetTopicProbeState(): void {
+  probeState.clear();
+}
+
+export interface TopicProbeResult { probed: boolean; shifted: boolean; reason: string; topic?: string }
+
+/**
+ * A Stop the debounce would skip: when at least TOPIC_PROBE_MIN_CHARS of new
+ * text arrived since the last topic check, ask the helper chain for a 3-8 word
+ * topic of the newest part and compare it with the note's current topic.
+ * One probe per session per 5 minutes; helper chain down -> the summary model; neither -> no probe, no error.
+ */
+export async function probeTopicShift(o: {
+  key: string;
+  jsonlPath: string;
+  fromOffset: number;
+  currentTopic: string | null;
+  now?: number;
+  helper?: typeof helperComplete;
+  /** No helper answered: the same small prompt on the summary model (default: spawnSummarizer, haiku tier). */
+  fallback?: (prompt: string) => Promise<string | null>;
+}): Promise<TopicProbeResult> {
+  const now = o.now ?? Date.now();
+  const prev = probeState.get(o.key);
+  if (prev && now - prev.at < TOPIC_PROBE_INTERVAL_MS) return { probed: false, shifted: false, reason: "probe rate limit" };
+  if (!o.currentTopic) return { probed: false, shifted: false, reason: "no current topic" };
+  const from = Math.max(o.fromOffset, prev?.offset ?? 0);
+  let ex: ExtractedContent;
+  try {
+    ex = extractFromJsonl(o.jsonlPath, "haiku", from);
+  } catch {
+    return { probed: false, shifted: false, reason: "transcript unreadable" };
+  }
+  if (ex.textChars < TOPIC_PROBE_MIN_CHARS) return { probed: false, shifted: false, reason: `only ${ex.textChars} new chars` };
+  probeState.set(o.key, { at: now, offset: prev?.offset ?? 0 });
+  const task = "State the topic of this AI-coding-session excerpt in 3 to 8 words. Reply with the topic alone, nothing else.";
+  const input = redactSecrets(ex.recentText);
+  let answer: string | null = null;
+  try {
+    answer = await (o.helper ?? helperComplete)({ label: "topic-shift", maxTokens: 24, timeoutMs: 15_000, keep: "tail", task, input });
+  } catch {
+    answer = null;
+  }
+  if (!answer?.trim()) {
+    // the helper chain is empty or down (no apple-fm on Linux): the summary model answers the same prompt
+    try {
+      answer = await (o.fallback ?? ((p) => spawnSummarizer(p, "haiku")))(`${task}\n\n${input}`);
+    } catch {
+      answer = null;
+    }
+  }
+  const topic = answer?.split("\n")[0].replace(/^\s*topic\s*[:\-]\s*/i, "").replace(/^["'*\s]+|["'*.\s]+$/g, "").slice(0, 120) ?? "";
+  if (!topic || !/[a-z0-9]{3,}/i.test(topic)) return { probed: false, shifted: false, reason: "no model answered" };
+  probeState.set(o.key, { at: now, offset: ex.endOffset });
+  const overlap = computeTopicOverlap(topic, o.currentTopic);
+  return overlap < TOPIC_OVERLAP_THRESHOLD
+    ? { probed: true, shifted: true, topic, reason: `topic shift "${topic}" vs "${o.currentTopic}" (overlap ${overlap.toFixed(2)})` }
+    : { probed: true, shifted: false, topic, reason: `same topic "${topic}" (overlap ${overlap.toFixed(2)})` };
+}
+
+// ---------------------------------------------------------------------------
 // Session note writing
 // ---------------------------------------------------------------------------
+
+/** Topic of the session's current note (today's), or null. */
+function currentNoteTopic(cwd: string): string | null {
+  try {
+    const p = getCurrentNotePath(findNotesDir(cwd).path);
+    return p ? extractExistingNoteTitle(p) : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Write (or update) the session note with the AI-generated summary.
@@ -1049,12 +1150,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // force=true bypasses the cooldown (used by stop-hook at session end so a
   // final summary is always produced regardless of recent PreCompact runs).
   // -------------------------------------------------------------------------
-  if (!force && !final && isOnCooldown(cwd)) {
-    process.stderr.write(
-      "[session-summary] Skipping — last summary was less than 30 minutes ago.\n"
-    );
-    return;
-  }
+  const onCooldown = !force && !final && isOnCooldown(cwd);
 
   // -------------------------------------------------------------------------
   // Step 1: Find the JSONL transcript
@@ -1109,9 +1205,22 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
     intervalMs,
     newTextChars: () => extractFromJsonl(jsonlPath!, selectedModel, fromOffset).textChars,
   });
-  if (!gate.run) {
-    process.stderr.write(`[session-summary] Skipping ${stateKey} — ${gate.reason}.\n`);
-    return;
+  let runReason = gate.reason;
+  if (onCooldown || !gate.run) {
+    // the debounce would skip this Stop: a cheap topic probe may still call for a summary now
+    const skipWhy = onCooldown ? "last summary was less than 30 minutes ago" : gate.reason;
+    const probe = await probeTopicShift({
+      key: stateKey,
+      jsonlPath,
+      fromOffset,
+      currentTopic: currentNoteTopic(cwd),
+    });
+    if (probe.reason !== "probe rate limit") process.stderr.write(`[session-summary] Topic probe ${stateKey}: ${probe.reason}.\n`);
+    if (!probe.shifted) {
+      process.stderr.write(`[session-summary] Skipping ${stateKey} — ${skipWhy}.\n`);
+      return;
+    }
+    runReason = "topic shift";
   }
   const extracted = extractFromJsonl(jsonlPath, selectedModel, fromOffset);
 
@@ -1173,10 +1282,10 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
 
   process.stderr.write(
     `[session-summary] Sending ${prompt.length} char prompt to ${selectedModel} ` +
-    `(session=${stateKey} ${gate.reason} offset=${fromOffset}->${extracted.endOffset})...\n`
+    `(session=${stateKey} ${runReason} offset=${fromOffset}->${extracted.endOffset})...\n`
   );
 
-  const summaryText = await spawnSummarizer(prompt, selectedModel);
+  const summaryText = await spawnSummarizer(prompt, selectedModel, configuredSummaryModel());
 
   if (!summaryText) {
     process.stderr.write(

@@ -218,6 +218,9 @@ export interface PaiDaemonConfig {
   /** Index schedule interval in seconds (default: 300 = 5 minutes) */
   indexIntervalSecs: number;
 
+  /** Session summaries: `model` = local (default) | <provider> | <provider>/<model> | haiku | sonnet. */
+  sessionSummary?: { model?: string };
+
   /** Embedding schedule interval in seconds (default: 600 = 10 minutes) */
   embedIntervalSecs: number;
   /** Obsidian vault sync interval in seconds (default: 1800 = 30 minutes); syncs only if a hook flagged a change. */

@@ -111,6 +111,7 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   socketPath: "Unix Domain Socket path for daemon IPC.",
   indexIntervalSecs: "How often the daemon re-indexes changed files, in seconds.",
   embedIntervalSecs: "How often the daemon runs the embedding pass, in seconds.",
+  sessionSummary: "Session summaries: { model } = local (default; cloud tier only when no local model answers) | <provider> | <provider>/<model> | haiku | sonnet.",
   embedOnStartup:
     "Run an embed pass 60s after daemon start. Off by default: with a large backlog it makes every restart a CPU storm.",
   embedMaxMinutes: "Wall-clock budget of one embed pass in minutes (default 60); the backlog continues next cycle.",

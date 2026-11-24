@@ -56,7 +56,7 @@ function legacyInstalled(deps: HelperDeps): boolean {
   }
 }
 /** Use label of a helper call -> its `helper.uses` switch name. */
-const USE_KEY: Record<string, string> = { alert: "toolErrors", tldr: "tldr", gate: "gateSummary", route: "routeClass", report: "reportCheck", topic: "topic" };
+const USE_KEY: Record<string, string> = { alert: "toolErrors", tldr: "tldr", gate: "gateSummary", route: "routeClass", report: "reportCheck", topic: "topic", "topic-shift": "topic-shift" };
 
 export const DEFAULT_HELPER: HelperConfig = {
   enabled: true,
@@ -513,7 +513,7 @@ export function resetHelperState(): void {
 }
 
 /** Side-job uses (labels) that resolve a helper model. */
-export const HELPER_USES = ["alert", "tldr", "gate", "route", "report", "topic"] as const;
+export const HELPER_USES = ["alert", "tldr", "gate", "route", "report", "topic", "topic-shift"] as const;
 
 /** Specs of a use that exist here: ollama:<m> entries and providers configured in workers.yaml (apple-fm only where its bridge is configured). */
 export function configuredHelperSpecs(label: string, cfg: HelperConfig, deps: HelperDeps = {}): string[] {
