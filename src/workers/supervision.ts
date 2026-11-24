@@ -55,7 +55,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { dirname, join } from "node:path";
-import { alive, isChatPane, loadStatusesCached, nowStamp, type WorkerStatus } from "./status.js";
+import { alive, isChatPane, isHarnessRun, loadStatusesCached, nowStamp, type WorkerStatus } from "./status.js";
 import { readWorkersSection } from "./config.js";
 import { itermForClaudeSession, itermUuid } from "./scope.js";
 import { classifyAlert } from "./helper-uses.js";
@@ -305,6 +305,8 @@ export function detectSupervisionEvents(
   const out: SupervisionEvent[] = [];
   const present = new Set(statuses.map((s) => s.id));
   for (const s of statuses) {
+    // a harness run (merge gate smoke start, probes): infrastructure, not a session's task — no notices, no digest
+    if (isHarnessRun(s)) continue;
     const session = ownershipKey(s);
     if (!session) continue;
     // the operator's own pane: ending it is not a worker outcome, idling is
