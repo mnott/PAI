@@ -395,7 +395,7 @@ final class ANEAndModeTests: XCTestCase {
             (name: "CPU1 Energy", delta: 2_000_000_000, unit: "nJ"),
             (name: "ANE Energy", delta: 999, unit: "mJ"),
         ], prefix: "CPU", seconds: 2.0)!
-        XCTAssertEqual(sum, 1.0, accuracy: 1e-9) // (1e-3 + 2e-3) / 2
+        XCTAssertEqual(sum, 1.5, accuracy: 1e-9) // (1e-3 + 2e-3) / 2
         // Unknown unit on a channel is skipped; the rest still count.
         let partial = wattsFromChannels([
             (name: "GPU0 Energy", delta: 1000, unit: "mJ"),
