@@ -446,3 +446,29 @@ export function resetQueueForTests(): void {
   _queue = [];
   _dirty = false;
 }
+
+/**
+ * Per-session key for session-end / session-summary items: sessionId, else
+ * transcript path, else cwd. Repeat Stop events for one session share a key.
+ */
+export function sessionJobKey(payload: Record<string, unknown>): string {
+  for (const k of ["sessionId", "transcriptPath", "cwd"]) {
+    const v = payload[k];
+    if (typeof v === "string" && v) return v;
+  }
+  return "";
+}
+
+/**
+ * Enqueue unless a pending (not yet started) item of the same type and session
+ * key exists. A processing item does not block: it may already have read the
+ * transcript, so one follow-up stays queued. Returns the existing item on dedupe.
+ */
+export function enqueueDedupedPerSession(params: Parameters<typeof enqueue>[0]): { item: WorkItem; deduped: boolean } {
+  const key = sessionJobKey(params.payload);
+  const existing = _queue.find(
+    (i) => i.type === params.type && i.status === "pending" && sessionJobKey(i.payload) === key
+  );
+  if (existing) return { item: existing, deduped: true };
+  return { item: enqueue(params), deduped: false };
+}

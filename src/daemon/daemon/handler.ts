@@ -30,7 +30,7 @@ import {
 import { runEmbed, runIndex, runVaultIndex } from "./scheduler.js";
 import { dispatchTool } from "./dispatcher.js";
 import { triggerRegistryScan } from "../registry-scan-trigger.js";
-import { enqueue, getStats as getQueueStats } from "../../daemon/work-queue.js";
+import { enqueue, enqueueDedupedPerSession, getStats as getQueueStats } from "../../daemon/work-queue.js";
 import { notifyNewWork } from "../../daemon/work-queue-worker.js";
 import { getBackendOutage } from "../../storage/outage.js";
 import { loopLag } from "../event-loop-lag.js";
@@ -501,12 +501,16 @@ export async function handleRequest(
         return;
       }
 
-      const item = enqueue({
+      const enqParams = {
         type: p.type as import("../../daemon/work-queue.js").WorkItemType,
         priority: p.priority,
         payload: p.payload ?? {},
         maxAttempts: p.maxAttempts,
-      });
+      };
+      // Stop fires every turn: one pending session-end / session-summary per session.
+      const { item } = p.type === "session-end" || p.type === "session-summary"
+        ? enqueueDedupedPerSession(enqParams)
+        : { item: enqueue(enqParams) };
 
       notifyNewWork();
 
