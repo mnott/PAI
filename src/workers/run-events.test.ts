@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { aibrokerMessenger, resetUndeliverable, sweepRuns, isUndeliverableError, parkInMailbox, type Messenger, type RunOrigin } from "./run-events.js";
+import { aibrokerMessenger, resetUndeliverable, sweepRuns, isUndeliverableError, parkInMailbox, eventLine, type Messenger, type RunOrigin } from "./run-events.js";
 
 const NOT_RUNNING = 'Error: Session "FE2552A8" is not running Claude — its terminal is at a shell prompt, so nothing was sent (a shell would execute the message rather than read it). An ended session leaves its tab behind; close it, or target a session that is running.';
 
@@ -40,6 +40,14 @@ describe("isUndeliverableError", () => {
     expect(isUndeliverableError("AIBroker IPC call timed out.")).toBe(false);
     expect(isUndeliverableError("ECONNRESET")).toBe(false);
     expect(isUndeliverableError("")).toBe(false);
+  });
+});
+
+describe("eventLine", () => {
+  it("flattens tabs and carriage returns in values so the line stays one line", () => {
+    const line = eventLine("abc", "R", { z: "a\tb\r\nc|d" }, "sentence");
+    expect(line).toBe("S i=abc z=R | z=a b  c d — sentence");
+    expect(line).not.toMatch(/[\t\r\n]/);
   });
 });
 

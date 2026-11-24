@@ -184,7 +184,7 @@ const fmtTok = (n: number): string => (n >= 1000 ? `${Math.round(n / 100) / 10}k
 
 /** AG2-style kind line plus a plain sentence, one line (it is typed into a terminal). */
 export function eventLine(id: string, kind: string, fields: Record<string, string | number>, sentence: string): string {
-  const kv = Object.entries(fields).map(([k, v]) => `${k}=${String(v).replace(/[|\n]/g, " ")}`);
+  const kv = Object.entries(fields).map(([k, v]) => `${k}=${String(v).replace(/[|\n\t\r]/g, " ")}`);
   return `S i=${id} z=${kind}${kv.length ? " | " + kv.join(" | ") : ""} — ${sentence}`;
 }
 
