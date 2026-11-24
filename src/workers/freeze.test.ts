@@ -357,6 +357,20 @@ describe("supervision stands down while frozen", () => {
     await w.flush();
     expect(n).toBe(0); // paused (preempted): no stall notice at all
   });
+
+  it("a loop-stop notice names the continuation the harness already started, or says no escalation", async () => {
+    // the notice is sent only after the escalation is decided (execute-fold.ts), so it can carry the clause
+    const sent: string[] = [];
+    const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), true) } as unknown as Messenger;
+    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, "", () => now, async (_p, t) => msg.toSession({} as RunOrigin, t));
+    w.onLoopStop("repeated identical tool call", "escalating to anthropic-native as L2 (same branch) - wait for it, do not restart");
+    await w.flush();
+    expect(sent[0]).toContain("was stopped by the loop guard: repeated identical tool call; escalating to anthropic-native as L2 (same branch) - wait for it, do not restart");
+    unthrottle(w);
+    w.onLoopStop("repeated identical tool call", "no escalation: the run ended without a continuation");
+    await w.flush();
+    expect(sent[1]).toContain("was stopped by the loop guard: repeated identical tool call; no escalation: the run ended without a continuation");
+  });
 });
 
 describe("exceptions", () => {
