@@ -92,7 +92,7 @@ function promptFromArgs(args: string[]): string | undefined {
 export async function runWorker(opts: RunOptions): Promise<number> {
   const runT0 = Date.now();
   const { raw: _raw, workers: config } = readWorkersSection();
-  // speed | balanced | budget (mode.ts) overrides the tiers; the session's explicit rows below still win
+  // speed | balanced | budget | local (mode.ts) overrides the tiers; the session's explicit rows below still win
   applyModeToConfig(config);
   // the session's own routing rows replace the global ones for this run (routeRun and resolveTarget read config.classes)
   const sessionName = await detectSessionName();

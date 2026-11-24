@@ -1324,7 +1324,7 @@ export const workerBenchCommand: CommandDef = {
 
 export const workerModeCommand: CommandDef = {
   name: "mode",
-  summary: "Switch workers between speed, balanced and budget",
+  summary: "Switch workers between speed, balanced, budget and local",
   description:
     "With no argument shows the mode; with one sets it (persisted as `mode:` in workers.yaml, applied on top of the tiers, which stay as written).\n" +
     WORK_MODES.map((m) => `  ${m.padEnd(9)} ${MODE_SUMMARY[m]}`).join("\n") +
@@ -1332,10 +1332,11 @@ export const workerModeCommand: CommandDef = {
     "  mode      single small change (implement, direct L2)         larger / grouped (orchestrate, L1 + L2s)\n" +
     "  speed     anthropic/sonnet                                   L1 anthropic/sonnet, L2s anthropic/haiku\n" +
     "  balanced  local (gyro-l); anthropic/sonnet on failure        L1 anthropic/sonnet, local L2s, sonnet takeover\n" +
-    "  budget    local only, failure reported (no cloud takeover)   L1 anthropic/sonnet, local L2s, sonnet only after a failed retry" +
+    "  budget    local only, failure reported (no cloud takeover)   L1 anthropic/sonnet, local L2s, sonnet only after a failed retry\n" +
+    "  local     local only (no under-pace cloud lead)              L1 local first, local L2s, cloud only as takeover after a failed local retry" +
     "\nAn open urgency window (`/now`, `pai now`) acts as speed for that session while it is open.",
   args: [{ name: "MODE", summary: WORK_MODES.join(" | ") }],
-  examples: ["pai worker mode", "pai worker mode speed", "pai worker mode budget"],
+  examples: ["pai worker mode", "pai worker mode speed", "pai worker mode budget", "pai worker mode local"],
   seeAlso: ["pai worker policy", "pai worker route", "pai now"],
   run(ctx) {
     try {

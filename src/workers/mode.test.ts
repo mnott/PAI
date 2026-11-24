@@ -72,9 +72,9 @@ describe("mode in workers.yaml", () => {
 });
 
 describe("routing by mode x {implement direct, orchestrate}", () => {
-  const direct = (m: "speed" | "balanced" | "budget") => models(applyMode(tiers(), m, { isLocal }), "t2");
-  const l1 = (m: "speed" | "balanced" | "budget") => models(applyMode(tiers(), m, { isLocal }), "t1");
-  const kids = (m: "speed" | "balanced" | "budget") => models(applyMode(tiers(), m, { isLocal, underOrchestrator: true }), "t2");
+  const direct = (m: "speed" | "balanced" | "budget" | "local") => models(applyMode(tiers(), m, { isLocal }), "t2");
+  const l1 = (m: "speed" | "balanced" | "budget" | "local") => models(applyMode(tiers(), m, { isLocal }), "t1");
+  const kids = (m: "speed" | "balanced" | "budget" | "local") => models(applyMode(tiers(), m, { isLocal, underOrchestrator: true }), "t2");
 
   it("speed: direct sonnet; L1 sonnet, children haiku", () => {
     expect(direct("speed")[0]).toBe("anthropic/sonnet");
@@ -93,6 +93,30 @@ describe("routing by mode x {implement direct, orchestrate}", () => {
     expect(direct("budget")).toEqual(["gyro-l"]);
     expect(l1("budget")[0]).toBe("anthropic/sonnet");
     expect(kids("budget")).toEqual(["gyro-l"]);
+  });
+
+  it("local: L1 and direct L2 and children lead local; cloud only behind (t1) or not at all (t2)", () => {
+    expect(direct("local")).toEqual(["gyro-l"]);
+    expect(l1("local")).toEqual(["gyro-l", "anthropic/sonnet", "glm/glm-5.3-flash"]);
+    expect(kids("local")).toEqual(["gyro-l"]);
+  });
+
+  it("local: under pace the cloud still does not lead (cloudFirst ignored)", () => {
+    const t = applyMode(tiers(), "local", { isLocal, cloudFirst: true, paceClasses: ["orchestrate", "plan", "implement"] });
+    expect(models(t, "t1")[0]).toBe("gyro-l");
+    expect(models(t, "t2")).toEqual(["gyro-l"]);
+  });
+
+  it("local: after a failed local retry the cloud is the takeover (t1 chain keeps it; t2 local only, the tier above takes over)", () => {
+    const t = applyMode(tiers(), "local", { isLocal });
+    expect(models(t, "t1").slice(1)).toContain("anthropic/sonnet");
+    expect(models(t, "t0")).toEqual(["anthropic/opus", "glm/glm-5.3[1m]"]);
+  });
+
+  it("local round-trips through workers.yaml", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "mode-")), "workers.yaml");
+    writeMode("local", f);
+    expect(readMode(f)).toBe("local");
   });
 
   it("no mode key defaults to balanced", () => {
