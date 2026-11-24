@@ -117,6 +117,28 @@ describe("workerContractPrompt — code graph lines", () => {
     }
   });
 
+  it("explicit PAI_BRIEF_CODE_GRAPH=1 forces code-graph lines ON for local providers; unset/0 keep them OFF", () => {
+    const saved = process.env.PAI_BRIEF_CODE_GRAPH;
+    try {
+      delete process.env.PAI_BRIEF_CODE_GRAPH;
+      const localUnset = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
+      expect(localUnset).not.toContain(CODE_EXPLORE_LINE);
+
+      process.env.PAI_BRIEF_CODE_GRAPH = "1";
+      const localOne = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
+      expect(localOne).toContain(CODE_EXPLORE_LINE);
+      expect(localOne).toContain(CODE_GRAPH_FIRST_LINE);
+
+      process.env.PAI_BRIEF_CODE_GRAPH = "0";
+      const localZero = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
+      expect(localZero).not.toContain(CODE_EXPLORE_LINE);
+      expect(localZero).not.toContain(CODE_GRAPH_FIRST_LINE);
+    } finally {
+      if (saved === undefined) delete process.env.PAI_BRIEF_CODE_GRAPH;
+      else process.env.PAI_BRIEF_CODE_GRAPH = saved;
+    }
+  });
+
   it("PAI_BRIEF_CODE_GRAPH=0 drops both code-graph lines from the brief (A/B #23)", () => {
     const saved = process.env.PAI_BRIEF_CODE_GRAPH;
     try {
