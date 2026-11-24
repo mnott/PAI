@@ -17,6 +17,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { usageContextTokens } from "../workers/run.js";
 import type { UsageBlock } from "../utils/input-side-tokens.js";
+import { withDaemonLlmMarker } from "../workers/daemon-llm.js";
 import { ensureNoMcpConfig } from "../workers/paths.js";
 import { nativeAnthropicModels } from "../workers/config.js";
 
@@ -97,7 +98,7 @@ export function ladderChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...base };
   delete env.PAI_WORKER;
   delete env.ANTHROPIC_API_KEY;
-  return env;
+  return withDaemonLlmMarker(env);
 }
 
 /** Spawn one rung of `claude -p ...` and read its usage-derived first-turn context. */

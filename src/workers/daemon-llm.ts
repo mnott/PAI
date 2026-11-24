@@ -41,6 +41,11 @@ export type { ModelTier } from "./config.js";
  */
 export const DAEMON_LLM_ENV_MARKER = "PAI_DAEMON_LLM";
 
+/** Env of any headless side-work claude run: the daemon marker added, nothing else changed. */
+export function withDaemonLlmMarker(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, [DAEMON_LLM_ENV_MARKER]: "1" };
+}
+
 /** Timeout per tier (ms) — a class-appropriate budget, not a per-model one. */
 export const LLM_TIMEOUT_MS: Record<ModelTier, number> = {
   haiku: 60_000,    // 60 seconds
@@ -98,7 +103,7 @@ function legacyPlan(tier: ModelTier, config: WorkersConfig | null): LlmSpawnPlan
       ...containmentArgs(workersLogDir(config ?? defaultWorkersConfig())),
       "-p", "--no-session-persistence",
     ],
-    env: { ...env, [DAEMON_LLM_ENV_MARKER]: "1" },
+    env: withDaemonLlmMarker(env),
     timeoutMs: LLM_TIMEOUT_MS[tier],
     provider: null,
   };
@@ -167,7 +172,7 @@ async function providerPlan(
       ...containmentArgs(logDir),
       "-p", "--no-session-persistence",
     ],
-    env: { ...buildRunEnv(provider, true, proxyUrl, providerName, viaRouter), [DAEMON_LLM_ENV_MARKER]: "1" },
+    env: withDaemonLlmMarker(buildRunEnv(provider, true, proxyUrl, providerName, viaRouter)),
     timeoutMs,
     provider: providerName,
   };
