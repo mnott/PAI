@@ -54,6 +54,7 @@ const GUARD_HOOKS = [
   "myapp-warm-builds",
   "block-sleep-poll",
   "block-unlisted-mail",
+  "block-samplers",
   "local-model-hint",
   "worker-guard",
   "worker-path-repair",
