@@ -205,6 +205,25 @@ describe("freeze / thaw", () => {
     expect(r.lines.join("\n")).toContain("frozen 2 workers + 2 model servers");
   });
 
+  // 2026-11-24: Ollama is never a freeze target — not a PAI-started server process, it unloads
+  // idle models itself after its keep_alive (~5 min), and serves embeddings (pai-embedding) and
+  // the apple-fm helper fallback (ollama:qwen3:8b). When it runs, the output says so in one line.
+  it("ollama is never frozen and the output says why when it is running", async () => {
+    const d = deps([{ pid: 500, label: "gyro-l:8035" }]);
+    d.procs = () => [...ROWS, row(500, 1, "strata-engine --serve"), row(600, 1, "ollama serve")];
+    const r = await freezeAll("/nonexistent-log", "t", undefined, d);
+    const stops = sent.filter((s) => s.startsWith("SIGSTOP"));
+    expect(stops).toContain("SIGSTOP:500"); // the PAI server is still stopped
+    expect(stops).not.toContain("SIGSTOP:600"); // ollama is never stopped
+    expect(r.marker!.pids.some((e) => e.pid === 600)).toBe(false); // and never recorded
+    expect(r.lines).toContain("ollama: not frozen (unloads idle models itself; serves embeddings and the helper fallback)");
+  });
+
+  it("no ollama line when ollama is not running", async () => {
+    const r = await freezeAll("/nonexistent-log", "t", undefined, deps());
+    expect(r.lines.join("\n")).not.toContain("ollama: not frozen");
+  });
+
   it("--all freezes every model server including the spare-marked one", async () => {
     const d = deps([{ pid: 500, label: "gyro-l:8035" }, { pid: 501, label: "apple-fm:8037" }]);
     d.procs = () => [...ROWS, row(500, 1, "strata-engine --serve"), row(501, 1, "apple-fm-bridge")];
