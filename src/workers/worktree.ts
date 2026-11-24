@@ -23,7 +23,6 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, ownsPid, refreshCachedStatus, saveStatus, statusPids, UNLABELED, type WorkerStatus } from "./status.js";
 import { currentWorkerId } from "./worker-id.js";
-import { recordFailures, suspectLines } from "./suspect-test.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
@@ -1972,7 +1971,6 @@ async function mergeWorkerInner(
     { logDir, id }
   );
   let related: RelatedResult | null = null;
-  let suspect: string[] = [];
   let mergeCommit = "";
   if (opts.verifyTests !== false) {
     const cfg = opts.merge ?? mergeSettings();
@@ -1987,16 +1985,12 @@ async function mergeWorkerInner(
       ...(related.summary ? { summary: related.summary.replace(/\n/g, " / ").slice(0, 400) } : {}),
       ...(related.flakyLogs?.length ? { flakyLog: related.flakyLogs.join(",") } : {}),
     });
-    if (related.status === "failed" && related.failing.length) {
-      recordFailures(logDir, id, loadStatus(logDir, id)?.model ?? "?", related.failing.map((f) => ({ id: f, assertion: related!.assert })));
-      suspect = suspectLines(logDir, related.failing);
-    }
     if (related.output) void growthAlarm(logDir, st.cwd, related.output);
     // "failed" already survived the serial re-run (flaky-under-load is its own status): revert like the other gates
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
       const log = related.logPath ? `: full gate output: ${related.logPath}` : "";
-      const why = [...(related.assert ? [`assertion: ${related.assert}`] : []), ...(related.summary ? [`summary: ${related.summary.replace(/\n/g, " / ")}`] : []), ...(related.hints ?? []), ...suspect].join("; ");
+      const why = [...(related.assert ? [`assertion: ${related.assert}`] : []), ...(related.summary ? [`summary: ${related.summary.replace(/\n/g, " / ")}`] : []), ...(related.hints ?? [])].join("; ");
       throw new Error(
         `related tests failed: ${files}${log}${why ? ` (${why})` : ""}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
       );
@@ -2065,7 +2059,7 @@ async function mergeWorkerInner(
   const text = withGate(verifyLine, merged);
   if (related?.status === "failed") {
     // the keep-on-fail path keeps the merge on main: exit 3 with hints, never a MERGE REVERTED line
-    throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit), ...suspect.map((l) => `  ${l}`)].join("\n"));
+    throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
   }
   // the build + restart gate is async: a failed health check rolls dist back and reverts the merge commit too
   return withBuild(`${text}${related ? `\n${related.line}` : ""}`, await rebuildDist(logDir, id, st.cwd, oldHead, opts));
