@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { isWorkerSession } from "../lib/worker-session.js";
+import { isWorkerSession, isDaemonLlmSession } from "../lib/worker-session.js";
 import { setTabTitle } from "../lib/tab-title.js";
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join, basename, dirname } from 'path';
@@ -499,6 +499,11 @@ function debug(msg: string): void {
 
 async function main() {
   if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
+  // A daemon-spawned LLM run (summarizer, topic probe, KG extraction) must
+  // never be summarized itself: its Stop hook used to enqueue a summary of the
+  // summarizer's own transcript, which spawned another summarizer — an
+  // unbounded feedback loop (401 runs on 2026-11-24).
+  if (isDaemonLlmSession()) return;
   if (isProbeSession()) {
     process.exit(0);
   }

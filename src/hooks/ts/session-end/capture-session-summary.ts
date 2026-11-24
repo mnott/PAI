@@ -14,6 +14,7 @@ import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';
 import { analyzeSession, formatSessionDocument } from '../lib/session-summary.js';
 import { enqueueWork } from '../lib/socket-request.js';
+import { isWorkerSession, isDaemonLlmSession } from '../lib/worker-session.js';
 
 interface SessionData {
   session_id: string;
@@ -59,6 +60,15 @@ async function main() {
       try { unlinkSync(inputFile); } catch { /* ignore */ }
     }
     const data: SessionData = JSON.parse(raw);
+
+    // A daemon-spawned LLM run (summarizer, topic probe, KG extraction) must
+    // never be summarized itself: its SessionEnd used to enqueue a final
+    // summary of the summarizer's own transcript, which spawned another
+    // summarizer — an unbounded feedback loop (401 runs on 2026-11-24).
+    // Workers likewise get their own reports, not session notes.
+    if (isDaemonLlmSession() || isWorkerSession()) {
+      process.exit(0);
+    }
 
     // Generate timestamp for filename
     const now = new Date();

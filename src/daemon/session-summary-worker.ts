@@ -48,7 +48,7 @@ import { getRegistryBackend } from "../storage/factory.js";
 import { drainRenameQueue } from "../storage/session-note-registry.js";
 import { storageBackend, daemonConfig } from "./daemon/state.js";
 import { recordSystemJobStart } from "../workers/pane-waiver.js";
-import { planSummarySpawn, type ModelTier } from "../workers/daemon-llm.js";
+import { planSummarySpawn, DAEMON_LLM_ENV_MARKER, type ModelTier } from "../workers/daemon-llm.js";
 import { helperComplete } from "../workers/helper.js";
 import { claudeProjectsDir, legacyConfigDir, paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import { findClaudeBinary } from "../memory/kg-extraction.js";
@@ -1123,6 +1123,32 @@ async function extractAndStoreTriples(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Daemon-LLM transcript backstop
+// ---------------------------------------------------------------------------
+
+/**
+ * True when a transcript belongs to a daemon-spawned LLM run (summarizer,
+ * topic probe, KG extraction) rather than a real interactive session.
+ *
+ * Those runs spawn with cwd "/" and the `PAI_DAEMON_LLM=1` marker, and their
+ * transcripts land under `~/.claude/projects/-/sessions/`. Summarizing one
+ * spawns another summarizer — the feedback loop of 2026-11-24 (401 runs). The
+ * hooks now skip enqueueing for such runs; this is the worker-side backstop for
+ * jobs that arrive anyway (e.g. enqueued before the fix, or by a stale hook).
+ *
+ * `cwd === "/"` alone is not enough: a real session could in principle run at
+ * the root. The transcript location is the reliable signal — the encoded
+ * project dir for "/" is exactly "-".
+ */
+export function isDaemonLlmTranscript(jsonlPath: string, cwd: string): boolean {
+  const underRootProject = jsonlPath.includes("/projects/-/");
+  if (underRootProject) return true;
+  // cwd "/" plus the marker is the daemon spawn's signature; the marker is
+  // inherited by the hook process that enqueued the job.
+  return cwd === "/" && process.env[DAEMON_LLM_ENV_MARKER] === "1";
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -1177,6 +1203,15 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
 
   process.stderr.write(`[session-summary] Using transcript: ${jsonlPath}\n`);
 
+  // Backstop: never summarize a daemon-spawned LLM's own transcript — that is
+  // the feedback loop (summarizer summarizes itself, forever).
+  if (isDaemonLlmTranscript(jsonlPath, cwd)) {
+    process.stderr.write(
+      `[session-summary] Refusing daemon-LLM transcript ${jsonlPath} (cwd=${cwd}) — no summary.\n`
+    );
+    return;
+  }
+
   // -------------------------------------------------------------------------
   // Step 2: Extract content from the JSONL
   // -------------------------------------------------------------------------
@@ -1224,9 +1259,12 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   }
   const extracted = extractFromJsonl(jsonlPath, selectedModel, fromOffset);
 
-  if (extracted.userMessages.length === 0) {
+  // A transcript with fewer than 2 real user messages is not a session worth
+  // summarizing (a daemon LLM run, a one-shot probe, a stub). Summarizing one
+  // spends a model slot for nothing.
+  if (extracted.userMessages.length < 2) {
     process.stderr.write(
-      "[session-summary] No user messages found in transcript — skipping.\n"
+      `[session-summary] Fewer than 2 user messages (${extracted.userMessages.length}) in transcript — skipping.\n`
     );
     if (prevState) saveSessionState(stateKey, { at: Date.now(), offset: extracted.endOffset });
     return;

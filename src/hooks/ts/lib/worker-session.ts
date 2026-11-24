@@ -21,3 +21,19 @@
 export function isWorkerSession(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.PAI_WORKER === "1";
 }
+
+/**
+ * A daemon-spawned background LLM run (`claude -p` from planLlmSpawn /
+ * planSummarySpawn: session summarizer, topic probe, KG extraction).
+ *
+ * Such a run is text-in/text-out and must never be summarized itself: its
+ * SessionEnd/Stop hooks used to enqueue a summary of the summarizer's own
+ * transcript, which spawned another summarizer, which ended, and so on — an
+ * unbounded feedback loop of 401 daemon LLM runs observed on 2026-11-24, each
+ * occupying a local model slot until its 300 s timeout. The spawn sets
+ * `PAI_DAEMON_LLM=1`; every hook that does per-session bookkeeping returns
+ * immediately when this predicate is true.
+ */
+export function isDaemonLlmSession(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.PAI_DAEMON_LLM === "1";
+}
