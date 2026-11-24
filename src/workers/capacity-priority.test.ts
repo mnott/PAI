@@ -862,3 +862,23 @@ describe("stickyEngine: affinity only while the instance has a free slot", () =>
     expect(stickyEngine("m", "sess", keys, (k) => load[k] < 2, (k) => load[k])).toBe("m#3");
   });
 });
+
+describe("local-idle sample does not block the loop", () => {
+  it("takeSample reads the status files once (cached), not once per queue walk", async () => {
+    const { takeSample } = await import("./local-idle.js");
+    const { defaultWorkersConfig } = await import("./config.js");
+    const dir = mkdtempSync(join(tmpdir(), "pai-li-"));
+    try {
+      mkdirSync(join(dir, "queue", "gyro"), { recursive: true });
+      writeFileSync(join(dir, "queue", "gyro", "w-q"), JSON.stringify({ id: "w-q", pid: process.pid, since: Date.now() }));
+      for (let i = 0; i < 3000; i++) writeFileSync(join(dir, `w-${i}.status`), JSON.stringify({ id: `w-${i}`, state: "done", provider: "gyro", pid: 1, started: new Date().toISOString() }));
+      await takeSample(dir, defaultWorkersConfig(), Date.now(), async () => null); // warm the cache
+      const t0 = performance.now();
+      const s = await takeSample(dir, defaultWorkersConfig(), Date.now(), async () => null);
+      expect(s.providers).toBeDefined();
+      expect(performance.now() - t0).toBeLessThan(100);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

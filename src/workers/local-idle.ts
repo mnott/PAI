@@ -280,8 +280,10 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
   } catch {
     /* no build dir yet */
   }
-  const statuses = loadStatusesCached(logDir).filter((s) => !isChatPane(s) && isLive(s, ownsPidCached) && s.state === "running");
-  const queue = queueRows(logDir);
+  // one cached read feeds both the live filter and the queue walk: queueRows without statuses re-reads every status file (7.5k files, ~3 s of daemon loop block)
+  const all = loadStatusesCached(logDir);
+  const statuses = all.filter((s) => !isChatPane(s) && isLive(s, ownsPidCached) && s.state === "running");
+  const queue = queueRows(logDir, {}, undefined, all);
   const providers: LocalProviderSample[] = [];
   const tiers = tierProviderNames();
   for (const [name, p] of Object.entries(workers.providers)) {
