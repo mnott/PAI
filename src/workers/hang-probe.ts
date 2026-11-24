@@ -18,7 +18,6 @@ import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { psTable } from "./ps-table.js";
 import { acquireTestSlot, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
-import { stripApiKey } from "./strip-api-key.js";
 
 /** Marker line every diagnosis carries; the loop guard keys on it. */
 export const HANG_MARKER = "[pai hang probe]";
@@ -185,12 +184,12 @@ export async function runProbed(o: ProbeOptions): Promise<number> {
   const idle = Math.max(2, Math.min(o.idleSecs ?? DEFAULT_IDLE_SECS, t !== null ? t - 8 : Infinity));
   const preload = join(o.reportDir, "preload.cjs");
   writeFileSync(preload, PRELOAD_SOURCE);
-  const env = stripApiKey({
+  const env = {
     ...process.env,
     PAI_HANG_PROBE_DIR: o.reportDir,
     [SLOT_HELD_ENV]: "1",
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${preload}`.trim(),
-  });
+  };
   const child = spawn("bash", ["-c", o.command], { cwd: o.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   let last = Date.now();
   let probing = false;

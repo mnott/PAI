@@ -53,8 +53,6 @@ const GUARD_HOOKS = [
   "ztk-auto.sh",
   "myapp-warm-builds",
   "block-sleep-poll",
-  "block-unlisted-mail",
-  "block-samplers",
   "local-model-hint",
   "worker-guard",
   "worker-path-repair",

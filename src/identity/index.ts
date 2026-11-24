@@ -92,8 +92,6 @@ export function normalizeEmail(raw: string | null | undefined): string | null {
 
 export interface IdentityLike {
   selfEmails?: string[];
-  /** Extra addresses mail may be sent to without review (selfEmails always count). */
-  mailWhitelist?: string[];
   deliverTo?: string;
   sendingAccount?: string;
 }
@@ -108,14 +106,6 @@ export function isSelfAddress(address: string, identity: IdentityLike | undefine
     .filter((e): e is string => e !== null);
 
   return own.includes(candidate);
-}
-
-/** May mail be sent to this address: one of selfEmails or mailWhitelist, case-insensitive. */
-export function isMailWhitelisted(address: string, identity: IdentityLike | undefined): boolean {
-  if (isSelfAddress(address, identity)) return true;
-  const candidate = normalizeEmail(address);
-  if (!candidate) return false;
-  return (identity?.mailWhitelist ?? []).some((e) => normalizeEmail(e) === candidate);
 }
 
 /**

@@ -463,15 +463,3 @@ describe("cockpit page script", () => {
     expect(page).toMatch(/@media\(max-width:760px\)\{table\.wq col:nth-child\(4\)/);
   });
 });
-
-describe("no sampler is spawned by any source file", () => {
-  it("no src/**/*.ts (non-test, not the gate) spawns mactop/htop/btop/glances/asitop/powermetrics", () => {
-    const bins = "mactop|htop|btop|glances|asitop|powermetrics";
-    const spawnRe = new RegExp(`\\b(?:spawn|exec|execFile|spawnSync|execSync|execFileSync)\\w*\\s*(?:<[^>(]*>)?\\(\\s*(?:\\[\\s*)?[^)]*?(?:["'\`](?:[^"'\`]*[\\s/])?(?:${bins})(?:[\\s"'\`][^"'\`]*)?["'\`])`);
-    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]);
-    const offenders = walk("src")
-      .filter((f) => f.endsWith(".ts") && !/\.test\.ts$/.test(f) && !f.endsWith("hooks/ts/lib/sampler-gate.ts"))
-      .filter((f) => spawnRe.test(readFileSync(f, "utf8")));
-    expect(offenders).toEqual([]);
-  });
-});

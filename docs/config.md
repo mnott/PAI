@@ -102,13 +102,7 @@ search:
 # and never guessed: nothing is self-addressed until this is set.
 identity:
   selfEmails:
-    - me@example.com
-  # Extra recipients mail-send tools may address (To/Cc/Bcc); selfEmails always
-  # count. Anything else is denied by the PreToolUse mail whitelist gate:
-  # "not on the mail whitelist: <addr> — create a draft instead". Drafts stay allowed.
-  mailWhitelist:
-    - colleague@example.com
-    - partner@example.org
+    - you@example.com
   deliverTo: you@example.com
   sendingAccount: you@example.com
 

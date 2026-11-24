@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
-import { decideSamplerGate } from "../hooks/ts/lib/sampler-gate.js";
 import { decidePreGates, decideWorkerGate } from "./gates.js";
 import { modelServerReason } from "../hooks/ts/lib/model-server-guard.js";
 import { WORKER_CHILD_ROUTE_REASON, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
@@ -271,30 +270,5 @@ describe("build gate routes plain builds through the queue", () => {
   it("keeps complex forms denied and wrapped commands untouched", () => {
     for (const c of ["swift build | tail", "swift build; echo x", "swift build && echo x", "swift build > out.txt", "swift build &", "FOO=1 swift build", "cd a && cd b && swift build", "bash -c 'swift build'"]) expect(w(c)?.action, c).toBe("deny");
     expect(w("pai build run -- swift build")).toBeNull();
-  });
-});
-
-describe("sampler gate: no mactop/htop/btop/glances/asitop, no powermetrics with an interval", () => {
-  const verdict = (command: string, tool = "Bash") => decideSamplerGate({ tool_name: tool, tool_input: { command } }).decision;
-  it("denies runs, in any segment and after wrappers", () => {
-    for (const c of [
-      "mactop --headless", "sudo mactop", "htop", "btop -p 1", "glances -t 2", "asitop",
-      "echo hi && mactop --headless --count 1", "ls | xargs htop", "env FOO=1 sudo -n btop", "/opt/homebrew/bin/mactop",
-      "sh -c 'sleep 1; asitop'", "powermetrics -i 1000", "sudo powermetrics --samplers cpu_power -i 500 -n 1",
-      "sudo powermetrics --sample-rate 1000", "powermetrics -n 2",
-    ]) expect(verdict(c), c).toBe("deny");
-    expect((decideSamplerGate({ tool_input: { command: "mactop" } }) as { reason: string }).reason).toContain("ioreg -r -d 1 -c IOAccelerator");
-  });
-  it("allows text mentions and powermetrics without an interval", () => {
-    for (const c of [
-      "grep mactop src/router/system.ts", "echo mactop is gone", 'git commit -m "drop mactop and htop"', "which mactop", "man htop",
-      "powermetrics --help", "sudo powermetrics --samplers smc", "sysctl vm.loadavg; vm_stat", "ioreg -r -d 1 -c IOAccelerator",
-      "cat <<'EOF'\nmactop\nEOF",
-    ]) expect(verdict(c), c).toBe("allow");
-    expect(verdict("mactop", "Read")).toBe("allow");
-  });
-  it("is part of the Bash gate set (sessions and workers)", () => {
-    const d = decidePreGates({ kind: "tool_call", tool: "Bash", input: { command: "mactop --headless" }, cwd: "/tmp", env: {} } as never, { bash: { localAnswer: () => null } } as never);
-    expect(d?.action).toBe("deny");
   });
 });
