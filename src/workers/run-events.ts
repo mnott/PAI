@@ -17,7 +17,6 @@ import { idleText, type RunLogEntry } from "./plan-runner.js";
 import { guardedPailot } from "./pailot-guard.js";
 import { runReportPolicy } from "./notice-policy.js";
 import type { QueueItem } from "./queue.js";
-import { stripApiKey } from "./strip-api-key.js";
 
 /** The session that started a run: where its events go. */
 export interface RunOrigin {
@@ -362,7 +361,7 @@ export function detachRun(
   const stamp = new Date(deps.now()).toISOString().replace(/[-:T]/g, "").slice(0, 14);
   const id = `${kind}-${label.replace(/[^\w.-]/g, "_")}-${stamp}`;
   const output = join(runsDir(logDir), `${id}.out`);
-  const pid = deps.spawnDetached(bin, argv, { cwd, env: stripApiKey({ ...process.env, PAI_RUN_ORIGIN: JSON.stringify(origin), PAI_RUN_ID: id }), outPath: output });
+  const pid = deps.spawnDetached(bin, argv, { cwd, env: { ...process.env, PAI_RUN_ORIGIN: JSON.stringify(origin), PAI_RUN_ID: id }, outPath: output });
   const rec: RunRecord = { id, kind, pid, argv: [bin, ...argv], cwd, origin, started: new Date(deps.now()).toISOString(), output };
   writeFileSync(runRecordPath(logDir, id), JSON.stringify(rec, null, 2) + "\n", "utf8");
   return rec;

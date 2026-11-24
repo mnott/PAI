@@ -10,7 +10,6 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { parseGateFailure, saveMergeGateLog } from "./gate-log.js";
 import { summarizeGateFailure } from "./helper-uses.js";
-import { stripApiKey } from "./strip-api-key.js";
 
 export const DEFAULT_VERIFY_TIMEOUT_SEC = 600;
 
@@ -186,7 +185,7 @@ export function runRelatedTests(
   } catch (e) {
     return skip(`cannot list changed files: ${(e as Error).message.split("\n")[0]}`);
   }
-  const env: NodeJS.ProcessEnv = stripApiKey({ ...process.env, NO_COLOR: "1" });
+  const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
   const r = runner(cwd, env, [resolved.cmd], timeoutSec, pipeGraceMs);
