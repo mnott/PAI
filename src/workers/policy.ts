@@ -26,7 +26,7 @@ import {
   routeProviderForModel,
   type WorkersConfig,
 } from "./config.js";
-import { isBenchmarkLabel } from "../daemon/battery-guard.js";
+import { isBenchmarkLabel, isSmokeLabel } from "../daemon/battery-guard.js";
 import { budgetCache } from "./budget.js";
 import { paceNotes } from "./pace.js";
 import { httpModelsCheck, isLocalCandidate, providerHostPort, tierProviderNames } from "./local-provider.js";
@@ -408,7 +408,7 @@ export function fallThroughReason(
   if (!route?.local || route.policy === "local-only") return null;
   // the provider that actually ran decides, not the route: a cloud run never repeats on the cloud
   if (ranLocal === false) return null;
-  if (isBenchmarkLabel(label)) return null;
+  if (isBenchmarkLabel(label) || isSmokeLabel(label)) return null;
   // a budget-checkpoint stop is the owning session's call (resume / extend / cloud), never an automatic fall-through
   if (status.needsReview) return null;
   if (status.endReason === "malformed-tool-call") return "instrument fault: malformed tool call";

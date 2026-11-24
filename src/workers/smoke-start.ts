@@ -33,6 +33,7 @@ import { acquireTestSlot, holdsTestSlot } from "./test-slot.js";
 import { spawnSession, startDetachedWorker } from "./reroute.js";
 import { eventsPath, workersLogDir } from "./paths.js";
 import { loadStatus, newWorkerId } from "./status.js";
+import { SMOKE_LABEL } from "../daemon/battery-guard.js";
 import { parseLastResultEvent } from "./keepalive.js";
 
 /** The provider the smoke run names; it exists only in the temp copy. */
@@ -45,7 +46,7 @@ export const SMOKE_TIMEOUT_MS = 60_000;
 /** Spawn seam of the smoke (tests inject a runner; no real CLI is started). */
 export interface SmokeStartDeps {
   /** Runs the built CLI's `worker run …` and waits for its end; returns rc + the worker id. */
-  start?: (opts: SmokeRunOpts) => Promise<{ rc: number; id: string }>;
+  start?: (opts: SmokeRunOpts) => Promise<{ rc: number; id: string; why?: string }>;
   /** The offline stub model server: a loopback provider pointing here speaks OpenAI through the PAI proxy. */
   serve?: () => Promise<{ url: string; close: () => Promise<void> }>;
   /** Points the config at the smoke provider (tests inject; default edits a temp workers.yaml copy). */
@@ -221,7 +222,7 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     const id = newWorkerId();
     const r = await start(runOpts({ id, cwd: opts.cwd, timeoutMs }));
     runId = r.id;
-    if (r.rc !== 0) return { ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}`, id: r.id };
+    if (r.rc !== 0) return { ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}${r.why ? `: ${r.why}` : ""}`, id: r.id };
     const ev = parseLastResultEvent(eventsPath(workersLogDir(readWorkersSection().workers), r.id));
     if (!ev || typeof ev.result !== "string" || !ev.result.trim()) return { ok: false, ms: Date.now() - t0, error: "no result event from the smoke worker", id: r.id };
     if (ev.is_error) return { ok: false, ms: Date.now() - t0, error: `worker result is an error: ${ev.result.trim().split("\n")[0].slice(0, 200)}`, id: r.id };
@@ -251,8 +252,31 @@ function forgetRun(id: string): void {
   for (const ext of ["status", "jsonl", "prompt", "log", "out"]) rmSync(join(logDir, `${id}.${ext}`), { force: true });
 }
 
+/** Why a smoke run ended non-zero: state, end reason and the first error line of its result event or log (read before forgetRun deletes them). */
+export function exitWhy(logDir: string, id: string, st: { state?: string; endReason?: string }): string {
+  const parts = [`state ${st.state ?? "?"}`];
+  if (st.endReason) parts.push(`reason ${st.endReason}`);
+  let line = "";
+  try {
+    const ev = parseLastResultEvent(eventsPath(logDir, id));
+    if (ev && typeof ev.result === "string") line = ev.result;
+  } catch {
+    /* no events */
+  }
+  if (!line.trim()) {
+    try {
+      const lines = readFileSync(join(logDir, `${id}.log`), "utf8").split("\n").filter((l) => l.trim());
+      line = lines.find((l) => /error|fail|cannot|exception/i.test(l)) ?? lines[lines.length - 1] ?? "";
+    } catch {
+      /* no log */
+    }
+  }
+  if (line.trim()) parts.push(line.trim().split("\n")[0].slice(0, 200));
+  return parts.join(", ");
+}
+
 /** The live start: the built CLI detaches one worker on the smoke provider and this waits for its end. */
-async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }> {
+async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string; why?: string }> {
   const logDir = workersLogDir(readWorkersSection().workers);
   // smokeStart's childEnv already dropped the worker identity and terminal keys and set PAI_NO_WORKTREE_GC=1
   const env: NodeJS.ProcessEnv = { ...(o.env ?? process.env), PAI_BIN: join(o.cwd, "dist", "cli", "index.mjs") };
@@ -266,7 +290,7 @@ async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }
       "--max-minutes",
       "1",
       "--label",
-      "merge gate smoke start",
+      SMOKE_LABEL,
       "-p",
       SMOKE_PROMPT,
       "--allowedTools",
@@ -285,7 +309,7 @@ async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }
   for (;;) {
     const st = loadStatus(logDir, id);
     if (st && (st.state === "done" || st.state === "failed" || st.state === "killed" || st.state === "lost")) {
-      return { rc: st.rc ?? 1, id };
+      return { rc: st.rc ?? 1, id, ...(st.rc === 0 ? {} : { why: exitWhy(logDir, id, st) }) };
     }
     if (Date.now() > deadline) return { rc: 124, id };
     await new Promise((r) => setTimeout(r, 500));
