@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { smokeStart } from "./smoke-start.js";
+import { smokeStart, startStubServer, stubMessage } from "./smoke-start.js";
 import { startDetachedWorker } from "./reroute.js";
 import { readWorkersSection } from "./config.js";
 import { workersLogDir } from "./paths.js";
@@ -124,4 +124,44 @@ describe("a slow start against the smoke's window", () => {
     expect(id).toContain("w-1"); // announced inside the window: the smoke reads its end, never times out
     expect(Date.now() - t0).toBeLessThan(2_000);
   }, 30_000);
+});
+
+describe("smoke run never falls through or escalates", () => {
+  it("an invalid report on the smoke label gives no fall-through reason (a normal local run does)", async () => {
+    const { fallThroughReason } = await import("./policy.js");
+    const route = { policy: "auto", reason: "x", local: true } as never;
+    const st = { reportValid: false, rc: 0, state: "done" };
+    expect(fallThroughReason(route, st, null, "merge gate smoke start", true)).toBeNull();
+    expect(fallThroughReason(route, st, null, "other task", true)).toBe("invalid report");
+  });
+
+  it("the smoke label is the one the live start uses; the exit reason names state and first error line", async () => {
+    const { SMOKE_LABEL, isSmokeLabel } = await import("../daemon/battery-guard.js");
+    const { exitWhy } = await import("./smoke-start.js");
+    expect(isSmokeLabel(SMOKE_LABEL)).toBe(true);
+    const dir = mkdtempSync(join(tmpdir(), "pai-exitwhy-"));
+    writeFileSync(join(dir, "X.log"), "starting\nError: provider unreachable\nbye\n");
+    expect(exitWhy(dir, "X", { state: "failed", endReason: "crash" })).toBe("state failed, reason crash, Error: provider unreachable");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("smoke stub server", () => {
+  it("lists smoke-stub on /v1/models and answers /v1/messages (json and SSE) with a valid AG2 report", async () => {
+    const srv = await startStubServer();
+    try {
+      const models = (await (await fetch(`${srv.url}/v1/models`)).json()) as { data: Array<{ id: string }> };
+      expect(models.data.map((m) => m.id)).toEqual(["smoke-stub"]);
+      const json = (await (await fetch(`${srv.url}/v1/messages?beta=true`, { method: "POST", body: JSON.stringify({ model: "smoke-stub" }) })).json()) as { content: Array<{ text: string }>; model: string };
+      expect(json.model).toBe("smoke-stub");
+      expect(json.content[0].text).toMatch(/^R\ni=smoke\nr=\?\n/);
+      const sse = await (await fetch(`${srv.url}/v1/messages`, { method: "POST", body: JSON.stringify({ stream: true }) })).text();
+      expect(sse).toContain("event: message_start");
+      expect(sse).toContain("event: message_stop");
+      expect((await fetch(`${srv.url}/v1/messages/count_tokens`, { method: "POST", body: "{}" })).status).toBe(404);
+    } finally {
+      await srv.close();
+    }
+    expect(stubMessage({}).json).toContain("smoke-stub");
+  });
 });
