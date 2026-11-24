@@ -745,7 +745,8 @@ export async function reapEndedPanesOnce(logDir: string, now = Date.now()): Prom
   const r = await closeEndedPanes(
     logDir,
     (wid) => {
-      const st = loadStatus(logDir, wid);
+      // cached read like the due check above: a full sync readFileSync per entry per tick was the loop-blocking cost
+      const st = loadStatusCached(logDir, wid);
       // clean end AND the pane's own process gone (a pooled run's follow, a restarted same-id run still alive)
       if (st !== null) return paneReapable(st, now) && paneMayClose(logDir, wid);
       // a pane-run pane: ended once its run wrote its end state (or its runner died)

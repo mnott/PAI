@@ -52,17 +52,28 @@ export function archiveRoot(logDir: string): string {
 /**
  * The one id -> file resolver: `<logDir>/<id><suffix>`, or, when the top folder has no such file and an
  * archive month does, that archived copy. Scans (loadStatuses, ps, cockpit) read the top folder only.
+ * The archive listing is cached per logDir: a reaper tick resolves hundreds of ids, and re-reading the
+ * archive directory per id was the bulk of the tick's synchronous fs time. A `pai worker gc` runs in a
+ * separate process, so the cache never hides a fresh archive from a daemon.
  */
+const archiveListing = new Map<string, string[]>();
+
 export function workerFilePath(logDir: string, id: string, suffix: string): string {
   const top = join(logDir, `${id}${suffix}`);
   if (existsSync(top)) return top;
-  try {
-    for (const month of readdirSync(archiveRoot(logDir)).sort().reverse()) {
-      const p = join(archiveRoot(logDir), month, `${id}${suffix}`);
-      if (existsSync(p)) return p;
+  let months = archiveListing.get(logDir);
+  if (!months) {
+    months = [];
+    try {
+      months = readdirSync(archiveRoot(logDir)).sort().reverse();
+    } catch {
+      /* no archive */
     }
-  } catch {
-    /* no archive */
+    archiveListing.set(logDir, months);
+  }
+  for (const month of months) {
+    const p = join(archiveRoot(logDir), month, `${id}${suffix}`);
+    if (existsSync(p)) return p;
   }
   return top;
 }

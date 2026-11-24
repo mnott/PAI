@@ -44,6 +44,7 @@ import {
   renameSync,
   rmSync,
   writeFileSync,
+  type Dirent,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -690,20 +691,23 @@ function readEntry(path: string, scope: string): PaneEntry[] {
 export function loadRegistry(logDir: string, scope?: string): PaneEntry[] {
   const root = panesDir(logDir);
   const out: PaneEntry[] = [];
-  let names: string[] = [];
+  // one readdir with types for the whole tree: a plain readdirSync stats every entry, and the
+  // scope dirs are mostly empty (622 of them) — that listing was the bulk of the reaper tick's sync fs time
+  let dirents: Dirent[];
   try {
-    names = readdirSync(root);
+    dirents = readdirSync(root, { withFileTypes: true });
   } catch {
     return out;
   }
-  for (const name of names.sort()) {
+  for (const d of dirents.sort((x, y) => x.name.localeCompare(y.name))) {
+    const name = d.name;
     const full = join(root, name);
     if (name.endsWith(".json")) {
       const sc = name.slice(0, -5);
       if (!scope || sc === scope) out.push(...readEntry(full, sc));
-    } else if (!scope || name === scope) {
+    } else if (d.isDirectory() && (!scope || name === scope)) {
       try {
-        for (const f of readdirSync(full)) if (f.endsWith(".json")) out.push(...readEntry(join(full, f), name));
+        for (const f of readdirSync(full, { withFileTypes: true })) if (f.isFile() && f.name.endsWith(".json")) out.push(...readEntry(join(full, f.name), name));
       } catch {
         /* not a directory */
       }
@@ -842,11 +846,27 @@ export async function closeRegisteredIterm(
   return p.stdout.trim() === "closed";
 }
 
+/**
+ * The registry snapshot behind the close guard. The reaper closes many panes in one pass, and each guard
+ * used to re-read the whole registry synchronously — 30 ms of blocking per close. One snapshot per tick is
+ * enough: a pane PAI opened is registered before it is ever closed, and a drop only removes entries.
+ */
+let registrySnapshot: { at: number; entries: PaneEntry[] } | null = null;
+const REGISTRY_SNAPSHOT_MS = 250;
+
+function registrySnapshotNow(): PaneEntry[] {
+  const now = Date.now();
+  if (!registrySnapshot || now - registrySnapshot.at > REGISTRY_SNAPSHOT_MS) {
+    registrySnapshot = { at: now, entries: loadRegistry(workersLogDir(readWorkersSection().workers)) };
+  }
+  return registrySnapshot.entries;
+}
+
 function isRegisteredSession(id: string): boolean {
   try {
     const uid = itermUuid(id) || id;
     const same = (session: string | undefined): boolean => !!session && (itermUuid(session) || session) === uid;
-    if (loadRegistry(workersLogDir(readWorkersSection().workers)).some((e) => same(e.session))) return true;
+    if (registrySnapshotNow().some((e) => same(e.session))) return true;
     // a `pane exec` wrapper vouches for its own session: PAI started that pane even if its registry entry is gone
     return listRecords().some((r) => same(r.session));
   } catch {

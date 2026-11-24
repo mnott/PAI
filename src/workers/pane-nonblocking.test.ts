@@ -5,7 +5,16 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// every synchronous child-process entry point counts its calls and still runs the real thing
+const sync = vi.hoisted(() => ({ calls: 0 }));
+vi.mock("node:child_process", async (orig) => {
+  const m = await orig<typeof import("node:child_process")>();
+  const wrap = <F extends (...a: never[]) => unknown>(f: F): F => ((...a: Parameters<F>) => { sync.calls++; return f(...a); }) as F;
+  return { ...m, spawnSync: wrap(m.spawnSync), execSync: wrap(m.execSync), execFileSync: wrap(m.execFileSync) };
+});
+import { closeEndedPanes, paneMayClose, saveEntry } from "./pane.js";
 import { psTableAsync } from "./ps-table.js";
 import { osascriptJxa } from "./pane.js";
 import { ownsPidAsync, ownsPidCachedAsync, type WorkerStatus } from "./status.js";
@@ -118,4 +127,33 @@ describe("supervision pid checks never block the loop", () => {
     // a killed pgrep reads as "no children": the sleeping alert still fires, degraded but never blocking
     expect(events.map((e) => e.kind)).toContain("sleeping");
   }, 10_000);
+});
+
+describe("the pane reaper tick runs no synchronous child process", () => {
+  it("closeEndedPanes + paneMayClose decide as before and never call spawnSync/execSync/execFileSync", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "reaper-"));
+    try {
+      const st = (id: string, state: string): void =>
+        writeFileSync(join(dir, `${id}.status`), JSON.stringify({ id, state, pid: 0, updated: "2026-11-24 00:00:00Z" }));
+      st("w-done", "done");
+      st("w-run", "running");
+      saveEntry(dir, { session: "sess-done", worker: "w-done", opened: "2026-11-24 00:00:01", scope: "s" });
+      saveEntry(dir, { session: "sess-run", worker: "w-run", opened: "2026-11-24 00:00:02", scope: "s" });
+      const closedIds: string[] = [];
+      const ops = {
+        listIterm: async () => [{ id: "sess-done", name: "" }, { id: "sess-run", name: "" }],
+        closeIterm: async (id: string) => (closedIds.push(id), true),
+        listTmux: async () => [],
+        closeTmux: async () => true,
+      };
+      sync.calls = 0;
+      const r = await closeEndedPanes(dir, (wid) => paneMayClose(dir, wid), false, ops);
+      expect(sync.calls).toBe(0);
+      expect(closedIds).toEqual(["sess-done"]);
+      expect(r.closed).toHaveLength(1);
+      expect(r.kept.join()).toContain("w-run");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
