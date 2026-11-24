@@ -434,3 +434,83 @@ console.log(JSON.stringify(stopped));
     }
   });
 });
+
+describe("auditTick looks only at recent workers", () => {
+  const NOW = Date.parse("2026-11-24T12:00:00");
+  const stamp = (ms: number): string => new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 19).replace("T", " ");
+  const status = (id: string, state: string, atMs: number): string =>
+    JSON.stringify({ id, pid: 1, runPid: 1, state, started: stamp(atMs), updated: stamp(atMs), turns: 1, tools: 0, origin: "spawn" });
+
+  it("2000 old ended workers and 3 live ones: 3 verdicts, under 50 ms, old verdicts pruned, nothing reported twice", async () => {
+    const logDir = makeLogDir();
+    try {
+      const old = NOW - 5 * 86_400_000;
+      for (let i = 0; i < 2000; i++) {
+        const id = `old-${i}`;
+        const f = join(logDir, `${id}.status`);
+        writeFileSync(f, status(id, "done", old));
+        utimesSync(f, old / 1000, old / 1000);
+      }
+      // a stale verdict file from earlier passes, for a worker long gone
+      writeFileSync(join(logDir, "pane-audit.json"), JSON.stringify({ at: "x", verdicts: [{ id: "old-1", kind: "worker", mark: "NO PANE" }] }));
+      writeFileSync(join(logDir, "pane-audit-told.json"), JSON.stringify({ "old-1": "NO PANE" }));
+      const live = ["live-a", "live-b", "live-c"];
+      for (const id of live) {
+        const f = join(logDir, `${id}.status`);
+        writeFileSync(f, status(id, "running", NOW - 3_600_000));
+        utimesSync(f, (NOW - 1000) / 1000, (NOW - 1000) / 1000);
+      }
+      const seen: string[] = [];
+      const run = (): Promise<unknown> =>
+        auditTick(logDir, {} as never, {
+          now: () => new Date(NOW),
+          tabs: async () => new Map([["unrelated", "1:1"]]),
+          launches: async () => undefined,
+          registry: () => [],
+          running: () => true,
+          ownSession: () => "",
+          stop: async (id) => void seen.push(id),
+        });
+      await run(); // warm: the first pass reads the directory
+      const t0 = performance.now();
+      await run();
+      const ms = performance.now() - t0;
+      const { readAudit } = await import("./pane-audit.js");
+      const ids = readAudit(logDir).map((v) => v.id);
+      expect(ids.every((id) => live.includes(id))).toBe(true);
+      expect(ids.some((id) => id.startsWith("old-"))).toBe(false);
+      expect(JSON.parse(readFileSync(join(logDir, "pane-audit-told.json"), "utf8"))["old-1"]).toBeUndefined();
+      expect(ms).toBeLessThan(50);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a violation reported once is not recorded again on later passes", async () => {
+    const logDir = makeLogDir();
+    try {
+      const id = "live-x";
+      writeFileSync(join(logDir, `${id}.status`), status(id, "running", NOW - 3_600_000));
+      const pass = (): Promise<unknown> =>
+        auditTick(logDir, {} as never, {
+          now: () => new Date(NOW),
+          tabs: async () => new Map([["unrelated", "1:1"]]),
+          launches: async () => undefined,
+          registry: () => [{ session: "gone", worker: id, opened: "2026-11-24 10:00:00", scope: "s" } as never],
+          running: () => true,
+          ownSession: () => "",
+          reopen: async () => { throw new Error("no host"); },
+          stop: async () => undefined,
+        });
+      for (let i = 0; i < 5; i++) await pass();
+      const ledger = join(logDir, "ledger.jsonl");
+      let text = "";
+      try { text = readFileSync(ledger, "utf8"); } catch { /* ledger elsewhere */ }
+      const { ledgerPath } = await import("./paths.js");
+      try { text = readFileSync(ledgerPath(logDir), "utf8"); } catch { /* none */ }
+      expect((text.match(/PANE-VIOLATION/g) ?? []).length).toBeLessThanOrEqual(1);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});
