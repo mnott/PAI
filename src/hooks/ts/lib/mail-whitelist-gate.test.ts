@@ -14,7 +14,7 @@ describe("mail whitelist gate", () => {
     expect(send({ to: "stranger@example.net" })).toEqual({ decision: "deny", reason: reason("stranger@example.net") });
     expect(send({ to: "me@example.com" }, "mcp__aibroker__aibroker_mail_send").decision).toBe("allow");
     expect(send({ to: "x@example.net" }, "mcp__claude_ai_Gmail__send_message").decision).toBe("deny");
-    expect(send({ to: "x@example.net" }, "mcp__aibroker__aibroker_mail_send").decision).toBe("deny");
+    expect(send({ to: "x@example.net" }, "mcp__aibroker__aibroker_mail_send").decision).toBe("allow");
   });
   it("checks cc and bcc", () => {
     expect(send({ to: "me@example.com", cc: "a@example.net" })).toEqual({ decision: "deny", reason: reason("a@example.net") });
@@ -27,5 +27,24 @@ describe("mail whitelist gate", () => {
   });
   it("denies everything when no identity is configured", () => {
     expect(decideMailGate({ tool_name: "mcp__coogle__send_gmail_message", tool_input: { to: "me@example.com" } }, undefined).decision).toBe("deny");
+  });
+  it("exempts the approved webseite channel aibroker_mail_send", () => {
+    expect(send({ to: "requester@example.net" }, "mcp__aibroker__aibroker_mail_send").decision).toBe("allow");
+    expect(send({}, "mcp__aibroker__aibroker_mail_send").decision).toBe("allow");
+  });
+  it("denies reply/forward with no explicit recipients (fail closed)", () => {
+    expect(decideMailGate({ tool_name: "mcp__claude_ai_Gmail__reply", tool_input: { body: "hi" } }, id)).toEqual({
+      decision: "deny",
+      reason: "recipients unknown (reply/forward) — create a draft instead",
+    });
+    expect(decideMailGate({ tool_name: "mcp__claude_ai_Gmail__reply_all", tool_input: {} }, id).decision).toBe("deny");
+    expect(decideMailGate({ tool_name: "mcp__claude_ai_Gmail__forward", tool_input: {} }, id).decision).toBe("deny");
+  });
+  it("denies forward to a non-whitelisted address, allows reply to self", () => {
+    expect(send({ to: "stranger@example.net" }, "mcp__claude_ai_Gmail__forward").decision).toBe("deny");
+    expect(send({ to: "me@example.com" }, "mcp__claude_ai_Gmail__reply").decision).toBe("allow");
+  });
+  it("keeps draft tools allowed even with no recipients", () => {
+    expect(decideMailGate({ tool_name: "mcp__claude_ai_Gmail__create_draft", tool_input: {} }, id).decision).toBe("allow");
   });
 });
