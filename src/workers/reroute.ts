@@ -275,6 +275,8 @@ async function defaultKill(logDir: string, id: string, reason: string, by: strin
 /** Env the restart process carries: the old run's id and why it moved (read back by `rerunFromEnv`). */
 export const RERUN_OF_ENV = "PAI_RERUN_OF";
 export const RERUN_WHY_ENV = "PAI_RERUN_WHY";
+/** Env carrying the terminal a daemon-side start anchors its pane to (a deep-freeze resume: the old run's `term`); read as `_hostTerm`. */
+export const HOST_TERM_ENV = "PAI_HOST_TERM";
 /** Env naming a file whose content is the old run's id, for a starter that cannot take custom env (`pai worker run --detach`). */
 export const RERUN_OF_FILE_ENV = "PAI_RERUN_OF_FILE";
 

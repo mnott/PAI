@@ -785,6 +785,37 @@ describe("deep freeze", () => {
     }
   });
 
+  it("the record carries the worker's terminal and the resume start anchors its pane to it (status-file fallback for old records)", async () => {
+    const spec = join(dir, "t.spec");
+    writeFileSync(spec, "the task");
+    saveStatus(logDir, worker("t1", "2026-11-18 11:00:00", { term: "w0t0p0:UUID-1", claudeSession: "cs" }));
+    await deepFreeze(logDir, "t", deps());
+    const w1 = readDeepfreeze()!.workers[0];
+    expect(w1.term).toBe("w0t0p0:UUID-1");
+    const calls: { args: string[]; env?: NodeJS.ProcessEnv }[] = [];
+    vi.doMock("./reroute.js", () => ({
+      startDetachedWorker: async (_d: string, args: string[], o: { env?: NodeJS.ProcessEnv }) => {
+        calls.push({ args, env: o.env });
+        return "new-id";
+      },
+    }));
+    try {
+      const d = await realDeepResumeDeps();
+      await d.start(logDir, w1, "go on"); // resume branch
+      expect(calls[0].args[0]).toBe("resume");
+      expect(calls[0].env?.PAI_HOST_TERM).toBe("w0t0p0:UUID-1");
+      const old = { ...w1, term: undefined, state: "queued" as const, claudeSession: null, spec };
+      await d.start(logDir, old, "go on"); // run branch, record without term: the old status file answers
+      expect(calls[1].args[0]).toBe("run");
+      expect(calls[1].env?.PAI_HOST_TERM).toBe("w0t0p0:UUID-1");
+      saveStatus(logDir, worker("t1", "2026-11-18 11:00:00", { term: "" }));
+      await d.start(logDir, old, "go on"); // nowhere to anchor: no env, the start keeps its own refusal
+      expect(calls[2].env).toBeUndefined();
+    } finally {
+      vi.doUnmock("./reroute.js");
+    }
+  });
+
   it("thaw --drop (drop) resumes nothing and discards the record", async () => {
     await freezeThree();
     const started: string[] = [];

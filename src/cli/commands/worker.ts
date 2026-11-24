@@ -43,7 +43,7 @@ import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
 import { filterBySession, filterByTopic, renderQueueTable } from "../../workers/queue-table.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
-import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile } from "../../workers/reroute.js";
+import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile, HOST_TERM_ENV } from "../../workers/reroute.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
 import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -404,6 +404,7 @@ const runCommand: CommandDef = {
       await applyTarget(ctx, plan);
       if (plan.kind === "run" && (await mergeOrchestrateRequests(plan.run, !flag(ctx, "no-merge")))) return 0;
       if (plan.kind === "run") rerunFromEnv(plan.run, logDir());
+      if (plan.kind === "run" && !plan.run._hostTerm && process.env[HOST_TERM_ENV]) plan.run._hostTerm = process.env[HOST_TERM_ENV];
       // a detached starter (startDetachedWorker) learns the id from here; gateStart fires this at the
       // queue and foldRun/tryPoolRun at the start, so it must be once per id (a duplicate would re-fire
       // rerunFromEnv's hand-over and any outer wrapper's per-start link)
@@ -525,6 +526,8 @@ const resumeCommand: CommandDef = {
         // the old run's --spec path must not be recorded for this thread
         ...(plan.freshPrompt ? { specOverride: parseRunnerArgs(claudeArgs).prompt ?? undefined } : {}),
         resumeOf: id,
+        // a deep-freeze resume started by the daemon/cockpit has no terminal: the pane anchors to the old run's
+        ...(process.env[HOST_TERM_ENV] ? { _hostTerm: process.env[HOST_TERM_ENV] } : {}),
         // the resumed run keeps the old run's deliverable: without it the class gate reads "findings" and the convergence rule exempts it
         ...(old.deliverable ? { deliverable: old.deliverable } : {}),
         approvedBy: str(ctx.opts["approved-by"]),

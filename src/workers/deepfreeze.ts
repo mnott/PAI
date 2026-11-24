@@ -22,6 +22,7 @@ import { queueDir } from "./capacity.js";
 import { readFreeze, realFreezeDeps, thawAll } from "./freeze.js";
 import { appendLedger as ledgerLine } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
+import { HOST_TERM_ENV } from "./reroute.js";
 import { isChatPane, isLive, loadStatus, loadStatuses, ownsPid, saveStatus, type WorkerStatus } from "./status.js";
 
 export interface DeepWorker {
@@ -47,6 +48,8 @@ export interface DeepWorker {
   claudeSession?: string | null;
   goals: string[];
   outputFormat?: string;
+  /** The terminal the worker ran in (WorkerStatus.term): a resume started without a terminal anchors its pane here. */
+  term?: string;
   /** Order of the original start (0 = first): resume replays in this order. */
   order: number;
   /** The WIP commit made in the worktree (sha), when there was uncommitted work. */
@@ -193,6 +196,7 @@ export function planDeepFreeze(statuses: WorkerStatus[], owns: (s: WorkerStatus)
     ...(s.routeWhy ? { route: s.routeWhy } : s.route ? { route: `${s.route.policy}: ${s.route.reason}` } : {}),
     priority: priorityOf(s),
     ...(s.now ? { now: true } : {}),
+    ...(s.term ? { term: s.term } : {}),
     ...(s.parent ? { parent: s.parent } : {}),
     children: statuses.filter((c) => c.parent === s.id).map((c) => c.id),
     state: s.state as "running" | "queued",
@@ -521,7 +525,10 @@ async function startOne(dir: string, w: DeepWorker, text: string, detached: type
           : ["-p", text]),
       ];
   if (!resumable && !(w.spec && existsSync(w.spec))) throw new Error("no spec file kept for this worker");
-  const id = await detached(dir, args, { cwd: existsSync(w.cwd) ? w.cwd : process.cwd(), timeoutMs: 60_000 });
+  // a start from the daemon / cockpit has no terminal of its own (reroute's rule): anchor the pane to the
+  // original worker's, recorded at the freeze, else still in its status file (records from before term was kept)
+  const term = w.term || loadStatus(dir, w.id)?.term || undefined;
+  const id = await detached(dir, args, { cwd: existsSync(w.cwd) ? w.cwd : process.cwd(), timeoutMs: 60_000, ...(term ? { env: { ...process.env, [HOST_TERM_ENV]: term } } : {}) });
   // the announce precedes the gates; give the run a bounded moment to record its real state (running or queued)
   const graceMs = 5_000;
   const until = Date.now() + graceMs;
