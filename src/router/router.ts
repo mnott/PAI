@@ -496,15 +496,6 @@ export function prepare(
     if (wire === "messages" && isLoopback(base)) {
       out = foldSystemMessages(out);
       if (loadConfig().router.local?.stablePrefix !== false) out = stabilizePrefix(out);
-      // A local server with no temperature decodes greedy (argmax) and re-emits
-      // an identical tool call once it is in the history (the signal-2
-      // identical-call loops). Fill in the provider's sampling default — or 0.7
-      // — only when the client sent none; a client temperature is never touched.
-      if (out.temperature === undefined) {
-        const s = res.provider.sampling;
-        out.temperature = s?.temperature ?? 0.7;
-        if (s?.top_p !== undefined) out.top_p = s.top_p;
-      }
     }
     let token: string | null;
     try {

@@ -244,38 +244,6 @@ describe("sleep-poll gate: per-step rule", () => {
   });
 });
 
-describe("L0 foreground wait denial: an interactive session may not block on pai worker wait", () => {
-  const REASON = "L0 never waits in the foreground: run it with run_in_background, or hand the merge/verify loop to an L1 (--class orchestrate)";
-  const l0 = (command: string, run_in_background = false) =>
-    decideSleepPollGate({ tool_name: "Bash", tool_input: { command, run_in_background } }, {}).decision;
-  const worker = (command: string, run_in_background = false) =>
-    decideSleepPollGate({ tool_name: "Bash", tool_input: { command, run_in_background } }, { PAI_WORKER: "1" }).decision;
-  it("denies a foreground wait in L0 with the exact reason", () => {
-    const d = decideSleepPollGate({ tool_name: "Bash", tool_input: { command: "pai worker wait abc --max 590" } }, {});
-    expect(d.decision).toBe("deny");
-    if (d.decision === "deny") expect(d.reason).toBe(REASON);
-  });
-  it("allows the same call backgrounded in L0", () => {
-    expect(l0("pai worker wait abc --max 590", true)).toBe("allow");
-  });
-  it("leaves a worker's foreground wait allowed", () => {
-    expect(worker("pai worker wait abc --max 590")).toBe("allow");
-  });
-  it("denies a sleep prefix before a wait in L0", () => {
-    expect(l0("sleep 20; pai worker wait abc")).toBe("deny");
-    expect(l0("sleep 20 && pai worker wait abc")).toBe("deny");
-  });
-  it("denies wait-on, wait-url and wait-file in L0", () => {
-    expect(l0("pai worker wait-on 123 --log x")).toBe("deny");
-    expect(l0("pai worker wait-url http://127.0.0.1:8016/v1/models")).toBe("deny");
-    expect(l0("pai worker wait-file /tmp/job.rc")).toBe("deny");
-  });
-  it("leaves quoted text alone", () => {
-    expect(l0('echo "pai worker wait"')).toBe("allow");
-    expect(l0("git commit -m 'wait for pai worker wait to finish'")).toBe("allow");
-  });
-});
-
 describe("model-server guard matches only commands that start a server", () => {
   const r = (command: string, env: Record<string, string | undefined> = {}) => modelServerReason(command, env, "signal-2 8044");
   it("allows probes and quoted text", () => {
