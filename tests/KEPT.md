@@ -74,3 +74,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/testgov/kept.test.ts | a | append-only KEPT.md writer: a local model rewrote the ledger wholesale twice (dropped 8, then ~40 rows) |
 | src/router/stall-round3.test.ts | a | router stalled ~14x/hour (#24, profiles 2026-11-23T20-34-47/51/59): defaultSources rebuilt per job (~930 ms), workers.yaml parsed per request (~450 ms), 4 spawns per /cockpit/system poll (~470 ms); pins one sources build per window, one parse per file change, hw.memsize spawned once |
 | src/daemon/log-rotate.test.ts | a | copytruncate rotation of fd-owned logs: archive, tail kept, keep=3 drop, live append fd survives |
+| src/workers/pane-nonblocking.test.ts | a | proves daemon pane tasks time out slow ps/osascript without blocking the loop |

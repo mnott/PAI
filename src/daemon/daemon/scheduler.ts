@@ -764,6 +764,13 @@ export async function reapEndedPanesOnce(logDir: string, now = Date.now()): Prom
  * made. Disabled workers disable the supervisor with it.
  */
 export function startWorkerSupervisor(): void {
+  // a task still running when its next interval fires is skipped, never stacked
+  const running = new Set<string>();
+  const once = (name: string, fn: () => Promise<unknown>): Promise<unknown> => {
+    if (running.has(name)) return Promise.resolve();
+    running.add(name);
+    return timedTask(name, fn).finally(() => running.delete(name));
+  };
   let enabled = false;
   try {
     enabled = readWorkersSection().workers.enabled;
@@ -794,10 +801,10 @@ export function startWorkerSupervisor(): void {
       if (r) for (const l of r.lines) process.stderr.write(`[pai-daemon] Freeze: ${l}\n`);
     }).catch(() => undefined);
     if (isFrozen()) return;
-    void timedTask("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
-    void timedTask("pane-close-finished", () => closeFinishedPanes(dir)).catch(() => undefined);
+    void once("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
+    void once("pane-close-finished", () => closeFinishedPanes(dir)).catch(() => undefined);
     // workers paused by a --now run that is gone (killed, crashed) go on again; a --now run still queued 60 s after pausing them never took their slots — the watchdog gives them back (PREEMPT-ABORT) so the queue cannot deadlock
-    void timedTask("preempt-sweep", async () => { endExpiredWindowNow(dir); abortStuckPreemptions(dir); resumeOrphaned(dir); for (const id of admitResumedWaiters(dir)) process.stderr.write(`[pai-daemon] Queue: resumed ${id} (slot free)\n`); }).catch(() => undefined);
+    void once("preempt-sweep", async () => { endExpiredWindowNow(dir); abortStuckPreemptions(dir); resumeOrphaned(dir); for (const id of admitResumedWaiters(dir)) process.stderr.write(`[pai-daemon] Queue: resumed ${id} (slot free)\n`); }).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
 
@@ -814,7 +821,7 @@ export function startWorkerSupervisor(): void {
   const localIdle = setInterval(() => {
     if (isFrozen()) return;
     const w = readWorkersSection().workers;
-    void timedTask("local-idle", () => localIdleTick(workersLogDir(w), w, runMessenger(workersLogDir(w)))).catch(() => undefined);
+    void once("local-idle", () => localIdleTick(workersLogDir(w), w, runMessenger(workersLogDir(w)))).catch(() => undefined);
   }, 30_000);
   localIdle.unref();
 
