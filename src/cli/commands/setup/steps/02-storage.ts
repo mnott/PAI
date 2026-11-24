@@ -52,7 +52,7 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
         const status = result.stdout?.toString().trim();
         if (status && status.includes("Up")) {
           console.log(c.ok(`Storage backend: PostgreSQL (container running). Skipping.`));
-          return existing;
+          return {};
         }
         console.log(c.dim("  PostgreSQL container found but not running. Starting..."));
         await startDocker(rl);
@@ -61,10 +61,10 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
       } catch {
         console.log(c.ok(`Storage backend: PostgreSQL (configured). Skipping.`));
       }
-      return existing;
+      return {};
     } else {
       console.log(c.ok(`Storage backend: ${backend}. Skipping.`));
-      return existing;
+      return {};
     }
   }
 
