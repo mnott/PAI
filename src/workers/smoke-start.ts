@@ -30,7 +30,7 @@ import { LOOPBACK_HOST } from "../utils/loopback.js";
 import { readWorkersSection } from "./config.js";
 import { defaultWorkersYamlPath } from "./workers-config.js";
 import { acquireTestSlot, holdsTestSlot } from "./test-slot.js";
-import { startDetachedWorker } from "./reroute.js";
+import { spawnSession, startDetachedWorker } from "./reroute.js";
 import { eventsPath, workersLogDir } from "./paths.js";
 import { loadStatus, newWorkerId } from "./status.js";
 import { parseLastResultEvent } from "./keepalive.js";
@@ -53,6 +53,8 @@ export interface SmokeStartDeps {
   removeProvider?: () => void;
   /** The env the detached smoke child runs with (defaultStart); tests inspect it instead of spawning a CLI. */
   env?: NodeJS.ProcessEnv;
+  /** Test seam: the process spawner the production start helper (startDetachedWorker) uses. */
+  spawn?: typeof spawnSession;
 }
 
 export interface SmokeRunOpts {
@@ -61,6 +63,7 @@ export interface SmokeRunOpts {
   timeoutMs: number;
   /** Test seam: the env prep defaultStart would do (default process.env); the runner receives it in `env`. */
   env?: NodeJS.ProcessEnv;
+  spawn?: typeof spawnSession;
 }
 
 export interface SmokeStartResult {
@@ -205,7 +208,7 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     env.PAI_NO_WORKTREE_GC = "1";
     return env;
   };
-  const runOpts = (o: SmokeRunOpts): SmokeRunOpts => ({ ...o, env: childEnv(deps.env ?? process.env) });
+  const runOpts = (o: SmokeRunOpts): SmokeRunOpts => ({ ...o, env: childEnv(deps.env ?? process.env), ...(deps.spawn ? { spawn: deps.spawn } : {}) });
   // the worker's own test runs must not fight the gate's slot; held here while the smoke runs
   const lease = holdsTestSlot() ? null : await acquireTestSlot();
   let runId: string | null = null;
@@ -269,7 +272,7 @@ async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }
       "--allowedTools",
       "Read",
     ],
-    { cwd: logDir, env, timeoutMs: Math.min(30_000, o.timeoutMs) }
+    { cwd: logDir, env, timeoutMs: Math.min(30_000, o.timeoutMs), ...(o.spawn ? { start: o.spawn } : {}) }
   );
   // the id file holds the run's status JSON ({id,state}); older builds wrote the bare id
   let id = announced;

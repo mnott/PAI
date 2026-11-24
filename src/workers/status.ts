@@ -317,6 +317,11 @@ export interface WorkerStatus {
 /** Label a worker gets when launched with neither --label nor a prompt. */
 export const UNLABELED = "unlabeled";
 
+/** The origin a pooled run's status takes over from the placeholder the client wrote: a harness run stays harness (the host process has no PAI_HARNESS_RUN of its own). */
+export function pooledOrigin(prior: Pick<WorkerStatus, "origin"> | null | undefined): "spawn" | "harness" {
+  return prior?.origin === "harness" ? "harness" : "spawn";
+}
+
 /**
  * Whether a run was started by the harness itself (the merge gate's smoke start, probes) rather than by a
  * session: it is infrastructure, not a task — no session notices, no digest line, never in `pai worker pending`.
