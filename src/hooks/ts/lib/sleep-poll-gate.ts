@@ -91,6 +91,19 @@ export function denyReason(secs: number, isWorker: boolean, command = ""): strin
 }
 
 /**
+ * An interactive (L0) session must never block on a foreground wait: it is the
+ * operator's chat, and a blocked call there cannot take messages (observed
+ * 2026-11-24: an L0 session blocked itself for hours with repeated
+ * `pai worker wait <ids> --max 590` calls). Workers keep foreground waits —
+ * they have no owner to deliver a background notification to.
+ */
+const L0_FOREGROUND_WAIT_REASON =
+  "L0 never waits in the foreground: run it with run_in_background, or hand the merge/verify loop to an L1 (--class orchestrate)";
+
+/** `pai worker wait` / `wait-on` / `wait-url` / `wait-file` in a command position (quoted text blanked first). */
+const L0_WAIT_RE = /\bpai\s+worker\s+wait(?:-on|-url|-file)?\b/;
+
+/**
  * A headless worker (`claude -p`) has no re-invocation: ending its turn ends
  * the process and kills the background job, whatever it says about waiting for
  * a completion notification.
@@ -137,6 +150,9 @@ export function decideSleepPollGate(
 
   const command = input.tool_input?.command;
   if (typeof command !== "string") return { decision: "allow" };
+
+  // L0: a foreground wait blocks the operator's session; workers keep theirs
+  if (!isWorker && L0_WAIT_RE.test(stripQuotedText(command))) return { decision: "deny", reason: L0_FOREGROUND_WAIT_REASON };
 
   const secs = totalSleepSecs(stripQuotedText(command));
   if (secs <= SLEEP_ALLOWED_SECS) return { decision: "allow" };
