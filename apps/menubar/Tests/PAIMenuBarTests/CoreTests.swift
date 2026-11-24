@@ -121,6 +121,19 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(localIdle(limit: l, busy: 0))
     }
 
+    func testEngineLinesPerRuntime() throws {
+        let q = try queue()
+        let json = #"{"limits":[{"provider":"apple-fm","kind":"local","up":true,"instances":[{"id":"apple-fm#1","inflight":0}]},{"provider":"gyro-x","kind":"local","up":true,"instances":[{"id":"gyro-x#2","inflight":0}]}]}"#
+        let lim = try JSONDecoder().decode(LimitsResponse.self, from: Data(json.utf8))
+        let a = engineLines(limit: lim.limits![0], queue: q)
+        XCTAssertTrue(a.idle)
+        XCTAssertEqual(a.slots, [.init(label: "#1", busy: 0, cap: 1)])
+        // runtime absent from the queue still gets its own idle + slot line
+        let b = engineLines(limit: lim.limits![1], queue: q)
+        XCTAssertTrue(b.idle)
+        XCTAssertEqual(b.slots, [.init(label: "#2", busy: 0, cap: 1)])
+    }
+
     func testPaceDecoded() throws {
         let limits = try JSONDecoder().decode(LimitsResponse.self, from: fixture("limits"))
         XCTAssertEqual(limits.activeCloud().first?.windows?.first?.pace, 62.5)

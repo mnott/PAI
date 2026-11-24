@@ -212,8 +212,9 @@ struct LocalEngine: View {
     var body: some View {
         let provider = limit.provider ?? ""
         let name = limit.served?.first ?? provider
-        let stats = queue?.instanceStats(provider: provider) ?? []
-        let idle = localIdle(limit: limit, busy: queue?.busyTotal(provider: provider))
+        let lines = engineLines(limit: limit, queue: queue)
+        let stats = lines.slots
+        let idle = lines.idle
         let ttft = data?.ttft(provider: provider) ?? (nil, nil)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
