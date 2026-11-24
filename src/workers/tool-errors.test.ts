@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { candidateSignature, CANDIDATE_MAX_EXAMPLES, migrateCandidates, normalizeCandidateText, writeCandidate } from "../hooks/ts/lib/antipattern-log.js";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { classifyToolError, commandHead, harnessEvidence, lastCommand, recordToolErrorCandidates, type ToolErrorRecord } from "./tool-errors.js";
+import { classifyToolError, commandHead, errorsTable, groupToolErrors, harnessEvidence, lastCommand, recordToolErrorCandidates, type ToolErrorRecord } from "./tool-errors.js";
 import { checkLoops } from "./loop-watch.js";
 import { detectEditMiss, editMissNote } from "./edit-miss.js";
 
@@ -30,6 +30,32 @@ describe("lastCommand", () => {
     const t = Date.now();
     lastCommand(cmd);
     expect(Date.now() - t).toBeLessThan(50);
+  });
+});
+
+describe("groupToolErrors provider filter", () => {
+  const mk = (provider: string, worker: string, ts: number): ToolErrorRecord =>
+    rec({ provider, worker, ts, signature: "Bash|Exit code <N> tsc error", raw: "error TS2307" });
+  it("keeps only records of the named provider and drops the rest", () => {
+    const all = [mk("signal-2", "w1", 100), mk("anthropic", "w2", 200), mk("signal-2", "w3", 300)];
+    const filtered = groupToolErrors(all, "signal-2");
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].count).toBe(2);
+    expect(filtered[0].providers).toEqual(["signal-2"]);
+    expect(filtered[0].workers).toEqual(["w1", "w3"]);
+    // unfiltered still sees both providers
+    const un = groupToolErrors(all);
+    expect(un[0].providers).toEqual(["signal-2", "anthropic"]);
+    expect(un[0].count).toBe(3);
+  });
+  it("an unknown provider yields no groups and the table says so", () => {
+    expect(groupToolErrors([mk("anthropic", "w1", 1)], "signal-2")).toEqual([]);
+    expect(errorsTable(groupToolErrors([mk("anthropic", "w1", 1)], "signal-2"))).toBe("no tool errors recorded");
+  });
+  it("the table keeps the PROVIDERS column", () => {
+    const t = errorsTable(groupToolErrors([mk("signal-2", "w1", 1)], "signal-2"));
+    expect(t).toContain("PROVIDERS");
+    expect(t).toContain("signal-2");
   });
 });
 

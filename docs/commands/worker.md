@@ -354,10 +354,12 @@ Counts the errors workers ran into, with numbers and paths removed so equal erro
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--since AGE` | string | 24h | Only errors newer than this, e.g. 30m, 2h, 1d |
+| `--provider NAME` | string | — | Only errors from workers of this provider, e.g. signal-2, anthropic |
 
 ```sh
 pai worker errors
 pai worker errors --since 2h
+pai worker errors --provider signal-2
 ```
 
 See also: `pai worker log`
