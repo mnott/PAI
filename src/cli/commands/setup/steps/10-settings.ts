@@ -30,6 +30,10 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     // already exist. Rate-limited internally; safe on high-frequency events.
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
     { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/security-validator.mjs" },
+    // Mail whitelist gate: MCP send tools may only address self/whitelist (drafts stay allowed).
+    { hookType: "PreToolUse", matcher: "mcp__", command: "${ADAPTER_DIR}/Hooks/block-unlisted-mail.mjs" },
+    // Sampler gate: no GPU sampler binaries from the main session.
+    { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/block-samplers.mjs" },
     // Delegation rules: L0 routes, worker pane rule, no recursive search from / or ~.
     { hookType: "PreToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/delegation-guard.mjs" },
     // Test governance for every session: a new test file is one-time (.pai-scratch/

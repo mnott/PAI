@@ -190,6 +190,26 @@ describe("pai session --local plan", () => {
       await expect(planLocalSession({ ...opts, model: "nope" })).rejects.toThrow(/not configured/);
   });
 
+  it("buildRunEnv / stripApiKey: no ANTHROPIC_API_KEY, local provider keeps AUTH_TOKEN and BASE_URL", async () => {
+    const { parseWorkersConfig } = await import("../../workers/config.js");
+    const { buildRunEnv, stripApiKey, nativeLaunchEnv } = await import("../../workers/run-env.js");
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-leak";
+    try {
+      const prov = parseWorkersConfig({ providers: { gyro: mkProvider(9) } }).providers.gyro;
+      const env = buildRunEnv(prov, true);
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeTruthy();
+      expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:9");
+      expect(nativeLaunchEnv().ANTHROPIC_API_KEY).toBeUndefined();
+      const e = stripApiKey({ ANTHROPIC_API_KEY: "k", ANTHROPIC_AUTH_TOKEN: "t", ANTHROPIC_BASE_URL: "u" });
+      expect(e).toEqual({ ANTHROPIC_AUTH_TOKEN: "t", ANTHROPIC_BASE_URL: "u" });
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved;
+    }
+  });
+
   // the compact window resolver (run-env.ts localCompactWindow): a provider env
   // entry for the key is the model's native window as shipped in providers.yaml
   // (gyro-l carries 262144 there), never an operator choice — it must not win
