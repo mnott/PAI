@@ -194,7 +194,7 @@ describe("pai session --local plan", () => {
     const { parseWorkersConfig } = await import("../../workers/config.js");
     const { buildRunEnv, stripApiKey, nativeLaunchEnv } = await import("../../workers/run-env.js");
     const saved = process.env.ANTHROPIC_API_KEY;
-    process.env.ANTHROPIC_API_KEY = "sk-ant-leak";
+    process.env.ANTHROPIC_API_KEY = "placeholder-not-a-key";
     try {
       const prov = parseWorkersConfig({ providers: { gyro: mkProvider(9) } }).providers.gyro;
       const env = buildRunEnv(prov, true);
