@@ -15,7 +15,6 @@ import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
 import { type OwnedPane } from "../pane-exec.js";
 import { type StatusLineSpec } from "../pane-bar.js";
-import { stripApiKey } from "../strip-api-key.js";
 
 /** The panes opened FIRST for the runs of this process, per worker id, until the run's command starts in them. */
 export const paneHandles = new Map<string, OwnedPane>();
@@ -162,7 +161,7 @@ export async function spawnOwned(
  * the status line and the input line are pinned by the wrapper (statusLine), not by the follow view.
  */
 export function pooledFollowSpawn(wid: string, label: string | undefined, logDir: string, cwd: string): Parameters<typeof spawnOwned>[2] & { cwd: string } {
-  return { env: stripApiKey({ ...process.env }), cwd, stdio: ["ignore", "pipe", "pipe"], title: `${label ?? wid} (pooled)`, statusLine: { kind: "worker", id: wid, logDir } };
+  return { env: process.env, cwd, stdio: ["ignore", "pipe", "pipe"], title: `${label ?? wid} (pooled)`, statusLine: { kind: "worker", id: wid, logDir } };
 }
 
 /**

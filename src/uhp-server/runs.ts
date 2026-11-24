@@ -16,7 +16,6 @@ import { loadStatus, pidAlive, type WorkerStatus } from "../workers/status.js";
 import { redactSecrets } from "../utils/redact.js";
 import { Assembler, splitLines, type UhpEventBody } from "./events.js";
 import { loadRecord, saveRecord, type FinalState, type ResponseRecord, type UhpStatus } from "./store.js";
-import { stripApiKey } from "../workers/strip-api-key.js";
 
 export interface RunsDeps {
   logDir: string;
@@ -38,7 +37,7 @@ export interface WorkerLaunch {
 export function launch(d: RunsDeps, rec: ResponseRecord, l: WorkerLaunch): number {
   const runs = join(d.logDir, "runs");
   mkdirSync(runs, { recursive: true });
-  const env = stripApiKey({ ...process.env });
+  const env = { ...process.env };
   delete env[WORKER_ID_ENV]; // a UHP response is a top-level worker, not a child of whatever started this server
   env[WORKER_ORIGIN_ENV] = "uhp"; // headless under the typed waiver, no session notices (pane-waiver.ts)
   return (d.start ?? spawnSession)(d.bin ?? process.env.PAI_BIN ?? "pai", ["worker", l.verb, ...l.args], {
