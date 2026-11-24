@@ -2367,8 +2367,12 @@ function findRevertedMerge(cwd: string, branch: string): { merge: string; revert
       // the branch forked after the revert: it never carried the change main dropped
       if (spawnSync("git", ["-C", cwd, "merge-base", "--is-ancestor", revert, base]).status === 0) continue;
       // main already carries the change again (a hand reapply with an amended message): reversing the revert no longer applies
-      const diff = spawnSync("git", ["-C", cwd, "diff", "--binary", `${revert}^`, revert], { encoding: "utf8", maxBuffer: 1 << 28 }).stdout;
-      if (spawnSync("git", ["-C", cwd, "apply", "--check", "-R", "--index"], { input: diff, encoding: "utf8" }).status !== 0) continue;
+      const diff = spawnSync("git", ["-C", cwd, "diff", "--binary", `${revert}^`, revert], { encoding: "utf8", maxBuffer: 1 << 28, timeout: 30_000 });
+      // a failed diff (bad ref, oversized output, timeout) yields no stdout: feeding `undefined` to apply
+      // would inherit this process's stdin and hang the merge forever (live 2026-11-24, 13 min)
+      if (diff.error || diff.status !== 0 || !diff.stdout) continue;
+      const check = spawnSync("git", ["-C", cwd, "apply", "--check", "-R", "--index"], { input: diff.stdout, encoding: "utf8", timeout: 30_000, stdio: ["pipe", "pipe", "pipe"] });
+      if (check.error || check.status !== 0) continue;
       const parents = git(cwd, ["rev-list", "--parents", "-n", "1", target]).split(" ");
       if (parents.length < 3 || !/^merge worker /.test(git(cwd, ["log", "-1", "--format=%s", target]))) continue;
       // the branch carries the reverted merge's own commits (a resume branch builds on them)
