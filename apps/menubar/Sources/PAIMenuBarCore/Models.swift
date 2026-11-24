@@ -350,3 +350,24 @@ public func actionRequest(baseURL: URL, id: String, action: String) -> URLReques
     req.httpBody = try! JSONEncoder().encode(["action": action, "id": id])
     return req
 }
+
+/// Everything one local runtime row shows: its own activity line ("idle" when
+/// nothing runs) and its own slot lines. Slots come from the queue's provider
+/// entry, else from the runtime's own instances, so a runtime the queue does not
+/// list still gets its line.
+public struct EngineLines: Equatable {
+    public var idle: Bool
+    public var slots: [QueueResponse.InstanceStat]
+}
+
+public func engineLines(limit: LimitsResponse.Limit, queue: QueueResponse?) -> EngineLines {
+    let provider = limit.provider ?? ""
+    var slots = queue?.instanceStats(provider: provider) ?? []
+    if slots.isEmpty {
+        slots = (limit.instances ?? []).map { i in
+            let n = (i.id ?? "").split(separator: "#").dropFirst().first.map(String.init) ?? "1"
+            return .init(label: "#" + n, busy: Int(i.inflight ?? 0), cap: 1)
+        }
+    }
+    return EngineLines(idle: localIdle(limit: limit, busy: queue?.busyTotal(provider: provider)), slots: slots)
+}
