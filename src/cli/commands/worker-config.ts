@@ -96,6 +96,7 @@ import { dim, err, ok, warn } from "../lib/utils.js";
 import { useCommand } from "./providers.js";
 import { psTable } from "../../workers/ps-table.js";
 import { loopbackUrl } from "../../utils/loopback.js";
+import { stripApiKey } from "../../workers/strip-api-key.js";
 
 const out = (s = "") => void process.stdout.write(s + "\n");
 
@@ -915,7 +916,7 @@ export function launchDetached(plan: StartPlan): Launched {
   mkdirSync(dirname(plan.logPath), { recursive: true });
   const fd = openSync(plan.logPath, "w");
   const [cmd, ...args] = plan.argv;
-  const child = spawn(cmd, args, { cwd: plan.cwd, env: { ...process.env, ...plan.env }, detached: true, stdio: ["ignore", fd, fd] });
+  const child = spawn(cmd, args, { cwd: plan.cwd, env: stripApiKey({ ...process.env, ...plan.env }), detached: true, stdio: ["ignore", fd, fd] });
   child.unref();
   closeSync(fd);
   return Object.assign(() => child.exitCode, child.pid !== undefined ? { pid: child.pid } : {});

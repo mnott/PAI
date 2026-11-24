@@ -8,6 +8,7 @@
  * wall of text.
  */
 
+import { suspectLines } from "./suspect-test.js";
 import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -425,7 +426,7 @@ function looksLikeReport(v: object): boolean {
  * Render a parsed report as the compact block the viewer shows: changed paths
  * with summaries, checks with ✓/✗, open items, notes. Empty report → [].
  */
-export function renderReport(c: Paint, prefix: string, r: WorkerReport, cwd = ""): string[] {
+export function renderReport(c: Paint, prefix: string, r: WorkerReport, cwd = "", suspectLogDir = ""): string[] {
   const out: string[] = [];
   const has = (xs: unknown[] | undefined) => (xs ?? []).length > 0;
   if (has(r.changed)) {
@@ -442,6 +443,8 @@ export function renderReport(c: Paint, prefix: string, r: WorkerReport, cwd = ""
       out.push(`${prefix}  ${mark} ${ck.name ?? "?"}${detail}`);
     }
   }
+  const failed = (r.checks ?? []).filter((ck) => ck.ok === false).map((ck) => ck.name ?? "").filter(Boolean);
+  if (suspectLogDir && failed.length) for (const l of suspectLines(suspectLogDir, failed)) out.push(`${prefix}${c("yellow", l)}`);
   if (has(r.commands)) {
     out.push(`${prefix}${c("bold", "commands")}`);
     for (const cmd of r.commands!) out.push(`${prefix}  ${c("dim", shortText(cmd, 100))}`);

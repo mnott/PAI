@@ -18,7 +18,7 @@ import { GATE_MARK } from "./worktree.js";
 import { PlanTracker, gatePhaseName } from "./plan-status.js";
 import { appendRunLog, tail, type GateEvent, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import type { Plan } from "./plan.js";
-import { isLoopbackProvider } from "./run-env.js";
+import { isLoopbackProvider, stripApiKey } from "./run-env.js";
 import { resolveRunnerProvider } from "./local-provider.js";
 
 export interface Captured {
@@ -222,7 +222,7 @@ export async function mergeBranch(repo: string, id: string, gate: string, onGate
   const ahead = await realCommitsAhead(repo, before, id);
   if (!(ahead > 0)) return { ok: false, noCommit: true, before, output: `branch worker/${id} has no non-empty commit beyond ${before.slice(0, 7)}` };
   const parser = onGate ? new GateParser(onGate, testTotal) : null;
-  const r = await capture(pai(), ["worker", "merge", id, ...(gate ? ["--verify", gate] : [])], repo, false, parser ? (c) => parser.feed(c) : undefined, parser ? { ...process.env, PAI_GATE_EVENTS: "1" } : process.env);
+  const r = await capture(pai(), ["worker", "merge", id, ...(gate ? ["--verify", gate] : [])], repo, false, parser ? (c) => parser.feed(c) : undefined, stripApiKey(parser ? { ...process.env, PAI_GATE_EVENTS: "1" } : { ...process.env }));
   parser?.end();
   if (parser?.total) lastTests.set(repo, parser.total);
   const output = parser ? parser.clean : r.out + r.err;
