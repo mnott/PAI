@@ -26,7 +26,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai doc`](doc.md) | Write the Markdown command reference |
 | [`pai end`](end.md) | Finish the current session |
 | [`pai find`](find.md) | Search your prompt history for sessions |
-| [`pai freeze`](freeze.md) | Stop all running workers and the local model server to free the CPU/GPU now |
+| [`pai freeze`](freeze.md) | Stop all running workers and the heavy local model servers to free the CPU/GPU now |
 | [`pai git`](git.md) | Link commits to the session that wrote them |
 | [`pai graph`](graph.md) | Relations across projects, notes and external documents |
 | [`pai handoff`](handoff.md) | Carry a session's work to a new one |
@@ -189,7 +189,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai doc` | Write the Markdown command reference |
 | `pai end` | Finish the current session |
 | `pai find` | Search your prompt history for sessions |
-| `pai freeze` | Stop all running workers and the local model server to free the CPU/GPU now |
+| `pai freeze` | Stop all running workers and the heavy local model servers to free the CPU/GPU now |
 | `pai git` | Link commits to the session that wrote them |
 | `pai git hook` | Git hook entry points (called by git) |
 | `pai git hook post-commit` | Record the sessions that edited the last commit's files |

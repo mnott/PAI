@@ -2,7 +2,7 @@ import { mkdtempSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isFrozen, activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, workerAncestryBlocked, freezeWorkerGuard, freezeLogDir, freezeTestMode, parseFreezeServers, realFreezeDeps, type FreezeDeps, type ProcRow } from "./freeze.js";
+import { isFrozen, activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, heavyServer, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, workerAncestryBlocked, freezeWorkerGuard, freezeLogDir, freezeTestMode, parseFreezeServers, realFreezeDeps, type FreezeDeps, type ProcRow } from "./freeze.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
 import { detectSupervisionEvents } from "./supervision.js";
@@ -178,7 +178,9 @@ describe("freeze / thaw", () => {
   });
 
   it("stops children before the L1 and the model server last; the gate holds while frozen", async () => {
-    const r = await freezeAll("/nonexistent-log", "t", 60_000, deps());
+    const d = deps();
+    d.heavyRuntimes = () => ["gyro"]; // the default freeze spares an unconfigured runtime; declare it heavy to keep the old full-freeze path
+    const r = await freezeAll("/nonexistent-log", "t", 60_000, d);
     expect(r.total).toBe(8);
     const stops = sent.filter((s) => s.startsWith("SIGSTOP")).map((s) => Number(s.split(":")[1]));
     expect(stops.indexOf(200)).toBeLessThan(stops.indexOf(100));
@@ -187,8 +189,62 @@ describe("freeze / thaw", () => {
     await expect(freezeAll("/nonexistent-log", "t", undefined, deps())).rejects.toThrow(/already frozen/);
   });
 
+  // 2026-11-24: `pai freeze --for 5m` froze the apple-fm bridge (port 8037, near-zero idle cost)
+  // and its helper calls timed out at 60 s. Default freeze stops only heavy runtimes
+  // (models.runtimes.<name>.exclusive: heavy); --all stops everything as before.
+  it("default freeze stops only the heavy model server and lists what was spared", async () => {
+    const d = deps([{ pid: 300, label: "gyro-l:8035" }, { pid: 301, label: "apple-fm:8037" }]);
+    d.heavyRuntimes = () => ["gyro-l"];
+    const r = await freezeAll("/nonexistent-log", "t", undefined, d);
+    expect(sent.filter((s) => s.startsWith("SIGSTOP"))).not.toContain("SIGSTOP:301");
+    expect(r.marker!.pids.filter((e) => e.kind === "model").map((e) => e.id)).toEqual(["gyro-l:8035"]);
+    expect(r.lines.join("\n")).toContain("spared model apple-fm:8037");
+    expect(r.lines.join("\n")).toContain("frozen 2 workers + 1 model servers");
+  });
+
+  it("--all freezes every model server", async () => {
+    // planFreeze only stops a server whose pid is in the process table; the servers live on free pids
+    const d = deps([{ pid: 500, label: "gyro-l:8035" }, { pid: 501, label: "apple-fm:8037" }]);
+    d.procs = () => [...ROWS, row(500, 1, "strata-engine --serve"), row(501, 1, "apple-fm-bridge")];
+    d.heavyRuntimes = () => ["gyro-l"];
+    const r = await freezeAll("/nonexistent-log", "t", undefined, d, undefined, undefined, true);
+    expect(sent.filter((s) => s.startsWith("SIGSTOP"))).toEqual(expect.arrayContaining(["SIGSTOP:500", "SIGSTOP:501"])); // 501 is the spared server, taken only by --all
+    expect(r.marker!.pids.filter((e) => e.kind === "model").map((e) => `${e.id}:${e.pid}`).sort()).toEqual(["apple-fm:8037:501", "gyro-l:8035:500"]);
+    expect(r.lines.join("\n")).not.toContain("spared model");
+  });
+
+  it("thaw continues exactly what the default freeze froze (the spared server was never stopped)", async () => {
+    const d = deps([{ pid: 300, label: "gyro-l:8035" }, { pid: 301, label: "apple-fm:8037" }]);
+    d.heavyRuntimes = () => ["gyro-l"];
+    await freezeAll("/nonexistent-log", "t", undefined, d);
+    sent.length = 0;
+    const r = thawAll("/nonexistent-log", d);
+    const conts = sent.filter((s) => s.startsWith("SIGCONT")).map((s) => Number(s.split(":")[1]));
+    expect(conts).not.toContain(301);
+    expect(conts[0]).toBe(300); // the model first
+    expect(r.wasFrozen).toBe(true);
+  });
+
+  it("a server whose runtime is not configured is treated as light (spared)", async () => {
+    const d = deps([{ pid: 300, label: "unknown:9999 serving Qwen3-4B" }]);
+    d.heavyRuntimes = () => ["gyro-l"];
+    const r = await freezeAll("/nonexistent-log", "t", undefined, d);
+    expect(sent.filter((s) => s.startsWith("SIGSTOP"))).not.toContain("SIGSTOP:300");
+    expect(r.marker!.pids.filter((e) => e.kind === "model")).toEqual([]);
+  });
+
+  it("heavyServer: a heavy runtime on the port is heavy, a light one is not", () => {
+    expect(heavyServer("gyro-l:8035", ["gyro-l"])).toBe(true);
+    expect(heavyServer("apple-fm:8037", ["gyro-l"])).toBe(false);
+    expect(heavyServer("gyro-l:8035 serving gyro-l", ["gyro-l"])).toBe(true);
+    expect(heavyServer("port 8035", ["gyro-l"])).toBe(false);
+    expect(heavyServer("gyro-l:8035", [])).toBe(false);
+  });
+
   it("thaws the model first, the L1 last, tells every worker, skips the dead, and accounts the time", async () => {
-    await freezeAll("/nonexistent-log", "t", undefined, deps());
+    const d = deps();
+    d.heavyRuntimes = () => ["gyro"]; // declare the fake server heavy so the default freeze takes it
+    await freezeAll("/nonexistent-log", "t", undefined, d);
     sent.length = 0;
     now += 5 * 60_000;
     expect(frozenMsFor("L1", now)).toBe(5 * 60_000);
@@ -382,6 +438,7 @@ describe("exceptions", () => {
     procs: () => rows,
     statuses: () => A,
     servers: async () => [{ pid: 400, label: "gyro:8080" }],
+    heavyRuntimes: () => ["gyro"], // declare the fake server heavy so the default freeze takes it
     signal: (pid, sig) => void sent.push(`${sig}:${pid}`),
     owns: () => true,
     self: 60,
@@ -475,7 +532,9 @@ describe("test-mode isolation", () => {
     process.env.PAI_FREEZE_SERVERS = "777:test-gyro, junk";
     expect(parseFreezeServers(process.env.PAI_FREEZE_SERVERS)).toEqual([{ pid: 777, label: "test-gyro" }]);
     process.env.PAI_FREEZE_LOGDIR = dir; // the isolation is all-or-nothing: with both set the freeze runs fully inside them
-    const r = await freezeAll(freezeLogDir(), "t", undefined, deps());
+    const d = deps();
+    d.heavyRuntimes = () => ["test-gyro"]; // the listed server is declared heavy so the default freeze takes it
+    const r = await freezeAll(freezeLogDir(), "t", undefined, d);
     expect(r.marker!.pids.map((e) => e.pid)).toEqual([100, 101, 777]); // the isolated tree + the listed pid, nothing else
     expect(sent).toContain("SIGSTOP:777");
   });
