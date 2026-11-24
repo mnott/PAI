@@ -247,12 +247,6 @@ export function isBenchmarkLabel(label: string | undefined | null): boolean {
   return !!label && /strata-bench|night[- ]?queue|\bbench(mark)?\b/i.test(label);
 }
 
-/** The label of the merge gate's smoke start (offline stub model): it is a probe, never repeated or moved up a tier. */
-export const SMOKE_LABEL = "merge gate smoke start";
-export function isSmokeLabel(label: string | undefined | null): boolean {
-  return label === SMOKE_LABEL;
-}
-
 /** Percent per minute lost over the last `windowReadings` readings; null when too short or not falling. */
 export function drainRatePctPerMin(readings: BatteryReading[], windowReadings: number): number | null {
   const win = readings.filter((x) => x.pct !== null).slice(-windowReadings);

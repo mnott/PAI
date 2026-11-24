@@ -5,8 +5,8 @@
  * through that made every worker start crash ("Cannot access 'toolFold' before
  * initialization", 2026-11-19 03:33–03:58, merge 2d9a628d): no gate step ever
  * started a worker. This is that step: the freshly built CLI runs one headless
- * worker on a scripted offline model — a loopback provider whose url is a
- * stub server answering every Messages call with "ok" (never a real
+ * worker on a scripted offline model — a loopback provider whose upstream is a
+ * stub server answering every Chat Completions call with "ok" (never a real
  * model, never the cloud) — prompt "reply ok", tools Read only. It must end rc 0
  * with a valid result; anything else fails the gate, which reverts the merge
  * like a failed test (`smoke start failed: <first error line>`).
@@ -33,7 +33,6 @@ import { acquireTestSlot, holdsTestSlot } from "./test-slot.js";
 import { spawnSession, startDetachedWorker } from "./reroute.js";
 import { eventsPath, workersLogDir } from "./paths.js";
 import { loadStatus, newWorkerId } from "./status.js";
-import { SMOKE_LABEL } from "../daemon/battery-guard.js";
 import { parseLastResultEvent } from "./keepalive.js";
 
 /** The provider the smoke run names; it exists only in the temp copy. */
@@ -46,8 +45,8 @@ export const SMOKE_TIMEOUT_MS = 60_000;
 /** Spawn seam of the smoke (tests inject a runner; no real CLI is started). */
 export interface SmokeStartDeps {
   /** Runs the built CLI's `worker run …` and waits for its end; returns rc + the worker id. */
-  start?: (opts: SmokeRunOpts) => Promise<{ rc: number; id: string; why?: string }>;
-  /** The offline stub model server: a loopback provider pointing here speaks the Anthropic protocol directly (no shared proxy). */
+  start?: (opts: SmokeRunOpts) => Promise<{ rc: number; id: string }>;
+  /** The offline stub model server: a loopback provider pointing here speaks OpenAI through the PAI proxy. */
   serve?: () => Promise<{ url: string; close: () => Promise<void> }>;
   /** Points the config at the smoke provider (tests inject; default edits a temp workers.yaml copy). */
   addProvider?: (url: string) => void;
@@ -75,68 +74,37 @@ export interface SmokeStartResult {
   id?: string;
 }
 
-/**
- * The Anthropic Messages answer Claude Code reads as "ok". The stub speaks the Anthropic protocol itself: a protocol
- * "openai" smoke provider runs through the shared PAI proxy daemon, which reads the live config, does not know the
- * temp-copy smoke provider and answers 404 — the CLI reports that as "issue with the selected model (smoke-stub)".
- */
-export function stubMessage(body: unknown): { json: string; sse: string } {
-  const b = body as { model?: string };
-  const model = b?.model ?? SMOKE_MODEL;
-  // a valid AG2 report: the worker contract rejects a bare "ok" as an invalid report, which the live supervision re-runs on the cloud
-  const text = "R\ni=smoke\nr=?\nt=Stub+\nc=none\nz=offline stub answer\ny=smoke stub, no work done";
-  const message = {
-    id: "msg_smoke",
-    type: "message",
-    role: "assistant",
+/** The OpenAI Chat Completions answer Claude Code reads as "ok". */
+function stubCompletion(body: unknown): string {
+  const model = (body as { model?: string })?.model ?? SMOKE_MODEL;
+  return JSON.stringify({
+    id: "chatcmpl-smoke",
+    object: "chat.completion",
     model,
-    content: [{ type: "text", text }],
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: { input_tokens: 1, output_tokens: 1 },
-  };
-  const ev = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
-  const sse =
-    ev("message_start", { type: "message_start", message: { ...message, content: [], stop_reason: null } }) +
-    ev("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }) +
-    ev("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }) +
-    ev("content_block_stop", { type: "content_block_stop", index: 0 }) +
-    ev("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } }) +
-    ev("message_stop", { type: "message_stop" });
-  return { json: JSON.stringify(message), sse };
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  });
 }
 
-/** A loopback HTTP server answering /v1/messages with the scripted reply and /v1/models with the stub model list. */
-export async function startStubServer(): Promise<{ url: string; close: () => Promise<void> }> {
+/** A loopback HTTP server answering /v1/chat/completions with the scripted reply. */
+async function startStubServer(): Promise<{ url: string; close: () => Promise<void> }> {
   const srv: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       if (req.url?.endsWith("/models")) {
-        // the run gate's liveness probe of a named loopback provider, and the model list a client may check the model against
+        // the run gate's liveness probe of a named loopback provider
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ object: "list", data: [{ id: SMOKE_MODEL, object: "model", type: "model", display_name: SMOKE_MODEL }], has_more: false }));
+        res.end(JSON.stringify({ object: "list", data: [{ id: SMOKE_MODEL, object: "model" }] }));
         return;
       }
-      if (req.method !== "POST" || !/\/v1\/messages(\?|$)/.test(req.url ?? "")) {
+      if (!req.url?.includes("/chat/completions")) {
         res.writeHead(404, { "content-type": "application/json" });
-        res.end('{"type":"error","error":{"type":"not_found_error","message":"not found"}}');
+        res.end('{"error":"not found"}');
         return;
       }
-      let body: unknown = {};
-      try {
-        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      } catch {
-        /* an unparsable body still gets the scripted answer */
-      }
-      const out = stubMessage(body);
-      if ((body as { stream?: boolean })?.stream) {
-        res.writeHead(200, { "content-type": "text/event-stream" });
-        res.end(out.sse);
-      } else {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(out.json);
-      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(stubCompletion(Buffer.concat(chunks).toString("utf8")));
     });
   });
   const port = await new Promise<number>((resolve, reject) => {
@@ -147,7 +115,7 @@ export async function startStubServer(): Promise<{ url: string; close: () => Pro
     });
   });
   return {
-    url: `http://${LOOPBACK_HOST}:${port}`,
+    url: `http://${LOOPBACK_HOST}:${port}/v1`,
     close: async () =>
       new Promise<void>((resolve) => {
         srv.closeAllConnections?.();
@@ -161,9 +129,10 @@ function smokeProviderYaml(url: string): string {
   return [
     `  ${SMOKE_PROVIDER_NAME}:`,
     `    enabled: true`,
-    `    protocol: "anthropic"`,
+    `    protocol: "openai"`,
     `    url: ${JSON.stringify(url)}`, // loopback: the local-only window must not read the smoke as a cloud start
     `    key_file: null`,
+    `    upstream_url: ${JSON.stringify(url)}`,
     `    router: false`,
     `    max_concurrent: 1`,
     `    models:`,
@@ -252,7 +221,7 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     const id = newWorkerId();
     const r = await start(runOpts({ id, cwd: opts.cwd, timeoutMs }));
     runId = r.id;
-    if (r.rc !== 0) return { ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}${r.why ? `: ${r.why}` : ""}`, id: r.id };
+    if (r.rc !== 0) return { ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}`, id: r.id };
     const ev = parseLastResultEvent(eventsPath(workersLogDir(readWorkersSection().workers), r.id));
     if (!ev || typeof ev.result !== "string" || !ev.result.trim()) return { ok: false, ms: Date.now() - t0, error: "no result event from the smoke worker", id: r.id };
     if (ev.is_error) return { ok: false, ms: Date.now() - t0, error: `worker result is an error: ${ev.result.trim().split("\n")[0].slice(0, 200)}`, id: r.id };
@@ -282,31 +251,8 @@ function forgetRun(id: string): void {
   for (const ext of ["status", "jsonl", "prompt", "log", "out"]) rmSync(join(logDir, `${id}.${ext}`), { force: true });
 }
 
-/** Why a smoke run ended non-zero: state, end reason and the first error line of its result event or log (read before forgetRun deletes them). */
-export function exitWhy(logDir: string, id: string, st: { state?: string; endReason?: string }): string {
-  const parts = [`state ${st.state ?? "?"}`];
-  if (st.endReason) parts.push(`reason ${st.endReason}`);
-  let line = "";
-  try {
-    const ev = parseLastResultEvent(eventsPath(logDir, id));
-    if (ev && typeof ev.result === "string") line = ev.result;
-  } catch {
-    /* no events */
-  }
-  if (!line.trim()) {
-    try {
-      const lines = readFileSync(join(logDir, `${id}.log`), "utf8").split("\n").filter((l) => l.trim());
-      line = lines.find((l) => /error|fail|cannot|exception/i.test(l)) ?? lines[lines.length - 1] ?? "";
-    } catch {
-      /* no log */
-    }
-  }
-  if (line.trim()) parts.push(line.trim().split("\n")[0].slice(0, 200));
-  return parts.join(", ");
-}
-
 /** The live start: the built CLI detaches one worker on the smoke provider and this waits for its end. */
-async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string; why?: string }> {
+async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string }> {
   const logDir = workersLogDir(readWorkersSection().workers);
   // smokeStart's childEnv already dropped the worker identity and terminal keys and set PAI_NO_WORKTREE_GC=1
   const env: NodeJS.ProcessEnv = { ...(o.env ?? process.env), PAI_BIN: join(o.cwd, "dist", "cli", "index.mjs") };
@@ -320,7 +266,7 @@ async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string; 
       "--max-minutes",
       "1",
       "--label",
-      SMOKE_LABEL,
+      "merge gate smoke start",
       "-p",
       SMOKE_PROMPT,
       "--allowedTools",
@@ -339,7 +285,7 @@ async function defaultStart(o: SmokeRunOpts): Promise<{ rc: number; id: string; 
   for (;;) {
     const st = loadStatus(logDir, id);
     if (st && (st.state === "done" || st.state === "failed" || st.state === "killed" || st.state === "lost")) {
-      return { rc: st.rc ?? 1, id, ...(st.rc === 0 ? {} : { why: exitWhy(logDir, id, st) }) };
+      return { rc: st.rc ?? 1, id };
     }
     if (Date.now() > deadline) return { rc: 124, id };
     await new Promise((r) => setTimeout(r, 500));
