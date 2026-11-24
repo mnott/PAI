@@ -11,7 +11,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { idleText, type RunLogEntry } from "./plan-runner.js";
 import { guardedPailot } from "./pailot-guard.js";
@@ -62,6 +62,38 @@ export function originTarget(origin: RunOrigin): string | undefined {
   return origin.iterm?.split(":").pop() || origin.host || origin.name || undefined; // ITERM_SESSION_ID form "w8t0p0:<uuid>" -> the uuid
 }
 
+/**
+ * A delivery failure that will never succeed by trying again: the target is
+ * gone or sits at a shell prompt, so typing into it is refused outright.
+ * Retrying these is what filled the daemon log with 16k identical lines.
+ */
+export function isUndeliverableError(err: string): boolean {
+  return /not running Claude|is not running|not found|no such session|closed before response|not running \(socket not found\)/i.test(err);
+}
+
+/**
+ * Park a report that cannot be typed into its session: deposit it once in the
+ * session's AIBroker mailbox (read when Claude runs there again) and log one
+ * line. Returns false when the mailbox deposit itself failed.
+ */
+export async function parkInMailbox(
+  target: string,
+  text: string,
+  warn: (s: string) => void,
+  deposit: (target: string, text: string) => Promise<{ ok: boolean; error?: string }> = async (t, x) => {
+    const { sendToSession } = await import("../cli/lib/aibroker-client.js");
+    return sendToSession(t, x, undefined, { mailboxOnly: true });
+  },
+): Promise<boolean> {
+  const r = await deposit(target, text).catch((e) => ({ ok: false, error: String(e) }));
+  if (r.ok) {
+    warn(`run report for ${target} parked in mailbox of ${target}: not running Claude`);
+    return true;
+  }
+  warn(`run report for ${target} could not be parked in mailbox: ${r.error ?? "unknown"}`);
+  return false;
+}
+
 /** Real messenger over AIBroker's socket; unreachable AIBroker is logged and ignored. */
 export function aibrokerMessenger(
   logDir: string,
@@ -71,6 +103,10 @@ export function aibrokerMessenger(
     // lazy import: the live client loads only when a message is actually sent
     const { sendToSession } = await import("../cli/lib/aibroker-client.js");
     return sendToSession(target, text);
+  },
+  deposit: (target: string, text: string) => Promise<{ ok: boolean; error?: string }> = async (t, x) => {
+    const { sendToSession } = await import("../cli/lib/aibroker-client.js");
+    return sendToSession(t, x, undefined, { mailboxOnly: true });
   },
   toPailot: (text: string) => Promise<boolean> = (text) =>
     guardedPailot(logDir, text, async (t) => {
@@ -100,7 +136,16 @@ export function aibrokerMessenger(
           return fail("the run has no originating session");
         }
         const r = await send(target, text);
-        if (!r.ok && !r.timedOut) return fail(`${target}: ${r.error}`);
+        if (!r.ok && !r.timedOut) {
+          // the session cannot take the message: park it in the mailbox once
+          // instead of retrying forever (the 16k-line log loop).
+          if (isUndeliverableError(r.error ?? "")) {
+            await parkInMailbox(target, text, warn, deposit);
+            self.lastError = r.error;
+            return false;
+          }
+          return fail(`${target}: ${r.error}`);
+        }
         return r.ok || r.timedOut === true;
       } catch (e) {
         return fail(String(e));
@@ -327,19 +372,83 @@ export function markRunDone(logDir: string, id: string, now: () => number = Date
   }
 }
 
+/** A dead run whose report could not be delivered: how many tries it has had. */
+const retryPath = (logDir: string, id: string): string => `${runRecordPath(logDir, id)}.retry`;
+/** A dead run whose report is parked in the mailbox: never tried again. */
+const parkedPath = (logDir: string, id: string): string => `${runRecordPath(logDir, id)}.parked`;
+
+/** Bounded retries for a transient delivery failure (hub unreachable, timeout). */
+const MAX_DELIVERY_ATTEMPTS = 3;
+
 /**
  * Daemon tick: a registered run whose process is gone without a done marker
  * died silently; tell its session once.
+ *
+ * A report the session cannot take (not running Claude / gone) is parked in
+ * that session's mailbox once and dropped from the queue — it is read when
+ * Claude runs there again. Only transient failures (hub unreachable, timeout)
+ * are retried, at most MAX_DELIVERY_ATTEMPTS times over the following ticks;
+ * after that the report is dropped too, so a dead target cannot loop forever.
  */
 export async function sweepRuns(logDir: string, msg: Messenger, isAlive: (pid: number) => boolean, now: () => number = Date.now): Promise<string[]> {
   const told: string[] = [];
   for (const r of listRuns(logDir)) {
     const marker = `${runRecordPath(logDir, r.id)}.done`;
     if (existsSync(marker) || isAlive(r.pid)) continue;
-    markRunDone(logDir, r.id, now);
+    const parked = parkedPath(logDir, r.id);
+    if (existsSync(parked)) {
+      // the report is parked (undeliverable) or exhausted (transient): drop the
+      // registry entry so a dead session cannot linger in the sweep forever
+      try {
+        unlinkSync(runRecordPath(logDir, r.id));
+        unlinkSync(parked);
+        unlinkSync(retryPath(logDir, r.id));
+      } catch {
+        /* the registry is a courtesy */
+      }
+      continue;
+    }
     const what = `The detached ${r.kind} run ${r.id} stopped without finishing; see ${r.output}.`;
-    await msg.toSession(r.origin, eventLine(r.id, "run-died", { output: r.output }, what)).catch(() => false);
-    told.push(r.id);
+    const text = eventLine(r.id, "run-died", { output: r.output }, what);
+    const ok = await msg.toSession(r.origin, text).catch(() => false);
+    if (ok) {
+      markRunDone(logDir, r.id, now);
+      told.push(r.id);
+      continue;
+    }
+    // the messenger parked an undeliverable report in the mailbox: stop here
+    if (msg.lastError && isUndeliverableError(msg.lastError)) {
+      try {
+        writeFileSync(parked, new Date(now()).toISOString(), "utf8");
+        unlinkSync(retryPath(logDir, r.id));
+      } catch {
+        /* the registry is a courtesy */
+      }
+      continue;
+    }
+    // transient: bounded retries across ticks, then drop
+    const attempts = readAttempts(retryPath(logDir, r.id)) + 1;
+    try {
+      writeFileSync(retryPath(logDir, r.id), String(attempts), "utf8");
+    } catch {
+      /* the registry is a courtesy */
+    }
+    if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+      try {
+        unlinkSync(retryPath(logDir, r.id));
+        writeFileSync(parked, new Date(now()).toISOString(), "utf8");
+      } catch {
+        /* the registry is a courtesy */
+      }
+    }
   }
   return told;
+}
+
+function readAttempts(path: string): number {
+  try {
+    return parseInt(readFileSync(path, "utf8"), 10) || 0;
+  } catch {
+    return 0;
+  }
 }
