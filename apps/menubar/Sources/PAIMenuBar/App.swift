@@ -113,12 +113,18 @@ struct PAIApp: App {
 }
 
 /// Wraps the popover content so the window follows its ideal height.
-/// `sizingOptions = .preferredContentSize` makes AppKit resize the window on
-/// every content change instead of keeping a stale size.
 struct PopoverRoot: View {
     @ObservedObject var store: Store
     @ObservedObject var endpoints: EndpointManager
     @Binding var visible: Bool
+
+    /// The window's preferred size, derived from the measured content height;
+    /// nil until the content has been measured (AppKit then sizes to content).
+    private var windowSize: CGSize? {
+        guard let h = popoverWindowSize(measured: store.contentIdealHeight,
+                                        visibleHeight: visibleScreenHeight()) else { return nil }
+        return CGSize(width: 420, height: h)
+    }
 
     var body: some View {
         Group {
@@ -128,7 +134,7 @@ struct PopoverRoot: View {
                 PopoverContent(store: store, endpoints: endpoints, visible: $visible)
             }
         }
-        .background(WindowConfigurator())
+        .background(WindowConfigurator(windowSize: windowSize))
     }
 }
 
@@ -138,19 +144,35 @@ func visibleScreenHeight() -> CGFloat {
     return screen.visibleFrame.height
 }
 
-/// Applies the sizing options to the window that hosts the popover.
+/// Keeps the popover window at the content's ideal height, recomputed on every
+/// content change. `setFrame` (not just preferredContentSize) is what actually
+/// resizes AppKit's MenuBarExtra window; the top edge stays anchored so the
+/// panel keeps hanging directly under the menu bar while it grows or shrinks.
 struct WindowConfigurator: NSViewRepresentable {
+    var windowSize: CGSize?
+
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
-        DispatchQueue.main.async {
-            guard let win = v.window else { return }
-            if let host = win.contentView as? NSHostingView<AnyView> {
-                host.sizingOptions = [.preferredContentSize]
-            }
-        }
+        DispatchQueue.main.async { apply(to: v.window, host: v.window?.contentView as? NSHostingView<AnyView>) }
         return v
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { apply(to: nsView.window, host: nsView.window?.contentView as? NSHostingView<AnyView>) }
+    }
+
+    private func apply(to win: NSWindow?, host: NSHostingView<AnyView>?) {
+        guard let win, let size = windowSize else { return }
+        if let host { host.sizingOptions = [.preferredContentSize] }
+        // AppKit grows a window from its origin (bottom), so without this the
+        // panel drifts down and leaves a gap under the menu bar; anchoring the
+        // top edge keeps it hanging directly below the status item.
+        // AppKit already sizes the window to its content once preferredContentSize
+        // is set; only force a resize when it did not follow (e.g. after the
+        // popover was resized by hand or the host missed an update).
+        if frameMatches(win.frame, size: size) { return }
+        win.setFrame(resizedFrame(win.frame, height: size.height), display: false)
+    }
 }
 
 /// Admin prompts via AppleScript: no stored password.
