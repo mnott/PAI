@@ -147,6 +147,10 @@ export function parsePackJson(out: string): { filename: string; size: number; en
 function cleanEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE"]) delete env[k];
+  // Same worker cap as the merge gate (config verify: PAI_VITEST_MAX_WORKERS=2):
+  // an uncapped release run spawns one node worker per core, and concurrent
+  // scratch-database tests under load race each other's Postgres state.
+  if (!env.PAI_VITEST_MAX_WORKERS) env.PAI_VITEST_MAX_WORKERS = "2";
   return env;
 }
 
