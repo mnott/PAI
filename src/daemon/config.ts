@@ -307,6 +307,9 @@ export interface PaiDaemonConfig {
   /** Model router supervised by the daemon (src/router/supervisor.ts). */
   router: RouterConfig;
 
+  /** Size rotation of daemon.log, router.log, scheduler.log (src/daemon/log-rotate.ts). */
+  logs?: { maxMB?: number; keep?: number };
+
   /**
    * Battery guard (src/daemon/battery-guard.ts, macOS only). Defaults in the
    * shipped file under `power.batteryGuard`.

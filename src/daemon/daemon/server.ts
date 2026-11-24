@@ -37,6 +37,7 @@ import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sy
 import { interruptStaleJobs } from "../../router/cockpit-job-recovery.js";
 import { paiHomeDir } from "../../config/pai-home.js";
 import { startOrphanCheck } from "../orphan-check.js";
+import { startLogRotation } from "../log-rotate.js";
 import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch, startConfigGuard, startRuntimeAutostartSupervision, startLowPriorityKeeperSupervision } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
@@ -261,6 +262,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // A config change armed with `pai config arm` that nobody confirmed by its deadline is restored here.
   startConfigGuard();
+
+  // The process logs are fd-owned (launchd / router spawn): copytruncate hourly once over logs.maxMB.
+  startLogRotation(() => config.logs ?? {}, (l) => process.stderr.write(`[pai-daemon] log ${l}\n`));
 
   // Connect the federation backend in the background. When storageBackend is
   // "postgres" this retries forever (never silently falls back to SQLite), so
