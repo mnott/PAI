@@ -44,7 +44,8 @@ function bashAtLeast4(path: string): boolean {
   try {
     const r = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 2000 });
     if (r.status !== 0) return false;
-    const m = /GNU bash, version (\d+)/.exec(r.stdout ?? "");
+    // Homebrew's bash prints "GNU bash, Version 5.3.20" (capital V); macOS's prints "version"
+    const m = /GNU bash, [Vv]ersion (\d+)/.exec(r.stdout ?? "");
     return m !== null && Number(m[1]) >= 4;
   } catch {
     return false;
@@ -70,6 +71,11 @@ export function selectWorkerShell(env: NodeJS.ProcessEnv = process.env): string 
     cachedShell = pickBash4(env) ?? (existsSync(ZSH_FALLBACK) ? ZSH_FALLBACK : null);
   }
   return cachedShell;
+}
+
+/** Selection without the process cache: the same rules, for tests that control the filesystem. */
+export function selectWorkerShellUncached(env: NodeJS.ProcessEnv): string | null {
+  return pickBash4(env) ?? (existsSync(ZSH_FALLBACK) ? ZSH_FALLBACK : null);
 }
 
 /** Test seam: drop the cached selection so a test can control what is found. */
