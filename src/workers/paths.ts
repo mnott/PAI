@@ -54,48 +54,28 @@ export function archiveRoot(logDir: string): string {
  * archive month does, that archived copy. Scans (loadStatuses, ps, cockpit) read the top folder only.
  * The archive listing is cached per logDir: a reaper tick resolves hundreds of ids, and re-reading the
  * archive directory per id was the bulk of the tick's synchronous fs time. A `pai worker gc` runs in a
- * separate process and can create a new month folder (the first archive of a new month) while a daemon
- * lives for days, so the cache is kept fresh: it expires after ARCHIVE_LISTING_TTL_MS, and a lookup that
- * finds nothing in the cached months re-reads the listing once before giving up.
+ * separate process, so the cache never hides a fresh archive from a daemon.
  */
-const ARCHIVE_LISTING_TTL_MS = 60_000;
-const archiveListing = new Map<string, { months: string[]; readAt: number }>();
-
-/** Read the archive month folders (newest first); never throws — no archive reads as empty. */
-function readArchiveMonths(logDir: string): string[] {
-  try {
-    return readdirSync(archiveRoot(logDir)).sort().reverse();
-  } catch {
-    /* no archive */
-    return [];
-  }
-}
-
-/** The cached month listing for logDir, re-read when the cache is absent or older than the TTL. */
-function archiveMonths(logDir: string, now: number): string[] {
-  const hit = archiveListing.get(logDir);
-  if (hit && now - hit.readAt < ARCHIVE_LISTING_TTL_MS) return hit.months;
-  const months = readArchiveMonths(logDir);
-  archiveListing.set(logDir, { months, readAt: now });
-  return months;
-}
+const archiveListing = new Map<string, string[]>();
 
 export function workerFilePath(logDir: string, id: string, suffix: string): string {
   const top = join(logDir, `${id}${suffix}`);
   if (existsSync(top)) return top;
-  const find = (months: string[]): string | undefined => {
-    for (const month of months) {
-      const p = join(archiveRoot(logDir), month, `${id}${suffix}`);
-      if (existsSync(p)) return p;
+  let months = archiveListing.get(logDir);
+  if (!months) {
+    months = [];
+    try {
+      months = readdirSync(archiveRoot(logDir)).sort().reverse();
+    } catch {
+      /* no archive */
     }
-    return undefined;
-  };
-  let found = find(archiveMonths(logDir, Date.now()));
-  if (!found) {
-    // a miss may mean a month folder this process has never seen: re-read once before giving up
-    found = find(readArchiveMonths(logDir));
+    archiveListing.set(logDir, months);
   }
-  return found ?? top;
+  for (const month of months) {
+    const p = join(archiveRoot(logDir), month, `${id}${suffix}`);
+    if (existsSync(p)) return p;
+  }
+  return top;
 }
 
 export function statusPath(logDir: string, id: string): string {
