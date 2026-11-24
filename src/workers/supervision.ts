@@ -88,6 +88,7 @@ import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { endContinuedOrigins, escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
 import { activeMsOf, frozenSince, ownMsOf } from "./freeze.js";
+import { detectSleepGap, wallNow } from "./sleep-clock.js";
 import { readSchedFile, type SchedSnapshot } from "../router/scheduler.js";
 import { yieldToLoop } from "./yield.js";
 

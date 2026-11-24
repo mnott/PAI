@@ -228,7 +228,7 @@ const runCommand: CommandDef = {
       const logLine = (l: string) => process.stderr.write(l + "\n");
       // config key as well as env var: a gapless restart spawns the successor from the old router's environment, so only config survives `pai router restart`
       const profiler = stallProfilerEnabled(process.env, loadConfig().router.profileStalls) ? startStallProfiler({ log: logLine }) : undefined;
-      const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: logLine, onStall: profiler?.onStall });
+      const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: logLine, onStall: profiler?.onStall, logDir: workersLogDir(readWorkersSection().workers) });
       const handler = stalls.wrap(inner);
       // backstop: a stray exception is logged, it does not take the proxy down
       process.on("uncaughtException", (e) => process.stderr.write(`pai: router: uncaught exception: ${(e as Error)?.stack ?? String(e)}\n`));

@@ -13,6 +13,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { statusPath } from "./paths.js";
 import { frozenMsFor } from "./freeze.js";
+import { detectSleepGap, sleepMsBetween, wallNow } from "./sleep-clock.js";
 
 interface WaitFile {
   ms: number;
@@ -112,7 +113,8 @@ export function preemptedMsOf(logDir: string, id: string, now: number = Date.now
   }
 }
 
-/** Everything that does not count against the deadline: build-gate waits plus router-queue waits plus preemption pauses plus `pai freeze` time. */
+/** Everything that does not count against the deadline: build-gate waits plus router-queue waits plus preemption pauses plus `pai freeze` time plus system sleep (sleep-clock.ts: the Mac asleep is not the worker working). */
 export function blockedMsOf(logDir: string, id: string, now: number = Date.now()): number {
-  return buildWaitMs(logDir, id, now) + routerWaitMs(logDir, id, now) + preemptedMsOf(logDir, id, now) + frozenMsFor(id, now);
+  detectSleepGap(now, wallNow()); // a worker's own clock read also records a sleep gap it survived
+  return buildWaitMs(logDir, id, now) + routerWaitMs(logDir, id, now) + preemptedMsOf(logDir, id, now) + frozenMsFor(id, now) + sleepMsBetween(0, now);
 }
