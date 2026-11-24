@@ -29,6 +29,8 @@ export interface CapturedTurn {
   ts: string;
   request: unknown;
   response: string;
+  /** Port of the upstream instance that served this turn (local multi-instance providers). */
+  upstreamPort?: number;
 }
 
 /** The in-memory ring of recent turns, per worker id, bounded by count and bytes. */
@@ -37,9 +39,9 @@ export class LoopCaptureRing {
   constructor(private keep = LOOP_CAPTURE_KEEP, private maxBytes = LOOP_CAPTURE_MAX_BYTES) {}
 
   /** Record one translated request and its raw response for a run. */
-  record(id: string, request: unknown, response: string, now = Date.now()): void {
+  record(id: string, request: unknown, response: string, now = Date.now(), upstreamPort?: number): void {
     const list = this.turns.get(id) ?? [];
-    list.push({ ts: new Date(now).toISOString(), request, response });
+    list.push({ ts: new Date(now).toISOString(), request, response, ...(upstreamPort ? { upstreamPort } : {}) });
     while (list.length > this.keep) list.shift();
     let bytes = 0;
     for (const t of list) bytes += Buffer.byteLength(JSON.stringify(t));
@@ -110,7 +112,7 @@ export function writeLoopCapture(
       id,
       reason,
       capturedAt: now.toISOString(),
-      turns: turns.map((t) => ({ ts: t.ts, request: stripSecrets(t.request), response: stripSecrets(t.response) })),
+      turns: turns.map((t) => ({ ts: t.ts, request: stripSecrets(t.request), response: stripSecrets(t.response), ...(t.upstreamPort ? { upstreamPort: t.upstreamPort } : {}) })),
     };
     writeFileSync(path, JSON.stringify(payload, null, 2), { mode: 0o600 });
     try {
