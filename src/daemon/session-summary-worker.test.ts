@@ -29,6 +29,43 @@ describe("session summary debounce", () => {
     expect(shouldSummarize(st, { final: true, intervalMs: 1e9, now: 1, newTextChars: () => 0 }).run).toBe(true);
   });
 
+  it("SessionEnd shortly after a debounced Stop still summarizes once, only the new part", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "ss-final-")), "t.jsonl");
+    writeFileSync(f, line("user", "first question about alpha"));
+    const t0 = 1_000_000_000;
+    const intervalMs = 30 * 60_000;
+
+    // Stop summary runs now and stores the offset.
+    const stop = shouldSummarize(undefined, { intervalMs, now: t0, newTextChars: () => 30_000 });
+    expect(stop.run).toBe(true);
+    const a = extractFromJsonl(f, "haiku", 0);
+    expect(a.userMessages.join()).toContain("alpha");
+    const state = { at: t0, offset: a.endOffset };
+
+    // 5 minutes later: a Stop is debounced.
+    appendFileSync(f, line("user", "second question about beta"));
+    const later = t0 + 5 * 60_000;
+    const stop2 = shouldSummarize(state, { intervalMs, now: later, newTextChars: () => extractFromJsonl(f, "haiku", state.offset).textChars });
+    expect(stop2.run).toBe(false);
+
+    // SessionEnd (final) at the same moment summarizes once, reading only the part
+    // after the stored offset.
+    const fin = shouldSummarize(state, { final: true, intervalMs, now: later, newTextChars: () => 0 });
+    expect(fin.run).toBe(true);
+    expect(fin.reason).toBe("final");
+    const b = extractFromJsonl(f, "haiku", state.offset);
+    expect(b.userMessages).toEqual(["second question about beta"]);
+    expect(b.userMessages.join()).not.toContain("alpha");
+    expect(b.endOffset).toBeGreaterThan(a.endOffset);
+  });
+
+  it("a Stop does not set final", () => {
+    const st = { at: 0, offset: 0 };
+    // Stop payloads carry force, never final: within the interval they are debounced.
+    expect(shouldSummarize(st, { intervalMs: 30 * 60_000, now: 60_000, newTextChars: () => 0 }).run).toBe(false);
+    expect(shouldSummarize(st, { intervalMs: 30 * 60_000, now: 60_000, newTextChars: () => 0 }).run).toBe(false);
+  });
+
   it("second extraction sends only the part after the stored offset", () => {
     const f = join(mkdtempSync(join(tmpdir(), "ss-")), "t.jsonl");
     writeFileSync(f, line("user", "first question about alpha") + line("assistant", "answer one"));
