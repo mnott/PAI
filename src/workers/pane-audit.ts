@@ -11,7 +11,7 @@
  * `ps` and the cockpit.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptListing, saveEntry, type PaneEntry } from "./pane.js";
@@ -518,7 +518,7 @@ export interface LaunchAuditDeps {
   /** Stops an unlaunched worker (default: kill-tree). */
   stop?: (wid: string, why: string) => Promise<unknown>;
   /** Whether the live process `pid` is still the one this launch started (start time and, for the wrapper, its command). */
-  owns?: (pid: number, r: LaunchRecord, side: "wrapper" | "child") => boolean;
+  owns?: (pid: number, r: LaunchRecord, side: "wrapper" | "child") => boolean | Promise<boolean>;
   /** Whether the record's iTerm session now belongs to another launch or registered worker. */
   sessionHeld?: (r: LaunchRecord, all: LaunchRecord[]) => boolean;
   /** Liveness of the pane launcher's processes (its wrapper and caller): a live one means its pane is still being opened. Default: process.kill(pid, 0). */
@@ -538,16 +538,22 @@ export function launchPidFresh(startMs: number, r: Pick<LaunchRecord, "openedMs"
 }
 
 /** A pid is the launch's own only when it started within two minutes of its side's launch and, for the wrapper, runs `pane exec <id>`. */
-function ownsLaunchPid(pid: number, r: LaunchRecord, side: "wrapper" | "child"): boolean {
+async function ownsLaunchPid(pid: number, r: LaunchRecord, side: "wrapper" | "child"): Promise<boolean> {
   try {
-    const env = { ...process.env, LC_ALL: "C" };
-    const start = Date.parse(execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env }).trim());
+    const start = Date.parse((await psField("lstart=", pid)).trim());
     if (Number.isNaN(start) || !launchPidFresh(start, r, side)) return false;
-    if (side === "wrapper") return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", env }).includes(r.id);
+    if (side === "wrapper") return (await psField("command=", pid)).includes(r.id);
     return true;
   } catch {
     return false;
   }
+}
+
+/** `ps -o <field> -p <pid>` off the event loop, killed after 5 s. */
+function psField(field: string, pid: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("ps", ["-o", field, "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, timeout: 5_000, killSignal: "SIGKILL" }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
 }
 
 const killReal = (pid: number, sig: NodeJS.Signals, group: boolean): void => {
@@ -599,12 +605,13 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
       (recs.some((o) => o.id !== r.id && o.session === r.session && o.startedMs >= r.startedMs) ||
         (!d.records && loadRegistry(logDir).some((e) => e.worker !== r.id && e.session === itermUuid(r.session!)))));
   for (const r of all) {
+    await new Promise<void>((res) => setImmediate(res)); // one record per loop turn: IPC answers between records
     // fresh clock per record: no orphan verdict or kill rests on a stale `now` (an injected clock is the round's, kept)
     const at = injectedClock ? nowMs : freshNowMs(nowMs);
     const ex = exitOf(r.id);
     // a pid is acted on only while it is verifiably this launch's process: a reused pid is someone else's
-    const wrapperUp = alive(r.wrapper) && owns(r.wrapper!, r, "wrapper");
-    const childUp = alive(r.child) && owns(r.child!, r, "child");
+    const wrapperUp = alive(r.wrapper) && (await owns(r.wrapper!, r, "wrapper"));
+    const childUp = alive(r.child) && (await owns(r.child!, r, "child"));
     // the pane's session now carries another worker: the old record is dropped, nothing is signalled or closed
     if ((wrapperUp || childUp) && held(r, all)) continue;
     if (ex && !wrapperUp && !childUp) continue;

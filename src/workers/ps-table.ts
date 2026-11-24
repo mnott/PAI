@@ -5,7 +5,7 @@
  * Here the buffer is large and every line is cut to MAX_LINE chars after reading
  * (the identifying words of a command come first).
  */
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 
 export const PS_MAX_BUFFER = 64 * 1024 * 1024;
 export const PS_MAX_LINE = 1024;
@@ -38,4 +38,17 @@ export function psTableOrNull(format: string, run: PsRunner = realRunner, tries 
     }
   }
   return null;
+}
+
+/**
+ * `ps -axo <format>` without holding the event loop: the daemon asks every 2 s and a sync ps
+ * of a busy machine is hundreds of ms (measured 330-460 ms), seconds under load. Killed at `timeoutMs`; rejects on failure.
+ */
+export function psTableAsync(format: string, timeoutMs = 5_000, maxLine = PS_MAX_LINE): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("ps", ["-axo", format], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, maxBuffer: PS_MAX_BUFFER, timeout: timeoutMs, killSignal: "SIGKILL" }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(truncateLines(stdout, maxLine));
+    });
+  });
 }

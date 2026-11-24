@@ -34,7 +34,7 @@
 
 import { pidAlive, readExit, readRecord } from "./pane-exec.js";
 import { spawn } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -53,7 +53,7 @@ import { appendLedger } from "./ledger.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { listRecords } from "./pane-exec.js";
 import { itermUuid, scopeKey } from "./scope.js";
-import { psTable, psTableOrNull } from "./ps-table.js";
+import { psTable, psTableAsync, psTableOrNull } from "./ps-table.js";
 import { escapePaneTitle, paneTitle } from "./pane-title.js";
 import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV, quoteArg } from "./pane-exec.js";
 import { panePolicy } from "./pane-policy.js";
@@ -336,17 +336,31 @@ function run(argv) {
 
 /** Run a JXA script with argv. Rejects when osascript itself cannot run. */
 export { osascript as osascriptJxa };
-function osascript(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+/** An osascript call that has not answered in this long is killed: a busy or dialog-blocked iTerm never answers. */
+export const OSASCRIPT_TIMEOUT_MS = 5_000;
+
+function osascript(script: string, args: string[], timeoutMs = OSASCRIPT_TIMEOUT_MS): Promise<{ stdout: string; stderr: string }> {
   // any non-listing script may change iTerm (split, close, rebalance): the next listing is fresh
   if (!listingCache.has(script)) listingCache.clear();
   return new Promise((resolve, reject) => {
     const proc = spawn("osascript", ["-l", "JavaScript", "-", ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    const killer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      reject(new Error(`osascript timed out after ${timeoutMs} ms`));
+    }, timeoutMs);
     let out = "";
     let err = "";
     proc.stdout.on("data", (c: Buffer) => (out += c.toString("utf8")));
     proc.stderr.on("data", (c: Buffer) => (err += c.toString("utf8")));
-    proc.on("error", reject);
-    proc.on("close", () => resolve({ stdout: out, stderr: err }));
+    proc.on("error", (e) => {
+      clearTimeout(killer);
+      reject(e);
+    });
+    proc.on("close", () => {
+      clearTimeout(killer);
+      resolve({ stdout: out, stderr: err });
+    });
+    proc.stdin.on("error", () => undefined);
     proc.stdin.write(script);
     proc.stdin.end();
   });
@@ -407,6 +421,14 @@ function psOutput(format: string): string {
   }
 }
 
+async function psOutputAsync(format: string): Promise<string> {
+  try {
+    return await psTableAsync(format);
+  } catch {
+    return "";
+  }
+}
+
 /** TTys of running `worker follow` processes, normalised to /dev/ttysNNN. */
 function followTtys(): Set<string> {
   const ttys = new Set<string>();
@@ -426,11 +448,11 @@ export function workerPaneOpen(wid: string): boolean {
 }
 
 /** True while a `follow <id>` process runs in this iTerm session (its pane shows that id). */
-function followRunsHere(uid: string): boolean {
+async function followRunsHere(uid: string): Promise<boolean> {
   if (!uid) return false;
-  const tty = itermTtyOf(uid);
+  const tty = await itermTtyOf(uid);
   if (!tty) return false;
-  return psOutput("tty=,command=")
+  return (await psOutputAsync("tty=,command="))
     .split("\n")
     .some((ln) => ln.trim().startsWith(`${tty.replace(/^\/dev\//, "")} `) && /(^|\/)(worker[- ]follow|pane exec|glm-ps follow)\b/.test(ln));
 }
@@ -446,13 +468,9 @@ function run(argv) {
 }`;
 
 /** The /dev/ttysNNN of the iTerm session with that unique id, "" when it is not live. */
-function itermTtyOf(uid: string): string {
+async function itermTtyOf(uid: string): Promise<string> {
   try {
-    const out = execFileSync("osascript", ["-l", "JavaScript", "-", uid], {
-      encoding: "utf8",
-      timeout: 5_000,
-      input: SESSION_TTY_SCRIPT,
-    }).trim();
+    const out = (await osascript(SESSION_TTY_SCRIPT, [uid])).stdout.trim();
     return out && out !== "?" && out !== "??" ? (out.startsWith("/dev/") ? out : `/dev/${out}`) : "";
   } catch {
     return "";
@@ -801,8 +819,8 @@ function run(argv) {
 export interface PaneOps {
   listIterm(): Promise<Array<{ id: string; name: string }>>;
   closeIterm(id: string): Promise<boolean>;
-  listTmux(): Array<{ id: string; command: string }>;
-  closeTmux(id: string): boolean;
+  listTmux(): Array<{ id: string; command: string }> | Promise<Array<{ id: string; command: string }>>;
+  closeTmux(id: string): boolean | Promise<boolean>;
 }
 
 /**
@@ -836,6 +854,13 @@ function isRegisteredSession(id: string): boolean {
   }
 }
 
+/** A subprocess off the event loop: stdout, killed at `timeoutMs`, rejects on failure. */
+function execAsync(cmd: string, args: string[], timeoutMs = 5_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL" }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
+}
+
 export const realPaneOps: PaneOps = {
   async listIterm() {
     if (process.platform !== "darwin") return [];
@@ -843,27 +868,24 @@ export const realPaneOps: PaneOps = {
     // iTerm renames a pane after its running command ("node"), so the follow
     // command is looked up by the session's tty instead
     const cmdByTty = new Map<string, string>();
-    for (const line of psOutput("tty=,command=").split("\n")) {
+    for (const line of (await psOutputAsync("tty=,command=")).split("\n")) {
       const [tty, ...rest] = line.trim().split(/\s+/);
       if (tty && tty !== "??") cmdByTty.set(`/dev/${tty}`, rest.join(" "));
     }
     return sessions.map((x) => ({ id: x.id, name: `${x.name ?? ""} ${cmdByTty.get(x.tty) ?? ""}`.trim() }));
   },
   closeIterm: (id) => closeRegisteredIterm(id),
-  listTmux() {
+  async listTmux() {
     try {
-      const out = execFileSync("tmux", ["list-panes", "-a", "-F", "#{pane_id}\t#{pane_start_command}"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const out = await execAsync("tmux", ["list-panes", "-a", "-F", "#{pane_id}\t#{pane_start_command}"]);
       return out.split("\n").filter(Boolean).map((l) => ({ id: l.split("\t")[0], command: l.split("\t").slice(1).join(" ") }));
     } catch {
       return [];
     }
   },
-  closeTmux(id) {
+  async closeTmux(id) {
     try {
-      execFileSync("tmux", ["kill-pane", "-t", id], { stdio: "ignore" });
+      await execAsync("tmux", ["kill-pane", "-t", id]);
       return true;
     } catch {
       return false;
@@ -898,7 +920,7 @@ export async function closeOwnPane(env: NodeJS.ProcessEnv, ops: PaneOps = realPa
   if (!uid) return false;
   // never close the session itself while its follow still runs: that follow is
   // the pane's own view, and closing here would cut off the output it shows
-  if (followRunsHere(uid)) return false;
+  if (await followRunsHere(uid)) return false;
   return ops.closeIterm(uid).catch(() => false);
 }
 
@@ -930,7 +952,7 @@ export async function closeEndedPanes(
       return;
     }
     if (!dryRun) {
-      const ok = backend === "tmux" ? ops.closeTmux(id) : await ops.closeIterm(id).catch(() => false);
+      const ok = backend === "tmux" ? await ops.closeTmux(id) : await ops.closeIterm(id).catch(() => false);
       if (entry) dropEntry(logDir, entry, "closeEndedPanes", ok ? "ended, pane closed" : "ended, close failed"); // stale whether or not the pane still existed
       if (!ok && !entry) return;
     }
@@ -943,6 +965,7 @@ export async function closeEndedPanes(
   const sessions = await ops.listIterm().catch(() => []);
   const open = new Set(sessions.map((s) => s.id));
   for (const e of registry) {
+    await new Promise<void>((res) => setImmediate(res)); // one entry per loop turn: IPC answers between entries
     // iTerm answered and the session is gone: a stale entry, forgotten without a close
     // (a live worker's entry stays: the audit needs it to reopen the pane, and the listing may have missed the session)
     if (sessions.length && !open.has(e.session)) {
@@ -955,7 +978,7 @@ export async function closeEndedPanes(
     const m = FOLLOW_ID.exec(s.name);
     if (m) await handle("iterm", s.id, m[1]);
   }
-  for (const t of ops.listTmux()) {
+  for (const t of await ops.listTmux()) {
     const m = FOLLOW_ID.exec(t.command);
     if (m) await handle("tmux", t.id, m[1]);
   }
