@@ -292,19 +292,19 @@ describe("supervision stands down while frozen", () => {
     expect(sent[1]).toContain("has produced no output for 75 min");
   });
 
-  it("detectSupervisionEvents: no stalled verdict while frozen, none from frozen minutes after a thaw", () => {
+  it("detectSupervisionEvents: no stalled verdict while frozen, none from frozen minutes after a thaw", async () => {
     const s = st("L1", 100, { spawnerSession: "own", updated: "2026-11-16 10:00:00", turns: 3 });
     const at = Date.parse("2026-11-16 11:00:00"); // 60 min without a turn, all of it frozen
     marker(at - 60 * 60_000, ["L1"]);
     const opts = { stallMs: 10 * 60_000, now: new Date(at), isAlive: () => true };
-    expect(detectSupervisionEvents([s], opts)).toEqual([]);
+    expect(await detectSupervisionEvents([s], opts)).toEqual([]);
     // thawed: the hour was frozen time, so nothing stalled
     acct({ L1: 60 * 60_000 });
     rmSync(process.env.PAI_FREEZE_FILE!);
-    expect(detectSupervisionEvents([s], opts)).toEqual([]);
+    expect(await detectSupervisionEvents([s], opts)).toEqual([]);
     // a worker not named by the marker keeps its stall verdict (the wall clock, unchanged)
     const other = { ...s, id: "L9" };
-    expect(detectSupervisionEvents([other], opts).map((e) => e.kind)).toEqual(["stalled"]);
+    expect((await detectSupervisionEvents([other], opts)).map((e) => e.kind)).toEqual(["stalled"]);
   });
 
   it("escalationReason: no verdict for a frozen worker, and frozen minutes never count after a thaw", () => {
@@ -333,13 +333,13 @@ describe("supervision stands down while frozen", () => {
     // a worker paused by a --now preemption 20 min ago, quiet for 30 active minutes around it
     const paused = st("L1", 100, { spawnerSession: "own", updated: startedStamp(now - 50 * 60_000), turns: 3, paused: true, pausedBy: "now-run", pausedAt: now - 20 * 60_000 });
     const opts = { stallMs: 10 * 60_000, now: new Date(now), isAlive: () => true };
-    expect(detectSupervisionEvents([paused], opts)).toEqual([]); // paused: no stalled verdict at all
+    expect(await detectSupervisionEvents([paused], opts)).toEqual([]); // paused: no stalled verdict at all
     // after the resume: the paused 20 min leave the clock; only the older 30 active min remain, already past the threshold — a worker that never resumed mid-spell still stalls on its ACTIVE quiet
     const resumed = { ...paused, started: startedStamp(now - 50 * 60_000), paused: false, pausedAt: undefined, pausedMs: 20 * 60_000 };
-    expect(detectSupervisionEvents([resumed], opts).map((e) => e.kind)).toEqual(["stalled"]);
+    expect((await detectSupervisionEvents([resumed], opts)).map((e) => e.kind)).toEqual(["stalled"]);
     // a fully paused-since-start worker: every minute was paused time, nothing to tell after the resume either
     const allPaused = st("L2", 101, { spawnerSession: "own", updated: startedStamp(now - 50 * 60_000), turns: 3, pausedMs: 50 * 60_000 });
-    expect(detectSupervisionEvents([allPaused], opts)).toEqual([]);
+    expect(await detectSupervisionEvents([allPaused], opts)).toEqual([]);
     // escalation: a paused worker has no verdict, and pause never produces a verdict (turn-count rule)
     const specFile = join(dir, "spec.txt");
     writeFileSync(specFile, "task", "utf8");
@@ -769,9 +769,9 @@ describe("deep freeze", () => {
     expect(rec.workers[0].resumeNote).toMatch(/status says no status/);
   });
 
-  it("deepfrozen workers trigger no failure, stall or escalation", () => {
+  it("deepfrozen workers trigger no failure, stall or escalation", async () => {
     const s = worker("w1", "2026-11-18 10:00:00", { state: "deepfrozen", pid: 999999, spawnerSession: "sess", session: { id: "i", name: "n" }, rc: null, updated: "2026-11-18 10:00:00" });
-    const ev = detectSupervisionEvents([s], { now: new Date("2026-11-18 14:00:00"), stallMs: 60_000, isAlive: () => false });
+    const ev = await detectSupervisionEvents([s], { now: new Date("2026-11-18 14:00:00"), stallMs: 60_000, isAlive: () => false });
     expect(ev).toEqual([]);
     expect(escalationReason(s, Date.parse("2026-11-18T14:00:00"))).toBeNull();
   });
@@ -792,9 +792,9 @@ describe("one own-time clock: stall alert and time budget", () => {
     expect(ownMsOf("none", 0, 20 * M, 15 * M, 0)).toBe(5 * M);
   });
 
-  it("stall alert: silent while in line the whole quiet spell, as today without the line", () => {
-    expect(detectSupervisionEvents([quiet], { ...base, sched: sched(Date.parse("2026-11-19 10:00:00")) })).toEqual([]);
-    expect(detectSupervisionEvents([quiet], base).map((e) => e.kind)).toEqual(["stalled"]);
+  it("stall alert: silent while in line the whole quiet spell, as today without the line", async () => {
+    expect(await detectSupervisionEvents([quiet], { ...base, sched: sched(Date.parse("2026-11-19 10:00:00")) })).toEqual([]);
+    expect((await detectSupervisionEvents([quiet], base)).map((e) => e.kind)).toEqual(["stalled"]);
   });
 
   it("budget checkpoint: 15 min in line + 5 min work does not fire at 20 min wall", () => {

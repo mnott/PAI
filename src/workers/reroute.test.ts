@@ -880,7 +880,7 @@ describe("reroute lineage", () => {
     const { results } = await waitWorkers(dir, ["A"], { timeoutMs: 5_000, intervalMs: 20 });
     expect(results[0]).toMatchObject({ id: "A", finalId: "C", followed: ["B", "C"], state: "done", ok: true });
     const { detectSupervisionEvents } = await import("./supervision.js");
-    const ev = detectSupervisionEvents([loadStatus(dir, "A")!, loadStatus(dir, "B")!, loadStatus(dir, "C")!], { now: new Date(), stallMs: 600_000 }).find((e) => e.worker === "C");
+    const ev = (await detectSupervisionEvents([loadStatus(dir, "A")!, loadStatus(dir, "B")!, loadStatus(dir, "C")!], { now: new Date(), stallMs: 600_000 })).find((e) => e.worker === "C");
     expect(ev?.text).toMatch(/^continuation C of A \(fix\) finished: rc=0; merge with pai worker merge C/);
   });
 
@@ -948,7 +948,7 @@ describe("harness runs stay out of L0 notices", () => {
     saveStatus(dir, mk("NORM", { fallThroughOf: "ORIG" }));
     const { detectSupervisionEvents } = await import("./supervision.js");
     const all = [loadStatus(dir, "SMOKE")!, loadStatus(dir, "ORIG")!, loadStatus(dir, "SMOKE2")!, loadStatus(dir, "NORM")!];
-    const ev = detectSupervisionEvents(all, { now: new Date(), stallMs: 600_000 });
+    const ev = await detectSupervisionEvents(all, { now: new Date(), stallMs: 600_000 });
     expect(ev.find((e) => e.worker === "SMOKE")).toBeUndefined();
     expect(ev.find((e) => e.worker === "SMOKE2")).toBeUndefined();
     // ORIG's continuation is the harness run: its failure names no merge target (the smoke is not mergeable work)

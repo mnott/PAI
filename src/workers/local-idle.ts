@@ -20,7 +20,7 @@ import { eventLine, type Messenger } from "./run-events.js";
 import { routeNotice } from "./notice-triage.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { readLocalStatus, type LocalStatus } from "./local-status.js";
-import { holdsSlot, isChatPane, isLive, pausedFree, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
+import { holdsSlot, isChatPane, isLive, isLiveAsync, pausedFree, loadStatusesCached, ownsPidCached, ownsPidCachedAsync, type WorkerStatus } from "./status.js";
 import { packageRoot } from "../module-paths.js";
 
 export interface LocalIdleConfig {
@@ -282,7 +282,11 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
   }
   // one cached read feeds both the live filter and the queue walk: queueRows without statuses re-reads every status file (7.5k files, ~3 s of daemon loop block)
   const all = loadStatusesCached(logDir);
-  const statuses = all.filter((s) => !isChatPane(s) && isLive(s, ownsPidCached) && s.state === "running");
+  const statuses: WorkerStatus[] = [];
+  for (const s of all) {
+    if (isChatPane(s) || s.state !== "running") continue;
+    if (await isLiveAsync(s, ownsPidCachedAsync)) statuses.push(s);
+  }
   const queue = queueRows(logDir, {}, undefined, all);
   const providers: LocalProviderSample[] = [];
   const tiers = tierProviderNames();

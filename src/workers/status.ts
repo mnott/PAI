@@ -8,7 +8,7 @@
  */
 
 import { ledgerStamp } from "./ledger.js";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -793,9 +793,29 @@ export function spawnTimeOf(status: OwnerFields): number | undefined {
   return new Date(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!).getTime();
 }
 
+/** `ps <args>` without holding the event loop: killed at `timeoutMs` (SIGKILL), rejects on failure. Same shape as psTableAsync. */
+function psAsync(args: string[], timeoutMs = 5_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("ps", args, { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, maxBuffer: 64 << 20, timeout: timeoutMs, killSignal: "SIGKILL" }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout.trim());
+    });
+  });
+}
+
 function parentPidOf(pid: number): number | undefined {
   try {
     const out = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    return out ? Number(out) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** parentPidOf without blocking the daemon loop; undefined when ps fails or times out. */
+async function parentPidAsync(pid: number, timeoutMs = 5_000): Promise<number | undefined> {
+  try {
+    const out = await psAsync(["-o", "ppid=", "-p", String(pid)], timeoutMs);
     return out ? Number(out) : undefined;
   } catch {
     return undefined;
@@ -849,7 +869,8 @@ export const realProcTable: ProcTable = {
 };
 
 /**
- * ownsPid over a process table. A start time that disagrees with the status
+ * ownsPid over a process table — the synchronous variant, for CLI and hook paths outside the daemon.
+ * The daemon loop must use ownsPidAsync / ownsPidCachedAsync instead. A start time that disagrees with the status
  * is not yet "another process": a run that waited in the capacity queue was
  * spawned long before its `started` stamp, so the process is also accepted when
  * its command line names the worker (id, or its own label as `pai worker run`
@@ -876,15 +897,111 @@ export function makeOwnsPid(t: ProcTable): (status: OwnerFields) => boolean {
   };
 }
 
+/** The async process facts ownership reads; tests inject a fake table. */
+export interface AsyncProcTable {
+  alive: (pid: number) => boolean;
+  /** Start time (ms epoch) of the process; undefined when it cannot be read. */
+  startMs: (pid: number) => Promise<number | undefined>;
+  /** Full command line of the process; "" when it cannot be read. */
+  command: (pid: number) => Promise<string>;
+  parentPid: (pid: number) => Promise<number | undefined>;
+}
+
+/** realProcTable without blocking the event loop: every `ps` is execFile'd, killed at 5 s. */
+export const realProcTableAsync: AsyncProcTable = {
+  alive,
+  startMs: async (pid) => {
+    try {
+      // Same STARTED-header guard as realProcTable: `ps -o lstart= -p <dead pid>`
+      // prints the header and exits 0 on macOS, so a dead pid must stay unknown.
+      const out = await psAsync(["-o", "lstart=", "-p", String(pid)]);
+      if (!out || out.trim().toUpperCase() === "STARTED") return undefined;
+      const t = Date.parse(out.split("\n")[0] ?? "");
+      return Number.isNaN(t) ? undefined : t;
+    } catch {
+      return undefined;
+    }
+  },
+  command: async (pid) => {
+    try {
+      return await psAsync(["-ww", "-o", "command=", "-p", String(pid)]);
+    } catch {
+      return "";
+    }
+  },
+  parentPid: parentPidAsync,
+};
+
+/** ownsPid over an async process table — the daemon-loop variant. */
+export function makeOwnsPidAsync(t: AsyncProcTable): (status: OwnerFields) => Promise<boolean> {
+  return async (status) => {
+    if (status.pool) return status.pid > 0 && t.alive(status.pid) && (await t.parentPid(status.pid)) === status.pool.hostPid;
+    if (status.pid <= 0 || !t.alive(status.pid)) return false;
+    const psStart = await t.startMs(status.pid);
+    const started = status.procStart ?? spawnTimeOf(status) ?? (status.started ? Date.parse(status.started.replace(" ", "T")) : NaN);
+    if (psStart === undefined || Number.isNaN(started)) return t.alive(status.pid);
+    if (Math.abs(psStart - started) <= 120_000) return true;
+    const cmd = await t.command(status.pid);
+    return (!!status.id && cmd.includes(status.id)) || (!!status.label && status.label.length >= 8 && cmd.includes(status.label));
+  };
+}
+
+/** ownsPid over the real process table — the synchronous variant, for CLI and hook paths outside the daemon. */
 export const ownsPid = makeOwnsPid(realProcTable);
+
+/** ownsPid without blocking the daemon loop. */
+export const ownsPidAsync = makeOwnsPidAsync(realProcTableAsync);
+
+/**
+ * ownsPidAsync for periodic daemon tasks: a pid verified (one async `ps`) is trusted for a minute while
+ * it still exists, so a tick does not spawn a `ps` per running worker. Kill paths keep using ownsPid.
+ */
+export async function ownsPidCachedAsync(status: OwnerFields, now = Date.now()): Promise<boolean> {
+  if (status.pid <= 0 || !alive(status.pid)) return false;
+  const key = `${status.pid}:${status.started}`;
+  const at = ownsCache.get(key);
+  if (at !== undefined && now - at < OWNS_TTL_MS) return true;
+  const ok = await ownsPidAsync(status);
+  if (ok) ownsCache.set(key, now);
+  else ownsCache.delete(key);
+  if (ownsCache.size > 512) for (const [k, t] of ownsCache) if (now - t >= OWNS_TTL_MS) ownsCache.delete(k);
+  return ok;
+}
+
+/** isLive with an async owns — the daemon-loop variant. */
+export async function isLiveAsync(
+  status: OwnerFields & Pick<WorkerStatus, "state">,
+  owns: (s: OwnerFields) => Promise<boolean> = ownsPidAsync
+): Promise<boolean> {
+  return (status.state === "running" || status.state === "queued") && (await owns(status));
+}
+
+/** reconcileStatuses with an async owns: awaits each check and yields to the loop between workers. */
+export async function reconcileStatusesAsync(
+  logDir: string,
+  now: Date = new Date(),
+  graceMs: number = LOST_GRACE_MS,
+  owns: (s: OwnerFields) => Promise<boolean> = ownsPidAsync
+): Promise<string[]> {
+  const lost: string[] = [];
+  for (const s of loadStatuses(logDir)) {
+    if ((s.state !== "running" && s.state !== "queued") || (await owns(s))) continue;
+    const upd = Date.parse((s.updated ?? "").replace(" ", "T"));
+    if (Number.isNaN(upd) || now.getTime() - upd < graceMs) continue;
+    saveStatus(logDir, { ...s, state: "lost", rc: null, last: "process ended without a final status" }, now);
+    lost.push(s.id);
+  }
+  return lost;
+}
 
 const ownsCache = new Map<string, number>();
 /** How long a verified pid ownership is trusted by the daemon's periodic tasks. */
 export const OWNS_TTL_MS = 60_000;
 
 /**
- * ownsPid for periodic daemon tasks: a pid that was verified (one blocking `ps`) is trusted for a minute while
- * it still exists, so a tick does not spawn a `ps` per running worker. Kill paths keep using ownsPid.
+ * ownsPid for periodic tasks outside the daemon loop (CLI, hooks): a pid that was verified (one blocking `ps`)
+ * is trusted for a minute while it still exists, so a pass does not spawn a `ps` per running worker.
+ * The daemon must use ownsPidCachedAsync. Kill paths keep using ownsPid.
  */
 export function ownsPidCached(status: OwnerFields, now = Date.now()): boolean {
   if (status.pid <= 0 || !alive(status.pid)) return false;
