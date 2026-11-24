@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { routerUrl } from "./run-env.js";
 import { providerKeyPath, resolveProviderKey, type WorkerProvider } from "./config.js";
+import { stripApiKey } from "./strip-api-key.js";
 
 /** Build the opencode run argument vector (without the binary itself). */
 export function buildOpencodeArgs(prompt: string, model: string | undefined, sessionId?: string | null): string[] {
@@ -80,7 +81,7 @@ export function buildOpencodeEnv(
   routerBase = routerUrl(),
   token = "pai"
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = stripApiKey({ ...process.env });
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_BASE_URL;
   delete env.ANTHROPIC_AUTH_TOKEN;

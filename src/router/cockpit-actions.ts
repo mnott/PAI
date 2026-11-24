@@ -17,7 +17,7 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
-import { withLoginIdentity } from "../workers/run-env.js";
+import { stripApiKey, withLoginIdentity } from "../workers/run-env.js";
 import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 import { parseEnginePriority, setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
@@ -902,7 +902,7 @@ export function spawnMemoryRun(
         detached: true,
         stdio: ["ignore", fd, fd],
         // the router may run without USER/LOGNAME/HOME; the CLI then dies in os.userInfo() while loading its config
-        env: withLoginIdentity({ ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId }),
+        env: withLoginIdentity(stripApiKey({ ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId })),
       });
     } finally {
       io.closeSync(fd);
