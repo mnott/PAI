@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { shouldSummarize, capPrompt, extractFromJsonl, probeTopicShift, resetTopicProbeState } from "./session-summary-worker.js";
-import { planSummarySpawn } from "../workers/daemon-llm.js";
+import { shouldSummarize, capPrompt, extractFromJsonl, probeTopicShift, resetTopicProbeState, isDaemonLlmTranscript } from "./session-summary-worker.js";
+import { planSummarySpawn, DAEMON_LLM_ENV_MARKER } from "../workers/daemon-llm.js";
 import { enqueueDedupedPerSession, resetQueueForTests } from "./work-queue.js";
 
 const line = (type: string, text: string) =>
@@ -200,6 +200,7 @@ ${extra}`;
     expect(plan.provider).toBe("loc");
     expect(plan.model).toBe("loc-model");
     expect(plan.env.ANTHROPIC_API_KEY).not.toBe("sk-should-never-pass");
+    expect(plan.env[DAEMON_LLM_ENV_MARKER]).toBe("1");
   });
 
   it("falls back to the cloud tier when no local provider answers", async () => {
@@ -213,5 +214,29 @@ ${extra}`;
     expect((await planSummarySpawn("cloudy", "sonnet", { probe, resolveLocal: up })).provider).toBe("cloudy");
     const pm = await planSummarySpawn("cloudy/some-model", "sonnet", { probe, resolveLocal: up });
     expect(pm).toMatchObject({ provider: "cloudy", model: "some-model" });
+  });
+});
+
+describe("daemon-LLM transcript backstop", () => {
+  const saved = process.env[DAEMON_LLM_ENV_MARKER];
+  afterEach(() => { if (saved === undefined) delete process.env[DAEMON_LLM_ENV_MARKER]; else process.env[DAEMON_LLM_ENV_MARKER] = saved; });
+
+  it("refuses a transcript under projects/-/sessions", () => {
+    expect(isDaemonLlmTranscript("/home/u/.claude/projects/-/sessions/abc.jsonl", "/")).toBe(true);
+  });
+
+  it("refuses cwd / with the marker set", () => {
+    process.env[DAEMON_LLM_ENV_MARKER] = "1";
+    expect(isDaemonLlmTranscript("/home/u/.claude/projects/some-project/abc.jsonl", "/")).toBe(true);
+  });
+
+  it("accepts a normal interactive transcript", () => {
+    delete process.env[DAEMON_LLM_ENV_MARKER];
+    expect(isDaemonLlmTranscript("/home/u/.claude/projects/some-project/abc.jsonl", "/home/u/dev/proj")).toBe(false);
+  });
+
+  it("accepts cwd / without the marker", () => {
+    delete process.env[DAEMON_LLM_ENV_MARKER];
+    expect(isDaemonLlmTranscript("/home/u/.claude/projects/some-project/abc.jsonl", "/")).toBe(false);
   });
 });

@@ -76,3 +76,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/daemon/log-rotate.test.ts | a | copytruncate rotation of fd-owned logs: archive, tail kept, keep=3 drop, live append fd survives |
 | src/workers/pane-nonblocking.test.ts | a | proves daemon pane tasks time out slow ps/osascript without blocking the loop |
 | src/daemon/session-summary-worker.test.ts | a | regression: Stop spam re-summarized 281MB transcripts 259x; covers debounce, incremental offset, queue dedupe |
+| src/hooks/ts/session-end/capture-session-summary.test.ts | a | summarizer feedback loop: SessionEnd of a daemon-spawned LLM run enqueued a summary of the summarizer's own transcript, spawning another summarizer forever (401 runs in daemon.log on 2026-11-24); pins that marker/worker sessions write no session document and a normal interactive session still does |

@@ -31,6 +31,16 @@ import { proxyPort, ensureProxyRunning } from "./proxy/server.js";
 
 export type { ModelTier } from "./config.js";
 
+/**
+ * Marker every daemon-spawned LLM process carries. The run is text-in/text-out
+ * (prompt in, answer out) and must never be summarized itself: without this
+ * marker its SessionEnd/Stop hooks enqueue a summary of the summarizer's own
+ * transcript, which spawns another summarizer — an unbounded feedback loop
+ * (401 runs observed on 2026-11-24). Hooks check `isDaemonLlmSession()`; the
+ * session-summary worker refuses such transcripts as a backstop.
+ */
+export const DAEMON_LLM_ENV_MARKER = "PAI_DAEMON_LLM";
+
 /** Timeout per tier (ms) — a class-appropriate budget, not a per-model one. */
 export const LLM_TIMEOUT_MS: Record<ModelTier, number> = {
   haiku: 60_000,    // 60 seconds
@@ -88,7 +98,7 @@ function legacyPlan(tier: ModelTier, config: WorkersConfig | null): LlmSpawnPlan
       ...containmentArgs(workersLogDir(config ?? defaultWorkersConfig())),
       "-p", "--no-session-persistence",
     ],
-    env,
+    env: { ...env, [DAEMON_LLM_ENV_MARKER]: "1" },
     timeoutMs: LLM_TIMEOUT_MS[tier],
     provider: null,
   };
@@ -157,7 +167,7 @@ async function providerPlan(
       ...containmentArgs(logDir),
       "-p", "--no-session-persistence",
     ],
-    env: buildRunEnv(provider, true, proxyUrl, providerName, viaRouter),
+    env: { ...buildRunEnv(provider, true, proxyUrl, providerName, viaRouter), [DAEMON_LLM_ENV_MARKER]: "1" },
     timeoutMs,
     provider: providerName,
   };
