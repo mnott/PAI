@@ -13,9 +13,17 @@
  * A partial freeze (--only/--except) records scope "workers": isFrozen()/freezeHold() ignore it, supervision skips just the frozen ids (frozenSince). `--only` ids that are not running write no marker.
  *
  * Order: workers deepest first (an L2 before its L1, so no L1 ever runs next to a
- * frozen child), then the model server. Thaw: model server, then workers deepest
+ * frozen child), then the model servers. Thaw: model server, then workers deepest
  * first again (the L1 last). `--only <id>` implies `--workers-only`: freezing one
  * worker must never stall every other worker's shared model server.
+ *
+ * By default every running model server is stopped EXCEPT a runtime explicitly
+ * marked light: `models.runtimes.<name>.freeze: spare`. The shipped apple-fm
+ * runtime carries that flag — the Neural Engine bridge costs near nothing idle
+ * and SIGSTOPping it hangs every helper call routed to it (2026-11-24: 60 s
+ * timeouts). Everything else (GPU servers, ollama, unconfigured runtimes) is
+ * stopped, so a freeze really frees the machine. `--all` freezes every running
+ * server including the spared ones. Thaw continues exactly what was frozen.
  *
  * Never stopped: this process and its ancestors, the daemon, router, AIBroker,
  * pool hosts, docker. Only worker pids, their descendants and model servers.
@@ -361,6 +369,8 @@ export interface FreezeDeps {
   statuses: (logDir: string) => WorkerStatus[];
   /** One entry per RUNNING model server: the listening pid and the name of what it serves (its port's /v1/models id). Async because naming a server is an HTTP probe. */
   servers: () => Promise<{ pid: number; label: string }[]>;
+  /** The runtime names whose config declares `freeze: spare` (kept running by a default freeze). Default: read from the main config. */
+  spareRuntimes?: () => string[];
   signal: (pid: number, sig: "SIGSTOP" | "SIGCONT") => void;
   owns: (s: WorkerStatus) => boolean;
   self: number;
@@ -389,6 +399,16 @@ export function realFreezeDeps(): FreezeDeps {
     self: process.pid,
     now: () => Date.now(),
     note: (d, id, t) => void setWorkerNote(d, id, t),
+    // lazy: building deps must stay free of config reads
+    spareRuntimes: () => {
+      try {
+        const { readRuntimeCommands } = require("./model-runtimes.js") as typeof import("./model-runtimes.js");
+        const cmds = readRuntimeCommands();
+        return Object.keys(cmds).filter((n) => cmds[n]?.freeze === "spare");
+      } catch {
+        return [];
+      }
+    },
   };
 }
 
@@ -496,7 +516,18 @@ export interface Except {
 /** A model-server label ("provider:port") belongs to a worker when it starts with the worker's provider. */
 const serverOf = (label: string, s: WorkerStatus): boolean => !!s.provider && (label === s.provider || label.startsWith(`${s.provider}:`));
 
-export async function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[], except?: Except): Promise<FreezeReport> {
+/**
+ * A model-server label ("provider:port" or "provider:port serving X") names its runtime by the provider part.
+ * A server is SPARED only when that runtime (or any provider sharing the port) declares `freeze: spare`;
+ * everything else — including an unconfigured runtime — is stopped.
+ */
+export function sparedServer(label: string, spare: string[]): boolean {
+  const port = /:(\d+)/.exec(label)?.[1];
+  const providers = label.split(":")[0].split(/\s+/)[0];
+  return spare.some((s) => s === providers || (port && `${s}:${port}` === providers));
+}
+
+export async function freezeAll(logDir: string, by: string, forMs: number | undefined, d: FreezeDeps, only?: string[], except?: Except, freezeAllServers = false): Promise<FreezeReport> {
   // defence in depth: the env var AND the process ancestry (a worker with PAI_WORKER cleared is still a worker).
   // Both reads are the guard's own, never d.statuses/d.procs — an injected deps must not be what decides.
   // The status read runs first (pure file reads) so the `ps` only happens outside test mode, where the ancestry matters.
@@ -507,11 +538,11 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
   }
   const existing = readFreeze();
   if (existing) throw new Error(`already frozen since ${new Date(existing.since).toISOString()} by ${existing.by}; \`pai thaw\` first`);
-  const all = d.statuses(logDir);
-  const spared = except && (except.ids?.length || except.session) ? familyIds(all, except) : new Set<string>();
-  const live = all.filter((s) => s.state === "running" && s.pid > 0 && (!only || only.includes(s.id)) && !spared.has(s.id) && d.owns(s));
+  const statuses = d.statuses(logDir);
+  const spared = except && (except.ids?.length || except.session) ? familyIds(statuses, except) : new Set<string>();
+  const live = statuses.filter((s) => s.state === "running" && s.pid > 0 && (!only || only.includes(s.id)) && !spared.has(s.id) && d.owns(s));
   // a model server an excepted worker runs on keeps serving it
-  const sparedLive = all.filter((s) => spared.has(s.id) && s.state === "running");
+  const sparedLive = statuses.filter((s) => spared.has(s.id) && s.state === "running");
   const sigs = (e: FrozenEntry): boolean => {
     try {
       d.signal(e.pid, "SIGSTOP");
@@ -530,10 +561,19 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
   const marker: FreezeMarker = { since, by, ...(partial ? { scope: "workers" as const } : {}), ...(forMs ? { until: since + forMs } : {}), pids: stopped };
   writeJson(freezePath(), marker);
   const wanted = new Set<number>();
+  const spare = freezeAllServers ? null : (d.spareRuntimes?.() ?? []);
+  const sparedServers: string[] = [];
   const stopPass = async (): Promise<void> => {
     const rows = d.procs();
-    // a model server an excepted worker runs on keeps serving it
-    const servers = (await d.servers()).filter((m) => !sparedLive.some((s) => serverOf(m.label, s)));
+    // a model server an excepted worker runs on keeps serving it; a `freeze: spare` runtime keeps serving everyone unless --all
+    const servers = (await d.servers()).filter((m) => {
+      if (sparedLive.some((s) => serverOf(m.label, s))) return false;
+      if (spare && sparedServer(m.label, spare)) {
+        if (!sparedServers.includes(m.label)) sparedServers.push(m.label);
+        return false;
+      }
+      return true;
+    });
     const plan = planFreeze(live, rows, servers, d.self).filter((e) => !wanted.has(e.pid));
     // a worker's tree root first (no new children), model servers last
     for (const e of plan) {
@@ -556,6 +596,7 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
   for (const e of stopped.filter((x) => x.kind === "model")) (modelEntries.get(e.id) ?? modelEntries.set(e.id, []).get(e.id)!).push(e);
   for (const [label, mine] of modelEntries) lines.push(`frozen model ${label} (pid ${mine[mine.length - 1].pid}, ${mine.length} processes)`);
   if (spared.size) lines.push(`spared ${[...spared].join(", ")} (and children)`);
+  if (sparedServers.length) lines.push(`spared model ${sparedServers.join(", ")} (runtime marked freeze: spare; \`pai freeze --all\` stops it too)`);
   lines.push(`frozen ${ids.length} workers + ${modelEntries.size} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
   return { lines, total: stopped.length, marker };
 }

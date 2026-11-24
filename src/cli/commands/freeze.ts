@@ -73,7 +73,7 @@ async function freezeRun(ctx: RunContext): Promise<number> {
     if (ctx.opts["workers-only"] === true || (only && ctx.opts.models !== true)) deps.servers = async () => [];
     const exceptIds = list(ctx.opts.except);
     const exceptSession = typeof ctx.opts["except-session"] === "string" ? ctx.opts["except-session"] : undefined;
-    const r = await freezeAll(logDir(), by(), forMs, deps, only, exceptIds || exceptSession ? { ids: exceptIds, session: exceptSession } : undefined);
+    const r = await freezeAll(logDir(), by(), forMs, deps, only, exceptIds || exceptSession ? { ids: exceptIds, session: exceptSession } : undefined, ctx.opts.all === true);
     console.log(r.lines.join("\n"));
     return 0;
   } catch (e) {
@@ -98,15 +98,17 @@ const MODELS_OPT = { name: "models", type: "boolean", summary: "With --only: als
 const EXCEPT_OPT = { name: "except", type: "string", value: "IDS", summary: "Freeze everything except these worker ids (comma list) and their children" } as const;
 const EXCEPT_SESSION_OPT = { name: "except-session", type: "string", value: "NAME", summary: "Freeze everything except this session's workers (and their children)" } as const;
 const FOR_OPT = { name: "for", type: "string", value: "DURATION", summary: "Thaw by itself after this long (30m, 2h); the daemon does it, `pai thaw` always works" } as const;
+const ALL_OPT = { name: "all", type: "boolean", summary: "Freeze every local model server too, including the ones marked light (models.runtimes.<name>.freeze: spare)" } as const;
 
 export const freezeCommand: CommandDef = {
   name: "freeze",
-  summary: "Stop all running workers and the local model server to free the CPU/GPU now",
+  summary: "Stop all running workers and the local model servers to free the CPU/GPU now (a runtime marked freeze: spare keeps serving)",
   description:
-    "Testing freeze safely: prove `pai freeze` without touching the live machine with three env vars together — PAI_FREEZE_FILE pointing at a throwaway marker, PAI_FREEZE_LOGDIR pointing at an isolated log dir (required in test mode: worker discovery reads only that dir, never the real one), and PAI_FREEZE_SERVERS listing exactly the pids its model discovery may stop (`pid[:label]`, comma list; with nothing listed no server is discovered at all). Isolation is all-or-nothing: a marker alone is not isolation — with test mode half-set (no log dir) the command refuses rather than fall back to the real config. A PAI worker cannot freeze even with PAI_WORKER cleared from its env (`env -u PAI_WORKER`): the process ancestry is checked against the running workers' pids too, and only test mode is exempt. SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model server(s) — one entry per server, found by its listening port and named by the model it serves there. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` (and `--except`) is a partial freeze: only those workers stand still, the rest stay supervised and the slot gate stays open; ids that are not running write no marker. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).",
-  examples: ["pai freeze", "pai freeze --for 30m", "pai freeze --only w-1234", "pai freeze --status", "pai freeze --except-session CaseLeaf", "pai thaw", "pai thaw --session CaseLeaf"],
+    "Testing freeze safely: prove `pai freeze` without touching the live machine with three env vars together — PAI_FREEZE_FILE pointing at a throwaway marker, PAI_FREEZE_LOGDIR pointing at an isolated log dir (required in test mode: worker discovery reads only that dir, never the real one), and PAI_FREEZE_SERVERS listing exactly the pids its model discovery may stop (`pid[:label]`, comma list; with nothing listed no server is discovered at all). Isolation is all-or-nothing: a marker alone is not isolation — with test mode half-set (no log dir) the command refuses rather than fall back to the real config. A PAI worker cannot freeze even with PAI_WORKER cleared from its env (`env -u PAI_WORKER`): the process ancestry is checked against the running workers' pids too, and only test mode is exempt. SIGSTOP to every running worker's whole process tree (L1s, L2s, local and cloud: their tool calls burn local CPU; children first, an L1 last) and then to the local model servers — one entry per server, found by its listening port and named by the model it serves there. Every server is stopped except a runtime explicitly marked light with `models.runtimes.<name>.freeze: spare` (the shipped apple-fm bridge carries it: on the Neural Engine it costs near nothing idle and stopping it hangs every helper call routed to it — 2026-11-24: 60 s timeouts). Everything else, GPU servers and unconfigured runtimes included, is stopped so a freeze really frees the machine; `--all` stops the spared ones too, and the output lists what was spared. Nothing is killed. No new `pai worker run` gets a slot while frozen; deadlines and wait budgets do not count the frozen time and supervision treats the workers as healthy. `pai thaw` continues everything where it was and tells every worker so. `--only <id>` (and `--except`) is a partial freeze: only those workers stand still, the rest stay supervised and the slot gate stays open; ids that are not running write no marker. `--only <id>` implies `--workers-only`: one worker's freeze never stalls every other worker's shared model server (`--models` takes it anyway). Never touches the daemon, router, AIBroker, interactive sessions or docker. Refused inside a worker. `--except-session NAME` / `--except ID[,ID]` freezes everything except those workers and their children (a model server they run on keeps serving). A run started with `--now` (or inside an urgency window) is not held by a freeze; it takes its cloud route when the local model is frozen, unless --local (then the model server is thawed).",
+  examples: ["pai freeze", "pai freeze --for 30m", "pai freeze --all", "pai freeze --only w-1234", "pai freeze --status", "pai freeze --except-session CaseLeaf", "pai thaw", "pai thaw --session CaseLeaf"],
   options: [
     FOR_OPT,
+    ALL_OPT,
     WORKERS_ONLY_OPT,
     ONLY_OPT,
     MODELS_OPT,
@@ -141,10 +143,10 @@ export const workerFreezeCommand: CommandDef = {
   name: "freeze",
   summary: "Alias of `pai freeze` (--all) and `pai thaw` (--resume)",
   args: [{ name: "ID", summary: "Freeze this one worker (in memory; lost on reboot)" }],
-  description: "`pai worker freeze <id>` stops one worker's process tree (`pai worker thaw <id>` continues it); `pai worker freeze --all` is `pai freeze`; `--resume` is `pai thaw`; `--status` shows what is frozen.",
+  description: "`pai worker freeze <id>` stops one worker's process tree (`pai worker thaw <id>` continues it); `pai worker freeze --all` is `pai freeze --all` (every worker and every local model server, including runtimes marked freeze: spare); `--resume` is `pai thaw`; `--status` shows what is frozen.",
   examples: ["pai worker freeze --all", "pai worker freeze --resume", "pai worker freeze 20261019-142851-84910"],
   options: [
-    { name: "all", type: "boolean", summary: "Freeze every running worker and the local model server" },
+    { name: "all", type: "boolean", summary: "Freeze every running worker and every local model server (runtimes marked freeze: spare too; a plain `pai freeze` spares them)" },
     { name: "resume", type: "boolean", summary: "Thaw (same as `pai thaw`)" },
     { name: "status", type: "boolean", summary: "Show what is frozen" },
     FOR_OPT,
@@ -161,6 +163,7 @@ export const workerFreezeCommand: CommandDef = {
       return freezeRun(ctx);
     }
     if (ctx.opts.all !== true && ctx.opts.resume !== true && ctx.opts.status !== true) throw new CliError("say --all, --resume or --status", "pai worker freeze --all");
+    // `pai worker freeze --all` already passes opts.all through to freezeRun, which freezes light runtimes too
     return freezeRun(ctx);
   },
 };
