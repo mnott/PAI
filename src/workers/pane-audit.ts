@@ -22,7 +22,7 @@ import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { killTree } from "./kill-tree.js";
 import { appendStopEvent, requestKill } from "./endreason.js";
-import { loadStatusesCached, loadStatus, refreshCachedStatus, isLive, isLiveAsync, isChatPane, ownsPid, ownsPidCached, ownsPidCachedAsync, spawnTimeOf } from "./status.js";
+import { loadRecentStatusesCached, loadLiveStatusesCached, loadStatus, refreshCachedStatus, isLive, isLiveAsync, isChatPane, ownsPid, ownsPidCached, ownsPidCachedAsync, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import { isPaiContinuation } from "./run/pane-handles.js";
@@ -153,29 +153,32 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
   });
 }
 
+/** The audit looks at workers that run or ended within this long; older ones are history (no verdict, no cost). */
+export const AUDIT_RECENT_MS = 24 * 3600_000;
+
 /** Everything running now that must own a pane. A run that was refused/allowed hidden (pane.opened false) is exempt. */
 /** runningProcs without blocking the daemon loop: ownership checks are awaited, one at a time. */
-export async function runningProcsAsync(logDir: string): Promise<AuditProc[]> {
+export async function runningProcsAsync(logDir: string, nowMs = Date.now()): Promise<AuditProc[]> {
   const procs: AuditProc[] = [];
   const launches = new Map<string, LaunchRecord>();
   for (const r of listRecords()) launches.set(r.id, r);
-  for (const s of loadStatusesCached(logDir)) {
+  for (const s of loadRecentStatusesCached(logDir, nowMs - AUDIT_RECENT_MS, nowMs)) {
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
     if (s.rerouted && s.fallThroughTo) continue;
     const r = launches.get(s.id);
     procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), ...(r ? { launchMs: Math.max(r.openedMs ?? 0, r.startedMs) } : {}), ...(r && (pidAlive(r.wrapper) || pidAlive(r.caller)) ? { launching: true } : {}), live: await isLiveAsync(s, ownsPidCachedAsync), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
-  for (const p of loadPaneRunStatuses(logDir)) procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs, ended: p.state !== "running" });
+  for (const p of loadPaneRunStatuses(logDir)) if (p.state === "running" || !(p.startedMs < nowMs - AUDIT_RECENT_MS)) procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs, ended: p.state !== "running" });
   return procs;
 }
 
-export function runningProcs(logDir: string): AuditProc[] {
+export function runningProcs(logDir: string, nowMs = Date.now()): AuditProc[] {
   const procs: AuditProc[] = [];
   // the pane launcher's own view, read once per tick: a run whose wrapper or caller still lives is mid-launch
   const launches = new Map<string, LaunchRecord>();
   for (const r of listRecords()) launches.set(r.id, r);
-  for (const s of loadStatusesCached(logDir)) {
+  for (const s of loadRecentStatusesCached(logDir, nowMs - AUDIT_RECENT_MS, nowMs)) {
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
     // a rerouted old run handed its task to the restart: it is not judged over a pane it no longer owns
     if (s.rerouted && s.fallThroughTo) continue;
@@ -184,7 +187,7 @@ export function runningProcs(logDir: string): AuditProc[] {
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
   // ended pane runs too: their pane must have closed itself, and one still open is a fault
-  for (const p of loadPaneRunStatuses(logDir)) procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs, ended: p.state !== "running" });
+  for (const p of loadPaneRunStatuses(logDir)) if (p.state === "running" || !(p.startedMs < nowMs - AUDIT_RECENT_MS)) procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs, ended: p.state !== "running" });
   return procs;
 }
 
@@ -314,7 +317,7 @@ export async function auditTick(
     return []; // iTerm unreadable: no verdict, no false alarm
   }
   if (tabs.size === 0) return []; // no iTerm (tmux, other platform): nothing to compare against
-  const procs = deps.procs ? deps.procs() : await (deps.procsAsync ?? (() => runningProcsAsync(logDir)))();
+  const procs = deps.procs ? deps.procs() : await (deps.procsAsync ?? (() => runningProcsAsync(logDir, nowMs)))();
   const verdicts = auditPanes(procs, (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, nowMs, sizes, graceMs);
   // a pane the operator closed itself (pane-bar's /quit, the same way a worker's own end closes its pane):
   // the deliberate close is the expected end state — the audit leaves it closed, never reopens or kills
@@ -383,7 +386,10 @@ export async function auditTick(
     spared.add(id);
     appendLedger(ledgerPath(logDir), "PANE-SPARED", { id, why: `pane audit: spared ${id}: ${why}` }, clock());
   };
+  // a verdict reported once stays reported while its run is audited at all (a flap back to ok does not re-arm it); it goes with the run
   const next: Record<string, string> = {};
+  const audited = new Set(procs.map((p) => p.id));
+  for (const [id, mark] of Object.entries(told)) if (audited.has(id)) next[id] = mark;
   for (const v of verdicts) {
     if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
     next[v.id] = v.mark;
@@ -797,7 +803,7 @@ const defaultClose = (logDir: string) => (id: string) => closePaneForWorker(logD
 
 function runningWorkers(logDir: string): Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> {
   const out: Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> = [];
-  for (const s of loadStatusesCached(logDir)) {
+  for (const s of loadLiveStatusesCached(logDir)) {
     if (isChatPane(s) || s.state !== "running" || !isLive(s, ownsPidCached)) continue;
     out.push({ id: s.id, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), exec: s.pane?.exec === true, exempt: s.pane?.opened === false });
   }

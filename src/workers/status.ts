@@ -617,6 +617,64 @@ export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStat
   return out;
 }
 
+/** Names of terminal status files already judged older than a recency cutoff, per directory: never statted again. */
+const oldStatusNames = new Map<string, { cutoff: number; names: Set<string> }>();
+
+/**
+ * The statuses a sweep over recent work needs: every non-terminal one, and the terminal ones whose file was
+ * last written at or after `sinceMs`. A terminal file older than that is skipped from its directory entry
+ * alone — not parsed, and after its first look not even statted — so a pass over thousands of old workers
+ * touches only the live and recently ended ones. The returned objects are shared with the cache: read-only.
+ */
+export function loadRecentStatusesCached(logDir: string, sinceMs: number, now = Date.now()): WorkerStatus[] {
+  if (!existsSync(logDir)) return [];
+  let old = oldStatusNames.get(logDir);
+  if (!old || sinceMs < old.cutoff) {
+    old = { cutoff: sinceMs, names: new Set() }; // an older cutoff than the one the skips were judged by: judge again
+    oldStatusNames.set(logDir, old);
+  }
+  const out: WorkerStatus[] = [];
+  const present = new Set<string>();
+  for (const name of readdirSync(logDir)) {
+    if (!name.endsWith(".status")) continue;
+    present.add(name);
+    if (old.names.has(name)) continue;
+    const path = join(logDir, name);
+    try {
+      let hit = statusCache.get(path);
+      if (hit?.status && isTerminal(hit.status.state) && now - hit.checked < TERMINAL_RECHECK_MS) {
+        if (Number(hit.mtimeNs / 1_000_000n) < sinceMs) old.names.add(name);
+        else out.push(hit.status);
+        continue;
+      }
+      const id = statusFileIdentity(path);
+      if (!hit && Number(id.mtimeNs / 1_000_000n) < sinceMs) {
+        // never read: a file this old is a finished worker's unless a running one stopped writing a day ago
+        old.names.add(name);
+        continue;
+      }
+      if (!hit || !statusEntryFresh(hit, id)) {
+        let status: WorkerStatus | null = null;
+        try {
+          status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
+        } catch {
+          // a half-written or damaged status file is not worth a crash
+        }
+        hit = { ...id, status, checked: now };
+        statusCache.set(path, hit);
+      }
+      hit.checked = now;
+      if (!hit.status) continue;
+      if (isTerminal(hit.status.state) && Number(hit.mtimeNs / 1_000_000n) < sinceMs) old.names.add(name);
+      else out.push(hit.status);
+    } catch {
+      statusCache.delete(path);
+    }
+  }
+  for (const n of old.names) if (!present.has(n)) old.names.delete(n);
+  return out;
+}
+
 const sharedStatuses = new Map<string, { at: number; list: WorkerStatus[] }>();
 /** How long loadStatusesShared serves one scan to every caller. */
 export const STATUS_SHARE_MS = 1000;
