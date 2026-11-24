@@ -584,7 +584,7 @@ describe("loop capture on the router path for local models", () => {
         const bits: Buffer[] = [];
         req.on("data", (c) => bits.push(c));
         req.on("end", () => {
-          seen.push({ body: JSON.parse(bits.toString("utf8")), port: ports[i]! });
+          seen.push({ body: JSON.parse(Buffer.concat(bits).toString("utf8")), port: ports[i]! });
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: "gyro-m", content: [{ type: "text", text: `ok${i}` }], usage: { input_tokens: 1, output_tokens: 1 } }));
         });
@@ -607,7 +607,7 @@ describe("loop capture on the router path for local models", () => {
       captureLogDir: dir,
     });
     const port = await listen(r);
-    const post = (worker: string) =>
+    const post = (worker: string | null, userId?: string) =>
       new Promise<{ status: number; text: string }>((resolve) => {
         const q = http.request(
           {
@@ -615,7 +615,7 @@ describe("loop capture on the router path for local models", () => {
             host: "127.0.0.1",
             path: "/v1/messages",
             method: "POST",
-            headers: { "content-type": "application/json", "x-pai-worker": worker, authorization: "Bearer client-secret" },
+            headers: { "content-type": "application/json", ...(worker ? { "x-pai-worker": worker } : {}), authorization: "Bearer client-secret" },
           },
           (x) => {
             let text = "";
@@ -624,7 +624,7 @@ describe("loop capture on the router path for local models", () => {
           }
         );
         q.on("error", () => resolve({ status: 0, text: "" }));
-        q.end(JSON.stringify({ model: "gyro-m", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
+        q.end(JSON.stringify({ model: "gyro-m", max_tokens: 10, messages: [{ role: "user", content: "hi" }], ...(userId ? { metadata: { user_id: userId } } : {}) }));
       });
     return { dir, ring, seen, ports, post };
   }
@@ -664,7 +664,7 @@ describe("loop capture on the router path for local models", () => {
     expect(raw.toLowerCase()).not.toContain("authorization");
     expect(raw.toLowerCase()).not.toContain("api_key");
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    const ledger = readFileSync(join(t.dir, "ledger.jsonl"), "utf8");
+    const ledger = readFileSync(join(t.dir, "ledger.log"), "utf8");
     expect(ledger).toContain("LOOP-CAPTURE");
     expect(ledger).toContain("wStop");
   });
@@ -742,14 +742,7 @@ describe("loop capture on the router path for local models", () => {
 
   it("metadata.user_id names the run when no worker header is present", async () => {
     const t = await capRig(1);
-    await new Promise<void>((resolve) => {
-      const q = http.request({ port: t.ports[0], host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "content-type": "application/json" } }, (x) => {
-        x.on("data", () => {});
-        x.on("end", () => resolve());
-      });
-      q.on("error", () => resolve());
-      q.end(JSON.stringify({ model: "gyro-m", max_tokens: 5, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "sess-9" } }));
-    });
+    await t.post(null, "sess-9");
     expect(t.ring.get("sess-9").length).toBe(1);
   });
 });
