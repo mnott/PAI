@@ -251,6 +251,19 @@ interface AibrokerCheckJson {
 }
 
 /**
+ * Error messages of an aibroker check. E_R_UNPROVEN ("r=+ without proof") also fires when r=+ stands
+ * beside a failing t= entry (`ProbeBefore-`) although p= is present (#26); say that, so the re-ask
+ * tells the worker what to fix (a before/after probe goes in p=/z=, not as a `-` check).
+ */
+export function ag2ErrorMessages(parsed: AibrokerCheckJson, text: string): string[] {
+  const failing = (parseAg2Report(unwrapAg2(text))?.fields.t ?? "").split(/\s+/).filter((tok) => /^\S+[-!?~]$/.test(tok));
+  return (parsed.errors ?? []).map((e) => {
+    if (e.code === "E_R_UNPROVEN" && failing.length) return `r=+ with failing t= entry ${failing.join(" ")}: r=+ needs every t entry +`;
+    return e.message ?? e.code ?? "unknown error";
+  });
+}
+
+/**
  * Validate an AG2 message with `aibroker agentish check - --json`. Never
  * fails the caller: a missing/broken CLI reports ok:true, validator "none" —
  * a worker's run is never blocked on a local tooling gap, only its
@@ -265,16 +278,14 @@ export function validateAg2(text: string): Ag2ValidationResult {
       encoding: "utf8",
     });
     const parsed = JSON.parse(out) as AibrokerCheckJson;
-    const errors = (parsed.errors ?? []).map((e) => e.message ?? e.code ?? "unknown error");
-    return { ok: parsed.ok !== false, errors, validator: "aibroker" };
+    return { ok: parsed.ok !== false, errors: ag2ErrorMessages(parsed, text), validator: "aibroker" };
   } catch (e) {
     // execFileSync throws on non-zero exit too — stdout still carries the JSON
     const out = (e as { stdout?: Buffer | string }).stdout;
     if (out) {
       try {
         const parsed = JSON.parse(out.toString()) as AibrokerCheckJson;
-        const errors = (parsed.errors ?? []).map((er) => er.message ?? er.code ?? "unknown error");
-        return { ok: parsed.ok !== false, errors, validator: "aibroker" };
+        return { ok: parsed.ok !== false, errors: ag2ErrorMessages(parsed, text), validator: "aibroker" };
       } catch {
         // fall through to "no validator" below
       }

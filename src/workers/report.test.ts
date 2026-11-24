@@ -127,6 +127,17 @@ describe("proof check and report validation credit what really ran (2026-11-22/2
     expect(out.validation.errors).toEqual([]);
   });
 
+  it("r=+ with a p= line is not 'without proof'; a failing t= entry is named (#26)", () => {
+    const base = "R\ni=stale-verify-repro\nr=+\nG=+\nc=src/workers/report.ts fix\nt=Tsc+ ReportTest+ ProbeBefore- ProbeAfter+\np=npx tsx .pai-scratch/probe.ts → before: ok=false. After: ok=true. npx tsc --noEmit && npx vitest run src/workers/report.test.ts → 14 passed\nz=Cause was DELETED_RE.";
+    const bad = repairAndValidateAg2(base).validation;
+    expect(bad.errors.join()).not.toContain("without proof");
+    expect(bad.errors.join()).toContain("ProbeBefore-");
+    expect(repairAndValidateAg2(base.replace("ProbeBefore-", "ProbeBefore+")).validation.errors).toEqual([]);
+    const noP = repairAndValidateAg2(base.replace(/\np=.*/, "").replace("ProbeBefore-", "ProbeBefore+")).validation;
+    expect(noP.ok).toBe(false);
+    expect(noP.errors.join()).toContain("without proof");
+  });
+
   it("a script run from $TMPDIR inside a && chain counts as run", () => {
     const runs = [{ command: `sed -i '' -e 's/a/b/' config.yaml && printf 'x' > "$TMPDIR/p.py" && python3 -I "$TMPDIR/p.py"; sed -n 1p config.yaml`, failed: false }];
     const chk = checkProof(R("./config.yaml x", 'python3 -I p.py (yaml.safe_load config.yaml) → ok; line 331: "--reasoning on"'), runs);
