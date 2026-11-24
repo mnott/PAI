@@ -525,6 +525,8 @@ const resumeCommand: CommandDef = {
         // the old run's --spec path must not be recorded for this thread
         ...(plan.freshPrompt ? { specOverride: parseRunnerArgs(claudeArgs).prompt ?? undefined } : {}),
         resumeOf: id,
+        // the resumed run keeps the old run's deliverable: without it the class gate reads "findings" and the convergence rule exempts it
+        ...(old.deliverable ? { deliverable: old.deliverable } : {}),
         approvedBy: str(ctx.opts["approved-by"]),
         // the gatekeeper's approval follows the job: a worker whose start ran
         // under --approved-by is recorded cloudApproved, and its resume passes
