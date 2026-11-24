@@ -626,7 +626,7 @@ describe("loop capture on the router path for local models", () => {
         q.on("error", () => resolve({ status: 0, text: "" }));
         q.end(JSON.stringify({ model: "gyro-m", max_tokens: 10, messages: [{ role: "user", content: "hi" }], ...(userId ? { metadata: { user_id: userId } } : {}) }));
       });
-    return { dir, ring, seen, ports, post };
+    return { dir, ring, seen, ports, post, port };
   }
 
   it("a local /v1/messages turn is kept with the forwarded body and the serving instance port", async () => {
@@ -708,6 +708,42 @@ describe("loop capture on the router path for local models", () => {
     expect(payload.reason).toBe("loop guard");
     expect(payload.turns[0].upstreamPort).toBe(port);
     expect(defaultLoopCaptureRing.get("wHook").length).toBe(0);
+  });
+
+  it("the stop path asks the router to flush: the capture is written with no further request from the run", async () => {
+    // the bug: routerFlushLoopCapture ran only before forwarding the NEXT request,
+    // and a loop-stopped worker never sends one — so the file was never written.
+    // requestLoopStop now POSTs /_pai/loop-capture to the router, which writes the
+    // ring it holds for that run.
+    const t = await capRig(1);
+    await t.post("wFlush");
+    expect(t.ring.get("wFlush").length).toBe(1);
+    requestLoopStop(t.dir, "wFlush", "identical-call loop", { kill: () => {}, claudePid: () => undefined, routerBase: () => `http://127.0.0.1:${t.port}` });
+    // the notification is fire-and-forget; poll the file the router writes
+    const path = loopCapturePath(t.dir, "wFlush");
+    let raw = "";
+    for (let i = 0; i < 100; i++) {
+      if (existsSync(path)) {
+        raw = readFileSync(path, "utf8");
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(raw).not.toBe("");
+    const payload = JSON.parse(raw) as { id: string; reason: string; turns: Array<{ request: Record<string, unknown>; response: string; upstreamPort?: number }> };
+    expect(payload.id).toBe("wFlush");
+    expect(payload.reason).toBe("identical-call loop"); // from the marker the stop path wrote first
+    expect(payload.turns.length).toBe(1);
+    expect(payload.turns[0].request).toEqual(t.seen[0].body);
+    expect(payload.turns[0].response).toContain("ok0");
+    expect(payload.turns[0].upstreamPort).toBe(t.ports[0]);
+    expect(raw).not.toContain("client-secret");
+    expect(raw.toLowerCase()).not.toContain("authorization");
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    const ledger = readFileSync(join(t.dir, "ledger.log"), "utf8");
+    expect(ledger).toContain("LOOP-CAPTURE");
+    expect(ledger).toContain("wFlush");
+    expect(t.ring.get("wFlush").length).toBe(0); // the router's ring was cleared
   });
 
   it("a cloud target is never captured", async () => {
