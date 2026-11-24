@@ -60,13 +60,15 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "${PAI_DIR}/Hooks/security-validator.mjs" }
+          { "type": "command", "command": "${PAI_DIR}/Hooks/security-validator.mjs" },
+          { "type": "command", "command": "${PAI_DIR}/Hooks/block-samplers.mjs" }
         ]
       },
       {
         "matcher": "mcp__",
         "hooks": [
-          { "type": "command", "command": "${PAI_DIR}/Hooks/mcp-deferred-gate.mjs" }
+          { "type": "command", "command": "${PAI_DIR}/Hooks/mcp-deferred-gate.mjs" },
+          { "type": "command", "command": "${PAI_DIR}/Hooks/block-unlisted-mail.mjs" }
         ]
       }
     ],

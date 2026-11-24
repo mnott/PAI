@@ -440,6 +440,18 @@ describe("supervision stands down while frozen", () => {
     await w.flush();
     expect(sent[1]).toContain("was stopped by the loop guard: repeated identical tool call; no escalation: the run ended without a continuation");
   });
+
+  it("a loop-stop notice names the repeated call, its count and the result it kept getting, on one line", async () => {
+    const sent: string[] = [];
+    const msg = { toSession: async (_o: RunOrigin, t: string) => (sent.push(t), true) } as unknown as Messenger;
+    const w = new TroubleWatcher("L1", "lbl", msg, {} as RunOrigin, "", () => now, async (_p, t) => msg.toSession({} as RunOrigin, t));
+    const call = { tool: "Bash", input: "python3 - <<'EOF'\nprint(1)\nEOF", count: 4, result: "(Bash completed with no output)" };
+    w.onLoopStop("loop guard: you ran this command 4 times with the same result. Stop repeating it. Edit a file", "no escalation: the run ended without a continuation", call);
+    await w.flush();
+    expect(sent[0]).toContain("Bash python3 - <<'EOF'⏎print(1)⏎EOF repeated 4x, always: (Bash completed with no output); no escalation: the run ended without a continuation");
+    expect(sent[0]).not.toContain("Stop repeating it");
+    expect(sent[0]).not.toContain("\n");
+  });
 });
 
 describe("exceptions", () => {

@@ -135,7 +135,7 @@ const PROVIDER_KEYS: Record<string, KeyKind> = {
   quotaSkipAt: "number", worker_model: "string", toolParsing: "any", tool_parsing: "any", context_window: "number",
   thinking: "any", maxConcurrent: "number", max_concurrent: "number", conversationSlots: "number",
   conversation_slots: "number", hold: "any", tags: "list", characteristics: "object", usage: "any",
-  model_tiers: "object", builtin: "boolean",
+  model_tiers: "object", builtin: "boolean", sampling: "object",
 };
 const KIND_TEXT: Record<KeyKind, string> = {
   string: "a string", boolean: "true or false", number: "a number", object: "a mapping", list: "a list of strings",
@@ -243,6 +243,7 @@ export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, un
   }
   if (y.usage !== undefined) raw.usage = y.usage;
   if (y.model_tiers !== undefined) raw.modelTiers = y.model_tiers;
+  if (y.sampling !== undefined) raw.sampling = y.sampling;
   return raw;
 }
 
@@ -280,6 +281,7 @@ export function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> 
   }
   if (p.usage) y.usage = p.usage;
   if (p.modelTiers) y.model_tiers = { ...p.modelTiers };
+  if (p.sampling) y.sampling = { ...p.sampling };
   return y;
 }
 

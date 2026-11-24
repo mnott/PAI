@@ -120,6 +120,13 @@ function shortKey(key = ""): string {
   return k.length > 80 ? `${k.slice(0, 77)}...` : k;
 }
 
+/** The newest recorded result of the loop window (normalised, secrets masked); "" when none was recorded (an empty result). */
+function lastResult(st: { outs?: Array<string | null> }): string {
+  const outs = st.outs ?? [];
+  for (let i = outs.length - 1; i >= 0; i--) if (outs[i] != null) return outs[i] as string;
+  return "";
+}
+
 /** Per-worker repeat window in <logDir>/loop-guard/<id>.json; deny reason when this call is a loop repeat, else null. */
 function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: string; stopReason?: string } | { note: string } | null {
   const id = currentWorkerId(env, env.PAI_WORKER_LOOP_DIR || undefined);
@@ -169,6 +176,12 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
     if (r.stop)
       requestLoopStop(logDir, id, r.reason ?? `${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change`, {
         // a loop dir override marks a probe run by hand from a worker's Bash: its parent chain leads to the real claude
+        call: {
+          tool: input.tool_name,
+          input: bashCmd ?? JSON.stringify(input.tool_input ?? {}),
+          count: r.count ?? 0,
+          result: lastResult(r.state),
+        },
         claudePid: env.PAI_LOOP_STOP_PID ? () => Number(env.PAI_LOOP_STOP_PID) : env.PAI_WORKER_LOOP_DIR ? () => undefined : undefined,
       });
     return {

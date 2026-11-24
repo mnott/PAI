@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { bashResultHint, isLocalWorkerProvider, toolResultText, EMPTY_SUCCESS_HINT, SEARCH_MISS_HINT, NO_OUTPUT_SENTINEL } from "./worker-result-hint.js";
 import type { WorkersConfig } from "../../../workers/config.js";
@@ -84,5 +88,47 @@ describe("isLocalWorkerProvider", () => {
 
   it("is false when the provider name is unknown (never guessed local)", () => {
     expect(isLocalWorkerProvider({ PAI_WORKER_PROVIDER: "typo" }, cfg({}))).toBe(false);
+  });
+});
+
+describe("isLocalWorkerProvider url lists", () => {
+  const env = { PAI_WORKER_PROVIDER: "signal-2" };
+  it("is local when every entry of a url list is loopback", () => {
+    expect(isLocalWorkerProvider(env, { providers: { "signal-2": { url: ["http://127.0.0.1:8044", "http://127.0.0.1:8045"] } } } as unknown as WorkersConfig)).toBe(true);
+    expect(isLocalWorkerProvider(env, { providers: { "signal-2": { baseUrl: "http://127.0.0.1:8044", instances: ["http://127.0.0.1:8044", "http://localhost:8045"] } } } as unknown as WorkersConfig)).toBe(true);
+  });
+  it("is not local when one entry of the list is remote", () => {
+    expect(isLocalWorkerProvider(env, { providers: { "signal-2": { url: ["http://127.0.0.1:8044", "https://example.com"] } } } as unknown as WorkersConfig)).toBe(false);
+  });
+});
+
+describe("worker-result-hint hook (from source)", () => {
+  // Runs the hook from this branch's own source via tsx, never a prebuilt
+  // dist/ artifact: the merge gate runs tests before the build, so a dist
+  // hook is the old build and cannot show new behaviour.
+  const hook = join(process.cwd(), "src/hooks/ts/post-tool-use/worker-result-hint.ts");
+  const input = JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "npx tsc --noEmit" }, tool_response: { stdout: "", stderr: "", interrupted: false } });
+  function run(yaml: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "wrh-"));
+    try {
+      writeFileSync(join(dir, "workers.yaml"), yaml);
+      return execFileSync("npx", ["tsx", hook], {
+        input,
+        encoding: "utf8",
+        env: { ...process.env, PAI_WORKER: "1", PAI_WORKER_PROVIDER: "signal-2", PAI_WORKERS_YAML: join(dir, "workers.yaml"), PAI_CONFIG_FILE: join(dir, "config.json") },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const list = "providers:\n  signal-2:\n    enabled: true\n    url:\n      - http://127.0.0.1:8044\n      - http://127.0.0.1:8045\n    models:\n      default: m\n      fast: m\n";
+  it("prints the success hint for a provider with a url list", () => {
+    expect(run(list)).toContain(EMPTY_SUCCESS_HINT);
+  });
+  it("still prints it when the entry fails validation (unknown key)", () => {
+    expect(run(list + "    bogus_key: 1\n")).toContain(EMPTY_SUCCESS_HINT);
+  });
+  it("prints nothing for a remote url list", () => {
+    expect(run(list.replace("127.0.0.1:8045", "example.com"))).toBe("");
   });
 });
