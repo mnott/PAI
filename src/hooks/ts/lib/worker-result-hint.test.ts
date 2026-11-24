@@ -1,0 +1,63 @@
+import { describe, it, expect } from "vitest";
+import { bashResultHint, isLocalWorkerProvider, EMPTY_SUCCESS_HINT, SEARCH_MISS_HINT, NO_OUTPUT_SENTINEL } from "./worker-result-hint.js";
+import type { WorkersConfig } from "../../../workers/config.js";
+
+const cfg = (providers: Record<string, { baseUrl: string }>): WorkersConfig =>
+  ({ providers }) as unknown as WorkersConfig;
+
+describe("bashResultHint", () => {
+  it("returns the success hint for empty output (tsc with no errors)", () => {
+    expect(bashResultHint("npx tsc --noEmit 2>&1 | head -20", "")).toBe(EMPTY_SUCCESS_HINT);
+    expect(bashResultHint("npx tsc --noEmit", "   \n")).toBe(EMPTY_SUCCESS_HINT);
+  });
+
+  it("treats the harness no-output sentinel as success (worker 20261124-050119-64084 re-ran tsc 5x)", () => {
+    expect(bashResultHint("npx tsc --noEmit 2>&1 | head -20", NO_OUTPUT_SENTINEL)).toBe(EMPTY_SUCCESS_HINT);
+  });
+
+  it("returns the search hint when a grep output contains none of the searched names", () => {
+    const out = "src/foo.ts:12:export async function handleOtherCommand";
+    expect(bashResultHint('grep -n "handleMqttCommand\\|handleCreateCommand" src/foo.ts', out)).toBe(SEARCH_MISS_HINT);
+    expect(bashResultHint("grep handleMqttCommand src/foo.ts", out)).toBe(SEARCH_MISS_HINT);
+    expect(bashResultHint("rg handleCreateCommand src", out)).toBe(SEARCH_MISS_HINT);
+  });
+
+  it("returns null when the grep output contains a searched name", () => {
+    const out = "src/foo.ts:12:export async function handleMqttCommand";
+    expect(bashResultHint('grep -n "handleMqttCommand" src/foo.ts', out)).toBeNull();
+  });
+
+  it("returns null for non-empty output of a non-search command", () => {
+    expect(bashResultHint("git config --list --show-origin | grep user", "file:/x/user.name=me")).toBeNull();
+    expect(bashResultHint("ls", "a.ts\nb.ts")).toBeNull();
+  });
+
+  it("checks every grep segment of a chained command", () => {
+    const out = "src/foo.ts:1:other";
+    expect(bashResultHint("ls; grep handleMqttCommand src/foo.ts", out)).toBe(SEARCH_MISS_HINT);
+    expect(bashResultHint("grep handleMqttCommand src/foo.ts; ls", out)).toBe(SEARCH_MISS_HINT);
+  });
+});
+
+describe("isLocalWorkerProvider", () => {
+  it("is false for an interactive session (no provider set)", () => {
+    expect(isLocalWorkerProvider({}, cfg({}))).toBe(false);
+  });
+
+  it("is false for the native anthropic provider", () => {
+    expect(isLocalWorkerProvider({ PAI_WORKER_PROVIDER: "anthropic" }, cfg({}))).toBe(false);
+  });
+
+  it("is false for a cloud provider", () => {
+    expect(isLocalWorkerProvider({ PAI_WORKER_PROVIDER: "openrouter" }, cfg({ openrouter: { baseUrl: "https://openrouter.ai/api/v1" } }))).toBe(false);
+  });
+
+  it("is true for a loopback provider", () => {
+    expect(isLocalWorkerProvider({ PAI_WORKER_PROVIDER: "gyro-l" }, cfg({ "gyro-l": { baseUrl: "http://127.0.0.1:8000/v1" } }))).toBe(true);
+    expect(isLocalWorkerProvider({ PAI_WORKER_PROVIDER: "gyro-l" }, cfg({ "gyro-l": { baseUrl: "http://localhost:8000/v1" } }))).toBe(true);
+  });
+
+  it("is false when the provider name is unknown (never guessed local)", () => {
+    expect(isLocalWorkerProvider({ PAI_WORKER_PROVIDER: "typo" }, cfg({}))).toBe(false);
+  });
+});

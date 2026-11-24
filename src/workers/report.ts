@@ -260,6 +260,10 @@ export const TEST_GOVERNANCE_LINE =
 export const LIVE_RUNS_MAIN_LINE =
   "The live router/daemon/cockpit run main, not your branch: prove your change with tests or a headless render from your worktree; never poll live endpoints for it (L0 checks live after the merge).";
 
+/** One guidance line for local providers: a repeated call returns the same result (2026-11-24: three signal-2 workers loop-guarded re-running empty/denied calls). */
+export const REPEAT_STOP_LINE =
+  "A denied or repeated call will not change its result: after one empty, unexpected or denied answer change the command, read a different file, or write your report.";
+
 /** Added when the run's repo is already indexed: the graph is current, so ask it before grepping. */
 export const CODE_GRAPH_FIRST_LINE = [
   "This repo is indexed in the code graph: locate code with `pai code explore \"<what you look for>\"`,",
@@ -287,7 +291,8 @@ export function workerContractPrompt(
   orchestrate?: boolean,
   noteToken?: string,
   scratch?: string,
-  graphIndexed?: boolean
+  graphIndexed?: boolean,
+  localProvider?: boolean
 ): string {
   // planner classes get the L1 opening even without the flag; with it they also get ORCHESTRATOR_CONTRACT below.
   const short = SHORT_CONTRACT_CLASSES.has(cls ?? "");
@@ -296,6 +301,7 @@ export function workerContractPrompt(
   base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
   base += `\n${LIVE_RUNS_MAIN_LINE}`;
+  if (localProvider) base += `\n${REPEAT_STOP_LINE}`;
   if (graphIndexed) base += `\n${CODE_GRAPH_FIRST_LINE}`;
   if (noteToken) base += `\n${noteTokenSentence(noteToken)}`;
   if (orchestrate) base += `\n${ORCHESTRATOR_CONTRACT}`;

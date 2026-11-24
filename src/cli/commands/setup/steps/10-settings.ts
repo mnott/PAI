@@ -49,6 +49,9 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/update-tab-on-action.mjs" },
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
+    // Local workers read an empty or no-match result as "try again" and repeat the call
+    // (2026-11-24: three signal-2 workers loop-guarded on identical repeats); this names the result.
+    { hookType: "PostToolUse", matcher: "Bash", command: "${ADAPTER_DIR}/Hooks/worker-result-hint.mjs" },
     // Marks edited files dirty for the code graph (no parsing here; the next query re-reads them).
     { hookType: "PostToolUse", matcher: "Edit|Write|MultiEdit|NotebookEdit", command: "${ADAPTER_DIR}/Hooks/code-graph-dirty.mjs" },
     // Failures that never reach PreToolUse (input validation) are counted by the loop guard here.
