@@ -26,9 +26,61 @@ import { isLoopbackHostname } from "../utils/loopback.js";
  * Headless workers run their Bash tool under bash: the operator's zsh aborts a whole command on an
  * unmatched glob ("no matches found: --include=*.ts"). CLAUDE_CODE_SHELL is honoured by Claude Code
  * for its Bash tool; an explicit value already in the env wins.
+ *
+ * macOS ships /bin/bash 3.2, which Claude Code refuses to run commands it cannot execute reliably
+ * there (exit 126: "this shell (bash 3.2.57) is too old to run it reliably" — heredocs, arrays,
+ * nested $() die). So the selection is: a bash >= 4 found on PATH or at the standard Homebrew/macOS
+ * install locations, else /bin/zsh if present, else leave CLAUDE_CODE_SHELL unset (Claude Code picks
+ * its own default). The version check runs once per process and is cached.
  */
+const SHELL_CANDIDATES = ["/opt/homebrew/bin/bash", "/usr/local/bin/bash"];
+const ZSH_FALLBACK = "/bin/zsh";
+
+/** Cached result of the shell selection; null = nothing usable, leave unset. */
+let cachedShell: string | null | undefined;
+
+/** A bash at `path` counts when it reports GNU bash >= 4 (macOS's /bin/bash 3.2 does not). */
+function bashAtLeast4(path: string): boolean {
+  try {
+    const r = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 2000 });
+    if (r.status !== 0) return false;
+    const m = /GNU bash, version (\d+)/.exec(r.stdout ?? "");
+    return m !== null && Number(m[1]) >= 4;
+  } catch {
+    return false;
+  }
+}
+
+/** First bash >= 4 on PATH, then the standard install locations; null when none. */
+function pickBash4(env: NodeJS.ProcessEnv): string | null {
+  const dirs = (env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const d of dirs) {
+    const p = join(d, "bash");
+    if (existsSync(p) && bashAtLeast4(p)) return p;
+  }
+  for (const p of SHELL_CANDIDATES) {
+    if (existsSync(p) && bashAtLeast4(p)) return p;
+  }
+  return null;
+}
+
+/** The shell a headless worker's Bash tool runs under: cached selection, see above. */
+export function selectWorkerShell(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (cachedShell === undefined) {
+    cachedShell = pickBash4(env) ?? (existsSync(ZSH_FALLBACK) ? ZSH_FALLBACK : null);
+  }
+  return cachedShell;
+}
+
+/** Test seam: drop the cached selection so a test can control what is found. */
+export function resetWorkerShellCache(): void {
+  cachedShell = undefined;
+}
+
 function workerShell(env: NodeJS.ProcessEnv): void {
-  if (!env.CLAUDE_CODE_SHELL) env.CLAUDE_CODE_SHELL = "/bin/bash";
+  if (env.CLAUDE_CODE_SHELL) return; // an explicit value already in the env wins
+  const shell = selectWorkerShell(env);
+  if (shell) env.CLAUDE_CODE_SHELL = shell;
 }
 
 /**
