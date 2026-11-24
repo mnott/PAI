@@ -170,7 +170,7 @@ async function handleMessages(
   }
 
   const model = provider.models.default;
-  const openaiBody = anthropicToOpenAi(reqBody, model, provider.sampling);
+  const openaiBody = anthropicToOpenAi(reqBody, model);
   opts.onUpstreamRequest?.(`${provider.upstreamUrl}/chat/completions`, openaiBody);
 
   // loop capture: the run id Claude Code carries (metadata.user_id = session id);

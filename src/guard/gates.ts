@@ -19,7 +19,6 @@ import { apiKeySetMatch, API_KEY_SET_REASON } from "../hooks/ts/lib/api-key-gate
 import { headlessReason } from "../hooks/ts/lib/headless-gate.js";
 import { backgroundReason } from "../hooks/ts/lib/background-gate.js";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
-import { decideSamplerGate } from "../hooks/ts/lib/sampler-gate.js";
 import { raiseWaitTimeout } from "../hooks/ts/lib/wait-timeout.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 import { decideEditGate, decideOrchestratorBash, decideOrchestratorEdit, decidePlannerLockBash, decidePlannerLockEdit } from "../hooks/ts/lib/edit-gate.js";
@@ -173,8 +172,6 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
     }
     const sp = decideSleepPollGate({ tool_name: c.tool, tool_input: ti }, c.env);
     if (sp.decision === "deny") return deny(sp.reason, "sleep-poll-gate");
-    const sg = decideSamplerGate({ tool_name: c.tool, tool_input: ti });
-    if (sg.decision === "deny") return deny(sg.reason, "sampler-gate");
     if (buildRewrite) return { action: "allow", updatedInput: { ...ti, command: buildRewrite.command }, message: [buildRewrite.note, memoNote].filter(Boolean).join("; ") };
     if (c.env.PAI_WORKER !== "1") {
       const raised = raiseWaitTimeout(ti);

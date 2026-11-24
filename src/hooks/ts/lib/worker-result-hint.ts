@@ -14,11 +14,8 @@
  * worker already reads empty output as success and does not need the hint.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
 import { isLoopbackUrl } from "../../../utils/loopback.js";
 import { ANTHROPIC_NATIVE, readWorkersCached, type WorkersConfig } from "../../../workers/config.js";
-import { workersYamlPath } from "../../../workers/workers-config.js";
 
 /**
  * The literal the harness sends when a command produced no output (observed in
@@ -63,40 +60,11 @@ export function toolResultText(response: unknown): string {
   return "";
 }
 
-/** Every url an entry names: baseUrl / url / instances, each a string or a list (workers.yaml `url: [a, b]`). */
-function entryUrls(p: unknown): string[] {
-  if (!p || typeof p !== "object") return [];
-  const o = p as Record<string, unknown>;
-  const out: string[] = [];
-  for (const k of ["baseUrl", "url", "instances"]) {
-    const v = o[k];
-    for (const u of Array.isArray(v) ? v : [v]) if (typeof u === "string" && u) out.push(u);
-  }
-  return out;
-}
-
-/** Local = at least one url and every url loopback. */
-function allLoopback(p: unknown): boolean {
-  const urls = entryUrls(p);
-  return urls.length > 0 && urls.every(isLoopbackUrl);
-}
-
-/** The provider's raw workers.yaml entry: used when the validated config does not hold it (entry failed validation, config read threw). */
-function rawYamlProvider(name: string): unknown {
-  const path = workersYamlPath();
-  if (!existsSync(path)) return undefined;
-  const doc = parseYaml(readFileSync(path, "utf8")) as { providers?: Record<string, unknown> } | null;
-  return doc?.providers?.[name];
-}
-
 /**
  * True when this worker run is on a local (loopback) model provider.
  * `PAI_WORKER_PROVIDER` is the provider name the runner set; a provider whose
- * urls are all loopback is local. The parsed config is asked first (baseUrl and
- * every instance of a `url: [a, b]` list); a provider the parsed config lacks
- * (an entry that failed validation, a config read that threw) is read from
- * workers.yaml directly. A missing name or an unknown provider is not treated
- * as local — the hint is only ever added when local is proven.
+ * baseUrl is loopback is local. A missing name or an unknown provider is not
+ * treated as local — the hint is only ever added when local is proven.
  */
 export function isLocalWorkerProvider(
   env: NodeJS.ProcessEnv = process.env,
@@ -105,13 +73,9 @@ export function isLocalWorkerProvider(
   const name = env.PAI_WORKER_PROVIDER;
   if (!name || name === ANTHROPIC_NATIVE) return false;
   try {
-    const p = (cfg ?? readWorkersCached()).providers?.[name];
-    if (p !== undefined) return allLoopback(p);
-  } catch {
-    /* fall through to the raw file */
-  }
-  try {
-    return allLoopback(rawYamlProvider(name));
+    const providers = (cfg ?? readWorkersCached()).providers;
+    const p = providers?.[name];
+    return p !== undefined && isLoopbackUrl(p.baseUrl);
   } catch {
     return false;
   }

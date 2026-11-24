@@ -642,8 +642,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // finaliseRun's beforeHandoff) runs after this point, and a notice that names no continuation is
   // what let L0 start a duplicate cloud worker in the gap (2026-11-24, twice). The stop reason is
   // read here and the notice goes out after finaliseRun, enriched with the continuation id.
-  const loopStopMarker = state.trouble ? peekLoopStop(logDir, wid) : null;
-  const loopStopReason = loopStopMarker?.reason ?? null;
+  const loopStopReason = state.trouble ? peekLoopStop(logDir, wid)?.reason ?? null : null;
   resultGrace.cancel();
   await resultGrace.settled();
   // the result already received is the outcome; the signal that ended the leftovers is not
@@ -906,7 +905,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // the harness already started (same branch) so the owning session waits instead of restarting a
   // duplicate, or says plainly that nothing follows.
   if (state.trouble) {
-    if (loopStopReason) state.trouble.onLoopStop(loopStopReason, continuationNote(logDir, wid), loopStopMarker?.call);
+    if (loopStopReason) state.trouble.onLoopStop(loopStopReason, continuationNote(logDir, wid));
     await state.trouble.flush();
   }
   return finalRc;

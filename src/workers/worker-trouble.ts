@@ -10,18 +10,10 @@
 import { eventLine, type Messenger, type RunOrigin } from "./run-events.js";
 import { troublePolicy } from "./notice-policy.js";
 import { loadStatus } from "./status.js";
-import type { LoopStopCall } from "./loop-stop.js";
-import { redactSecrets as maskSecrets } from "../utils/redact.js";
 import { activeMsOf, frozenSince } from "./freeze.js";
 import { appendDigest, classifyNotice, type NoticePriority } from "./notice-triage.js";
 
 const short = (s: string, n: number): string => s.replace(/\s+/g, " ").trim().slice(0, n);
-
-/** One line: `<tool> <first 120 chars of input, newlines as ⏎> x<count> -> <first 100 chars of result>`. */
-function loopCallText(c: LoopStopCall): string {
-  const one = (t: string, n: number): string => maskSecrets(t).replace(/\r?\n/g, "⏎").replace(/[ \t]+/g, " ").trim().slice(0, n);
-  return `${c.tool} ${one(c.input, 120)} repeated ${c.count}x, always: ${one(c.result, 100) || `(${c.tool} completed with no output)`}`;
-}
 
 /** A routine trouble line waits in the origin's digest; without any origin key
  *  there is no queue to join, and it goes out directly rather than vanish. */
@@ -111,11 +103,9 @@ export class TroubleWatcher {
    * branch) - wait for it, do not restart") or "no escalation: <reason>". The caller sends this only
    * once the escalation is decided, so the notice never precedes the continuation it describes.
    */
-  onLoopStop(reason: string, escalation?: string, call?: LoopStopCall): void {
+  onLoopStop(reason: string, escalation?: string): void {
     const clause = escalation ? `; ${escalation}` : "";
-    // with the call known the guard's own instruction text is dropped: the worker saw it, L0 needs what was repeated
-    const what = call ? loopCallText(call) : short(reason, 160);
-    this.send("loop-stopped", {}, `${this.who} was stopped by the loop guard: ${what}${clause}`, true);
+    this.send("loop-stopped", {}, `${this.who} was stopped by the loop guard: ${short(reason, 160)}${clause}`, true);
   }
 
   /** Timer tick while running: no activity for notices.trouble.stallMinutes tells once per quiet spell (throttled). A worker stopped by the operator — listed in the active freeze marker, or paused (a --now preemption or `pai worker pause`) — is not stalled: it tells nothing, and its quiet clock restarts at the thaw or resume. */

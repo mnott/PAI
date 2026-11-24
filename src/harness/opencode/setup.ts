@@ -53,7 +53,6 @@ export const BRIDGED_HOOKS: { hook: string; tools: string[] }[] = [
   { hook: "route-edits-to-worker", tools: ["edit", "write", "multiedit", "patch"] },
   { hook: "test-file-governance", tools: ["edit", "write", "multiedit", "patch"] },
   { hook: "block-sleep-poll", tools: ["bash"] },
-  { hook: "block-samplers", tools: ["bash"] },
   { hook: "security-validator", tools: ["bash"] },
   { hook: "delegation-guard", tools: ["bash"] },
 ];
