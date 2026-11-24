@@ -37,6 +37,30 @@ export const SEARCH_MISS_HINT =
 const SEARCH_COMMANDS = new Set(["grep", "egrep", "fgrep", "rg", "ag"]);
 
 /**
+ * The Bash tool result as Claude Code sends it: an object
+ * `{ stdout, stderr, interrupted, isImage }`, not a string. The old hook read
+ * `tool_response` as a string and JSON.stringify'd the object, so a run with
+ * empty stdout+stderr looked non-empty and the hint never fired (A/B run
+ * 20261124-070310-23895: zero hints). `interrupted: true` means the operator
+ * stopped the command — that is not a success, so it is never treated as
+ * empty. The string shape (older harnesses, the "(Bash completed with no
+ * output)" sentinel) is still accepted.
+ */
+export function toolResultText(response: unknown): string {
+  if (typeof response === "string") return response;
+  if (response && typeof response === "object") {
+    const r = response as { stdout?: unknown; stderr?: unknown; interrupted?: unknown };
+    if (r.interrupted === true) {
+      const parts = [typeof r.stdout === "string" ? r.stdout : "", typeof r.stderr === "string" ? r.stderr : ""];
+      return parts.filter(Boolean).join("\n") || "(interrupted)";
+    }
+    const parts = [typeof r.stdout === "string" ? r.stdout : "", typeof r.stderr === "string" ? r.stderr : ""];
+    return parts.filter(Boolean).join("\n");
+  }
+  return "";
+}
+
+/**
  * True when this worker run is on a local (loopback) model provider.
  * `PAI_WORKER_PROVIDER` is the provider name the runner set; a provider whose
  * baseUrl is loopback is local. A missing name or an unknown provider is not
