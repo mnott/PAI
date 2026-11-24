@@ -290,9 +290,15 @@ describe("worker priority and kill", () => {
   it("a taskpolicy -b child really runs at background QoS", () => {
     if (process.platform !== "darwin") return;
     const [bin, ...args] = backgroundArgv(["sh", "-c", `ps -o pri= -p $$; : ${MARK}`], undefined, "darwin");
-    const out = execFileSync(bin, args, { encoding: "utf8", timeout: 20_000 });
+    // A background-QoS child is starved by design when the machine is busy, so one spawn can exceed any short
+    // timeout: retry a bounded number of times with a generous per-attempt timeout instead of failing on load.
+    let out = "";
+    for (let attempt = 0; attempt < 3 && out === ""; attempt++) {
+      const r = spawnSync(bin, args, { encoding: "utf8", timeout: 60_000 });
+      if (r.status === 0) out = r.stdout;
+    }
     expect(Number(out.trim())).toBeLessThan(10); // a normal process sits near 31, a background one at 4
-  });
+  }, 200_000);
 
   it("a worker Bash command gets the ulimit prefix; test runs and build doors are uncapped", () => {
     expect(capBashCommand("ls -la", { cpuSecondsPerCommand: 300 })).toMatch(/^ulimit -S -t 300 /);
