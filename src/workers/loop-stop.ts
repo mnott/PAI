@@ -14,6 +14,8 @@ import { appendStopEvent } from "./endreason.js";
 import { loadStatus, saveStatus } from "./status.js";
 import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
 import { captureOnLoopStop } from "./proxy/loop-capture.js";
+import { LOOP_CAPTURE_FLUSH_PATH } from "../router/router-loop-capture.js";
+import { routerUrl } from "./run-env.js";
 
 export const loopStopMarkerPath = (logDir: string, id: string): string => join(logDir, `${id}.loop-stop`);
 
@@ -26,6 +28,8 @@ export interface LoopStopDeps {
   kill?: (pid: number, signal: NodeJS.Signals) => void;
   /** Pid of the claude process the hook runs under; default: the hook's parent, skipping a wrapping shell. */
   claudePid?: () => number | undefined;
+  /** Router base URL for the capture-flush notification; default: the loopback router. */
+  routerBase?: () => string;
 }
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
@@ -51,7 +55,7 @@ export function defaultClaudePid(): number | undefined {
 
 /** Mark the worker loop-stopped (marker file + status note) and SIGTERM its claude process. Never throws. */
 export function requestLoopStop(logDir: string, id: string, reason: string, deps: LoopStopDeps = {}): void {
-  const { kill = (pid, sig) => process.kill(pid, sig), claudePid = defaultClaudePid } = deps;
+  const { kill = (pid, sig) => process.kill(pid, sig), claudePid = defaultClaudePid, routerBase = routerUrl } = deps;
   try {
     const m: LoopStopMarker = { ts: new Date().toISOString(), reason };
     writeFileAtomic(loopStopMarkerPath(logDir, id), JSON.stringify(m));
@@ -59,13 +63,16 @@ export function requestLoopStop(logDir: string, id: string, reason: string, deps
     // the signal below still ends the run
   }
   appendStopEvent(logDir, id, { killed_by: "loop-guard", forced: false, reason });
-  // local runs: flush whatever the proxy still holds for this run (no-op when
+  // local runs: flush whatever this process still holds for this run (no-op when
   // the ring is empty, e.g. a cloud run or a different process)
   try {
     captureOnLoopStop(logDir, id, reason);
   } catch {
     // best effort
   }
+  // the ring that matters lives in the router process, and a stopped worker never
+  // sends the next request that would flush it: ask the router to write now
+  notifyRouterLoopCapture(id, reason, routerBase);
   try {
     const st = loadStatus(logDir, id);
     if (st && st.state === "running") saveStatus(logDir, { ...st, last: `loop-stopped: ${reason}` });
@@ -80,6 +87,26 @@ export function requestLoopStop(logDir: string, id: string, reason: string, deps
   }
   // a loop-stopped worker frees the machine-wide build lock and kills its build tree
   void releaseBuildsOf(buildsDir(), id).catch(() => []);
+}
+
+/**
+ * Tell the router to flush this run's kept turns to the capture file now.
+ * Fire-and-forget on the loopback router; never throws, never blocks the stop.
+ */
+function notifyRouterLoopCapture(id: string, reason: string, routerBase: () => string): void {
+  try {
+    const base = routerBase();
+    if (!base) return;
+    const req = fetch(`${base}${LOOP_CAPTURE_FLUSH_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, reason }),
+      signal: AbortSignal.timeout(2000),
+    });
+    req.catch(() => {});
+  } catch {
+    // best effort
+  }
 }
 
 /** The marker of a loop-stopped worker, consumed on read; null when there is none. */

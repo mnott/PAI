@@ -76,7 +76,7 @@ import type { LocalConfig } from "../workers/local-tiers.js";
 import { resolveSelector } from "../workers/route-table.js";
 import { refuseUnlessLoopback, isTailnetOrLocalName } from "../utils/loopback-guard.js";
 import { hostAllowed, originAllowed, isCockpitPath } from "./cockpit-auth.js";
-import { captureRunId, defaultLoopCaptureRing, routerCaptureLogDir, routerFlushLoopCapture, routerRecordTurn } from "./router-loop-capture.js";
+import { captureRunId, defaultLoopCaptureRing, LOOP_CAPTURE_FLUSH_PATH, routerCaptureLogDir, routerFlushLoopCapture, routerFlushRunNow, routerRecordTurn } from "./router-loop-capture.js";
 import { LOOP_CAPTURE_MAX_BYTES, type LoopCaptureRing } from "../workers/proxy/loop-capture.js";
 
 /** The router's port (router.port in config.yaml). */
@@ -672,6 +672,33 @@ function runTokenControl(req: http.IncomingMessage, res: http.ServerResponse, ra
   reply(405, { error: "POST or DELETE only" });
 }
 
+/**
+ * POST /_pai/loop-capture {id, reason?} flushes a run's kept turns to the capture
+ * file now. A loop-stopped worker never sends another request, so the stop path
+ * calls this instead of waiting for the flush-on-next-request trigger. Loopback
+ * + host/origin checks (the mutating-method gate above) are its auth; the id is
+ * the worker id routed requests carry as x-pai-worker.
+ */
+function loopCaptureControl(req: http.IncomingMessage, res: http.ServerResponse, raw: string, logDir: string, ring: LoopCaptureRing, log: (l: string) => void): void {
+  const reply = (status: number, body: object) => {
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
+  if (req.method !== "POST") return reply(405, { error: "POST only" });
+  let b: Record<string, unknown>;
+  try {
+    b = JSON.parse(raw || "{}") as Record<string, unknown>;
+  } catch {
+    return reply(400, { error: "invalid JSON body" });
+  }
+  const id = typeof b.id === "string" && b.id ? b.id.slice(0, 80) : undefined;
+  if (!id) return reply(400, { error: "id required" });
+  const reason = typeof b.reason === "string" && b.reason ? b.reason : "loop guard";
+  const path = routerFlushRunNow(logDir, id, reason, ring);
+  log(`${new Date().toISOString()} loop-capture flush ${id} ${path ? "written" : "nothing kept"}`);
+  reply(200, { ok: true, written: !!path });
+}
+
 /** A server on `routerHandler(...)`; takes exactly its parameters. */
 export function createRouter(...args: Parameters<typeof routerHandler>): http.Server {
   return http.createServer(routerHandler(...args));
@@ -761,6 +788,7 @@ export function routerHandler(
       res.once("close", () => closeCbs.forEach((f) => f()));
       const onClose = (cb: () => void): void => void closeCbs.push(cb);
       if (path === RUN_TOKEN_PATH) return runTokenControl(req, res, Buffer.concat(chunks).toString("utf8"), tokens, log);
+      if (path === LOOP_CAPTURE_FLUSH_PATH) return loopCaptureControl(req, res, Buffer.concat(chunks).toString("utf8"), options?.captureLogDir ?? routerCaptureLogDir(), options?.captureRing ?? defaultLoopCaptureRing, log);
       // a run's placeholder credential: it names the provider, the router supplies the real key
       const presented = requestToken(req.headers);
       const runProvider = presented?.startsWith(RUN_TOKEN_PREFIX) ? tokens.resolve(presented) : undefined;

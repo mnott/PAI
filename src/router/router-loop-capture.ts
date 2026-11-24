@@ -15,15 +15,21 @@
  * request when a loop-stop marker exists (maybeFlushLoopCapture).
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { headerValue } from "./usage.js";
 import {
   captureLogDir,
   defaultLoopCaptureRing,
   maybeFlushLoopCapture,
+  writeLoopCapture,
   type LoopCaptureRing,
 } from "../workers/proxy/loop-capture.js";
 export { defaultLoopCaptureRing };
 import { isLocalProvider } from "../workers/config.js";
+
+/** The router's internal flush endpoint: the loop-stop path POSTs {id, reason?} here. */
+export const LOOP_CAPTURE_FLUSH_PATH = "/_pai/loop-capture";
 
 /** The run id a request belongs to: the worker header first, else the session id in the body. */
 export function captureRunId(headers: Record<string, unknown>, body: Record<string, unknown> | null): string | null {
@@ -31,6 +37,30 @@ export function captureRunId(headers: Record<string, unknown>, body: Record<stri
   if (w) return w;
   const meta = body?.metadata as { user_id?: unknown } | undefined;
   return typeof meta?.user_id === "string" && meta.user_id ? meta.user_id : null;
+}
+
+/**
+ * Flush a run's ring now, without waiting for its next request: a loop-stopped
+ * worker never sends one. The reason comes from the run's loop-stop marker when
+ * it exists (the stop path writes it first), else the caller's reason.
+ * Returns the capture path, or null when the ring holds nothing for the run.
+ */
+export function routerFlushRunNow(
+  logDir: string,
+  runId: string,
+  reason: string,
+  ring: LoopCaptureRing = defaultLoopCaptureRing
+): string | null {
+  let r = reason;
+  try {
+    const m = JSON.parse(readFileSync(join(logDir, `${runId}.loop-stop`), "utf8")) as { reason?: string };
+    if (m.reason) r = m.reason;
+  } catch {
+    // no marker (or unreadable): keep the caller's reason
+  }
+  const path = writeLoopCapture(logDir, runId, ring.get(runId), r);
+  if (path) ring.clear(runId);
+  return path;
 }
 
 /**
