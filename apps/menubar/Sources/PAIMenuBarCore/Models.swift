@@ -30,6 +30,14 @@ public struct LimitsResponse: Codable {
     }
     public var now: Double?
     public var limits: [Limit]?
+    /// The router's pace decision (`pace: currentPace()` on /cockpit/limits); `classes` = budget.cloudUnderPace.classes.
+    public var pace: Pace?
+
+    public struct Pace: Codable {
+        public var cloud: Bool?
+        public var reason: String?
+        public var classes: [String]?
+    }
 
     /// Cloud providers worth showing: not local, no error, at least one window.
     public func activeCloud() -> [Limit] {

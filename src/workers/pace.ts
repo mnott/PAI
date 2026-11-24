@@ -48,13 +48,19 @@ function readPaceConfigUncached(yamlPath: string): PaceConfig {
 
 export interface PaceDecision { cloud: boolean; reason: string; classes: string[] }
 
+/** One line naming which classes the cloud lead applies to, from the config (empty list = none). */
+export function paceScope(classes: string[]): string {
+  return classes.length ? ` for ${classes.join(", ")}` : " for no classes";
+}
+
 /** The switch with hysteresis: cloud below ratio x pace, stays cloud until used reaches (ratio + hysteresis) x pace. */
 export function decidePace(used: number, pace: number, cfg: PaceConfig, wasCloud: boolean): PaceDecision {
   const low = cfg.ratio * pace;
   const high = (cfg.ratio + cfg.hysteresis) * pace;
   const r = (n: number) => Math.round(n);
-  if (used < low) return { cloud: true, reason: `cloud: under pace ${r(used)} % < ${cfg.ratio} x ${r(pace)} %`, classes: cfg.classes };
-  if (wasCloud && used < high) return { cloud: true, reason: `cloud: under pace ${r(used)} % < ${+(cfg.ratio + cfg.hysteresis).toFixed(2)} x ${r(pace)} % (hysteresis)`, classes: cfg.classes };
+  const scope = paceScope(cfg.classes);
+  if (used < low) return { cloud: true, reason: `cloud: under pace${scope} ${r(used)} % < ${cfg.ratio} x ${r(pace)} %`, classes: cfg.classes };
+  if (wasCloud && used < high) return { cloud: true, reason: `cloud: under pace${scope} ${r(used)} % < ${+(cfg.ratio + cfg.hysteresis).toFixed(2)} x ${r(pace)} % (hysteresis)`, classes: cfg.classes };
   return { cloud: false, reason: `local: used ${r(used)} % >= ${wasCloud ? +(cfg.ratio + cfg.hysteresis).toFixed(2) : cfg.ratio} x pace ${r(pace)} %`, classes: cfg.classes };
 }
 
