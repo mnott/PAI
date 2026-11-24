@@ -427,6 +427,7 @@ final class ANEAndModeTests: XCTestCase {
         XCTAssertEqual(workModeRule(.balanced, used: 21, pace: 34, classes: ["orchestrate", "plan"]), "cloud first for orchestrate, plan: 21% < 80% of pace 34%")
         XCTAssertEqual(workModeRule(.balanced, used: 40, pace: 34, classes: ["orchestrate", "plan"]), "local first: 40% >= 80% of pace 34%")
         XCTAssertEqual(parseWorkMode("mode: budget \u{2014} t2 = local only"), .budget)
+        XCTAssertEqual(parseWorkMode("mode: local \u{2014} t1 and t2 = local first"), .local)
         XCTAssertNil(parseWorkMode("garbage"))
     }
 

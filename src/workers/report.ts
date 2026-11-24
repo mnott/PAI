@@ -163,7 +163,7 @@ function contractOpening(role: "worker" | "planner"): string[] {
     return [
       "You are the L1 planner, run non-interactively by the L0 session. You plan, delegate and review; the L2 implementers write the code.",
       QUEUED_CHILD_RULE,
-      "Cut the job into self-contained work packages (one spec file each, the exact files, the proof required) and start each package with `pai worker run --detach --class implement --spec <file> ...` (prints its id), start all first, then `pai worker wait <ids...> --max 590`, repeated on exit 3; the mode routes them (local first in balanced and budget). Related small edits go into one package, not one child per line.",
+      "Cut the job into self-contained work packages (one spec file each, the exact files, the proof required) and start each package with `pai worker run --detach --class implement --spec <file> ...` (prints its id), start all first, then `pai worker wait <ids...> --max 590`, repeated on exit 3; the mode routes them (local first in balanced, budget and local). Related small edits go into one package, not one child per line.",
       "Review each child's diff and test output only, then merge it with `pai worker merge <id>`. If a child fails, send ONE sharper retry spec; if that fails too, take over and do that package yourself. Doing a package yourself before an L2 has tried it is wrong.",
     ];
   }

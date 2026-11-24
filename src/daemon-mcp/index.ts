@@ -1157,7 +1157,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       "Manage worker providers (list, add, update, remove, use, enable, disable, test).",
       "",
       "action=list (default) shows providers (with cost tier and tags), classes and routing.",
-      "The speed | balanced | budget mode (worker_mode tool) rides along in the listing.",
+      "The speed | balanced | budget | local mode (worker_mode tool) rides along in the listing.",
       "Every loopback (local) provider is marked running or not running by an HTTP",
       "probe (GET /v1/models): an enabled provider that is not running is not usable — never pick a",
       "local provider by name; pass where: \"local\" to the delegation tools instead.",
@@ -1872,7 +1872,7 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
   server.tool(
     "worker_mode",
     [
-      "Show or set the worker mode: speed | balanced | budget (persisted as `mode:` in workers.yaml, same as `pai worker mode`).",
+      "Show or set the worker mode: speed | balanced | budget | local (persisted as `mode:` in workers.yaml, same as `pai worker mode`).",
       "",
       ...WORK_MODES.map((m) => `${m}: ${MODE_SUMMARY[m]}`),
       "An open urgency window (urgency_set) acts as speed for that session. Only on the operator's request; never from a worker.",

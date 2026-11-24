@@ -8,6 +8,8 @@
  *   balanced  today's behaviour: t2 = local first, cloud on takeover; L1 = sonnet
  *   speed     t2 = anthropic/sonnet first, children of an L1 = anthropic/haiku, no local model
  *   budget    t2 = local only; cloud only as L1 and as takeover (the tier above) after a failed retry
+ *   local     t1 and t2 lead with the local model, no under-pace cloud lead; t2 local only, the cloud only as
+ *             takeover after a failed local retry (t1 keeps the cloud entries behind the local ones)
  *
  * An open session urgency window (`/now`, urgency_set) acts as `speed` for that
  * session (effectiveMode). A leaf apart from the yaml helpers.
@@ -21,7 +23,7 @@ import { entryProvider, findTier, type TierDef } from "./route-lists.js";
 import { WorkersConfigError, isLocalProvider } from "./config.js";
 import { workersYamlPath, writeWorkersYamlText } from "./workers-config.js";
 
-export const WORK_MODES = ["speed", "balanced", "budget"] as const;
+export const WORK_MODES = ["speed", "balanced", "budget", "local"] as const;
 export type WorkMode = (typeof WORK_MODES)[number];
 export const DEFAULT_WORK_MODE: WorkMode = "balanced";
 
@@ -30,6 +32,7 @@ export const MODE_SUMMARY: Record<WorkMode, string> = {
   speed: "t2 = anthropic/sonnet first, L1 children = anthropic/haiku, no local model",
   balanced: "t2 = local first, anthropic/sonnet on takeover; L1 = anthropic/sonnet (default)",
   budget: "t2 = local only; cloud only as L1 and as takeover after a failed retry",
+  local: "t1 and t2 = local first, no under-pace cloud lead; cloud only as takeover after a failed local retry",
 };
 
 export const isWorkMode = (v: unknown): v is WorkMode => typeof v === "string" && (WORK_MODES as readonly string[]).includes(v);
@@ -92,6 +95,14 @@ export function applyMode(tiers: TierDef[], mode: WorkMode, ctx: ModeCtx): TierD
   return tiers.map((t) => {
     if (t.session) return t;
     const isWorker = worker !== undefined && t.id === worker.id;
+    if (mode === "local") {
+      // t1 (orchestrate/plan) leads with the local model, the cloud behind it; t2 is local only
+      const isPlanner = t.classes?.some((c) => c === "orchestrate" || c === "plan") === true;
+      if (!isWorker && !isPlanner) return t;
+      const locals = t.models.filter(ctx.isLocal);
+      if (!locals.length) return t;
+      return { ...t, models: isWorker ? locals : [...locals, ...t.models.filter((e) => !ctx.isLocal(e))] };
+    }
     if (mode === "budget") {
       if (!isWorker) return t;
       const locals = t.models.filter(ctx.isLocal);

@@ -1645,7 +1645,7 @@ See also: `pai worker config check`
 
 ### pai worker mode
 
-Switch workers between speed, balanced and budget
+Switch workers between speed, balanced, budget and local
 
 ```
 pai worker mode [MODE]
@@ -1655,21 +1655,24 @@ With no argument shows the mode; with one sets it (persisted as `mode:` in worke
   speed     t2 = anthropic/sonnet first, L1 children = anthropic/haiku, no local model
   balanced  t2 = local first, anthropic/sonnet on takeover; L1 = anthropic/sonnet (default)
   budget    t2 = local only; cloud only as L1 and as takeover after a failed retry
+  local     t1 and t2 = local first, no under-pace cloud lead; cloud only as takeover after a failed local retry
 Routing by mode (L0 starts --class implement directly for one small change, --class orchestrate for several related or one larger multi-file change):
   mode      single small change (implement, direct L2)         larger / grouped (orchestrate, L1 + L2s)
   speed     anthropic/sonnet                                   L1 anthropic/sonnet, L2s anthropic/haiku
   balanced  local (gyro-l); anthropic/sonnet on failure        L1 anthropic/sonnet, local L2s, sonnet takeover
   budget    local only, failure reported (no cloud takeover)   L1 anthropic/sonnet, local L2s, sonnet only after a failed retry
+  local     local only (no under-pace cloud lead)              L1 local first, local L2s, cloud only as takeover after a failed local retry
 An open urgency window (`/now`, `pai now`) acts as speed for that session while it is open.
 
 | Argument | Required | Description |
 |---|---|---|
-| `MODE` | no | speed | balanced | budget |
+| `MODE` | no | speed | balanced | budget | local |
 
 ```sh
 pai worker mode
 pai worker mode speed
 pai worker mode budget
+pai worker mode local
 ```
 
 See also: `pai worker policy`, `pai worker route`, `pai now`
@@ -2105,7 +2108,7 @@ See also: `pai worker providers`
 | `pai worker classes` | Which provider serves draft, implement, review, … |
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths |
-| `pai worker mode` | Switch workers between speed, balanced and budget |
+| `pai worker mode` | Switch workers between speed, balanced, budget and local |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
 | `pai worker priority` | Priority of a worker at the local engine, and of a session in the queue |
 | `pai worker route` | Print the routing table: per delegation tier the ordered models |

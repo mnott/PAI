@@ -23,8 +23,8 @@ export interface DelegationDecision { decision: "allow" | "deny"; reason?: strin
 
 export const SEARCH_ROOT_REASON = "search a named directory, never ~ or /";
 export const PANE_REASON = "every worker runs behind a visible pane: --no-pane, PAI_WORKER_AUTOPANE, PAI_WORKER= and the headless-ok override are operator-only";
-export const L0_ROUTE_REASON = "L0 starts only these routes (the mode in workers.yaml picks the models: speed, balanced, budget): single small change: --class implement (direct L2); several related changes or one larger multi-file change: --class orchestrate (L1, or plan). The orchestrator cuts the work packages and starts the L2 implementers itself.";
-export const MODEL_OVERRIDE_REASON = "workers follow the mode chain (`pai worker mode` shows it; speed|balanced|budget switches it): --model and --provider from L0 only when the operator names that model or provider in the request";
+export const L0_ROUTE_REASON = "L0 starts only these routes (the mode in workers.yaml picks the models: speed, balanced, budget, local): single small change: --class implement (direct L2); several related changes or one larger multi-file change: --class orchestrate (L1, or plan). The orchestrator cuts the work packages and starts the L2 implementers itself.";
+export const MODEL_OVERRIDE_REASON = "workers follow the mode chain (`pai worker mode` shows it; speed|balanced|budget|local switches it): --model and --provider from L0 only when the operator names that model or provider in the request";
 
 /**
  * The local-only window (src/workers/local-only.ts) as the guard sees it: the
@@ -304,7 +304,7 @@ export function decideDelegationGate(command: string, env: NodeJS.ProcessEnv, op
 export const DELEGATION_BLOCK = [
   "PAI DELEGATION (L0 = this session; all work goes to workers, never done in place)",
   "- Routes by size: single small change -> `pai worker run --class implement` (direct L2); several related or one larger multi-file change -> `--class orchestrate` (L1 cuts work packages, starts the L2 implementers). Other classes are denied from L0.",
-  "- Mode picks the models: `pai worker mode` shows it, `pai worker mode speed|balanced|budget` switches it (workers.yaml).",
+  "- Mode picks the models: `pai worker mode` shows it, `pai worker mode speed|balanced|budget|local` switches it (workers.yaml).",
   "- Start: write the spec with the Write tool, then `pai worker run --label \"<goal>\" -p \"$(cat <spec>)\" --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json`, from the project directory with run_in_background: true. The spec states root cause or requirement, exact target, proof required, and whether to commit. No inline prompts, no heredocs.",
   "- No `--model`/`--provider` unless the operator names that model or provider in the request (the delegation guard enforces this): workers follow the mode and the class map. The Agent tool is denied in this session; every worker, researcher or spotcheck is one `pai worker run`.",
   "- `--tools` lists keep ToolSearch; web research adds WebSearch,WebFetch to --allowedTools.",

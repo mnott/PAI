@@ -1,14 +1,15 @@
 import Foundation
 
-/// `pai worker mode speed|balanced|budget`.
+/// `pai worker mode speed|balanced|budget|local`.
 public enum WorkMode: String, CaseIterable, Sendable {
-    case speed, balanced, budget
+    case speed, balanced, budget, local
     public var label: String { rawValue.capitalized }
     public var tooltip: String {
         switch self {
         case .speed: return "Speed: cloud first"
         case .balanced: return "Balanced: local first, cloud while under pace"
         case .budget: return "Budget: local only where possible"
+        case .local: return "Local: everything local, cloud only as takeover"
         }
     }
 }
@@ -19,6 +20,7 @@ public func workModeRule(_ mode: WorkMode, used: Double?, pace: Double?, ratio: 
     switch mode {
     case .speed: return "cloud first: speed mode"
     case .budget: return "local only where possible: budget mode"
+    case .local: return "everything local, cloud only as takeover: local mode"
     case .balanced:
         guard let used, let pace else { return "local first: no weekly pace reading" }
         let r = "\(Int((ratio * 100).rounded()))%"
@@ -31,7 +33,7 @@ public func workModeRule(_ mode: WorkMode, used: Double?, pace: Double?, ratio: 
 
 /// Mode from `pai worker mode` output ("mode: balanced — ...").
 public func parseWorkMode(_ out: String) -> WorkMode? {
-    guard let r = out.range(of: #"mode: (speed|balanced|budget)"#, options: .regularExpression) else { return nil }
+    guard let r = out.range(of: #"mode: (speed|balanced|budget|local)"#, options: .regularExpression) else { return nil }
     return WorkMode(rawValue: String(out[r].dropFirst(6)))
 }
 
