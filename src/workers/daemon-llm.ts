@@ -15,6 +15,7 @@
 import { mkdirSync } from "node:fs";
 import {
   defaultWorkersConfig,
+  isLocalProvider,
   readWorkersSection,
   resolveModelCapability,
   type ModelTier,
@@ -22,6 +23,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { resolveTarget } from "./routing.js";
+import { resolveLocalProvider } from "./local-provider.js";
 import { ensureNoMcpConfig, workersLogDir } from "./paths.js";
 import { buildRunEnv, loopbackRouterChoice, withLoginIdentity } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
@@ -125,7 +127,19 @@ export async function planLlmSpawn(
     providerName = null;
   }
   if (!provider || !providerName || !config) return legacyPlan(tier, config);
+  return providerPlan(provider, providerName, config, tier, undefined, probe);
+}
 
+/** The spawn plan of one resolved provider; `modelId` overrides the tier's model. */
+async function providerPlan(
+  provider: WorkerProvider,
+  providerName: string,
+  config: WorkersConfig,
+  tier: ModelTier,
+  modelId: string | undefined,
+  probe: () => Promise<boolean>,
+  timeoutMs: number = LLM_TIMEOUT_MS[tier]
+): Promise<LlmSpawnPlan> {
   const logDir = workersLogDir(config);
   let proxyUrl: string | undefined;
   if (provider.protocol === "openai") {
@@ -133,7 +147,7 @@ export async function planLlmSpawn(
     proxyUrl = `${await ensureProxyRunning(proxyPort(), logDir)}/${providerName}`;
   }
 
-  const model = tierModel(provider, tier);
+  const model = modelId ?? tierModel(provider, tier);
   // loopback providers take the router (prefix fixes); down or `router: false` stays direct
   const viaRouter = proxyUrl ? undefined : await loopbackRouterChoice(provider, providerName, undefined, probe);
   return {
@@ -144,7 +158,64 @@ export async function planLlmSpawn(
       "-p", "--no-session-persistence",
     ],
     env: buildRunEnv(provider, true, proxyUrl, providerName, viaRouter),
-    timeoutMs: LLM_TIMEOUT_MS[tier],
+    timeoutMs,
     provider: providerName,
   };
+}
+
+/** Default `sessionSummary.model`: the local model PAI already runs, the cloud tier only when none answers. */
+export const DEFAULT_SUMMARY_MODEL = "local";
+/** A local model is slower than a cloud tier: its budget is the thorough tier's. */
+const LOCAL_TIMEOUT_MS = LLM_TIMEOUT_MS.opus;
+
+export interface SummaryPlanDeps {
+  configPath?: string;
+  probe?: () => Promise<boolean>;
+  /** Seam: the running local provider's name, or throws when none answers (default: resolveLocalProvider). */
+  resolveLocal?: (workers: WorkersConfig, logDir: string) => Promise<{ name: string }>;
+}
+
+/**
+ * Plan the session-summary spawn from `sessionSummary.model`:
+ *   local (default)    the running local provider (what `pai worker run --local` resolves to);
+ *                      the cloud `tier` when no local provider answers
+ *   haiku|sonnet|opus  that cloud tier
+ *   <provider>[/<model>]  that workers.yaml provider (optionally a concrete model id);
+ *                      the cloud `tier` when it is not configured
+ * The Anthropic API key is never passed (buildRunEnv / legacyPlan both drop it).
+ */
+export async function planSummarySpawn(
+  spec: string | undefined,
+  tier: ModelTier,
+  deps: SummaryPlanDeps = {}
+): Promise<LlmSpawnPlan> {
+  const want = (spec ?? DEFAULT_SUMMARY_MODEL).trim() || DEFAULT_SUMMARY_MODEL;
+  const probe = deps.probe ?? probeRouter;
+  if (want === "haiku" || want === "sonnet" || want === "opus") return planLlmSpawn(want, deps.configPath, probe);
+  let workers: WorkersConfig;
+  try {
+    workers = readWorkersSection(deps.configPath).workers;
+  } catch {
+    return planLlmSpawn(tier, deps.configPath, probe);
+  }
+  const logDir = workersLogDir(workers);
+  let name: string;
+  let modelId: string | undefined;
+  let local = false;
+  if (want === "local") {
+    try {
+      name = (await (deps.resolveLocal ?? resolveLocalProvider)(workers, logDir)).name;
+    } catch {
+      return planLlmSpawn(tier, deps.configPath, probe);
+    }
+    local = true;
+  } else {
+    const slash = want.indexOf("/");
+    name = slash < 0 ? want : want.slice(0, slash);
+    modelId = slash < 0 ? undefined : want.slice(slash + 1) || undefined;
+  }
+  const provider = workers.providers[name];
+  if (!provider) return planLlmSpawn(tier, deps.configPath, probe);
+  const isLocal = local || isLocalProvider(provider.baseUrl);
+  return providerPlan(provider, name, workers, tier, modelId, probe, isLocal ? LOCAL_TIMEOUT_MS : LLM_TIMEOUT_MS[tier]);
 }

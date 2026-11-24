@@ -15,6 +15,10 @@ indexIntervalSecs: 300
 embedIntervalSecs: 600
 # Obsidian sync interval, in seconds; syncs only if a hook flagged a change.
 obsidianSyncIntervalSecs: 1800
+# Session-summary model: local (the running local model; cloud tier only when none
+# answers) | <provider> | <provider>/<model> | haiku | sonnet.
+sessionSummary:
+  model: local
 # Run an embed pass 60s after daemon start. Off by default: with a large
 # backlog it makes every restart a CPU storm.
 embedOnStartup: false
