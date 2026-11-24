@@ -16,8 +16,17 @@ export interface MailGateInput {
 
 export type MailGateDecision = { decision: "allow" } | { decision: "deny"; reason: string };
 
-const SEND_TOOL_RE = /send.*(mail|message)|(mail|message).*send/i;
+const SEND_TOOL_RE = /send.*(mail|message)|(mail|message).*send|reply|reply_all|forward|_reply|_forward/i;
 const RECIPIENT_FIELDS = ["to", "cc", "bcc"];
+
+/**
+ * The approved webseite channel: aibroker's mail send enforces its own
+ * allowlist (requester + self addresses, operator in Cc), so the identity
+ * whitelist gate must not deny its replies.
+ */
+export function isApprovedWebseiteSend(name: string | undefined): boolean {
+  return name === "mcp__aibroker__aibroker_mail_send";
+}
 
 /** Is this an MCP tool that sends mail (draft tools never do)? */
 export function isMailSendTool(name: string | undefined): boolean {
@@ -43,8 +52,14 @@ export function recipientsOf(input: Record<string, unknown> | undefined): string
 }
 
 export function decideMailGate(input: MailGateInput, identity: IdentityLike & { mailWhitelist?: string[] } | undefined): MailGateDecision {
+  if (isApprovedWebseiteSend(input.tool_name)) return { decision: "allow" };
   if (!isMailSendTool(input.tool_name)) return { decision: "allow" };
-  for (const r of recipientsOf(input.tool_input)) {
+  const recipients = recipientsOf(input.tool_input);
+  if (recipients.length === 0) {
+    // reply/forward tools address the thread's sender implicitly — fail closed
+    return { decision: "deny", reason: "recipients unknown (reply/forward) — create a draft instead" };
+  }
+  for (const r of recipients) {
     if (!isMailWhitelisted(r, identity)) {
       return { decision: "deny", reason: `not on the mail whitelist: ${normalizeEmail(r) ?? r} — create a draft instead` };
     }
