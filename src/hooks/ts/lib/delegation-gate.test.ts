@@ -188,10 +188,12 @@ describeMb("mailbox follower instruction", () => {
     expectMb(helpSupportsFollow("wait [--follow] [--timeout <s>]")).toBe(true);
     expectMb(helpSupportsFollow("--follow-up")).toBe(false);
   });
-  itMb("follower form: Monitor, no restart loop", () => {
+  itMb("follower form: Monitor, pgrep guard, no restart loop", () => {
     const t = waiterNotice(true);
     expectMb(t).toContain("mailbox wait --follow");
     expectMb(t).toContain("Monitor");
+    expectMb(t).toContain('pgrep -f "aibroker mailbox wait"');
+    expectMb(t).toContain("never start a second");
     expectMb(t).not.toContain("start a new waiter");
   });
   itMb("legacy form keeps the restart loop", () => {
