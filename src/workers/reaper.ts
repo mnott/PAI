@@ -18,7 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { sep } from "node:path";
 import { appendLedger } from "./ledger.js";
-import { loadStatusesCached, isLive as statusIsLive, ownsPidCached } from "./status.js";
+import { loadStatusesCached, isLive as statusIsLive, ownsPidCached, ownsPidCachedAsync } from "./status.js";
 import { ledgerPath, slotCurrentPath } from "./paths.js";
 import { slotsDir } from "./slots.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -58,6 +58,8 @@ export interface ReaperDeps {
   parentLive?: (logDir: string, id: string) => boolean;
   /** Whether the worker `id`'s own status is live (state running/queued and it owns its recorded pid). Defaults to ownsPidCached; injectable for tests. */
   selfLive?: (status: WorkerStatus) => boolean;
+  /** Async selfLive for the daemon loop (never blocks on a sync `ps`). Defaults to ownsPidCachedAsync; injectable for tests. */
+  selfLiveAsync?: (status: WorkerStatus) => Promise<boolean>;
 }
 
 /** True when worker `id` exists and names a parent whose status is still live — the reaper spares it: only when the parent is gone too is the child an orphan. */
@@ -88,12 +90,25 @@ function anyLiveAncestor(statuses: WorkerStatus[], id: string, live: (s: WorkerS
  *     L1's worktree, so ownerOf names the L1, not the child; asking for the L1's parent would ask the
  *     wrong one (an L1 has no parent: the operator started it);
  *   - or the worker names a live ancestor (the process maps to the child id itself).
+ * The daemon loop must use isSupervisedByLiveAsync instead.
  */
 export function isSupervisedByLive(logDir: string, id: string, selfLive: (s: WorkerStatus) => boolean = ownsPidCached): boolean {
   try {
     const statuses = loadStatusesCached(logDir);
     const own = statuses.find((s) => s.id === id);
     if (own && selfLive(own)) return true;
+    return anyLiveAncestor(statuses, id);
+  } catch {
+    return false; // unreadable statuses: today's behavior — judge it as an orphan
+  }
+}
+
+/** isSupervisedByLive without blocking the daemon loop on a sync `ps`. */
+export async function isSupervisedByLiveAsync(logDir: string, id: string, selfLive: (s: WorkerStatus) => Promise<boolean> = ownsPidCachedAsync): Promise<boolean> {
+  try {
+    const statuses = loadStatusesCached(logDir);
+    const own = statuses.find((s) => s.id === id);
+    if (own && (await selfLive(own))) return true;
     return anyLiveAncestor(statuses, id);
   } catch {
     return false; // unreadable statuses: today's behavior — judge it as an orphan
@@ -209,13 +224,13 @@ function ownerOf(deps: ReaperDeps, logDir: string, row: ProcRow): string | undef
 }
 
 /** A worker whose own status is live, or one with a live recorded parent — never reaped as an orphan while its supervisor runs. */
-function sparedByParent(deps: ReaperDeps, logDir: string, row: ProcRow): boolean {
+async function sparedByParent(deps: ReaperDeps, logDir: string, row: ProcRow): Promise<boolean> {
   const id = ownerOf(deps, logDir, row);
   if (!id) return false;
   try {
     const statuses = loadStatusesCached(logDir);
     const own = statuses.find((s) => s.id === id);
-    if (own && (deps.selfLive ?? ownsPidCached)(own)) return true; // the live worker's own process or child
+    if (own && (await (deps.selfLiveAsync ?? ownsPidCachedAsync)(own))) return true; // the live worker's own process or child
     return anyLiveAncestor(statuses, id, deps.selfLive); // a child of a live parent
   } catch {
     return deps.parentLive?.(logDir, id) ?? false; // statuses unreadable: the injected check alone (tests keep it exact)
@@ -228,7 +243,7 @@ export async function reapOrphansOnce(logDir: string, state: ReaperState, deps: 
   const killed: number[] = [];
   const seen = new Set<number>();
   for (const row of deps.snapshot()) {
-    if (sparedByParent(deps, logDir, row)) continue; // a child of a live worker: its parent owns it, not an orphan
+    if (await sparedByParent(deps, logDir, row)) continue; // a child of a live worker: its parent owns it, not an orphan
     if (row.ppid === 1 && row.ageSecs >= REAP_MIN_AGE_SECS && isWorkerChrome(row, logDir)) {
       await deps.kill(row.pid);
       killed.push(row.pid);

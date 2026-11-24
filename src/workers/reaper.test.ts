@@ -72,6 +72,11 @@ function deps(rows: ProcRow[], logDir: string): ReaperDeps & { killed: number[] 
       const fresh = load(s.id);
       return !!fresh && (fresh.state === "running" || fresh.state === "queued") && fresh.pid === 5000;
     },
+    // the async default is ownsPidCachedAsync (real ps); the fake snapshot has no real processes, so mirror the sync seam
+    selfLiveAsync: async (s) => {
+      const fresh = load(s.id);
+      return !!fresh && (fresh.state === "running" || fresh.state === "queued") && fresh.pid === 5000;
+    },
   };
 }
 
