@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { applyClaimCheck, claimIdentifiers, workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, REPEAT_STOP_LINE, checkProof, verifyReportChanges } from "./report.js";
+import { applyClaimCheck, claimIdentifiers, workerContractPrompt, ORCHESTRATOR_START_BLOCK, WORKER_CONTRACT_PROMPT, REPEAT_STOP_LINE, CODE_EXPLORE_LINE, CODE_GRAPH_FIRST_LINE, checkProof, verifyReportChanges } from "./report.js";
 import { repairAndValidateAg2 } from "./agentish.js";
 
 describe("workerContractPrompt — planner classes (orchestrate/plan without the flag)", () => {
@@ -92,6 +92,29 @@ describe("workerContractPrompt — code graph lines", () => {
     expect(on).toContain("pai code callers <symbol>");
     expect(on).toContain("pai code search <text>");
     expect(off).not.toContain("indexed in the code graph");
+  });
+
+  it("local providers get no code-graph lines; cloud providers do (A/B #23 result, forge #23 comment 21176)", () => {
+    const local = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
+    expect(local).not.toContain(CODE_EXPLORE_LINE);
+    expect(local).not.toContain(CODE_GRAPH_FIRST_LINE);
+    expect(local).not.toContain("indexed in the code graph");
+    expect(local).toContain(REPEAT_STOP_LINE);
+
+    const cloud = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, false);
+    expect(cloud).toContain(CODE_EXPLORE_LINE);
+    expect(cloud).toContain(CODE_GRAPH_FIRST_LINE);
+
+    const saved = process.env.PAI_BRIEF_CODE_GRAPH;
+    try {
+      process.env.PAI_BRIEF_CODE_GRAPH = "0";
+      const cloudOff = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, false);
+      expect(cloudOff).not.toContain(CODE_EXPLORE_LINE);
+      expect(cloudOff).not.toContain(CODE_GRAPH_FIRST_LINE);
+    } finally {
+      if (saved === undefined) delete process.env.PAI_BRIEF_CODE_GRAPH;
+      else process.env.PAI_BRIEF_CODE_GRAPH = saved;
+    }
   });
 
   it("PAI_BRIEF_CODE_GRAPH=0 drops both code-graph lines from the brief (A/B #23)", () => {

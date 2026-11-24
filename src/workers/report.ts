@@ -300,7 +300,9 @@ export function workerContractPrompt(
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
   // A/B #23: PAI_BRIEF_CODE_GRAPH=0 in the environment of `pai worker run` drops both code-graph
   // guidance lines from the brief. Read here, not forwarded: the worker's own env is untouched.
-  const codeGraphOff = process.env.PAI_BRIEF_CODE_GRAPH === "0";
+  // A/B #23 result (forge #23 comment 21176): on local models the graph lines bring no benefit
+  // (first edit later, same or more calls), so they are dropped for local providers; cloud keeps them.
+  const codeGraphOff = process.env.PAI_BRIEF_CODE_GRAPH === "0" || Boolean(localProvider);
   if (!codeGraphOff) base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
   base += `\n${LIVE_RUNS_MAIN_LINE}`;
