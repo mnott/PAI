@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyMode, readMode, writeMode } from "./mode.js";
-import { DEFAULT_PACE, currentPace, decidePace, paceOf } from "./pace.js";
+import { DEFAULT_PACE, currentPace, decidePace, paceOf, readPaceConfig } from "./pace.js";
 import type { TierDef } from "./route-lists.js";
 
 const tiers = (): TierDef[] => [
@@ -99,5 +99,40 @@ describe("routing by mode x {implement direct, orchestrate}", () => {
     const f = join(mkdtempSync(join(tmpdir(), "mode-")), "workers.yaml");
     writeFileSync(f, "enabled: true\n");
     expect(readMode(f)).toBe("balanced");
+  });
+});
+
+describe("under-pace cloud lead is per class (budget.cloudUnderPace.classes)", () => {
+  const under = { cloudFirst: true, paceClasses: ["orchestrate", "plan"] };
+
+  it("under pace: implement stays local first, orchestrate leads with the cloud", () => {
+    const t = applyMode(tiers(), "balanced", { isLocal, ...under });
+    expect(models(t, "t2")[0]).toBe("gyro-l");
+    expect(models(t, "t1")[0]).toBe("anthropic/sonnet");
+  });
+
+  it("config listing implement: implement leads with the cloud too", () => {
+    const t = applyMode(tiers(), "balanced", { isLocal, cloudFirst: true, paceClasses: ["implement"] });
+    expect(models(t, "t2")[0]).toBe("anthropic/sonnet");
+    expect(models(t, "t1")[0]).toBe("anthropic/sonnet");
+  });
+
+  it("over pace (cloudFirst false): tiers unchanged", () => {
+    expect(applyMode(tiers(), "balanced", { isLocal, cloudFirst: false, paceClasses: ["orchestrate", "plan"] })).toEqual(tiers());
+  });
+
+  it("decidePace carries the classes through", () => {
+    const d = decidePace(10, 50, { ...DEFAULT_PACE, classes: ["implement"] }, false);
+    expect(d.cloud).toBe(true);
+    expect(d.classes).toEqual(["implement"]);
+  });
+
+  it("readPaceConfig reads classes from workers.yaml and defaults to the planning classes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pace-"));
+    const f = join(dir, "workers.yaml");
+    writeFileSync(f, "budget:\n  cloudUnderPace:\n    classes: [implement, research]\n");
+    expect(readPaceConfig(f).classes).toEqual(["implement", "research"]);
+    writeFileSync(f, "enabled: true\n");
+    expect(readPaceConfig(f).classes).toEqual(["orchestrate", "plan"]);
   });
 });

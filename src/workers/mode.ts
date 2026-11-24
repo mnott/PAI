@@ -67,8 +67,10 @@ export interface ModeCtx {
   isLocal: (entry: string) => boolean;
   /** The run is a child of an L1 (orchestrate) worker. */
   underOrchestrator?: boolean;
-  /** balanced only: the weekly window is under pace, so t2 leads with the cloud (pace.ts). */
+  /** balanced only: the weekly window is under pace, so the cloud leads (pace.ts). */
   cloudFirst?: boolean;
+  /** balanced only: the classes the under-pace cloud lead applies to (budget.cloudUnderPace.classes). */
+  paceClasses?: string[];
 }
 
 const SONNET = "anthropic/sonnet";
@@ -78,8 +80,14 @@ const HAIKU = "anthropic/haiku";
 export function applyMode(tiers: TierDef[], mode: WorkMode, ctx: ModeCtx): TierDef[] {
   const worker = findTier(tiers, "implement");
   if (mode === "balanced") {
-    if (!ctx.cloudFirst || !worker || !worker.models.includes(SONNET) || worker.models[0] === SONNET) return tiers;
-    return tiers.map((t) => (t.id === worker.id && !t.session ? { ...t, models: [SONNET, ...t.models.filter((e) => e !== SONNET)] } : t));
+    if (!ctx.cloudFirst) return tiers;
+    const paceClasses = ctx.paceClasses ?? [];
+    const lead = (t: TierDef): TierDef => {
+      if (t.session || !t.models.includes(SONNET) || t.models[0] === SONNET) return t;
+      return { ...t, models: [SONNET, ...t.models.filter((e) => e !== SONNET)] };
+    };
+    // the under-pace cloud lead applies only to the classes in budget.cloudUnderPace.classes
+    return tiers.map((t) => (t.classes?.some((c) => paceClasses.includes(c)) ? lead(t) : t));
   }
   return tiers.map((t) => {
     if (t.session) return t;
@@ -115,6 +123,7 @@ export function applyModeToConfig(
   if (pace) paceNotes.set(config, pace.reason);
   config.tiers = applyMode(config.tiers, mode, {
     cloudFirst: pace?.cloud === true,
+    paceClasses: pace?.classes,
     isLocal: (e) => isLocalProvider(config.providers[entryProvider(e)]?.baseUrl ?? ""),
     underOrchestrator: env.PAI_WORKER_ORCHESTRATOR === "1",
   });
