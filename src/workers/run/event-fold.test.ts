@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loopStopResult } from "./finalise.js";
 import { createResultFold, finalResultEvent, type StreamEventLike } from "./event-fold.js";
+import { preEventFailure } from "./pane-handles.js";
 
 // The resumed worker's stream (20261119-045451-23508): the replayed task notification and its num_turns-0 result
 // arrive BEFORE the real turn for the new prompt; arming the end on that result closed stdin and reaped the
@@ -108,5 +109,43 @@ describe("loopStopResult usage", () => {
       ]
     );
     expect(loopStopResult(dir, "w1", "x", 2, 1, log).usage).toEqual({ input_tokens: 2, output_tokens: 100, cache_read_input_tokens: 9, cache_creation_input_tokens: 9 });
+  });
+});
+
+// 2026-11-24: a queue-starved worker stopped by the time budget read "failed before any model
+// event: ⚠ claude.ai connectors are disabled …" — a benign stderr line every local worker prints.
+const CONNECTORS_WARNING =
+  "⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login · Unset it to use connectors.";
+
+describe("preEventFailure summary", () => {
+  it("skips the benign connectors warning: no failure text from it alone", () => {
+    expect(preEventFailure(143, 0, CONNECTORS_WARNING)).toBeNull();
+    expect(preEventFailure(143, 0, CONNECTORS_WARNING + "\n")).toBeNull();
+  });
+
+  it("keeps a real error when a benign line is mixed in", () => {
+    expect(preEventFailure(1, 0, CONNECTORS_WARNING + "\nError: spawn ENOENT")).toBe("failed before any model event: Error: spawn ENOENT");
+  });
+
+  it("returns null when the run answered turns or exited clean", () => {
+    expect(preEventFailure(0, 0, "anything")).toBeNull();
+    expect(preEventFailure(1, 2, "anything")).toBeNull();
+  });
+
+  it("uses the kill record's reason when one exists", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prefail-kill-"));
+    writeFileSync(
+      join(dir, "w1.kill"),
+      JSON.stringify({ ts: "2026-11-24T12:00:00Z", by: "time-budget", pid: 1, ppid: 2, cwd: "/", reason: "budget checkpoint: no progress in its 20-min allowance" })
+    );
+    expect(preEventFailure(143, 0, CONNECTORS_WARNING, dir, "w1")).toBe("stopped by time-budget before its first model turn (budget checkpoint: no progress in its 20-min allowance)");
+    // the marker is consumed: a second read falls back to stderr (benign → null)
+    expect(preEventFailure(143, 0, CONNECTORS_WARNING, dir, "w1")).toBeNull();
+  });
+
+  it("a kill record without a stated reason still names who stopped it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prefail-kill2-"));
+    writeFileSync(join(dir, "w2.kill"), JSON.stringify({ ts: "t", by: "pane audit", pid: 1, ppid: 2, cwd: "/" }));
+    expect(preEventFailure(143, 0, CONNECTORS_WARNING, dir, "w2")).toBe("stopped by pane audit before its first model turn");
   });
 });
