@@ -6,6 +6,7 @@
 
 import { spawn } from "node:child_process";
 import { shortText } from "../args.js";
+import { readMarker } from "../endreason.js";
 import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { saveStatus, type WorkerStatus } from "../status.js";
@@ -163,10 +164,36 @@ export function pooledFollowSpawn(wid: string, label: string | undefined, logDir
   return { env: process.env, cwd, stdio: ["ignore", "pipe", "pipe"], title: `${label ?? wid} (pooled)`, statusLine: { kind: "worker", id: wid, logDir } };
 }
 
-/** status.last for a claude start that died before any model event: its stderr, not a bare "starting". */
-export function preEventFailure(rc: number, turns: number, stderrTail: string): string | null {
-  if (rc === 0 || turns > 0 || !stderrTail.trim()) return null;
-  return "failed before any model event: " + shortText(stderrTail, 150);
+/**
+ * stderr lines every local worker prints that are not an error: the router's auth token takes
+ * precedence over a claude.ai login, so the CLI warns about disabled connectors on every start.
+ * Quoting one as the failure (2026-11-24: a time-budget stop of a queue-starved worker read as
+ * "claude.ai connectors are disabled") misattributes a benign line.
+ */
+export const BENIGN_STDERR = [/claude\.ai connectors are disabled/i];
+
+/** Drop known-benign lines from a stderr tail; returns "" when nothing real is left. */
+export function stripBenignStderr(stderrTail: string): string {
+  return stderrTail
+    .split(/\n/)
+    .filter((line) => line.trim() && !BENIGN_STDERR.some((re) => re.test(line)))
+    .join("\n");
+}
+
+/**
+ * status.last for a claude start that died before any model event: its stderr, not a bare "starting".
+ * Benign warning lines are skipped; when a kill record exists (PAI stopped the child — e.g. the time
+ * budget), the kill record's reason is the truth, not the stderr tail.
+ */
+export function preEventFailure(rc: number, turns: number, stderrTail: string, logDir?: string, wid?: string): string | null {
+  if (rc === 0 || turns > 0) return null;
+  if (logDir && wid) {
+    const marker = readMarker(logDir, wid);
+    if (marker) return `stopped by ${marker.by} before its first model turn${marker.reason ? ` (${marker.reason})` : ""}`;
+  }
+  const real = stripBenignStderr(stderrTail);
+  if (!real.trim()) return null;
+  return "failed before any model event: " + shortText(real, 150);
 }
 
 /**

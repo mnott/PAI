@@ -715,7 +715,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
   const ok = !empty && runSucceeded(headless, rc, resultEvent);
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);
-  else if (headless) status.last = preEventFailure(rc, status.turns, state.stderrTail) ?? status.last;
+  else if (headless) status.last = preEventFailure(rc, status.turns, state.stderrTail, logDir, wid) ?? status.last;
   if (state.resultReport?.notes) status.last = shortText(state.resultReport.notes, 90);
   if (empty) {
     status.last = "harness: empty-response (model returned nothing)";

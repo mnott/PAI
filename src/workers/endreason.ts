@@ -72,7 +72,8 @@ function peekMarker(logDir: string, id: string): KillRequest | null {
   }
 }
 
-function readMarker(logDir: string, id: string): KillRequest | null {
+/** Read and consume the kill-request marker (null when none); the runner's end path uses it. */
+export function readMarker(logDir: string, id: string): KillRequest | null {
   const p = killMarkerPath(logDir, id);
   if (!existsSync(p)) return null;
   try {
