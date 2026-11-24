@@ -7,7 +7,7 @@
  */
 import { isLocalProvider, type WorkersConfig } from "./config.js";
 import { providerCap, instanceCachedUp, liveQueue, queueRows, sessionOf } from "./capacity.js";
-import { alive, isLive, loadStatuses, pausedFree, ownsPid, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatusesCached, pausedFree, ownsPid, type WorkerStatus } from "./status.js";
 
 export interface SessionCounters {
   session: string;
@@ -39,7 +39,7 @@ export function schedulerView(
   logDir: string,
   workers: Pick<WorkersConfig, "providers">,
   now: number = Date.now(),
-  statuses: WorkerStatus[] = loadStatuses(logDir),
+  statuses: WorkerStatus[] = loadStatusesCached(logDir),
   owns: (w: Pick<WorkerStatus, "pid" | "started">) => boolean = ownsPid,
   isAlive: (pid: number) => boolean = alive
 ): SchedulerView {

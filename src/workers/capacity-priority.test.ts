@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -750,6 +751,35 @@ describe("session max_parallel gate", () => {
 
   it("0 running with cap 1 admits", async () => {
     expect(await race(sessGate("q3", { cap: 1, load: () => [] }))).toBe("admitted");
+  });
+});
+
+// 2026-11-24: queueRows/fairEntries fell back to the uncached loadStatuses when no statuses were passed,
+// re-parsing every status file on every queue walk (~3 s per call on a busy log dir).
+describe("queueRows defaults to the cached status list", () => {
+  it("reads each status file at most once across 10 calls without a statuses argument", async () => {
+    const { vi } = await import("vitest");
+    const d = mkdtempSync(join(tmpdir(), "cache-rows-"));
+    try {
+      mkdirSync(join(d, "queue", "fakeA"), { recursive: true });
+      for (let i = 0; i < 50; i++) {
+        saveStatus(d, st(`w${i}`));
+        writeTicket(join(d, "queue", "fakeA", `w${i}`), `${process.pid} @${1000 + i}`);
+      }
+      // ESM namespaces are frozen, so the fs spy goes through the module loader:
+      // a vi.mock factory that wraps the real fs and counts .status reads.
+      let statusReads = 0;
+      vi.doMock("node:fs", async () => {
+        const real = await vi.importActual<typeof import("node:fs")>("node:fs");
+        return { ...real, readFileSync: (p: unknown, ...a: unknown[]) => { if (typeof p === "string" && p.endsWith(".status")) statusReads++; return (real.readFileSync as (...x: unknown[]) => unknown)(p, ...a); } };
+      });
+      const fresh = await import("./capacity.js");
+      for (let n = 0; n < 10; n++) fresh.queueRows(d, {}, () => true);
+      expect(statusReads).toBeLessThanOrEqual(50);
+      vi.doUnmock("node:fs");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });
 
