@@ -60,7 +60,8 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "${PAI_DIR}/Hooks/security-validator.mjs" }
+          { "type": "command", "command": "${PAI_DIR}/Hooks/security-validator.mjs" },
+          { "type": "command", "command": "${PAI_DIR}/Hooks/block-samplers.mjs" }
         ]
       },
       {
