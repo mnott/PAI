@@ -6,7 +6,6 @@
  * runner uses, instead of importing the whole runner into the daemon.
  */
 
-import { stripApiKey } from "./strip-api-key.js";
 import { withBunOnPath } from "../bun-path.js";
 import { execFile, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -153,12 +152,11 @@ export function withLoginIdentity(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
-export { stripApiKey };
-
 /** Caller's env minus ANTHROPIC_API_KEY: a spawned claude must bill the
  *  subscription, never an API key left in the user's shell. */
 export function nativeLaunchEnv(): NodeJS.ProcessEnv {
-  const env = stripApiKey({ ...process.env });
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
   return withBunOnPath(withLoginIdentity(env), env.HOME ?? homedir());
 }
 
