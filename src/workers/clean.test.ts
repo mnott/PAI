@@ -1,4 +1,4 @@
-import { vi, afterAll, describe, expect, it } from "vitest";
+import { vi, afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { applyClean, scanClean } from "./clean.js";
 import { loadStatus, loadStatuses, nowStamp } from "./status.js";
 import { archiveWorkerFiles } from "./gc-run.js";
-import { eventsPath } from "./paths.js";
+import { eventsPath, statusPath } from "./paths.js";
 import { latestMergeGateLog } from "./gate-log.js";
 import { recordGitIdentity, restoreGitIdentity } from "./git-identity.js";
 
@@ -179,6 +179,47 @@ describe("worker gc archive", () => {
     expect(latestMergeGateLog(logDir, "w-old")).toContain(arch);
     expect(loadStatuses(logDir).map((s) => s.id)).not.toContain("w-old");
     expect(loadStatuses(logDir)).toHaveLength(3);
+  });
+});
+
+describe("archive month listing refresh", () => {
+  // the listing cache is keyed by logDir, so each test needs its own temp dir
+  let logDir: string;
+  beforeEach(() => {
+    logDir = mkdtempSync(join(tmpdir(), "pai-paths-"));
+  });
+  afterEach(() => {
+    rmSync(logDir, { recursive: true, force: true });
+    vi.useRealTimers();
+  });
+
+  it("a month folder created after the first lookup is found via the miss re-read", () => {
+    // first lookup of an unrelated id fills the cache with an empty listing
+    expect(eventsPath(logDir, "never")).toBe(join(logDir, "never.jsonl"));
+    // a separate `pai worker gc` process creates the first archive of a new month
+    const month = join(logDir, "archive", "2026-12");
+    mkdirSync(month, { recursive: true });
+    writeFileSync(join(month, "w.jsonl"), "{}\n");
+    // the cached listing would hide it; the miss re-read finds it
+    expect(eventsPath(logDir, "w")).toBe(join(month, "w.jsonl"));
+  });
+
+  it("a month folder created after the first lookup is found after the TTL", () => {
+    vi.useFakeTimers();
+    // fill the cache with an empty listing
+    expect(eventsPath(logDir, "never")).toBe(join(logDir, "never.jsonl"));
+    const month = join(logDir, "archive", "2026-12");
+    mkdirSync(month, { recursive: true });
+    writeFileSync(join(month, "w.status"), "{}\n");
+    // still inside the TTL: the cached (empty) listing is used, nothing found
+    vi.advanceTimersByTime(59_000);
+    expect(statusPath(logDir, "never")).toBe(join(logDir, "never.status"));
+    // past the TTL: the listing is re-read and the new month is seen
+    vi.advanceTimersByTime(1_001);
+    expect(statusPath(logDir, "w")).toBe(join(month, "w.status"));
+    // past the TTL: the listing is re-read and the new month is seen
+    vi.advanceTimersByTime(1_001);
+    expect(statusPath(logDir, "w")).toBe(join(month, "w.status"));
   });
 });
 
