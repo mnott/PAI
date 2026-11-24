@@ -49,7 +49,7 @@ export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe, 
   const enabled = flags.enabled ?? (await promptYesNo(rl, "Enable the router and cockpit?", typeof raw.enabled === "boolean" ? raw.enabled : true));
   if (!enabled) {
     console.log(c.ok("Router disabled. Enable later: pai config set router.enabled true"));
-    return { router: { ...raw, enabled: false } };
+    return { router: { enabled: false } };
   }
 
   // A port the router itself holds is not "taken": judged by the live router (its pid file), not by a config flag.
@@ -121,5 +121,5 @@ export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe, 
   if (bind === "tailscale" && resolveBindAddress("tailscale") === null) console.log(c.warn("  Tailscale is not up here; the extra listener starts once it is."));
 
   console.log(c.ok(`Router enabled on port ${port}, reach: ${bind}.`));
-  return { router: { ...raw, enabled: true, port, bind } };
+  return { router: { enabled: true, port, bind } };
 }

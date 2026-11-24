@@ -43,7 +43,9 @@ async function stepWorkersInner(rl: Rl): Promise<Record<string, unknown>> {
     line();
     console.log(c.ok("Skipping workers."));
     console.log(c.dim("  Later: pai worker on   (other providers: pai worker providers add <name> … — see docs/worker.md)"));
-    return { workers: { enabled: false, providers: {}, classes: {} } };
+    // A skipped step writes nothing: returning a workers block here used to
+    // overwrite the user's section (and turn workers off) on every re-run.
+    return {};
   }
 
   setWorkersEnabled(true);

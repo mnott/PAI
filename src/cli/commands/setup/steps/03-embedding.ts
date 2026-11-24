@@ -39,7 +39,7 @@ export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
     if (setupOptions.embedding !== undefined) {
       console.log(c.warn(`  --embedding ${setupOptions.embedding} ignored: a model is already set. Change it with \`pai memory backend use\` or by editing embeddingModel in ${CONFIG_FILE}.`));
     }
-    return { embeddingModel: existing.embeddingModel, ...(await stepBackend(rl, false)) };
+    return { ...(await stepBackend(rl, false)) };
   }
 
   line();
