@@ -396,11 +396,17 @@ const isSedInplaceFlag = (a: string): boolean => /^-[a-zA-Z]*i[a-zA-Z]*$/.test(a
  * `''` is the suffix). A script is read, never written: `sed -i '' -e '/let h = dlopen/d' -e … f`
  * was denied 2026-11-24 as a write to `/let h = dlopen/d` because the script after `-e` was taken
  * as a target. GNU sed (`sed -i.bak …`) has no separate suffix word, so nothing is dropped there.
+ * The dropped word is a suffix only when it is not a script: BSD sed reads the word after a bare
+ * `-i` as the backup suffix whatever it is (`sed -i '~' 's/a/b/' f` backs up to `f~`), so a word
+ * that looks like a script or option is kept as a target — the ambiguous deny below still catches
+ * the real mistakes (`sed -i 's/a/b/' f` never reaches here: the rewrite inserts `''` first).
  */
 function sedWriteTargets(args: string[]): string[] {
   const operands = sedOperands(args);
   const bare = args.some((a) => a === "-i" || a === "--in-place");
-  return bare ? operands.slice(1) : operands;
+  if (!bare) return operands;
+  const first = operands[0];
+  return first !== undefined && CLEAR_SED_SCRIPT.test(first) ? operands : operands.slice(1);
 }
 
 /** Paths a segment writes to (redirects plus the write-side of common tools). */
