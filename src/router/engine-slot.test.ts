@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,8 @@ import { parseWorkersConfig } from "../workers/config.js";
 import { createRouter } from "./router.js";
 import { DEFAULT_SCHED, RequestScheduler, sharedScheduler, type Priority } from "./scheduler.js";
 import { engineControlReader } from "../workers/engine-control.js";
+import { defaultLoopCaptureRing, LoopCaptureRing, loopCapturePath } from "../workers/proxy/loop-capture.js";
+import { loopStopMarkerPath, requestLoopStop } from "../workers/loop-stop.js";
 
 const closers: Array<() => void> = [];
 afterEach(() => {
@@ -566,6 +568,190 @@ describe("/cockpit/queue off the event loop", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe("loop capture on the router path for local models", () => {
+  // local workers point ANTHROPIC_BASE_URL at the router; the standalone proxy never
+  // sees those requests, so the router keeps the last turns per run and the loop
+  // guard's stop writes them (forwarded body, upstream instance port, no secrets).
+  async function capRig(instances: number) {
+    const dir = mkdtempSync(join(tmpdir(), "router-loopcap-"));
+    closers.push(() => rmSync(dir, { recursive: true, force: true }));
+    const seen: Array<{ body: unknown; port: number }> = [];
+    const ports: number[] = [];
+    for (let i = 0; i < instances; i++) {
+      const up = http.createServer((req, res) => {
+        const bits: Buffer[] = [];
+        req.on("data", (c) => bits.push(c));
+        req.on("end", () => {
+          seen.push({ body: JSON.parse(bits.toString("utf8")), port: ports[i]! });
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: "gyro-m", content: [{ type: "text", text: `ok${i}` }], usage: { input_tokens: 1, output_tokens: 1 } }));
+        });
+      });
+      ports.push(await listen(up));
+    }
+    const prov = parseWorkersConfig({
+      providers: {
+        gyro: {
+          baseUrl: `http://127.0.0.1:${ports[0]}`,
+          models: { default: "gyro-m" },
+          ...(instances > 1 ? { instances, maxConcurrent: instances } : {}),
+        },
+      },
+    }).providers;
+    const ring = new LoopCaptureRing();
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, undefined, undefined, {
+      instances: () => [],
+      captureRing: ring,
+      captureLogDir: dir,
+    });
+    const port = await listen(r);
+    const post = (worker: string) =>
+      new Promise<{ status: number; text: string }>((resolve) => {
+        const q = http.request(
+          {
+            port,
+            host: "127.0.0.1",
+            path: "/v1/messages",
+            method: "POST",
+            headers: { "content-type": "application/json", "x-pai-worker": worker, authorization: "Bearer client-secret" },
+          },
+          (x) => {
+            let text = "";
+            x.on("data", (c) => (text += c));
+            x.on("end", () => resolve({ status: x.statusCode ?? 0, text }));
+          }
+        );
+        q.on("error", () => resolve({ status: 0, text: "" }));
+        q.end(JSON.stringify({ model: "gyro-m", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }));
+      });
+    return { dir, ring, seen, ports, post };
+  }
+
+  it("a local /v1/messages turn is kept with the forwarded body and the serving instance port", async () => {
+    const t = await capRig(2);
+    const a = await t.post("w1");
+    expect(a.status).toBe(200);
+    const turns = t.ring.get("w1");
+    expect(turns.length).toBe(1);
+    expect(turns[0].request).toEqual(t.seen[0].body); // exactly what the engine received
+    expect((turns[0].request as { model: string }).model).toBe("gyro-m");
+    expect(turns[0].response).toContain("ok");
+    expect(t.ports).toContain(turns[0].upstreamPort);
+    const b = await t.post("w1");
+    expect(b.status).toBe(200);
+    expect(t.ring.get("w1").length).toBe(2);
+    expect(t.ring.get("w1")[1].upstreamPort).toBe(t.ring.get("w1")[0].upstreamPort); // same session, sticky instance
+  });
+
+  it("a simulated loop stop writes the capture: forwarded body, upstream port, mode 600, no secrets, ledger line", async () => {
+    const t = await capRig(1);
+    await t.post("wStop");
+    // the hook's stop leaves the marker; the router flushes on its next request
+    writeFileSync(loopStopMarkerPath(t.dir, "wStop"), JSON.stringify({ ts: new Date().toISOString(), reason: "identical-call loop" }));
+    await t.post("wStop");
+    const path = loopCapturePath(t.dir, "wStop");
+    const raw = readFileSync(path, "utf8");
+    const payload = JSON.parse(raw) as { id: string; reason: string; turns: Array<{ request: Record<string, unknown>; response: string; upstreamPort?: number }> };
+    expect(payload.id).toBe("wStop");
+    expect(payload.reason).toBe("identical-call loop");
+    expect(payload.turns.length).toBe(1); // the turn kept before the stop; the post-stop turn is not captured again
+    expect(payload.turns[0].request).toEqual(t.seen[0].body);
+    expect(payload.turns[0].upstreamPort).toBe(t.ports[0]);
+    expect(payload.turns[0].response).toContain("ok0");
+    expect(raw).not.toContain("client-secret");
+    expect(raw.toLowerCase()).not.toContain("authorization");
+    expect(raw.toLowerCase()).not.toContain("api_key");
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    const ledger = readFileSync(join(t.dir, "ledger.jsonl"), "utf8");
+    expect(ledger).toContain("LOOP-CAPTURE");
+    expect(ledger).toContain("wStop");
+  });
+
+  it("the hook path writes the capture directly when it shares the ring", async () => {
+    // the hook (loop-stop) captures on the process-wide default ring, which is what
+    // a router running without an injected ring uses; the marker-flush path (test
+    // above) covers the cross-process case.
+    const dir = mkdtempSync(join(tmpdir(), "router-loopcap-hook-"));
+    closers.push(() => rmSync(dir, { recursive: true, force: true }));
+    defaultLoopCaptureRing.clear("wHook");
+    const up = http.createServer((req, res) => {
+      const bits: Buffer[] = [];
+      req.on("data", (c) => bits.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: "gyro-m", content: [{ type: "text", text: "ok0" }], usage: { input_tokens: 1, output_tokens: 1 } }));
+      });
+    });
+    const port = await listen(up);
+    const prov = parseWorkersConfig({
+      providers: { gyro: { baseUrl: `http://127.0.0.1:${port}`, models: { default: "gyro-m" } } },
+    }).providers;
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, undefined, undefined, {
+      instances: () => [],
+      captureLogDir: dir,
+    });
+    const routerPort = await listen(r);
+    await new Promise<void>((resolve) => {
+      const q = http.request({ port: routerPort, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "content-type": "application/json", "x-pai-worker": "wHook" } }, (x) => {
+        x.on("data", () => {});
+        x.on("end", () => resolve());
+      });
+      q.on("error", () => resolve());
+      q.end(JSON.stringify({ model: "gyro-m", max_tokens: 5, messages: [{ role: "user", content: "hi" }] }));
+    });
+    expect(defaultLoopCaptureRing.get("wHook").length).toBe(1);
+    requestLoopStop(dir, "wHook", "loop guard", { kill: () => {}, claudePid: () => undefined });
+    const raw = readFileSync(loopCapturePath(dir, "wHook"), "utf8");
+    const payload = JSON.parse(raw) as { reason: string; turns: Array<{ upstreamPort?: number }> };
+    expect(payload.reason).toBe("loop guard");
+    expect(payload.turns[0].upstreamPort).toBe(port);
+    expect(defaultLoopCaptureRing.get("wHook").length).toBe(0);
+  });
+
+  it("a cloud target is never captured", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-loopcap-cloud-"));
+    closers.push(() => rmSync(dir, { recursive: true, force: true }));
+    const cloud = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "text", text: "cloud" }], usage: { input_tokens: 1, output_tokens: 1 } }));
+      });
+    });
+    const cloudPort = await listen(cloud);
+    const ring = new LoopCaptureRing();
+    const r = createRouter(() => ({}), `http://127.0.0.1:${cloudPort}`, () => {}, undefined, undefined, {
+      instances: () => [],
+      captureRing: ring,
+      captureLogDir: dir,
+    });
+    const port = await listen(r);
+    const res = await new Promise<{ status: number }>((resolve) => {
+      const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "content-type": "application/json", "x-pai-worker": "wCloud" } }, (x) => {
+        x.on("data", () => {});
+        x.on("end", () => resolve({ status: x.statusCode ?? 0 }));
+      });
+      q.on("error", () => resolve({ status: 0 }));
+      q.end(JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 5, messages: [{ role: "user", content: "hi" }] }));
+    });
+    expect(res.status).toBe(200);
+    expect(ring.get("wCloud").length).toBe(0);
+  });
+
+  it("metadata.user_id names the run when no worker header is present", async () => {
+    const t = await capRig(1);
+    await new Promise<void>((resolve) => {
+      const q = http.request({ port: t.ports[0], host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "content-type": "application/json" } }, (x) => {
+        x.on("data", () => {});
+        x.on("end", () => resolve());
+      });
+      q.on("error", () => resolve());
+      q.end(JSON.stringify({ model: "gyro-m", max_tokens: 5, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "sess-9" } }));
+    });
+    expect(t.ring.get("sess-9").length).toBe(1);
+  });
 });
 
 describe("cockpit polled endpoints share one computation", () => {
