@@ -125,3 +125,23 @@ describe("a slow start against the smoke's window", () => {
     expect(Date.now() - t0).toBeLessThan(2_000);
   }, 30_000);
 });
+
+describe("smoke run never falls through or escalates", () => {
+  it("an invalid report on the smoke label gives no fall-through reason (a normal local run does)", async () => {
+    const { fallThroughReason } = await import("./policy.js");
+    const route = { policy: "auto", reason: "x", local: true } as never;
+    const st = { reportValid: false, rc: 0, state: "done" };
+    expect(fallThroughReason(route, st, null, "merge gate smoke start", true)).toBeNull();
+    expect(fallThroughReason(route, st, null, "other task", true)).toBe("invalid report");
+  });
+
+  it("the smoke label is the one the live start uses; the exit reason names state and first error line", async () => {
+    const { SMOKE_LABEL, isSmokeLabel } = await import("../daemon/battery-guard.js");
+    const { exitWhy } = await import("./smoke-start.js");
+    expect(isSmokeLabel(SMOKE_LABEL)).toBe(true);
+    const dir = mkdtempSync(join(tmpdir(), "pai-exitwhy-"));
+    writeFileSync(join(dir, "X.log"), "starting\nError: provider unreachable\nbye\n");
+    expect(exitWhy(dir, "X", { state: "failed", endReason: "crash" })).toBe("state failed, reason crash, Error: provider unreachable");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
