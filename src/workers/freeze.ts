@@ -21,9 +21,15 @@
  * marked light: `models.runtimes.<name>.freeze: spare`. The shipped apple-fm
  * runtime carries that flag — the Neural Engine bridge costs near nothing idle
  * and SIGSTOPping it hangs every helper call routed to it (2026-11-24: 60 s
- * timeouts). Everything else (GPU servers, ollama, unconfigured runtimes) is
- * stopped, so a freeze really frees the machine. `--all` freezes every running
- * server including the spared ones. Thaw continues exactly what was frozen.
+ * timeouts). Everything else (GPU servers, unconfigured runtimes) is stopped,
+ * so a freeze really frees the machine. `--all` freezes every running server
+ * including the spared ones. Thaw continues exactly what was frozen.
+ *
+ * Ollama is deliberately NOT a freeze target: it is not a PAI-started server
+ * process, it unloads idle models itself after its keep_alive (~5 min), and it
+ * serves embeddings for memory search (pai-embedding) and the apple-fm helper
+ * fallback (ollama:qwen3:8b), which must keep working during a freeze. When it
+ * is running the freeze output prints one line saying so.
  *
  * Never stopped: this process and its ancestors, the daemon, router, AIBroker,
  * pool hosts, docker. Only worker pids, their descendants and model servers.
@@ -554,6 +560,10 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
   if (only && live.length === 0) {
     return { lines: [`nothing to freeze: ${only.join(", ")} ${only.length === 1 ? "is" : "are"} not running`], total: 0, marker: null };
   }
+  // Ollama is never a freeze target (see the module header): it is not a PAI-started server process,
+  // unloads idle models itself after its keep_alive, and serves embeddings + the helper fallback.
+  // Discovery never lists it; the process table is the only way to know it is running.
+  const ollamaRunning = d.procs().some((r) => /\bollama\b/.test(r.command));
   const since = d.now();
   const stopped: FrozenEntry[] = [];
   // the marker exists before the first signal: the gate and the daemon already stand down
@@ -597,6 +607,7 @@ export async function freezeAll(logDir: string, by: string, forMs: number | unde
   for (const [label, mine] of modelEntries) lines.push(`frozen model ${label} (pid ${mine[mine.length - 1].pid}, ${mine.length} processes)`);
   if (spared.size) lines.push(`spared ${[...spared].join(", ")} (and children)`);
   if (sparedServers.length) lines.push(`spared model ${sparedServers.join(", ")} (runtime marked freeze: spare; \`pai freeze --all\` stops it too)`);
+  if (ollamaRunning) lines.push("ollama: not frozen (unloads idle models itself; serves embeddings and the helper fallback)");
   lines.push(`frozen ${ids.length} workers + ${modelEntries.size} model servers, ${stopped.length} processes${forMs ? `, auto-thaw in ${Math.round(forMs / 60_000)} min` : ""}`);
   return { lines, total: stopped.length, marker };
 }
