@@ -20,7 +20,7 @@ const short = (s: string, n: number): string => s.replace(/\s+/g, " ").trim().sl
 /** One line: `<tool> <first 120 chars of input, newlines as ⏎> x<count> -> <first 100 chars of result>`. */
 function loopCallText(c: LoopStopCall): string {
   const one = (t: string, n: number): string => maskSecrets(t).replace(/\r?\n/g, "⏎").replace(/[ \t]+/g, " ").trim().slice(0, n);
-  return `${c.tool} ${one(c.input, 120)} repeated ${c.count}x, always: ${one(c.result, 100) || `(${c.tool} completed with no output)`}`;
+  return `${c.tool} ${one(c.input, 120)} repeated ${c.count}x, always: ${one(c.result, 100) || (c.tool === "Bash" ? "(Bash completed with no output)" : "(result not recorded: the loop guard keeps no result for this tool)")}`;
 }
 
 /** A routine trouble line waits in the origin's digest; without any origin key
