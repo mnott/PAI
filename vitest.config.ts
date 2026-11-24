@@ -22,6 +22,9 @@ export function unitMaxWorkers(env: NodeJS.ProcessEnv = process.env, cores: numb
 
 export default defineConfig({
   test: {
+    // The 5 s default is a load-sensitive wall clock: git/fs-heavy and cold-import tests
+    // pass in <1 s alone but cross 5 s when the gate runs the whole suite in parallel.
+    testTimeout: 30_000,
     // Runs before any test module is imported, which is the only point early
     // enough: paths derived from homedir() are frequently module-level
     // constants, evaluated on import. See test/setup-home-guard.ts.
