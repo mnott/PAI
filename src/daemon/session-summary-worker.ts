@@ -29,6 +29,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, basename, dirname } from "node:path";
+import { openSync, readSync, closeSync, fstatSync } from "node:fs";
 
 import {
   findNotesDir,
@@ -67,6 +68,89 @@ const MAX_JSONL_CHARS: Record<string, number> = {
   opus: 500_000,
 };
 
+/** Minimum new user/assistant text (chars) since the last summary of a session. */
+const MIN_NEW_TEXT_CHARS = 20_000;
+/** Hard cap on the whole prompt; the newest content is kept. */
+const MAX_PROMPT_CHARS = 120_000;
+const MAX_EXISTING_NOTE_CHARS = 40_000;
+const MAX_GIT_CHARS = 20_000;
+
+/** Per-session summary state: when it last ran and how far into the transcript. */
+export interface SessionSummaryState { at: number; offset: number }
+
+function sessionStateFile(): string {
+  return paiHomePath("summary-sessions.json");
+}
+
+function loadSessionStates(): Record<string, SessionSummaryState> {
+  try {
+    const f = sessionStateFile();
+    if (existsSync(f)) return JSON.parse(readFileSync(f, "utf-8"));
+  } catch { /* ignore */ }
+  return {};
+}
+
+function saveSessionState(key: string, st: SessionSummaryState): void {
+  try {
+    const all = loadSessionStates();
+    all[key] = st;
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const k of Object.keys(all)) if (all[k].at < cutoff) delete all[k];
+    mkdirSync(dirname(sessionStateFile()), { recursive: true });
+    writeFileSync(sessionStateFile(), JSON.stringify(all), "utf-8");
+  } catch { /* ignore */ }
+}
+
+/**
+ * Decide whether a session needs a new summary. A final run (real session end)
+ * always summarizes. Otherwise: at most once per `intervalMs`, and only when
+ * at least MIN_NEW_TEXT_CHARS of new text arrived since the last offset.
+ * `newTextChars` is evaluated lazily because it reads the transcript tail.
+ */
+export function shouldSummarize(
+  state: SessionSummaryState | undefined,
+  opts: { final?: boolean; intervalMs: number; now?: number; newTextChars: () => number },
+): { run: boolean; reason: string } {
+  if (opts.final) return { run: true, reason: "final" };
+  if (!state) return { run: true, reason: "first" };
+  const age = (opts.now ?? Date.now()) - state.at;
+  if (age < opts.intervalMs) return { run: false, reason: `last summary ${Math.round(age / 1000)}s ago` };
+  const n = opts.newTextChars();
+  if (n < MIN_NEW_TEXT_CHARS) return { run: false, reason: `only ${n} new chars` };
+  return { run: true, reason: `${n} new chars` };
+}
+
+/** Keep the newest `max` chars. */
+export function capPrompt(prompt: string, max = MAX_PROMPT_CHARS): string {
+  return prompt.length <= max ? prompt : prompt.slice(prompt.length - max);
+}
+
+/** Read bytes [from, size) of a file, but at most the last `maxBytes`, aligned to a line start. */
+function readTail(path: string, from: number, maxBytes: number): { text: string; size: number } {
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    let start = Math.max(0, Math.min(from, size));
+    let trimmed = false;
+    if (size - start > maxBytes) { start = size - maxBytes; trimmed = true; }
+    const buf = Buffer.alloc(size - start);
+    let got = 0;
+    while (got < buf.length) {
+      const n = readSync(fd, buf, got, buf.length - got, start + got);
+      if (n <= 0) break;
+      got += n;
+    }
+    let text = buf.subarray(0, got).toString("utf-8");
+    if (trimmed) {
+      const nl = text.indexOf("\n");
+      text = nl >= 0 ? text.slice(nl + 1) : "";
+    }
+    return { text, size };
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Maximum user messages to include in the prompt. */
 const MAX_USER_MESSAGES = 30;
 
@@ -96,6 +180,8 @@ export interface SessionSummaryPayload {
   sessionId?: string;
   projectSlug?: string;
   transcriptPath?: string;
+  /** Real session end: summarize once now regardless of the debounce. */
+  final?: boolean;
   /** If true, bypass the cooldown check (e.g. triggered by stop-hook at session end). */
   force?: boolean;
   /** Model tier to use for summarization (resolved to the configured
@@ -222,7 +308,9 @@ export function findLatestJsonl(cwd: string): string | null {
 // JSONL content extraction
 // ---------------------------------------------------------------------------
 
-interface ExtractedContent {
+export interface ExtractedContent {
+  textChars: number;
+  endOffset: number;
   userMessages: string[];
   filesModified: string[];
   sessionStartTime: string;
@@ -232,25 +320,25 @@ interface ExtractedContent {
  * Parse a JSONL transcript and extract relevant content.
  * Filters noise, truncates to model-appropriate size from the end of the file.
  */
-function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet"): ExtractedContent {
+export function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet", fromOffset = 0): ExtractedContent {
   const result: ExtractedContent = {
     userMessages: [],
     filesModified: [],
     sessionStartTime: "",
+    textChars: 0,
+    endOffset: 0,
   };
 
+  // Only the part after the last summarized offset is read, never the whole
+  // (possibly hundreds of MB) transcript; the newest content wins when capped.
+  const maxChars = MAX_JSONL_CHARS[tier] ?? 200_000;
   let raw: string;
   try {
-    raw = readFileSync(jsonlPath, "utf-8");
+    const r = readTail(jsonlPath, fromOffset, maxChars);
+    raw = r.text;
+    result.endOffset = r.size;
   } catch (e) {
     throw new Error(`Could not read JSONL at ${jsonlPath}: ${e}`);
-  }
-
-  // Truncate from the start if too large (keep the most recent content)
-  const maxChars = MAX_JSONL_CHARS[tier] ?? 200_000;
-  if (raw.length > maxChars) {
-    const truncPoint = raw.indexOf("\n", raw.length - maxChars);
-    raw = truncPoint >= 0 ? raw.slice(truncPoint + 1) : raw.slice(-MAX_JSONL_CHARS);
   }
 
   const lines = raw.trim().split("\n");
@@ -272,6 +360,13 @@ function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet"): Extrac
     }
 
     // Extract user messages
+    if (entry.type === "user" || entry.type === "assistant") {
+      const m = entry.message as Record<string, unknown> | undefined;
+      if (m?.content) {
+        const t = contentToText(m.content);
+        if (t && !isNoise(t)) result.textChars += t.length;
+      }
+    }
     if (entry.type === "user") {
       const msg = entry.message as Record<string, unknown> | undefined;
       if (msg?.content) {
@@ -937,7 +1032,7 @@ async function extractAndStoreTriples(params: {
  * Throws on fatal errors (work queue will retry with backoff).
  */
 export async function handleSessionSummary(payload: SessionSummaryPayload): Promise<void> {
-  const { cwd, sessionId, projectSlug, transcriptPath, force } = payload;
+  const { cwd, sessionId, projectSlug, transcriptPath, force, final } = payload;
 
   if (!cwd) {
     throw new Error("session-summary payload missing cwd");
@@ -954,7 +1049,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // force=true bypasses the cooldown (used by stop-hook at session end so a
   // final summary is always produced regardless of recent PreCompact runs).
   // -------------------------------------------------------------------------
-  if (!force && isOnCooldown(cwd)) {
+  if (!force && !final && isOnCooldown(cwd)) {
     process.stderr.write(
       "[session-summary] Skipping — last summary was less than 30 minutes ago.\n"
     );
@@ -1001,12 +1096,30 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // Incremental checkpoints are a summarisation task with a clear input; haiku
   // is sufficient. Callers wanting better can still pass `model` explicitly.
   const selectedModel = payload.model ?? (force ? "haiku" : "sonnet");
-  const extracted = extractFromJsonl(jsonlPath, selectedModel);
+
+  // Debounce + incremental: one summary per session per interval, only the
+  // transcript part after the last summarized offset is read.
+  const stateKey = sessionId ?? jsonlPath;
+  const prevState = loadSessionStates()[stateKey];
+  const cfgMin = (daemonConfig as { session_summary_interval_minutes?: number } | undefined)?.session_summary_interval_minutes;
+  const intervalMs = (typeof cfgMin === "number" && cfgMin >= 0 ? cfgMin : 30) * 60 * 1000;
+  const fromOffset = prevState?.offset ?? 0;
+  const gate = shouldSummarize(prevState, {
+    final,
+    intervalMs,
+    newTextChars: () => extractFromJsonl(jsonlPath!, selectedModel, fromOffset).textChars,
+  });
+  if (!gate.run) {
+    process.stderr.write(`[session-summary] Skipping ${stateKey} — ${gate.reason}.\n`);
+    return;
+  }
+  const extracted = extractFromJsonl(jsonlPath, selectedModel, fromOffset);
 
   if (extracted.userMessages.length === 0) {
     process.stderr.write(
       "[session-summary] No user messages found in transcript — skipping.\n"
     );
+    if (prevState) saveSessionState(stateKey, { at: Date.now(), offset: extracted.endOffset });
     return;
   }
 
@@ -1042,22 +1155,25 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
     if (dateMatch && dateMatch[1] === today) {
       try {
         existingNote = readFileSync(existingNotePath, "utf-8");
+        // previous summary is the context for the increment; keep its newest part
+        if (existingNote.length > MAX_EXISTING_NOTE_CHARS) existingNote = existingNote.slice(-MAX_EXISTING_NOTE_CHARS);
       } catch { /* ignore */ }
     }
   }
 
   // secret values never reach the summarizer prompt or the note it produces
-  const prompt = redactSecrets(buildSessionSummaryPrompt({
+  const prompt = capPrompt(redactSecrets(buildSessionSummaryPrompt({
     userMessages: extracted.userMessages,
-    gitLog,
+    gitLog: gitLog.length > MAX_GIT_CHARS ? gitLog.slice(0, MAX_GIT_CHARS) : gitLog,
     cwd,
     date: today,
     filesModified: extracted.filesModified,
     existingNote,
-  }));
+  })));
 
   process.stderr.write(
-    `[session-summary] Sending ${prompt.length} char prompt to ${selectedModel}...\n`
+    `[session-summary] Sending ${prompt.length} char prompt to ${selectedModel} ` +
+    `(session=${stateKey} ${gate.reason} offset=${fromOffset}->${extracted.endOffset})...\n`
   );
 
   const summaryText = await spawnSummarizer(prompt, selectedModel);
@@ -1069,6 +1185,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
     // Don't throw — this is a soft failure. The existing PreCompact checkpoint
     // is sufficient. Just mark the cooldown so we don't retry too soon.
     markCooldown(cwd);
+    saveSessionState(stateKey, { at: Date.now(), offset: fromOffset });
     return;
   }
 
@@ -1107,6 +1224,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
 
   // Mark cooldown
   markCooldown(cwd);
+  saveSessionState(stateKey, { at: Date.now(), offset: extracted.endOffset });
 
   process.stderr.write("[session-summary] Done.\n");
 }

@@ -198,11 +198,13 @@ async function getPersistentTabName(itermSessionId: string | undefined): Promise
  * Times out after DAEMON_TIMEOUT_MS so the hook doesn't block.
  */
 function enqueueWithDaemon(payload: {
+  sessionId?: string;
   transcriptPath: string;
   cwd: string;
   message: string;
 }): Promise<boolean> {
   return enqueueWork<boolean>(DAEMON_SOCKET, DAEMON_TIMEOUT_MS, 'session-end', 2, {
+    sessionId: payload.sessionId || undefined,
     transcriptPath: payload.transcriptPath,
     cwd: payload.cwd,
     message: payload.message,
@@ -238,9 +240,12 @@ function enqueueWithDaemon(payload: {
  * itself. At session-end, Claude Code may still be moving the JSONL to sessions/, so a
  * stale path passed from the hook could point to a file that no longer exists.
  */
-function enqueueForcedSessionSummary(label: string, priority: number, payload: { cwd: string }): Promise<boolean> {
+function enqueueForcedSessionSummary(label: string, priority: number, payload: { cwd: string; sessionId?: string }): Promise<boolean> {
   return enqueueWork<boolean>(DAEMON_SOCKET, DAEMON_TIMEOUT_MS, 'session-summary', priority, {
     cwd: payload.cwd,
+    sessionId: payload.sessionId || undefined,
+    // force no longer bypasses the debounce: the worker summarizes a session at
+    // most once per interval and only when enough new text accumulated.
     force: true,
   }, {
     onReply: (r) => {
@@ -600,7 +605,7 @@ async function main() {
         // The whisper rules already enforce "never stop" behavior, so blocking
         // is redundant. Just fire the work item and exit 0 silently.
         try {
-          await enqueueForcedSessionSummary('Mid-session summary', 3, { cwd });
+          await enqueueForcedSessionSummary('Mid-session summary', 3, { cwd, sessionId });
         } catch { /* daemon may not be running — non-fatal */ }
       } else {
         // Update the stored count so we can measure delta on next fire.
@@ -685,6 +690,7 @@ async function main() {
   // Relay heavy work to daemon — fall back to direct execution if unavailable
   // -----------------------------------------------------------------------
   const relayed = await enqueueWithDaemon({
+    sessionId,
     transcriptPath,
     cwd,
     message,
@@ -698,7 +704,7 @@ async function main() {
   // Also enqueue a session-summary for AI-powered note generation.
   // We omit transcriptPath so the worker resolves it via findLatestJsonl(),
   // avoiding a race where the session-end hook moves the JSONL before the worker reads it.
-  await enqueueForcedSessionSummary('Session summary', 4, { cwd });
+  await enqueueForcedSessionSummary('Session summary', 4, { cwd, sessionId });
 
   // Enqueue a registry-scan so pai session recent stays fresh after this session ends.
   await enqueueRegistryScan(DAEMON_SOCKET, DAEMON_TIMEOUT_MS);
