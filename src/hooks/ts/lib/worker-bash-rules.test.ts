@@ -312,6 +312,50 @@ describe("worker guard heredoc bodies", () => {
   });
 });
 
+describe("worker guard substitution / subshell delimiters", () => {
+  // fault 2026-11-25: the closing `)` of a `$( … )` stayed on the redirect target, so
+  // `wait-on $(cat "$TMPDIR"/x.pid 2>/dev/null)` was read as writing `/dev/null)` and denied.
+  const ctx = (): WorkerGuardContext => ({
+    cwd: "/repo/.workers/worktrees/abc",
+    home: "/home/u",
+    worktreeRoot: "/repo/.workers/worktrees/abc",
+    inWorktree: true,
+    mainCheckout: "/repo",
+    testScript: () => null,
+  });
+  const denied = (command: string) =>
+    decideWorkerGuard(
+      { tool_name: "Bash", tool_input: { command } } as never,
+      { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" },
+      ctx
+    ).decision === "deny";
+
+  it("allows a redirect inside $( … ) whose closing paren used to poison the target", () => {
+    expect(denied(`x $(cat "$TMPDIR"/bmi5quysq.pid 2>/dev/null) y`)).toBe(false);
+    expect(denied(`pai worker wait-on $(cat "$TMPDIR"/bmi5quysq.pid 2>/dev/null) --log $TMPDIR/job.log --rc $TMPDIR/job.rc --max 110 2>&1 | tail -5`)).toBe(false);
+  });
+
+  it("allows the same forms with backticks and a subshell", () => {
+    expect(denied("x `cat f 2>/dev/null` y")).toBe(false);
+    expect(denied("(sleep 1 >/dev/null)")).toBe(false);
+  });
+
+  it("still denies a write outside the worktree inside $( … ) and names the clean target", () => {
+    const d = decideWorkerGuard(
+      { tool_name: "Bash", tool_input: { command: "x $(echo a > /etc/foo)" } } as never,
+      { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir" },
+      ctx
+    );
+    expect(d.decision).toBe("deny");
+    expect((d as { reason?: string }).reason).toContain("/etc/foo)"); // the fence names the resolved path; no stray paren in it
+  });
+
+  it("still denies a write outside the worktree inside backticks and a subshell", () => {
+    expect(denied("x `echo a > /etc/foo`")).toBe(true);
+    expect(denied("(echo a > /etc/foo)")).toBe(true);
+  });
+});
+
 describe("dbWriteReason (live-database write rule)", () => {
   const ctx: DbWriteContext = { cwd: "/w", home: "/h", worktreeRoot: "/w" };
   const env = {} as Record<string, string | undefined>;
