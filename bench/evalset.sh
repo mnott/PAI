@@ -32,12 +32,14 @@ Solve every task in tasks.jsonl (one JSON object per line: $fields). For task i,
 $rules Write all files in out/ relative to the current directory, one file per task id (out/ holds only answer files; a __pycache__ that Python creates there on import is fine, leave it), and do every task. Finish with a one-line report.
 SPEC
 margs=(); [ "$model" != - ] && margs=(--model "$model")
+cgargs=(); [ "${BENCH_CODE_GRAPH:-}" = on ] && cgargs=(--code-graph on); [ "${BENCH_CODE_GRAPH:-}" = off ] && cgargs=(--code-graph off)   # pai bench run --code-graph: the decision travels as a flag, not env (workers start through the daemon)
 t0=$(date +%s)
 run() { ( cd "$d" && env -u ITERM_SESSION_ID -u TERM_SESSION_ID -u TMUX -u TMUX_PANE -u ANTHROPIC_API_KEY \
-  pai worker run --provider "$provider" ${margs[@]+"${margs[@]}"} --class implement --no-worktree --cwd . --max-minutes 120 \
+  pai worker run --provider "$provider" ${margs[@]+"${margs[@]}"} ${cgargs[@]+"${cgargs[@]}"} --class implement --no-worktree --cwd . --max-minutes 120 \
   --label "eval $key $set rep$rep bench" --spec spec.txt --allowedTools "$tools" --output-format json > worker.json 2> worker.err ); }
 run; wrc=$?
 wall=$(( $(date +%s) - t0 ))
 inst=$(instrument_of "$d/worker.json" "$d/worker.err")   # PAI classification; "unknown" = no id, evalset.py regex fallback
 python3 -I "$E/evalset.py" grade "$set" "$d" "$res" "$key" "$rep" "$wall" "$wrc" "$d/worker.json" "$inst"
+[ -n "${BENCH_CODE_GRAPH:-}" ] && jq --arg cg "$BENCH_CODE_GRAPH" '. + {code_graph:$cg}' "$res" > "$res.tmp" && mv -f "$res.tmp" "$res"   # record the arm in the rep result
 echo "$(date +%H:%M:%S) $key $set rep$rep $(jq -r '"status=\(.status) pass=\(.passed)/\(.n) wall=\(.wall_s)s tok/s=\(.tok_per_s)"' "$res")" >> "$OUT/progress.md"

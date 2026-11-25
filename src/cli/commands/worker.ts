@@ -123,6 +123,12 @@ function deliverableOf(v: unknown): Deliverable {
   return v;
 }
 
+/** Validate a --code-graph value (on|off). */
+function codeGraphOf(v: unknown): "on" | "off" {
+  if (v !== "on" && v !== "off") throw new Error(`--code-graph: must be "on" or "off" (got ${String(v)})`);
+  return v;
+}
+
 export type RunPlan =
   | { kind: "chain"; chain: Parameters<typeof runChain>[0] }
   | { kind: "run"; run: RunOptions };
@@ -227,6 +233,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       allowTests: o["allow-tests"] === true ? true : undefined,
       allowDbWrites: o["allow-db-writes"] === true ? true : undefined,
       deliverable: o.deliverable === undefined ? undefined : deliverableOf(o.deliverable),
+      codeGraph: o["code-graph"] === undefined ? undefined : codeGraphOf(o["code-graph"]),
       // internal: repeatable --prune-file is passed only by `pai tests prune --apply` (src/testgov/prune.ts)
       pruneFiles: ctx.multi?.["prune-file"],
       printCmd: o["print-cmd"] === true || ctx.dryRun ? true : undefined,
@@ -378,6 +385,7 @@ const runCommand: CommandDef = {
     { name: "allow-tests", type: "boolean", summary: "Let this worker run tests even when the project has `.pai/checks.yaml` `tests: operator`; use only when the operator asked for tests" },
     { name: "allow-db-writes", type: "boolean", summary: "Allow writes to live databases and containers (PAI_ALLOW_DB_WRITES=1): let this worker's SQL clients write databases and lift the live-container cp/exec rule (workers.guard.liveContainers); by default every INSERT/UPDATE/DELETE/DDL through psql/mysql/sqlite3/… is denied unless the statement is read-only or the target matches workers guard.dbWriteAllow; use only for briefs that really need writes" },
     { name: "deliverable", type: "string", value: "change|findings", summary: "What this job hands back (PAI_WORKER_DELIVERABLE): change = a repo commit (default for code classes), findings = a report or answer (scratch files are fine, no commit expected, no-edit-stall off). Without it the class decides" },
+    { name: "code-graph", type: "string", value: "on|off", summary: "Force the code-graph brief lines in this run's system prompt on or off, overriding PAI_BRIEF_CODE_GRAPH and the default (local providers off, cloud on). Carried across resume/relaunch; recorded on the status" },
     { name: "prune-file", type: "string", value: "PATH", repeatable: true, hidden: true, summary: "Internal (`pai tests prune --apply` only): one tracked file this worker's delete guard (PAI_WORKER_PRUNE_FILES) allows it to remove; every other tracked-file deletion stays blocked" },
     { name: "print-cmd", type: "boolean", summary: "Print the claude command as JSON and exit without starting anything" },
     { name: "report", type: "string", value: "FORMAT", summary: "Final report format: json or ag2 (default ag2)" },
@@ -536,6 +544,8 @@ const resumeCommand: CommandDef = {
         ...(process.env[HOST_TERM_ENV] ? { _hostTerm: process.env[HOST_TERM_ENV] } : {}),
         // the resumed run keeps the old run's deliverable: without it the class gate reads "findings" and the convergence rule exempts it
         ...(old.deliverable ? { deliverable: old.deliverable } : {}),
+        // the code-graph decision follows the job too, so an A/B arm keeps its brief across a resume
+        ...(old.codeGraph ? { codeGraph: old.codeGraph } : {}),
         approvedBy: str(ctx.opts["approved-by"]),
         // the gatekeeper's approval follows the job: a worker whose start ran
         // under --approved-by is recorded cloudApproved, and its resume passes

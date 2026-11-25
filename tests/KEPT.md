@@ -85,3 +85,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/hooks/ts/lib/mail-whitelist-gate.test.ts | b | mail whitelist gate: unlisted recipients must be denied, drafts allowed |
 | src/workers/viewer.test.ts | a | follow must exit when a worker reaches any end state (killed pane never closed, 2026-11-24) |
 | src/bench/run.test.ts | a | Fault 2026-11-24 23:19: bench series logged 'done rc=0' while every worker start was refused (disabled local provider, rc 2). Kept test pins preflight abort with the gate message and FAILED rep logging with refusal text in error field. |
+| src/cli/commands/worker-code-graph.test.ts | a | 2026-11-25: PAI_BRIEF_CODE_GRAPH in the env of pai bench run never reached bench workers (they start through the daemon with its own env); pins that --code-graph on|off travels as a run option through buildRunPlan, overrides env/default in the brief, and is carried across resume |

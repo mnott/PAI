@@ -373,7 +373,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // ONE flag: contract (unless the caller brought their own), placement, caller text
   cmd.push(
     ...appendSystemPromptArgs([
-      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, volatileInTask ? undefined : noteToken, scratch, graphIndexed, !target.provider.native && isLoopbackProvider(target.provider))] : []),
+      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, volatileInTask ? undefined : noteToken, scratch, graphIndexed, !target.provider.native && isLoopbackProvider(target.provider), a.opts.codeGraph)] : []),
       ...(addendum ? [addendum.text] : []),
       ...(headless && target.provider.prompt ? [target.provider.prompt] : []),
       ...(slimArgs.length ? [WORKER_BRIEF] : []),
