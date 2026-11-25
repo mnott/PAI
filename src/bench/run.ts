@@ -5,11 +5,12 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_WORKER_TOOLS } from "../workers/run/argv.js";
 import { packageRoot } from "../module-paths.js";
+import { preflightProvider, type PreflightDeps } from "./preflight.js";
 import { onboardingForRun, renderOnboarding } from "./onboarding.js";
 import { DEFAULT_LIMITS, LogTail, Watchdog, type Verdict } from "./watch.js";
 
@@ -80,9 +81,16 @@ function killGroup(pid: number, graceMs: number): void {
   }, graceMs).unref();
 }
 
-export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv, tick: () => Verdict | null, graceMs = KILL_GRACE_MS): Promise<{ code: number | null; stopped?: Verdict }> {
+export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv, tick: () => Verdict | null, graceMs = KILL_GRACE_MS): Promise<{ code: number | null; stopped?: Verdict; stderr?: string }> {
+  const errFile = join(tmpdir(), `bench-stderr-${process.pid}-${Date.now()}`);
+  let fd: number | undefined;
+  try {
+    fd = openSync(errFile, "w");
+  } catch {
+    fd = undefined;
+  }
   return new Promise((resolve) => {
-    const child = spawn(script, args, { env, stdio: "ignore", detached: true });
+    const child = spawn(script, args, { env, stdio: ["ignore", "ignore", fd ?? "ignore"], detached: true });
     let stopped: Verdict | undefined;
     const sigs = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
     // a stopped bench process must leave nothing running: the detached group would otherwise outlive it
@@ -92,9 +100,19 @@ export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv
       setTimeout(() => process.exit(128 + (sig === "SIGINT" ? 2 : sig === "SIGHUP" ? 1 : 15)), graceMs + 200);
     };
     for (const s of sigs) process.on(s, onSignal);
-    const done = (): void => {
+    const done = (): string | undefined => {
       clearInterval(timer);
       for (const s of sigs) process.removeListener(s, onSignal);
+      if (fd === undefined) return undefined;
+      try { closeSync(fd); } catch { /* already closed */ }
+      fd = undefined;
+      try {
+        const t = readFileSync(errFile, "utf8").trim();
+        unlinkSync(errFile);
+        return t || undefined;
+      } catch {
+        return undefined;
+      }
     };
     const timer = setInterval(() => {
       const v = tick();
@@ -103,12 +121,10 @@ export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv
       if (child.pid) killGroup(child.pid, graceMs);
     }, 3000);
     child.on("exit", (code) => {
-      done();
-      resolve({ code, stopped });
+      resolve({ code, stopped, stderr: done() });
     });
     child.on("error", () => {
-      done();
-      resolve({ code: 127, stopped });
+      resolve({ code: 127, stopped, stderr: done() });
     });
   });
 }
@@ -140,8 +156,21 @@ export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key">, benchDi
   writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "stopped", n, passed: 0, wall_s: secs, error, graded: false, tasks: [] }, null, 1));
 }
 
+/**
+ * A rep whose set script exited non-zero (worker refused to start) still gets a result file when it wrote none:
+ * the refusal text (the script's stderr, e.g. gate.ts' disabled-local-provider message) goes into "error", so the
+ * operator sees why instead of an empty error and pass=0/n (incident 2026-11-24 23:19).
+ */
+export function writeFailedResult(o: Pick<BenchRunOpts, "dir" | "key">, set: string, rep: number, rc: number, stderr: string, secs: number): void {
+  const res = join(o.dir, "results", set, o.key, `rep${rep}.json`);
+  if (existsSync(res)) return; // the script graded whatever it ran: its file stands
+  mkdirSync(join(o.dir, "results", set, o.key), { recursive: true });
+  const error = stderr.trim() || `worker run refused: script exited rc=${rc} with no output`;
+  writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "error", n: 0, passed: 0, wall_s: secs, worker_rc: rc, error: error.slice(0, 1000), graded: false, tasks: [] }, null, 1));
+}
+
 /** Returns 0 when the series ran through, 1 when a script failed or MAX_CONSECUTIVE_STOPS runs in a row were watchdog-stopped. */
-export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai", "logs", "workers"), benchDir = join(packageRoot(import.meta.url), "bench")): Promise<number> {
+export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai", "logs", "workers"), benchDir = join(packageRoot(import.meta.url), "bench"), preflightDeps?: PreflightDeps): Promise<number> {
   mkdirSync(o.dir, { recursive: true });
   const seriesLog = join(o.dir, `series-${o.key}.log`);
   const log = (line: string): void => {
@@ -152,6 +181,16 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
   const gate = powerGate();
   const tools = resolveTools(o.tools);
   log(`series ${o.key}: provider=${o.provider} sets=${o.sets.join(",")} tools=${tools} reps=${o.reps} real=${o.real} cap=${o.realCapMin}min power-gate=${gate ? "pai power wait" : "none"} results=${o.dir}`);
+  // preflight: resolve the provider exactly like a worker start does (routing.resolveTarget +
+  // assertLocalProviderAlive). A disabled/unknown/not-running provider refuses every start with rc 2 while
+  // the set scripts still exit 0 — abort here, before burning reps, and say why (incident 2026-11-24 23:19).
+  try {
+    await preflightProvider(o.provider, preflightDeps);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    log(`ABORT series ${o.key}: provider "${o.provider}" cannot run a worker: ${why}; series ended`);
+    return 1;
+  }
   const env: NodeJS.ProcessEnv = { ...process.env, BENCH_DIR: o.dir, BENCH_TOOLS: tools, BENCH_REAL_MAX_MIN: String(o.realCapMin) };
   delete env.ANTHROPIC_API_KEY;
   const start = Date.now();
@@ -183,11 +222,15 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
       continue;
     }
     stops = 0;
-    log(`done ${run.label} in ${secs}s rc=${res.code}`);
     if (res.code !== 0) {
+      const reason = res.stderr?.trim() || `script exited rc=${res.code} with no output`;
+      log(`FAILED ${run.label}: ${reason}`);
+      const m = /^(\w+) rep(\d+)$/.exec(run.label);
+      if (m && res.code !== null) writeFailedResult(o, m[1], Number(m[2]), res.code, reason, secs);
       log(`STOP ${run.label}: script failed (rc=${res.code}); series ended`);
       return 1;
     }
+    log(`done ${run.label} in ${secs}s rc=${res.code}`);
   }
   log(`series ${o.key} complete`);
   // onboarding: the anti-pattern firings of this provider's model during the series, and a suggested

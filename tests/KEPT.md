@@ -84,3 +84,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/workers/run-env.test.ts | a | workers spawned with macOS /bin/bash 3.2 die at exit 126 (Claude Code refuses bash 3.2: heredocs, arrays, nested $() unreliable); the selection must prefer bash>=4, fall back to zsh, and never override an explicit CLAUDE_CODE_SHELL |
 | src/hooks/ts/lib/mail-whitelist-gate.test.ts | b | mail whitelist gate: unlisted recipients must be denied, drafts allowed |
 | src/workers/viewer.test.ts | a | follow must exit when a worker reaches any end state (killed pane never closed, 2026-11-24) |
+| src/bench/run.test.ts | a | Fault 2026-11-24 23:19: bench series logged 'done rc=0' while every worker start was refused (disabled local provider, rc 2). Kept test pins preflight abort with the gate message and FAILED rep logging with refusal text in error field. |
