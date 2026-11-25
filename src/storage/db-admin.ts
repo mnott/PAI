@@ -134,6 +134,14 @@ export const TEST_DB_MIN_AGE_MS = 60 * 60 * 1000;
  * old. That was the merge-gate flaky "database pai_test_… does not exist"
  * (codegraph NUL test), fixed 2026-11-19. The default (no filter, minAgeMs 1h)
  * stays the leak sweep for real use.
+ *
+ * A database any backend is still connected to is never dropped either:
+ * `DROP DATABASE` terminates other clients' connections ("Connection
+ * terminated unexpectedly"), which is how a release run lost a scratch
+ * database another vitest worker was mid-use (2026-11-24, runs 1 and 2). The
+ * age heuristic cannot cover that — the template's mtime is copied on CREATE,
+ * so a fresh scratch db can read months old — so an open backend connection
+ * is checked before every drop.
  */
 export async function cleanupTestDatabases(
   adminConnectionString: string,
@@ -150,6 +158,10 @@ export async function cleanupTestDatabases(
          AND ($3::text[] IS NULL OR d.datname = ANY($3))
          AND age(now(), (pg_stat_file(format('%s/base/%s', current_setting('data_directory'), d.oid), true)).modification)
              > make_interval(secs => $2::double precision / 1000)
+         -- a backend still connected means a live test is mid-use: dropping
+         -- would terminate its connections ("Connection terminated
+         -- unexpectedly"), the release-run flaky of 2026-11-24.
+         AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)
        ORDER BY d.datname`,
       [TEST_DB_PATTERN, minAgeMs, only],
     );
