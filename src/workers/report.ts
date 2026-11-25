@@ -302,17 +302,17 @@ export function workerContractPrompt(
   let base = short ? shortContractPrompt(format, scratch) : fullContractPrompt(format, scratch, planner ? "planner" : "worker");
   // A/B #23: PAI_BRIEF_CODE_GRAPH=0 in the environment of `pai worker run` drops both code-graph
   // guidance lines from the brief. Read here, not forwarded: the worker's own env is untouched.
-  // A/B #23 result (forge #23 comment 21176): on local models the graph lines bring no benefit
-  // (first edit later, same or more calls), so they are dropped for local providers; cloud keeps them.
-  // Explicit PAI_BRIEF_CODE_GRAPH=1 forces the lines ON even for local providers; "0" stays off;
-  // unset keeps the default (local OFF, cloud ON).
+  // A/B #23 result (forge #23 comment 21176) had dropped the lines for local providers. That was
+  // reversed by a later A/B (Signal 2, real set, 2026-11-24, two rounds): with the code-graph brief
+  // line ON vs OFF passes were equal (9/10 each) and wall time was lower ON in both rounds
+  // (r1 2548 vs 3482 s, r2 3662 vs 6010 s; excluding the confounded task: 1910 vs 2653 and
+  // 2813 vs 3134 s). So the default is now ON for local providers too.
+  // PAI_BRIEF_CODE_GRAPH=0 forces the lines OFF (for any provider); "1" or unset keeps them ON.
   // An explicit per-run --code-graph on|off beats the ambient env: a bench run cannot set the env
   // of its workers (they start through the daemon with its own environment), so the decision has to
-  // travel as a run option. Precedence: option > env > default (local OFF, cloud ON).
+  // travel as a run option. Precedence: option > env > default (ON everywhere).
   const codeGraphEnv = process.env.PAI_BRIEF_CODE_GRAPH;
-  const codeGraphOff =
-    codeGraphOverride === "off" ||
-    (codeGraphOverride !== "on" && (codeGraphEnv === "0" || (codeGraphEnv !== "1" && Boolean(localProvider))));
+  const codeGraphOff = codeGraphOverride === "off" || (codeGraphOverride !== "on" && codeGraphEnv === "0");
   if (!codeGraphOff) base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
   base += `\n${LIVE_RUNS_MAIN_LINE}`;
