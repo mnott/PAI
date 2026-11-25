@@ -94,20 +94,27 @@ describe("workerContractPrompt — code graph lines", () => {
     expect(off).not.toContain("indexed in the code graph");
   });
 
-  it("local providers get no code-graph lines; cloud providers do (A/B #23 result, forge #23 comment 21176)", () => {
+  it("local providers get the code-graph lines by default; --code-graph off and env 0 drop them (A/B 2026-11-24 reversal)", () => {
     const local = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
-    expect(local).not.toContain(CODE_EXPLORE_LINE);
-    expect(local).not.toContain(CODE_GRAPH_FIRST_LINE);
-    expect(local).not.toContain("indexed in the code graph");
+    expect(local).toContain(CODE_EXPLORE_LINE);
+    expect(local).toContain(CODE_GRAPH_FIRST_LINE);
     expect(local).toContain(REPEAT_STOP_LINE);
 
     const cloud = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, false);
     expect(cloud).toContain(CODE_EXPLORE_LINE);
     expect(cloud).toContain(CODE_GRAPH_FIRST_LINE);
 
+    const localOff = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true, "off");
+    expect(localOff).not.toContain(CODE_EXPLORE_LINE);
+    expect(localOff).not.toContain(CODE_GRAPH_FIRST_LINE);
+
     const saved = process.env.PAI_BRIEF_CODE_GRAPH;
     try {
       process.env.PAI_BRIEF_CODE_GRAPH = "0";
+      const localEnvOff = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
+      expect(localEnvOff).not.toContain(CODE_EXPLORE_LINE);
+      expect(localEnvOff).not.toContain(CODE_GRAPH_FIRST_LINE);
+
       const cloudOff = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, false);
       expect(cloudOff).not.toContain(CODE_EXPLORE_LINE);
       expect(cloudOff).not.toContain(CODE_GRAPH_FIRST_LINE);
@@ -117,12 +124,12 @@ describe("workerContractPrompt — code graph lines", () => {
     }
   });
 
-  it("explicit PAI_BRIEF_CODE_GRAPH=1 forces code-graph lines ON for local providers; unset/0 keep them OFF", () => {
+  it("PAI_BRIEF_CODE_GRAPH=1 or unset keeps code-graph lines ON for local providers; 0 forces them OFF", () => {
     const saved = process.env.PAI_BRIEF_CODE_GRAPH;
     try {
       delete process.env.PAI_BRIEF_CODE_GRAPH;
       const localUnset = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
-      expect(localUnset).not.toContain(CODE_EXPLORE_LINE);
+      expect(localUnset).toContain(CODE_EXPLORE_LINE);
 
       process.env.PAI_BRIEF_CODE_GRAPH = "1";
       const localOne = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true);
@@ -187,10 +194,10 @@ describe("workerContractPrompt — code graph lines", () => {
       expect(envOnOptionOff).not.toContain(CODE_EXPLORE_LINE);
       expect(envOnOptionOff).not.toContain(CODE_GRAPH_FIRST_LINE);
 
-      // unset option keeps the default behaviour
+      // unset option keeps the default behaviour (ON everywhere since the 2026-11-24 A/B reversal)
       delete process.env.PAI_BRIEF_CODE_GRAPH;
       const localDefault = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true, undefined);
-      expect(localDefault).not.toContain(CODE_EXPLORE_LINE);
+      expect(localDefault).toContain(CODE_EXPLORE_LINE);
     } finally {
       if (saved === undefined) delete process.env.PAI_BRIEF_CODE_GRAPH;
       else process.env.PAI_BRIEF_CODE_GRAPH = saved;
