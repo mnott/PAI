@@ -303,7 +303,10 @@ export function workerContractPrompt(
   // guidance lines from the brief. Read here, not forwarded: the worker's own env is untouched.
   // A/B #23 result (forge #23 comment 21176): on local models the graph lines bring no benefit
   // (first edit later, same or more calls), so they are dropped for local providers; cloud keeps them.
-  const codeGraphOff = process.env.PAI_BRIEF_CODE_GRAPH === "0" || Boolean(localProvider);
+  // Explicit PAI_BRIEF_CODE_GRAPH=1 forces the lines ON even for local providers; "0" stays off;
+  // unset keeps the default (local OFF, cloud ON).
+  const codeGraphEnv = process.env.PAI_BRIEF_CODE_GRAPH;
+  const codeGraphOff = codeGraphEnv === "0" || (codeGraphEnv !== "1" && Boolean(localProvider));
   if (!codeGraphOff) base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
   base += `\n${LIVE_RUNS_MAIN_LINE}`;
