@@ -16,6 +16,13 @@ const num = (v: unknown, name: string, dflt: number): number => {
 
 const DIR_OPT = { name: "results", type: "string", value: "DIR", summary: "Results root (default: $PAI_BENCH_DIR or ~/.cache/pai/bench); never inside the repo" } as const;
 
+/** Validate a --code-graph value (on|off, or unset). */
+function codeGraphOf(v: unknown): "on" | "off" | undefined {
+  if (v === undefined) return undefined;
+  if (v !== "on" && v !== "off") throw new CliError(`--code-graph: must be "on" or "off"`, "pai bench run --help");
+  return v;
+}
+
 export const benchCommand: CommandDef = {
   name: "bench",
   summary: "Local-model quality check: run the eval sets and real tasks, print the comparison table",
@@ -38,6 +45,7 @@ export const benchCommand: CommandDef = {
         { name: "real-cap", type: "number", value: "MIN", default: 30, summary: "Minutes one real task may run" },
         { name: "idle", type: "number", value: "SEC", default: 900, summary: "Stop the series after this many seconds without worker activity" },
         { name: "max-writes", type: "number", value: "N", default: 15, summary: "Stop the series when one answer file is written this many times" },
+        { name: "code-graph", type: "string", value: "on|off", summary: "Pass --code-graph on|off to every worker this series starts (the code-graph brief lines), overriding the local/cloud default; recorded in each rep result and the series log header. Without it the default applies" },
         DIR_OPT,
       ],
       examples: ["pai bench run --provider gyro-m", "pai bench run --provider gyro-m --sets easy,hard --reps 3 --real 2 --key gyro-m-night"],
@@ -58,6 +66,7 @@ export const benchCommand: CommandDef = {
           realCapMin: num(ctx.opts["real-cap"], "real-cap", 30),
           idleSec: num(ctx.opts.idle, "idle", 900),
           maxWrites: num(ctx.opts["max-writes"], "max-writes", 15),
+          codeGraph: codeGraphOf(ctx.opts["code-graph"]),
           out: (l: string) => void process.stdout.write(l + "\n"),
         };
         if (ctx.dryRun) {

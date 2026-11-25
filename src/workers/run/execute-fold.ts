@@ -148,6 +148,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     ...(a.route ? { route: a.route } : {}),
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
     ...(a.noEscalate ? { noEscalate: true } : {}),
+    ...(a.opts.codeGraph ? { codeGraph: a.opts.codeGraph } : {}),
     ...(a.className ? { className: a.className } : {}),
     ...(headless && env.PAI_WORKER_DELIVERABLE ? { deliverable: parseDeliverable(env.PAI_WORKER_DELIVERABLE) } : {}),
     ...(a.topic ? { topic: a.topic } : {}),

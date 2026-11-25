@@ -293,7 +293,8 @@ export function workerContractPrompt(
   noteToken?: string,
   scratch?: string,
   graphIndexed?: boolean,
-  localProvider?: boolean
+  localProvider?: boolean,
+  codeGraphOverride?: "on" | "off"
 ): string {
   // planner classes get the L1 opening even without the flag; with it they also get ORCHESTRATOR_CONTRACT below.
   const short = SHORT_CONTRACT_CLASSES.has(cls ?? "");
@@ -305,8 +306,13 @@ export function workerContractPrompt(
   // (first edit later, same or more calls), so they are dropped for local providers; cloud keeps them.
   // Explicit PAI_BRIEF_CODE_GRAPH=1 forces the lines ON even for local providers; "0" stays off;
   // unset keeps the default (local OFF, cloud ON).
+  // An explicit per-run --code-graph on|off beats the ambient env: a bench run cannot set the env
+  // of its workers (they start through the daemon with its own environment), so the decision has to
+  // travel as a run option. Precedence: option > env > default (local OFF, cloud ON).
   const codeGraphEnv = process.env.PAI_BRIEF_CODE_GRAPH;
-  const codeGraphOff = codeGraphEnv === "0" || (codeGraphEnv !== "1" && Boolean(localProvider));
+  const codeGraphOff =
+    codeGraphOverride === "off" ||
+    (codeGraphOverride !== "on" && (codeGraphEnv === "0" || (codeGraphEnv !== "1" && Boolean(localProvider))));
   if (!codeGraphOff) base += `\n${CODE_EXPLORE_LINE}`;
   base += `\n${TEST_GOVERNANCE_LINE}`;
   base += `\n${LIVE_RUNS_MAIN_LINE}`;

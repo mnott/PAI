@@ -36,6 +36,7 @@ Runs the sets one after another (local models serve one run at a time) through b
 | `--real-cap MIN` | number | 30 | Minutes one real task may run |
 | `--idle SEC` | number | 900 | Stop the series after this many seconds without worker activity |
 | `--max-writes N` | number | 15 | Stop the series when one answer file is written this many times |
+| `--code-graph on|off` | string | — | Pass --code-graph on|off to every worker this series starts (the code-graph brief lines), overriding the local/cloud default; recorded in each rep result and the series log header. Without it the default applies |
 | `--results DIR` | string | — | Results root (default: $PAI_BENCH_DIR or ~/.cache/pai/bench); never inside the repo |
 
 ```sh

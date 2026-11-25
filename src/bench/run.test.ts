@@ -145,3 +145,51 @@ describe("worker start refused mid-series (rc 2)", () => {
     expect(JSON.parse(readFileSync(res, "utf8")).error).toBe("graded by script");
   });
 });
+
+describe("--code-graph reaches the workers and the records (2026-11-25)", () => {
+  // PAI_BRIEF_CODE_GRAPH in the env of pai bench run never reaches a worker: workers start through
+  // the daemon with its own environment. The decision must travel as BENCH_CODE_GRAPH -> the set
+  // scripts' --code-graph flag, and be recorded so an A/B table can tell the arms apart.
+
+  it("the series header names the arm; without the option it says default", async () => {
+    const sh = join(dir, "evalset.sh");
+    writeFileSync(sh, "#!/bin/sh\nexit 0\n");
+    chmodSync(sh, 0o755);
+    const deps = { load: () => ({ raw: {}, workers: cfg({ "gyro-s2": local(true) }) }), check: async () => true };
+    const on = await benchRun({ ...opts("gyro-s2"), codeGraph: "on" }, dir, dir, deps);
+    expect(on).toBe(0);
+    expect(readFileSync(join(dir, "series-gyro-s2-v2b.log"), "utf8")).toContain("code-graph=on");
+    const off = await benchRun({ ...opts("gyro-s2"), codeGraph: "off" }, dir, dir, deps);
+    expect(off).toBe(0);
+    expect(readFileSync(join(dir, "series-gyro-s2-v2b.log"), "utf8")).toContain("code-graph=off");
+  });
+
+  it("BENCH_CODE_GRAPH is in the env handed to the set scripts, and only when asked", async () => {
+    // a script that reports its own env: what benchRun passes is what the worker start sees
+    // the script reports its own env: what benchRun passes is what the worker start sees
+    const seen = join(dir, "env-seen.txt");
+    const sh = join(dir, "evalset.sh");
+    writeFileSync(sh, `#!/bin/sh\nprintf "%s\\n" "\${BENCH_CODE_GRAPH:-unset}" > "${seen}"\nexit 0\n`);
+    chmodSync(sh, 0o755);
+    const deps = { load: () => ({ raw: {}, workers: cfg({ "gyro-s2": local(true) }) }), check: async () => true };
+    await benchRun({ ...opts("gyro-s2"), codeGraph: "on" }, dir, dir, deps);
+    expect(readFileSync(seen, "utf8").trim()).toBe("on");
+    await benchRun(opts("gyro-s2"), dir, dir, deps);
+    expect(readFileSync(seen, "utf8").trim()).toBe("unset");
+  });
+
+  it("a stopped or failed rep records the arm in its result json", () => {
+    writeFailedResult({ ...opts("gyro-s2"), codeGraph: "on" } as BenchRunOpts, "short", 1, 2, "refused", 1);
+    expect(JSON.parse(readFileSync(join(dir, "results", "short", "gyro-s2-v2b", "rep1.json"), "utf8")).code_graph).toBe("on");
+    writeFailedResult(opts("gyro-s2"), "short", 2, 2, "refused", 1);
+    expect(JSON.parse(readFileSync(join(dir, "results", "short", "gyro-s2-v2b", "rep2.json"), "utf8")).code_graph).toBeUndefined();
+  });
+
+  it("the shipped set scripts turn the env into --code-graph on every worker start", () => {
+    for (const f of ["evalset.sh", "realset.sh"]) {
+      const text = readFileSync(join(process.cwd(), "bench", f), "utf8");
+      expect(text).toContain('cgargs=(); [ "${BENCH_CODE_GRAPH:-}" = on ] && cgargs=(--code-graph on)');
+      expect(text).toContain('${cgargs[@]+"${cgargs[@]}"} --class implement');
+    }
+  });
+});

@@ -215,6 +215,8 @@ export interface WorkerStatus {
   deliverable?: Deliverable;
   /** --no-escalate (or a run that asked for local): the stall/queue escalation never moves this run; its continuations keep it. */
   noEscalate?: boolean;
+  /** --code-graph on|off: this run's explicit code-graph brief-line decision (overrides PAI_BRIEF_CODE_GRAPH and the local/cloud default); a resume of such a run keeps it. */
+  codeGraph?: "on" | "off";
   /** Set by the supervision tick while the session's escalation switch holds back a stalled run ("stalled 12m, escalation off for this session"). */
   escalationHeld?: string;
   /** Copy of the task text (<id>.prompt), kept so the run can be started again elsewhere (reroute.ts). */

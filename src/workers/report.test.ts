@@ -161,6 +161,41 @@ describe("workerContractPrompt — code graph lines", () => {
       else process.env.PAI_BRIEF_CODE_GRAPH = saved;
     }
   });
+
+  it("--code-graph override beats the ambient env and the local/cloud default", () => {
+    const saved = process.env.PAI_BRIEF_CODE_GRAPH;
+    try {
+      // on: lines present even for a local provider, even with the env saying off
+      delete process.env.PAI_BRIEF_CODE_GRAPH;
+      const localOn = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true, "on");
+      expect(localOn).toContain(CODE_EXPLORE_LINE);
+      expect(localOn).toContain(CODE_GRAPH_FIRST_LINE);
+
+      process.env.PAI_BRIEF_CODE_GRAPH = "0";
+      const envOffOptionOn = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true, "on");
+      expect(envOffOptionOn).toContain(CODE_EXPLORE_LINE);
+      expect(envOffOptionOn).toContain(CODE_GRAPH_FIRST_LINE);
+
+      // off: lines absent even for a cloud provider, even with the env saying on
+      delete process.env.PAI_BRIEF_CODE_GRAPH;
+      const cloudOff = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, false, "off");
+      expect(cloudOff).not.toContain(CODE_EXPLORE_LINE);
+      expect(cloudOff).not.toContain(CODE_GRAPH_FIRST_LINE);
+
+      process.env.PAI_BRIEF_CODE_GRAPH = "1";
+      const envOnOptionOff = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, false, "off");
+      expect(envOnOptionOff).not.toContain(CODE_EXPLORE_LINE);
+      expect(envOnOptionOff).not.toContain(CODE_GRAPH_FIRST_LINE);
+
+      // unset option keeps the default behaviour
+      delete process.env.PAI_BRIEF_CODE_GRAPH;
+      const localDefault = workerContractPrompt("implement", "ag2", false, undefined, undefined, true, true, undefined);
+      expect(localDefault).not.toContain(CODE_EXPLORE_LINE);
+    } finally {
+      if (saved === undefined) delete process.env.PAI_BRIEF_CODE_GRAPH;
+      else process.env.PAI_BRIEF_CODE_GRAPH = saved;
+    }
+  });
 });
 
 describe("proof check and report validation credit what really ran (2026-11-22/23 false 'invalid report')", () => {

@@ -87,6 +87,8 @@ export interface RunOptions {
   allowDbWrites?: boolean;
   /** --deliverable change|findings: what this run's result IS — a repo commit ("change") or a report ("findings"). Without it the class gate decides (PAI_WORKER_DELIVERABLE is inherited). */
   deliverable?: Deliverable;
+  /** --code-graph on|off: force the code-graph brief lines on/off for this run, overriding PAI_BRIEF_CODE_GRAPH and the local/cloud default. Carried across relaunches/resumes; recorded on the status. */
+  codeGraph?: "on" | "off";
   /** Set by `pai tests prune --apply` only: the plan's file list (PAI_WORKER_PRUNE_FILES), the tracked files this local worker's guard lets it delete. */
   pruneFiles?: string[];
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */

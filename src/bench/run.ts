@@ -32,6 +32,8 @@ export interface BenchRunOpts {
   idleSec: number;
   /** An answer file written this many times ends the series (REWRITE). */
   maxWrites: number;
+  /** --code-graph on|off: passed as --code-graph to every worker the series starts, and recorded in each rep result and the series header. Undefined = the default (local off, cloud on). */
+  codeGraph?: "on" | "off";
   out: (line: string) => void;
 }
 
@@ -137,7 +139,7 @@ export const MAX_CONSECUTIVE_STOPS = 3;
  * set scripts' own grader (evalset.py grade) over whatever answer files exist; the real set cannot be graded
  * from here (hidden tests run in throwaway trees), so it gets passed 0 and n = the task count.
  */
-export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key">, benchDir: string, set: string, rep: number, v: Verdict, secs: number): void {
+export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key" | "codeGraph">, benchDir: string, set: string, rep: number, v: Verdict, secs: number): void {
   const res = join(o.dir, "results", set, o.key, `rep${rep}.json`);
   if (existsSync(res)) return;
   mkdirSync(join(o.dir, "results", set, o.key), { recursive: true });
@@ -147,13 +149,13 @@ export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key">, benchDi
     const g = spawnSync("python3", ["-I", join(benchDir, "evalset.py"), "grade", set, work, res, o.key, String(rep), String(secs), "1", join(work, "worker.json"), ""], { stdio: "ignore" });
     if (g.status === 0 && existsSync(res)) {
       const r = JSON.parse(readFileSync(res, "utf8"));
-      writeFileSync(res, JSON.stringify({ ...r, status: "stopped", error }, null, 1));
+      writeFileSync(res, JSON.stringify({ ...r, status: "stopped", error, ...(o.codeGraph ? { code_graph: o.codeGraph } : {}) }, null, 1));
       return;
     }
   }
   const tasksDir = join(benchDir, "tasks");
   const n = set === "real" && existsSync(tasksDir) ? readdirSync(tasksDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
-  writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "stopped", n, passed: 0, wall_s: secs, error, graded: false, tasks: [] }, null, 1));
+  writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "stopped", n, passed: 0, wall_s: secs, error, graded: false, tasks: [], ...(o.codeGraph ? { code_graph: o.codeGraph } : {}) }, null, 1));
 }
 
 /**
@@ -161,12 +163,12 @@ export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key">, benchDi
  * the refusal text (the script's stderr, e.g. gate.ts' disabled-local-provider message) goes into "error", so the
  * operator sees why instead of an empty error and pass=0/n (incident 2026-11-24 23:19).
  */
-export function writeFailedResult(o: Pick<BenchRunOpts, "dir" | "key">, set: string, rep: number, rc: number, stderr: string, secs: number): void {
+export function writeFailedResult(o: Pick<BenchRunOpts, "dir" | "key" | "codeGraph">, set: string, rep: number, rc: number, stderr: string, secs: number): void {
   const res = join(o.dir, "results", set, o.key, `rep${rep}.json`);
   if (existsSync(res)) return; // the script graded whatever it ran: its file stands
   mkdirSync(join(o.dir, "results", set, o.key), { recursive: true });
   const error = stderr.trim() || `worker run refused: script exited rc=${rc} with no output`;
-  writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "error", n: 0, passed: 0, wall_s: secs, worker_rc: rc, error: error.slice(0, 1000), graded: false, tasks: [] }, null, 1));
+  writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "error", n: 0, passed: 0, wall_s: secs, worker_rc: rc, error: error.slice(0, 1000), graded: false, tasks: [], ...(o.codeGraph ? { code_graph: o.codeGraph } : {}) }, null, 1));
 }
 
 /** Returns 0 when the series ran through, 1 when a script failed or MAX_CONSECUTIVE_STOPS runs in a row were watchdog-stopped. */
@@ -180,7 +182,7 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
   };
   const gate = powerGate();
   const tools = resolveTools(o.tools);
-  log(`series ${o.key}: provider=${o.provider} sets=${o.sets.join(",")} tools=${tools} reps=${o.reps} real=${o.real} cap=${o.realCapMin}min power-gate=${gate ? "pai power wait" : "none"} results=${o.dir}`);
+  log(`series ${o.key}: provider=${o.provider} sets=${o.sets.join(",")} tools=${tools} reps=${o.reps} real=${o.real} cap=${o.realCapMin}min code-graph=${o.codeGraph ?? "default"} power-gate=${gate ? "pai power wait" : "none"} results=${o.dir}`);
   // preflight: resolve the provider exactly like a worker start does (routing.resolveTarget +
   // assertLocalProviderAlive). A disabled/unknown/not-running provider refuses every start with rc 2 while
   // the set scripts still exit 0 — abort here, before burning reps, and say why (incident 2026-11-24 23:19).
@@ -191,7 +193,10 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
     log(`ABORT series ${o.key}: provider "${o.provider}" cannot run a worker: ${why}; series ended`);
     return 1;
   }
-  const env: NodeJS.ProcessEnv = { ...process.env, BENCH_DIR: o.dir, BENCH_TOOLS: tools, BENCH_REAL_MAX_MIN: String(o.realCapMin) };
+  // BENCH_CODE_GRAPH reaches the set scripts' `pai worker run` calls as --code-graph; it is NOT
+  // PAI_BRIEF_CODE_GRAPH — workers start through the daemon with its own environment, so the ambient
+  // env never reaches them (verified 2026-11-25). The decision travels as a CLI flag on every start.
+  const env: NodeJS.ProcessEnv = { ...process.env, BENCH_DIR: o.dir, BENCH_TOOLS: tools, BENCH_REAL_MAX_MIN: String(o.realCapMin), ...(o.codeGraph ? { BENCH_CODE_GRAPH: o.codeGraph } : {}) };
   delete env.ANTHROPIC_API_KEY;
   const start = Date.now();
   const wd = new Watchdog({ ...DEFAULT_LIMITS, idleMs: o.idleSec * 1000, maxWrites: o.maxWrites }, start);
