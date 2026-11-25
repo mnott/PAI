@@ -6,7 +6,7 @@
 #   evalset.sh glm glm-5.3-flash short 1 glm-flash
 #   evalset.sh gyro-m - easy 1 gyro-m           (local: only when the orchestrator says so, see README.md)
 set -u
-E=$(cd "$(dirname "$0")" && pwd); . "$E/instrument.sh"
+E=$(cd "$(dirname "$0")" && pwd); . "$E/config.sh"; . "$E/instrument.sh"
 OUT=${BENCH_DIR:-$HOME/.cache/pai/bench}   # results/ and work/ live here, never in the repo
 provider=${1:?provider} model=${2:?model or -} set=${3:?set} rep=${4:?rep}
 if [ -n "${5:-}" ]; then key=$5; elif [ "$model" = - ]; then key=$provider; else key=$provider-$model; fi
@@ -14,7 +14,8 @@ T=$E/config-eval.template.yaml
 unset ANTHROPIC_API_KEY
 d=$OUT/work/$set/$key/rep$rep; res=$OUT/results/$set/$key/rep$rep.json
 mkdir -p "$OUT/results/$set/$key"; rm -rf "$d"; mkdir -p "$d"; touch "$d/.pai-bench"
-sed "s/__PROVIDER__/$provider/g" "$T" > "$d/config.yaml.new" && mv -f "$d/config.yaml.new" "$d/config.yaml"; export PAI_CONFIG_FILE=$d/config.yaml   # private copy per run: pai_eval db, panes off, routing pinned to the provider, escalation and quota retry off
+export PAI_CONFIG_FILE=$d/config.yaml   # private copy per run: pai_eval db, panes off, routing pinned to the provider, escalation and quota retry off
+write_bench_config "$provider" "$d/config.yaml"
 python3 -I "$E/evalset.py" prep "$set" "$d" || exit 2
 if [ "$set" = short ]; then
   what="write ONLY the exact final answer (no explanation, no extra text) to out/<id>.txt"; fields="id, prompt"
@@ -37,6 +38,7 @@ t0=$(date +%s)
 run() { ( cd "$d" && env -u ITERM_SESSION_ID -u TERM_SESSION_ID -u TMUX -u TMUX_PANE -u ANTHROPIC_API_KEY \
   pai worker run --provider "$provider" ${margs[@]+"${margs[@]}"} ${cgargs[@]+"${cgargs[@]}"} --class implement --no-worktree --cwd . --max-minutes 120 \
   --label "eval $key $set rep$rep bench" --spec spec.txt --allowedTools "$tools" --output-format json > worker.json 2> worker.err ); }
+write_bench_config "$provider" "$PAI_CONFIG_FILE"   # fresh config before the run: anything earlier may have rewritten it through the config store (fault 2026-11-25)
 run; wrc=$?
 wall=$(( $(date +%s) - t0 ))
 inst=$(instrument_of "$d/worker.json" "$d/worker.err")   # PAI classification; "unknown" = no id, evalset.py regex fallback
