@@ -8,8 +8,14 @@
  *
  * Parsing is conservative on purpose: a command is split on ; && || | & and
  * newlines outside quotes, `bash -c '<cmd>'` is unwrapped, `cd` is tracked
- * across segments. Not caught (false negatives chosen over blocking real
- * work): $(...) / backtick substitutions, subshell/brace grouping, variables
+ * across segments. A `)` (or closing backtick) that ends a `$(…)` / backtick
+ * substitution or a `( … )` subshell closes the group instead of sticking to
+ * the last word: `cat f 2>/dev/null)` inside `$( … )` is read as `/dev/null`,
+ * not `/dev/null)` (2026-11-25: that trailing paren made a redirect target
+ * outside the worktree, and the worker was denied its own wait recipe).
+ * Not caught (false negatives chosen over blocking real
+ * work): substitution/subshell bodies are not re-parsed as separate commands
+ * (a `>` inside them is still a write target of the whole segment), variables
  * other than ~ and $HOME in paths, scripts that do the forbidden thing
  * internally, `git -C <other>` targeting another repo's cwd, cp/rsync with
  * -t or a source that is a subdirectory of the tree.
@@ -112,6 +118,8 @@ export function parseCommand(raw: string): Segment[] {
   let has = false; // a token is in progress (covers empty quoted "")
   let quote: string | null = null;
   let target: "redir" | "skip" | null = null;
+  /** Open groups outside quotes: `$(…`, backtick, `( …`. A closing `)` / backtick at depth > 0 is a delimiter (see below), not part of the word. */
+  let depth = 0;
 
   const flushTok = (): void => {
     if (!has) return;
@@ -146,6 +154,10 @@ export function parseCommand(raw: string): Segment[] {
       has = true;
     } else if (/\s/.test(ch) && ch !== "\n") {
       flushTok();
+    } else if (depth > 0 && (ch === ")" || ch === "`")) {
+      // the closing delimiter of a `$(…)` / backtick substitution or `( … )` subshell: it ends the group, so it is never part of the preceding word — and a redirect target read inside the group (`cat f 2>/dev/null)`) resolves as `/dev/null`, not `/dev/null)`
+      flushTok();
+      depth--;
     } else if (ch === ";" || ch === "\n" || ch === "|" || ch === "&") {
       if (ch === "&" && command[i + 1] === ">") continue; // `&>` redirects
       endSeg(i);
@@ -162,6 +174,21 @@ export function parseCommand(raw: string): Segment[] {
         target = "skip"; // fd duplication: `2>&1`
       } else target = ch === ">" ? "redir" : "skip";
     } else {
+      if (ch === "`") depth++; // an open backtick substitution
+      else if (ch === "(") {
+        // `$(…` opens a command substitution; a bare `( … )` is a subshell. `(` inside a word (`xargs(`, a function name) stays part of the word.
+        // `$(…` opens a substitution even mid-word (`x $(cat …)`); a bare `(` only opens a subshell at the head of a word.
+        const opened = tok === "$" || (depth === 0 && !has);
+        if (opened) {
+          if (tok === "$") {
+            // `$(…` consumed as one unit: drop the `$` that was collected before it
+            tok = "";
+            has = false;
+          }
+          depth++;
+          continue;
+        }
+      }
       if (!has && !seg.words.length && !seg.redirects.length) segStart = i; // an unquoted word opening at the head of a segment
       tok += ch;
       has = true;
