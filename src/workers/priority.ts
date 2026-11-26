@@ -44,9 +44,22 @@ export function withCpuLimit(command: string, seconds: number, uncapped = false)
   );
 }
 
-/** True for commands that legitimately need more CPU time: test runs (the test-run wrapper) and the machine-wide build queue. */
+/**
+ * Build tools whose work lives in a long-lived detached daemon (Gradle, Kotlin, Xcode's build service, sccache) or runs for minutes of
+ * CPU. RLIMIT_CPU is inherited by every descendant and counts per process, so under the cap the Gradle daemon is SIGXCPU-killed mid-compile
+ * ("Gradle build daemon disappeared unexpectedly", 2026-11-26) while the same command from a plain pane survives.
+ */
+const BUILD_TOOL_RE =
+  /(^|[\s;&|(`/])(\.\/)?(gradlew?|mvnw?|flutter\s+(build|run|test|assemble)|xcodebuild|cargo\s+(build|test|check|clippy|install|run|bench)|swift\s+(build|test)|make|cmake|ninja|bazel|ndk-build|fastlane|pod\s+install|build-[\w.-]+\.sh|build\.sh)(\s|$|;|&|\|)/;
+
+/** True for a command that runs a build tool; its detached daemons would inherit the CPU cap. */
+export function isBuildToolCommand(command: string): boolean {
+  return BUILD_TOOL_RE.test(command);
+}
+
+/** True for commands that legitimately need more CPU time: test runs (the test-run wrapper), build tools and the machine-wide build queue. */
 export function isHeavyDoor(command: string): boolean {
-  return isTestCommand(command) || command.includes("pai worker test-run") || /\bpai build (run|lock)\b/.test(command);
+  return isTestCommand(command) || isBuildToolCommand(command) || command.includes("pai worker test-run") || /\bpai build (run|lock)\b/.test(command);
 }
 
 /** The Bash command a worker actually runs: test/build doors uncapped, everything else under the CPU cap. */

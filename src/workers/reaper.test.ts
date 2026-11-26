@@ -308,6 +308,29 @@ describe("worker priority and kill", () => {
     expect(capBashCommand("ls", { cpuSecondsPerCommand: 0 })).toMatch(/^ulimit -S -t unlimited/);
   });
 
+  it("build tools run uncapped; their detached daemons do not inherit the CPU cap", () => {
+    for (const c of ["bash tools/build-android.sh", "./gradlew assembleRelease", "flutter build apk --release", "xcodebuild -scheme App build", "cd x && cargo build --release", "make -j4"])
+      expect(capBashCommand(c)).toMatch(/^ulimit -S -t unlimited/);
+    for (const c of ["ls -la", "cat build.log", "grep -r makefile src"]) expect(capBashCommand(c)).toMatch(/^ulimit -S -t 300 /);
+    // a fake build whose detached (setsid) daemon spends 2 CPU s: killed under a 1 s cap, alive without it
+    const dir = join(tmpdir(), `${MARK}-daemon`);
+    mkdirSync(dir, { recursive: true });
+    const daemon = (out: string) => `perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' perl -e '$t=time; 1 while time-$t<3; open F,">${out}"; print F "ok"' ${MARK} &\nwait`;
+    const run = (name: string, cmd: string) => {
+      const script = join(dir, name);
+      writeFileSync(script, capBashCommand(cmd, { cpuSecondsPerCommand: 1 }) + "\n");
+      spawnSync("timeout", ["20", "bash", script], { encoding: "utf8" });
+    };
+    try {
+      run("capped.sh", `${daemon(join(dir, "capped.out"))}`);
+      run("build-fake.sh", `# build-fake.sh\n${daemon(join(dir, "build.out"))}`);
+      expect(() => readFileSync(join(dir, "capped.out"))).toThrow();
+      expect(readFileSync(join(dir, "build.out"), "utf8")).toBe("ok");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("a command that burns its CPU budget dies with the CPU-time message", () => {
     const script = join(tmpdir(), `${MARK}.sh`);
     writeFileSync(script, withCpuLimit(`perl -e '1 while 1' ${MARK}`, 1) + "\n");
