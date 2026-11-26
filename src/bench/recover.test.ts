@@ -6,7 +6,7 @@
  * nothing = not-run. n counts attempted tasks; never an empty tasks list when tasks ran.
  */
 
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,9 +16,9 @@ let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "bench-recover-")); });
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-/** run recover_real_rep in a subshell (bash >=5.3 array quirks are part of what this pins) */
+/** run recover_real_rep exactly like run.ts does: argv + env only, no interpolation (bash >=5.3 array quirks are part of what this pins) */
 function recover(work: string, out: string, tasks: string): unknown {
-  const res = spawnSync("bash", ["-c", `TASKS="${tasks}" . "${join(process.cwd(), "bench", "recover.sh")}"; recover_real_rep "${out}" k 1 "${work}" k-rep1 "watchdog-stopped: IDLE 900s"`,], { stdio: "ignore" });
+  const res = spawnSync("bash", ["-c", '. "$1"; shift; recover_real_rep "$@"', "recover", join(process.cwd(), "bench", "recover.sh"), out, "k", "1", work, "k-rep1", "watchdog-stopped: IDLE 900s"], { stdio: "ignore", env: { ...process.env, TASKS: tasks } });
   expect(res.status).toBe(0);
   return JSON.parse(readFileSync(join(out, "rep1.json"), "utf8"));
 }
@@ -84,6 +84,26 @@ describe("recover_real_rep grades a stopped real rep from the work dir", () => {
     expect(r.status).toBe("stopped");
     expect(r.graded).toBe(true);
     expect(r.tasks.length).toBeGreaterThan(0);
+    expect(r.passed).toBe(1);
+  });
+
+  it("injection in the error text is stored verbatim, never executed", () => {
+    // review 2026-11-26: run.ts must pass paths/TASKS/error as argv — $(), backticks and \ must not run.
+    const work = join(dir, "work", "real", "inj-rep1");
+    mkdirSync(work, { recursive: true });
+    writeFileSync(join(work, "a.tests.log"), "      Tests  3 passed (3)\n");
+    writeFileSync(join(work, "a.worker.json"), JSON.stringify({ duration_ms: 1000 }));
+    const marker = join(dir, "PWNED");
+    const error = 'watchdog-stopped: IDLE $(touch "' + marker + '") `touch ' + marker + '` \\$(id)';
+    const res = spawnSync("npx", ["tsx", "-e", `
+      import { writeStoppedResult } from "./src/bench/run.js";
+      writeStoppedResult({ dir: "${dir}", key: "inj" }, "${join(process.cwd(), "bench")}", "real", 1, { reason: "IDLE", detail: "900s" }, 60);
+    `], { stdio: "ignore", env: { ...process.env, TASKS: 'a $(touch "' + marker + '")' } });
+    expect(res.status).toBe(0);
+    const r = JSON.parse(readFileSync(join(dir, "results", "real", "inj", "rep1.json"), "utf8"));
+    expect(r.error).toBe(error); // stored verbatim
+    expect(existsSync(marker)).toBe(false); // nothing executed
+    expect(r.tasks.length).toBe(1);
     expect(r.passed).toBe(1);
   });
 });
