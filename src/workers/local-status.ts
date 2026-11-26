@@ -61,14 +61,11 @@ export interface LocalDownInfo {
   gaveUp?: string;
   /** Nothing marked autostart while a local provider is down: "autostart off". */
   autostartOff?: boolean;
-  /** A runtime stopped on purpose (`pai models stop`): autostart refuses it, so it is never "starting". */
-  stoppedOnPurpose?: string;
 }
 
 /** The one line of why the local tier reads down, "" when there is nothing to say. */
 export function localDownHint(info: LocalDownInfo | null | undefined): string {
   if (!info) return "";
-  if (info.stoppedOnPurpose) return `local model down: ${info.stoppedOnPurpose} stopped on purpose (pai models start to resume)`;
   if (info.starting) return `local model down: starting ${info.starting}`;
   if (info.gaveUp) return `local model down, autostart gave up on ${info.gaveUp} until the next daemon start`;
   if (info.autostartOff) return "local model down, autostart off";

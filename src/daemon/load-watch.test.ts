@@ -34,7 +34,7 @@ import {
   schedulerInflightFor,
   type AutostartDeps,
 } from "./runtime-autostart.js";
-import { DOWN_CONFIRM_MS, localBusyHint, localDownHint, localStatusLine, type LocalStatus } from "../workers/local-status.js";
+import { DOWN_CONFIRM_MS, localBusyHint, localStatusLine, type LocalStatus } from "../workers/local-status.js";
 import type { SchedSnapshot } from "../router/scheduler.js";
 import { freeMemoryGb, DEFAULT_RESERVE_GB, type MemoryDeps } from "../workers/local-memory.js";
 import { parseVmStat } from "../router/system.js";
