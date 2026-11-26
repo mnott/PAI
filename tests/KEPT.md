@@ -89,3 +89,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | bench/config.test.ts | a | Fault 2026-11-25 series cg-off signal-2: task 3 rewrote the shared private config via the config store (workers.enabled:false), tasks 4-5 failed in 1s with 'workers are off'; pins that realset.sh regenerates the per-task config from the template before every task start |
 | src/bench/recover.test.ts | a | fault 2026-11-26 night series h2h-g2-dualA/B: watchdog stopped a real rep after finished tasks and wrote an empty tasks list (0/5 although 3 tasks had hidden-test logs); pins recover_real_rep grading finished/interrupted/not-run tasks from the work dir |
 | src/workers/merge-tests.test.ts | a | merge verify runner detection (pubspec/flutter/dart) regression guard |
+| src/session/checkpoint-block.test.ts | a | Continue handover truncation regression 2026-11-26: a 6000-char previous Continue must survive an auto checkpoint |
