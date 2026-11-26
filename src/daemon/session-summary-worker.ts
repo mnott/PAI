@@ -64,6 +64,8 @@ const SUMMARY_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 const MIN_NEW_TEXT_CHARS = 6_000;
 /** Default: minutes since the last note write after which a Stop with a little new text triggers a summary. */
 const DEFAULT_INTERVAL_MINUTES = 10;
+/** A first summary of a session with one user message needs at least this much conversation text. */
+const MIN_SINGLE_MESSAGE_CHARS = 500;
 /** The time trigger needs at least this much new text (a Stop with nothing new writes nothing). */
 const MIN_TIME_TRIGGER_CHARS = 200;
 /** Hard cap on the whole prompt; the newest content is kept. */
@@ -372,6 +374,8 @@ export interface ExtractedContent {
   userMessages: string[];
   filesModified: string[];
   sessionStartTime: string;
+  /** Working directories the extracted entries ran in, in order of first appearance. */
+  cwds: string[];
   /** Newest user/assistant text of the extracted part (tail, capped at TOPIC_PROBE_CHARS). */
   recentText: string;
 }
@@ -385,6 +389,7 @@ export function extractFromJsonl(jsonlPath: string, _tier: ModelTier = "sonnet",
     userMessages: [],
     filesModified: [],
     sessionStartTime: "",
+    cwds: [],
     textChars: 0,
     endOffset: 0,
     recentText: "",
@@ -406,6 +411,8 @@ export function extractFromJsonl(jsonlPath: string, _tier: ModelTier = "sonnet",
     if (entry.timestamp && !result.sessionStartTime) {
       result.sessionStartTime = String(entry.timestamp);
     }
+
+    if (typeof entry.cwd === "string" && entry.cwd && !result.cwds.includes(entry.cwd)) result.cwds.push(entry.cwd);
 
     if (entry.type !== "user" && entry.type !== "assistant") return;
     const msg = entry.message as Record<string, unknown> | undefined;
@@ -951,6 +958,19 @@ export function linkNotes(prev: string, next: string): void {
   }
 }
 
+/** Delete the newest unclaimed stub of `cwd`'s notes dir when it is still the untouched template. */
+function removePristineStub(cwd: string): void {
+  try {
+    const dir = findNotesDir(cwd).path;
+    const stub = findUnclaimedStub(dir);
+    if (!stub) return;
+    const text = readFileSync(stub, "utf-8");
+    if (!text.includes("<!-- PAI will add completed work here during session -->")) return;
+    unlinkSync(stub);
+    process.stderr.write(`[session-summary] Removed unused stub ${basename(stub)} (session moved to another project).\n`);
+  } catch { /* best effort */ }
+}
+
 /** Month directories searched for a session's note: this month and the previous one. */
 function noteMonthDirs(notesDir: string): string[] {
   const now = new Date();
@@ -1260,13 +1280,28 @@ export function isDaemonLlmTranscript(jsonlPath: string, cwd: string): boolean {
 // Main entry point
 // ---------------------------------------------------------------------------
 
+const inFlight = new Map<string, Promise<void>>();
+
 /**
- * Process a `session-summary` work item.
- *
- * This is the main function called by work-queue-worker.ts.
- * Throws on fatal errors (work queue will retry with backoff).
+ * Process a `session-summary` work item. Runs for one session never overlap:
+ * a second Stop of the same session waits for the first, then decides against
+ * the cursor the first one saved (concurrent runs used to read the same offset
+ * and write the same summary twice).
  */
 export async function handleSessionSummary(payload: SessionSummaryPayload): Promise<void> {
+  const key = payload.sessionId;
+  if (!key) return handleSessionSummaryNow(payload);
+  const prev = inFlight.get(key) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(() => handleSessionSummaryNow(payload));
+  inFlight.set(key, run);
+  try {
+    await run;
+  } finally {
+    if (inFlight.get(key) === run) inFlight.delete(key);
+  }
+}
+
+async function handleSessionSummaryNow(payload: SessionSummaryPayload): Promise<void> {
   const { cwd, sessionId, projectSlug, transcriptPath, force, final } = payload;
 
   if (!cwd) {
@@ -1378,7 +1413,9 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // summarizing (a daemon LLM run, a one-shot probe, a stub). Summarizing one
   // spends a model slot for nothing.
   // An already-summarized session continues with whatever new messages arrive.
-  if (extracted.userMessages.length < (prevState ? 1 : 2)) {
+  // A first run with a single short message (a daemon LLM run, a one-shot probe) is not
+  // worth a model slot; a single substantial exchange is real work and gets its note.
+  if (extracted.userMessages.length < (prevState ? 1 : 2) && (prevState || extracted.textChars < MIN_SINGLE_MESSAGE_CHARS)) {
     process.stderr.write(
       `[session-summary] Fewer than 2 user messages (${extracted.userMessages.length}) in transcript — skipping.\n`
     );
@@ -1460,6 +1497,11 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // Step 5: Write the session note
   // -------------------------------------------------------------------------
   const notePath = writeSessionNote(cwd, summaryText, extracted.filesModified, sessionId, prevState?.note, extracted.userMessages);
+  // The session moved here before it ever wrote a note: the empty stubs the
+  // session-start hook left in the directories it passed through are junk.
+  if (notePath && sessionId && !prevState) {
+    for (const other of extracted.cwds) if (other !== cwd) removePristineStub(other);
+  }
 
   if (notePath) {
     process.stderr.write(

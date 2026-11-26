@@ -292,7 +292,7 @@ describe("session note lifecycle stress", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     let runs = 0, failures = 0, step = 0;
     const failed: string[] = [];
-    for (let seed = 1; seed <= STRESS_SEEDS; seed++) {
+    for (let seed = Number(process.env.PAI_STRESS_FROM ?? 1); seed <= STRESS_SEEDS; seed++) { // PAI_STRESS_FROM=n replays from one seed
       const rnd = mulberry32(seed);
       const pick = <T,>(xs: T[]): T => xs[Math.floor(rnd() * xs.length)];
       const proj = [mkProject(`s${seed}-a`), mkProject(`s${seed}-b`)];
@@ -317,7 +317,7 @@ describe("session note lifecycle stress", () => {
           setNow(clock);
           if (!ses.started) { sessionStart(ses.cwd); ses.started = true; }
           if (act < 0.2) ses.topic = Math.floor(rnd() * TOPICS.length);
-          if (act > 0.93 && ses.idx === 0 && ses.cwd === proj[0]) { ses.cwd = proj[1]; ses.tb.moveTo(proj[1]); sessionStart(ses.cwd); }
+          if (act > 0.93 && ses.idx === 0 && ses.cwd === proj[0]) { ses.tb.user("moving on to the other project"); ses.cwd = proj[1]; ses.tb.moveTo(proj[1]); sessionStart(ses.cwd); }
           const [name, words] = TOPICS[ses.topic];
           ses.tb.tool("Bash", 20_000 + Math.floor(rnd() * 200_000)).turn(`${name}: ${words}`, 800 + Math.floor(rnd() * 8000));
           if (act > 0.5 && act < 0.6) W.resetTopicProbeState(); // daemon restart
