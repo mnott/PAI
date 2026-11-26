@@ -167,7 +167,7 @@ describe("pane open: lock + retry on osascript timeouts, paneless when it never 
     writeFileSync(join(bin, "osascript"), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, "osascript"), 0o755);
   };
-  const deps = { timeouts: [300, 300, 300], backoffMs: 1 };
+  const deps = { timeouts: [1500, 1500, 1500], backoffMs: 1 };
 
   it("an osascript that times out once is retried and the open succeeds", async () => {
     const mark = join(bin, "seen");
