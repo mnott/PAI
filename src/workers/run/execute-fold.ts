@@ -96,6 +96,7 @@ import {
   worktreeExtras,
   identityExtras,
   reaskAg2Report,
+  foldContinuationResult,
   printResult,
   loopStopResult,
 } from "./finalise.js";
@@ -665,9 +666,15 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     const continuationEvent = (e: StreamEvent): void => {
       writeEvent(e as Record<string, unknown>);
       if (e.type !== "result") foldEvent(e);
+      else if (e.num_turns !== 0) {
+        foldContinuationResult(resultEvent, e);
+        state.resultReport = parseWorkerReport(resultEvent.result ?? "");
+      }
     };
     try {
-      const text = await reaskAg2Report({
+      // the continuation's own result event carries the answer and the stats; the returned text is a bare-output
+      // fallback (a raw stream line when the run was killed before any result) and is never taken as the answer
+      await reaskAg2Report({
         env,
         cwd: worktree?.dir ?? cwd,
         model,
@@ -683,10 +690,6 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         timeoutMs: 30 * 60_000,
         onEvent: continuationEvent,
       });
-      if (text) {
-        resultEvent.result = text;
-        state.resultReport = parseWorkerReport(text);
-      }
     } catch {
       // best effort; the original text stands
     }
