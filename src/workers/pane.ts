@@ -340,7 +340,13 @@ export { osascript as osascriptJxa };
 /** An osascript call that has not answered in this long is killed: a busy or dialog-blocked iTerm never answers. */
 export const OSASCRIPT_TIMEOUT_MS = 5_000;
 
-function osascript(script: string, args: string[], timeoutMs = OSASCRIPT_TIMEOUT_MS): Promise<{ stdout: string; stderr: string }> {
+let osascriptTimeoutMs = OSASCRIPT_TIMEOUT_MS;
+/** Default osascript timeout for the calls that follow (pane open retries widen it: 5/10/20 s). */
+export function setOsascriptTimeout(ms: number = OSASCRIPT_TIMEOUT_MS): void {
+  osascriptTimeoutMs = ms;
+}
+
+function osascript(script: string, args: string[], timeoutMs = osascriptTimeoutMs): Promise<{ stdout: string; stderr: string }> {
   // any non-listing script may change iTerm (split, close, rebalance): the next listing is fresh
   if (!listingCache.has(script)) listingCache.clear();
   return new Promise((resolve, reject) => {
