@@ -160,7 +160,9 @@ export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key" | "codeGr
     // never advanced, recover_real_rep grades from the work dir (tests.log = finished, worker.json = interrupted).
     const label = `${o.key}-rep${rep}`;
     const work = join(o.dir, "work", "real", label);
-    const g = spawnSync("bash", ["-c", `TASKS="${process.env.TASKS ?? ""}" . "${join(benchDir, "recover.sh")}"; recover_real_rep "${join(o.dir, "results", "real", o.key)}" "${o.key}" ${rep} "${work}" "${label}" "${error.replace(/"/g, '\\"')}"`], { stdio: "ignore" });
+    // everything travels as argv / env, never interpolated into the script text: $, backticks and \ in a
+    // path or error message must not be executed (review 2026-11-26). recover.sh reads TASKS from the env.
+    const g = spawnSync("bash", ["-c", '. "$1"; shift; recover_real_rep "$@"', "recover", join(benchDir, "recover.sh"), join(o.dir, "results", "real", o.key), o.key, String(rep), work, label, error], { stdio: "ignore", env: { ...process.env, TASKS: process.env.TASKS ?? "" } });
     if (g.status === 0 && existsSync(res)) return; // graded from the checkpoint / work dir
   }
   const tasksDir = join(benchDir, "tasks");
