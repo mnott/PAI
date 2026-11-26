@@ -13,15 +13,9 @@ import { saveStatus, type WorkerStatus } from "../status.js";
 import { frontmostItermSession, headlessAllowed, resolveHostSession } from "../pane.js";
 import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
-import { isOsascriptTimeout, retryPaneOpen } from "../pane-open-lock.js";
 import { type OwnedPane } from "../pane-exec.js";
 import { type StatusLineSpec } from "../pane-bar.js";
 import { stripApiKey } from "../strip-api-key.js";
-
-/** launchPane serialized across processes by the pane-open lock, retried on osascript timeouts (5/10/20 s). `launch` is a test seam. */
-export function openPane(o: Parameters<typeof launchPane>[0], launch: typeof launchPane = launchPane): Promise<OwnedPane | null> {
-  return retryPaneOpen(o.logDir, () => launch(o));
-}
 
 /** The panes opened FIRST for the runs of this process, per worker id, until the run's command starts in them. */
 export const paneHandles = new Map<string, OwnedPane>();
@@ -80,7 +74,7 @@ export async function requireVisiblePane(
   try {
     let pane: OwnedPane | null;
     try {
-      pane = await openPane({ logDir, config, id: wid, kind: "worker", term, env, continuation: restart });
+      pane = await launchPane({ logDir, config, id: wid, kind: "worker", term, env, continuation: restart });
     } catch (e) {
       if (!restart) throw e;
       // the inherited session is gone (closed tab, iTerm restart): anchor to the operator's frontmost window
@@ -89,7 +83,7 @@ export async function requireVisiblePane(
       pane = null;
       try {
         const front = await frontmostItermSession();
-        if (front && front !== term) pane = await openPane({ logDir, config, id: wid, kind: "worker", term: front, env, continuation: restart });
+        if (front && front !== term) pane = await launchPane({ logDir, config, id: wid, kind: "worker", term: front, env, continuation: restart });
       } catch (e2) {
         noTerminalReasons.set(wid, `${err}; frontmost window: ${(e2 instanceof Error ? e2.message : String(e2)).slice(0, 200)}`);
       }
@@ -103,7 +97,7 @@ export async function requireVisiblePane(
           for (const s of tabs.keys()) {
             if (s === term) continue;
             try {
-              pane = await openPane({ logDir, config, id: wid, kind: "worker", term: s, env, continuation: true });
+              pane = await launchPane({ logDir, config, id: wid, kind: "worker", term: s, env, continuation: true });
               break;
             } catch {
               /* this session cannot host it: the next one */
@@ -127,14 +121,6 @@ export async function requireVisiblePane(
     return true;
   } catch (e) {
     if (e instanceof Error && e.message.startsWith("no pane: ")) throw e;
-    if (isOsascriptTimeout(e)) {
-      // a slow iTerm must never fail the start: run without a pane and say so in the status (announcePane reads the reason)
-      const why = `pane open failed after 3 tries (${(e instanceof Error ? e.message : String(e)).slice(0, 200)}); started paneless`;
-      noTerminalReasons.set(wid, why);
-      appendLedger(ledger, "PANE-PANELESS", { id: wid, why });
-      process.stderr.write(`[pai worker] pane waived for ${wid}: ${why}\n`);
-      return false;
-    }
     return refuse((e instanceof Error ? e.message : String(e)).slice(0, 300));
   }
 }
