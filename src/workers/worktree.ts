@@ -1992,6 +1992,8 @@ async function mergeWorkerInner(
       suspect = suspectLines(logDir, related.failing);
     }
     if (related.output) void growthAlarm(logDir, st.cwd, related.output);
+    // a timed-out run is not a verdict: un-land the merge without a revert commit (so a retry needs no revert-of-revert) and say so
+    if (related.status === "timeout") throw new Error(unlandAfterVerifyTimeout(st.cwd, oldHead, mergeCommit, related.line));
     // "failed" already survived the serial re-run (flaky-under-load is its own status): revert like the other gates
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
@@ -2624,6 +2626,23 @@ async function growthAlarm(logDir: string, repo: string, output: string): Promis
  * it as a reverted merge). `keep` keeps the full gate output for a failing-test report. */
 export function runVerify(cwd: string, cmd: string, oldHead: string, keep?: { logDir: string; id: string }): string {
   return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null, () => null, () => null, () => null, keep);
+}
+
+/**
+ * A verify run that timed out is no verdict on the code, so it never reverts: while main still sits on the merge
+ * just made and the tracked tree is clean, main moves back to `oldHead` (no revert commit: a retry is a plain
+ * merge). If anything landed on top meanwhile the merge stays and the message says so. Never MERGE REVERTED.
+ */
+function unlandAfterVerifyTimeout(cwd: string, oldHead: string, mergeCommit: string, line: string): string {
+  const head = git(cwd, ["rev-parse", "HEAD"]);
+  let state: string;
+  if (head === mergeCommit && !git(cwd, ["status", "--porcelain", "--untracked-files=no"]).trim()) {
+    git(cwd, ["reset", "--hard", oldHead]);
+    state = `merge un-landed (main back at ${oldHead.slice(0, 8)}, no revert commit); branch kept`;
+  } else {
+    state = `merge ${mergeCommit.slice(0, 8)} left in place (main moved on or the tree is dirty): not reverted, not verified`;
+  }
+  return `${line}: ${state}: re-run \`pai worker merge\` when the machine is less loaded (or raise workers.merge.verifyTimeoutSec)`;
 }
 
 /** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */

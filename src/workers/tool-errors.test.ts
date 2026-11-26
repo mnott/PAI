@@ -369,3 +369,20 @@ describe("router notices and no-op edits", () => {
     expect(editMissNote(detectEditMiss(ev)!, "x")).toContain("changed nothing");
   });
 });
+
+describe("wait / wait-on rc=3 is benign", () => {
+  const base: ToolErrorRecord = { ts: 1, worker: "w", provider: "anthropic", label: "l", tool: "Bash", signature: "Bash|Exit code <N>", raw: "", input: "" };
+  const waitCmd = "pai worker wait-on $(cat $TMPDIR/s.pid) --log $TMPDIR/s.log --max 100";
+  it("exit 3 of wait / wait-on is benign", () => {
+    expect(classifyToolError({ ...base, raw: "Exit code 3", input: waitCmd }).cls).toBe("benign");
+    expect(classifyToolError({ ...base, raw: "Exit code 3", input: "pai worker wait abc --max 100" }).cls).toBe("benign");
+  });
+  it("a wrapper's exit 1 carrying rc=3, and the tool timeout over a still-running poll, are benign", () => {
+    expect(classifyToolError({ ...base, raw: "Exit code 1\nrc=3", input: waitCmd }).cls).toBe("benign");
+    expect(classifyToolError({ ...base, raw: "Timeout exceeded\nstill running after 100s (pid 1); call wait-on again", input: waitCmd }).cls).toBe("benign");
+  });
+  it("rc=3 from other commands is unchanged", () => {
+    expect(classifyToolError({ ...base, raw: "Exit code 3", input: "node build.js" }).cls).not.toBe("benign");
+    expect(classifyToolError({ ...base, raw: "Exit code 1\nrc=3", input: "node build.js" }).cls).not.toBe("benign");
+  });
+});

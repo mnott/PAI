@@ -56,7 +56,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, unlin
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { dirname, join } from "node:path";
 import { alive, isChatPane, isHarnessRun, loadStatusesCached, nowStamp, type WorkerStatus } from "./status.js";
-import { readWorkersSection } from "./config.js";
+import { getProviderOrNative, isLocalProvider, readWorkersSection } from "./config.js";
 import { itermForClaudeSession, itermUuid } from "./scope.js";
 import { classifyAlert } from "./helper-uses.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
@@ -123,6 +123,23 @@ export interface SupervisionEvent {
   text: string;
   /** urgent = pushed at once; routine = queued in the session's digest (notice-triage.ts). Set by runSupervisionTick. */
   priority?: NoticePriority;
+}
+
+/** Where the erroring worker actually ran: "provider/model", "local model" when its provider is loopback. Never the classifier's own model. */
+export function workerRunLabel(
+  w: { provider?: string; model?: string },
+  isLocal: (provider: string) => boolean = (n) => {
+    try {
+      const p = getProviderOrNative(readWorkersSection().workers, n);
+      return !!p && isLocalProvider(p.baseUrl);
+    } catch {
+      return false;
+    }
+  }
+): string {
+  const prov = w.provider ?? "";
+  if (prov && isLocal(prov)) return `local model${w.model ? `: ${w.model}` : ""}`;
+  return [prov, w.model].filter(Boolean).join("/") || "unknown provider";
 }
 
 /**
@@ -754,7 +771,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       const v = await classifyAlert(p.group).catch(() => null);
       if (v) {
         p.group.cls = v.cls;
-        p.group.hint = `${v.reason} (local model)`;
+        p.group.hint = `${v.reason} (${workerRunLabel(owner)})`;
       }
     }
     pending.push({
