@@ -51,6 +51,7 @@ import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { readLocalConfig, healthUrl, type LocalTier } from "../workers/local-tiers.js";
 import { paiHomeDir } from "../config/pai-home.js";
+import type { LocalDownInfo } from "../workers/local-status.js";
 import { exclusivePeers, isRuntimeStopped, readRuntimeCommands, readyIsUrl, liveRuntimeOpDeps, type RuntimeCommands } from "../workers/model-runtimes.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { freeMemoryGb } from "../workers/local-memory.js";
@@ -145,9 +146,12 @@ export type AutostartStates = Map<string, AutostartRuntimeState>;
 export const isBusyRuntime = (st: AutostartRuntimeState | undefined): boolean => st !== undefined && st.suspectedDownAt === undefined;
 
 /** The autostart answer for the local-status cache: what the hint line says while nothing runs. A busy runtime is not down: it yields no "starting", and nothing starts for it. */
-export function autostartDownInfo(cfg: AutostartConfig, states: AutostartStates): { starting?: string; gaveUp?: string; autostartOff?: boolean } | undefined {
+export function autostartDownInfo(cfg: AutostartConfig, states: AutostartStates, stopped?: (runtime: string) => boolean): LocalDownInfo | undefined {
   if (!cfg.enabled) return { autostartOff: true };
   const down = [...states.keys()].filter((r) => !isBusyRuntime(states.get(r)));
+  // stopped on purpose (the marker the tick honours) wins: autostart will not start it, so never "starting"
+  const sp = down.find((r) => stopped?.(r));
+  if (sp) return { stoppedOnPurpose: sp };
   const g = down.find((r) => states.get(r)?.gaveUp);
   if (g) return { gaveUp: g };
   const s = down[0];
@@ -371,9 +375,9 @@ export function liveAutostartDeps(): AutostartDeps {
 let current: { cfg: AutostartConfig; states: AutostartStates } | null = null;
 
 /** What the local-status cache says about why the tier reads down (undefined: no autostart manager ran). A busy runtime never yields "starting". */
-export function currentAutostartDownInfo(): { starting?: string; gaveUp?: string; autostartOff?: boolean } | undefined {
+export function currentAutostartDownInfo(): LocalDownInfo | undefined {
   if (!current) return undefined;
-  return autostartDownInfo(current.cfg, current.states);
+  return autostartDownInfo(current.cfg, current.states, (r) => isRuntimeStopped(paiHomeDir(), r));
 }
 
 /** The autostart runtimes the live manager reports busy (liveness alive, readiness slow): the cache's `busy` list. */
