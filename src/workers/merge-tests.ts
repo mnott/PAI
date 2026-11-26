@@ -21,7 +21,7 @@ export interface RelatedSettings {
 }
 
 export interface RelatedResult {
-  status: "passed" | "failed" | "skipped";
+  status: "passed" | "failed" | "skipped" | "timeout";
   /** The one line printed and recorded in the ledger. */
   line: string;
   failing: string[];
@@ -202,7 +202,8 @@ export function runRelatedTests(
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
   const r = runner(cwd, env, [resolved.cmd], timeoutSec, pipeGraceMs);
-  if (r.timedOut) return { status: "failed", line: `timed out after ${timeoutSec}s`, failing: [] };
+  // a timeout says nothing about the code: it is its own status, never a red suite (the gate must not revert on it)
+  if (r.timedOut) return { status: "timeout", line: `verify timed out after ${timeoutSec}s`, failing: [] };
   if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (runner: ${resolved.runner}; ${resolved.cmd})`, failing: [], output: r.output.slice(-20_000) };
   const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
   const tail = r.output.trim().split("\n").slice(-5).join(" | ").slice(0, 400);

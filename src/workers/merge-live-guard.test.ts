@@ -450,6 +450,20 @@ describe("a reverted merge gate exits non-zero with MERGE REVERTED last", () => 
     expect(lines.at(-1)).toMatch(/^MERGE REVERTED: verify failed/);
   });
 
+  it("a verify run that times out un-lands the merge without a revert commit and is no MERGE REVERTED", async () => {
+    const { repo, logDir } = g();
+    const before = git(repo, ["rev-parse", "HEAD"]);
+    const merge = { generated: [], regenerate: "", union: [], verify: "sleep 20", verifyTimeoutSec: 1 };
+    const e = (await mergeWorker(logDir, "rg", { cliRoot: null, merge }).catch((x: unknown) => x)) as Error;
+    expect(e).toBeInstanceOf(Error);
+    expect(e).not.toBeInstanceOf(MergeRevertedError);
+    expect(e.message).toContain("verify timed out after 1s");
+    expect(e.message).toContain("merge un-landed");
+    expect(asMergeReverted(e)).toBeNull();
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(before);
+    expect(git(repo, ["log", "--format=%s", "-5"])).not.toMatch(/^Revert/m);
+  }, 60_000);
+
   it("a merge that stands ends with ok-looking lines and no MERGE REVERTED", async () => {
     const { repo, logDir } = g();
     const out = await mergeWorker(logDir, "rg", { verifyTests: false, cliRoot: null });

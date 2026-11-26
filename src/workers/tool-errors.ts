@@ -22,7 +22,7 @@ import { isLocalProvider, readWorkersSection } from "./config.js";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
 import { bashExitCode } from "./wait.js";
-import { isExpectedWaitExit } from "../hooks/ts/lib/wait-poll.js";
+import { isExpectedWaitExit, isPollCommand } from "../hooks/ts/lib/wait-poll.js";
 import { upsertCandidate } from "../hooks/ts/lib/antipattern-log.js";
 
 export interface ToolErrorRecord {
@@ -215,6 +215,9 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   const out = (m?.[2] ?? r.raw).trim();
   const cmd = r.input;
   if (/^(?:\(eval\)|zsh):\d+: =+ not found$/m.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
+  // a wait/wait-on poll's own "still running, call again": exit 3 (also relayed as `rc=3` by a wrapper that exits 1)
+  // or its "still running after Ns" line, even when the tool's own timeout cut it (no exit code at all)
+  if (isPollCommand(cmd, r.cwd ?? process.cwd()) && /pai\s+worker\s+wait/.test(cmd) && (/\brc=3\b|^still running after \d+s/m.test(r.raw) || /^Timeout exceeded/im.test(r.raw))) return true;
   if (code === null) return false;
   if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(cmd)) return true;
   // a door/queue/wait poll exiting 3 is its documented "still running" answer (one predicate, wait-poll.ts)

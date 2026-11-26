@@ -48,6 +48,7 @@ const TREE_REWRITE: { name: string; pattern: RegExp }[] = [
   { name: "git switch", pattern: /\bgit(?:\s+-C\s+\S+)?\s+switch(?![\w-])/ },
   { name: "git rebase", pattern: /\bgit(?:\s+-C\s+\S+)?\s+rebase(?![\w-])/ },
   { name: "git merge", pattern: /\bgit(?:\s+-C\s+\S+)?\s+merge(?![\w-])/ },
+  { name: "git revert", pattern: /\bgit(?:\s+-C\s+\S+)?\s+revert(?![\w-])/ },
 ];
 
 /**
