@@ -377,6 +377,38 @@ describe("cloud -> local failover", () => {
     expect(a.text).toContain("mid-answer");
   });
 
+  it("no local model running: the request is held and the cloud retried until it answers, no 502", async () => {
+    let n = 0;
+    const cloud: Cloud = (q, res) => {
+      if (++n <= 2) return void q.socket.destroy(); // unreachable for the first attempts
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "c", type: "message", role: "assistant", model: "m", content: [{ type: "text", text: "from-cloud" }], usage: { input_tokens: 1, output_tokens: 1 } }));
+    };
+    let probes = 0;
+    const t = await fo(cloud, {
+      localProvider: async () => { throw new Error("no local model server is running"); },
+      probe: async () => ++probes >= 2,
+      backoffMs: () => 10,
+      noLocalRetryBudgetMs: 5000,
+    });
+    const a = await t.post();
+    expect(a.status).toBe(200);
+    expect(a.text).toContain("from-cloud");
+    expect(t.seen.local).toBe(0);
+  });
+
+  it("no local model running and the cloud stays down past the bound: the 502", async () => {
+    const t = await fo(null, {
+      localProvider: async () => { throw new Error("no local model server is running"); },
+      backoffMs: () => 10,
+      noLocalRetryBudgetMs: 150,
+    });
+    const a = await t.post();
+    expect(a.status).toBe(502);
+    expect(a.text).toContain("no local model is running");
+    expect(t.seen.local).toBe(0);
+  });
+
   it("an input larger than the local window is never failed over: a retryable 529, never a 400 /compact", async () => {
     const t = await fo(limit, { retryBudgetMs: 150, backoffMs: () => 10 });
     const a = await t.post("x".repeat(40_000));

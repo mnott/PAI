@@ -372,6 +372,8 @@ export interface RouterOptions {
     backoffMs?: (attempt: number) => number;
     /** how long one request keeps retrying the cloud before the client gets a retryable 529; default 120 s */
     retryBudgetMs?: number;
+    /** with no local model running: how long a request is held while the cloud is retried before the 502; default router.failover.noLocalRetryMin (15) minutes */
+    noLocalRetryBudgetMs?: number;
     /** ledger line; default appendLedger ROUTER-FAILOVER */
     onFailover?: (info: { session: string; reason: FailoverReason; to: string }) => void;
   };
@@ -959,9 +961,9 @@ export function routerHandler(
       // `onYield` frees the engine and parks the same request again (see the abort below).
       let touchHold: () => void = () => {};
       // ---- cloud -> local failover (router.failover) ----
-      const foCfg = (): { enabled: boolean; stickyMin: number } => {
+      const foCfg = (): { enabled: boolean; stickyMin: number; noLocalRetryMin?: number } => {
         const c = loadConfig().router.failover;
-        return { enabled: options?.failover?.enabled ?? c?.enabled ?? true, stickyMin: options?.failover?.stickyMin ?? c?.stickyMin ?? 30 };
+        return { enabled: options?.failover?.enabled ?? c?.enabled ?? true, stickyMin: options?.failover?.stickyMin ?? c?.stickyMin ?? 30, noLocalRetryMin: c?.noLocalRetryMin };
       };
       const foKey = headerValue(req.headers["x-pai-session"], 80) || sessionId || "anon";
       const foEligible =
@@ -971,10 +973,11 @@ export function routerHandler(
       const retryBudget = options?.failover?.retryBudgetMs ?? CLOUD_RETRY_BUDGET_MS;
       const backoff = options?.failover?.backoffMs ?? cloudBackoffMs;
       /** keep probing the cloud with backoff; once it answers, send the request again, else a retryable 529 after the budget */
-      const retryCloudOrOverload = async (reasonKey: FailoverReason): Promise<void> => {
+      const retryCloudOrOverload = async (reasonKey: FailoverReason, hold?: { budgetMs: number; give: string }): Promise<void> => {
         const t0 = Date.now();
-        for (let n = 0; Date.now() - t0 < retryBudget; n++) {
-          await new Promise((r) => setTimeout(r, Math.min(backoff(n), Math.max(0, retryBudget - (Date.now() - t0)))).unref());
+        const budget = hold?.budgetMs ?? retryBudget;
+        for (let n = 0; Date.now() - t0 < budget; n++) {
+          await new Promise((r) => setTimeout(r, Math.min(backoff(n), Math.max(0, budget - (Date.now() - t0)))).unref());
           if (res.destroyed) return;
           const ph: Record<string, string> = { ...up.headers };
           delete ph["content-length"];
@@ -984,6 +987,7 @@ export function routerHandler(
           }
         }
         if (res.destroyed) return;
+        if (hold) return fail(502, hold.give, target.model, ANTHROPIC_NATIVE);
         if (!res.headersSent) {
           res.writeHead(529, { "content-type": "application/json", "retry-after": "30" });
           res.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: `cloud unavailable (${reasonKey}); retry` } }));
@@ -1005,7 +1009,11 @@ export function routerHandler(
           try {
             name = await (options?.failover?.localProvider ?? (async () => (await resolveLocalProvider(readWorkersCached(), workersLogDir(readWorkersCached()))).name))();
           } catch (e) {
-            return fail(502, `cloud unavailable (${reasonKey}) and no local model is running: ${(e as Error).message}`, target.model, ANTHROPIC_NATIVE);
+            // no local model to fail over to: hold the request and keep retrying the cloud (a network blip must not kill a long worker), then the 502
+            const give = `cloud unavailable (${reasonKey}) and no local model is running: ${(e as Error).message}`;
+            const budgetMs = options?.failover?.noLocalRetryBudgetMs ?? (foCfg().noLocalRetryMin ?? 15) * 60_000;
+            log(`${new Date().toISOString()} ${target.model} cloud ${reasonKey}, session ${foKey} no local model is running: holding the request, retrying the cloud for up to ${Math.round(budgetMs / 1000)}s`);
+            return void retryCloudOrOverload(reasonKey, { budgetMs, give });
           }
           const lp = providers[name];
           const lm = lp ? localModelOf(lp) : undefined;

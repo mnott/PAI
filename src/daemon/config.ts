@@ -152,8 +152,8 @@ export interface RouterConfig {
   profileStalls?: boolean;
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
-  /** Cloud failure (usage limit 429, no network) -> the same request is retried on the running local model, and the session stays local for stickyMin minutes. Default: enabled true, stickyMin 30. */
-  failover?: { enabled?: boolean; stickyMin?: number };
+  /** Cloud failure (usage limit 429, no network) -> the same request is retried on the running local model, and the session stays local for stickyMin minutes. Default: enabled true, stickyMin 30. With no local model running the request is held and the cloud retried for noLocalRetryMin minutes (default 15) before the 502. */
+  failover?: { enabled?: boolean; stickyMin?: number; noLocalRetryMin?: number };
   /** Retry once a local answer whose text is an unparsed tool-call block (the router holds local answers until complete). Default: true. */
   localToolCallRetry?: boolean;
   /** Local requests: date and gitStatus move from the system prompt to the end of the last user message, so a resumed session keeps a byte-identical prefix (engine cache hit). Default: true. */
