@@ -70,7 +70,7 @@ import { flowText, routeRows, type RouteRow } from "../workers/route-table.js";
 import type { BudgetMap } from "../workers/budget.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
-import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
+import { cockpitCaller, defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { liveProofDeps } from "../config/config-guard-live.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
@@ -1746,7 +1746,7 @@ export function handleCockpit(
     readJsonObject(readBody, req)
       .then(async (body) => {
         try {
-          const r = await runCockpitAction(body, { ...defaultDeps(), onLocalChange: () => (limits as Partial<LimitsCache>).invalidate?.(), ...(actionDepsOverride ?? {}) }, actionHooks);
+          const r = await runCockpitAction(body, { ...defaultDeps(), onLocalChange: () => (limits as Partial<LimitsCache>).invalidate?.(), ...(actionDepsOverride ?? {}) }, actionHooks, cockpitCaller(req.headers, req.socket?.remoteAddress));
           send(200, "application/json", JSON.stringify(r));
         } catch (e) {
           send(500, "application/json", JSON.stringify({ ok: false, message: (e as Error).message }));

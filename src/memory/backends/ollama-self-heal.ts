@@ -60,10 +60,12 @@ export function liveSelfHeal(): SelfHeal {
       const { defaultDeps, runtimeStartStop } = await import("../../router/cockpit-actions.js");
       const { appendLedger } = await import("../../workers/ledger.js");
       const deps = defaultDeps();
+      const { isRuntimeStopped } = await import("../../workers/model-runtimes.js");
+      if (isRuntimeStopped(deps.home, runtime)) return { ok: false, message: `${runtime} was stopped on purpose; not self-healed` };
       appendLedger(deps.ledger, EMBED_HEAL_EVENT, { runtime, reason: reason.replace(/\s+/g, "_") });
       const stop = await runtimeStartStop(runtime, "stop", deps);
       if (!stop.ok) return stop;
-      return await runtimeStartStop(runtime, "start", deps);
+      return await runtimeStartStop(runtime, "start", deps, { caller: "ollama-self-heal", allowStopped: true });
     },
   };
 }

@@ -1090,3 +1090,94 @@ describe("runtime start env and exit 127", () => {
     rmSync(home, { recursive: true, force: true });
   });
 });
+
+describe("stopped on purpose holds for every runtime start path (runtimeStartStop)", () => {
+  const setup = () => {
+    const home = mkdtempSync(join(tmpdir(), "stopguard-"));
+    const spawned: string[] = [];
+    let up = false;
+    const ops: RuntimeOpDeps = {
+      runShell: async () => ({ code: 0 }),
+      spawnDetached: (cmd) => { spawned.push(cmd); up = true; return { exit: new Promise(() => undefined) }; },
+      getUrl: async () => up,
+      runCmd: async () => 0,
+      now: () => Date.now(),
+      sleep: async () => undefined,
+    };
+    // a fresh deps object per call = a daemon restart: only the files under home carry over
+    const deps = () => ({ home, ledger: join(home, "ledger.log"), runtimeOps: ops, runtimeCommands: { r1: { start: "serve r1", stop: "kill r1", ready: "http://127.0.0.1:1/ok" } }, workers: { providers: {} } }) as never;
+    return { home, spawned, deps, setUp: (v: boolean) => { up = v; } };
+  };
+
+  it("refuses cockpit/autostart/other starts after a stop, across restarts; an explicit start lifts it; every start logs its caller", async () => {
+    const { runtimeStartStop } = await import("../router/cockpit-actions.js");
+    const { isRuntimeStopped } = await import("../workers/model-runtimes.js");
+    const t = setup();
+    expect((await runtimeStartStop("r1", "stop", t.deps())).ok).toBe(true);
+    expect(isRuntimeStopped(t.home, "r1")).toBe(true);
+    for (const caller of ["cockpit-action", "daemon-autostart", "session-summary", undefined]) {
+      const r = await runtimeStartStop("r1", "start", t.deps(), { caller });
+      expect(r.ok).toBe(false);
+      expect(r.message).toMatch(/stopped on purpose/);
+    }
+    expect(t.spawned).toEqual([]);
+    const log = readFileSync(join(t.home, "logs", "daemon.log"), "utf8");
+    expect(log).toMatch(/runtime start r1: REFUSED, stopped on purpose, caller=cockpit-action pid=\d+/);
+    expect(log).toMatch(/caller=daemon-autostart/);
+    t.setUp(false);
+    const ok = await runtimeStartStop("r1", "start", t.deps(), { caller: "pai models", allowStopped: true });
+    expect(ok.ok).toBe(true);
+    expect(t.spawned).toEqual(["serve r1"]);
+    expect(isRuntimeStopped(t.home, "r1")).toBe(false);
+    expect(readFileSync(join(t.home, "logs", "daemon.log"), "utf8")).toMatch(/runtime start r1: caller=pai models pid=\d+.*\(explicit\)/);
+    rmSync(t.home, { recursive: true, force: true });
+  });
+
+  it("a runtime not stopped on purpose still starts, logged with its caller", async () => {
+    const { runtimeStartStop } = await import("../router/cockpit-actions.js");
+    const t = setup();
+    expect((await runtimeStartStop("r1", "start", t.deps(), { caller: "daemon-autostart" })).ok).toBe(true);
+    expect(readFileSync(join(t.home, "logs", "daemon.log"), "utf8")).toMatch(/runtime start r1: caller=daemon-autostart/);
+    rmSync(t.home, { recursive: true, force: true });
+  });
+});
+
+describe("cockpit HTTP runtime start always wins over the stopped marker", () => {
+  it("cockpitCaller classifies web/menubar as operator, curl/none as script, and keeps ua/origin/peer", async () => {
+    const { cockpitCaller } = await import("../router/cockpit-actions.js");
+    const web = cockpitCaller({ "user-agent": "Mozilla/5.0 (Macintosh) Safari", origin: "http://127.0.0.1:7777" }, "127.0.0.1");
+    expect(web.operator).toBe(true);
+    expect(web.caller).toMatch(/^cockpit-web ua=Mozilla\/5\.0_\(Macintosh\)_Safari origin=http:\/\/127\.0\.0\.1:7777 peer=127\.0\.0\.1$/);
+    expect(cockpitCaller({ "user-agent": "PAIMenubar/1.0" }).operator).toBe(true);
+    expect(cockpitCaller({ "user-agent": "curl/8.0" }).caller).toMatch(/^cockpit-script ua=curl\/8\.0/);
+    expect(cockpitCaller({}).operator).toBe(false);
+  });
+
+  it("POST runtime start: every cockpit HTTP start (script or UI) lifts the stopped marker and starts; the caller is logged", async () => {
+    const { runCockpitAction, cockpitCaller } = await import("../router/cockpit-actions.js");
+    const { markRuntimeStopped, isRuntimeStopped } = await import("../workers/model-runtimes.js");
+    const spawned: string[] = [];
+    let up = false;
+    const ops: RuntimeOpDeps = {
+      runShell: async () => ({ code: 0 }),
+      spawnDetached: (cmd) => { spawned.push(cmd); up = true; return { exit: new Promise(() => undefined) }; },
+      getUrl: async () => up, runCmd: async () => 0, now: () => Date.now(), sleep: async () => undefined,
+    };
+    const mk = (home: string) => ({ home, ledger: join(home, "ledger.log"), runtimeOps: ops, runtimeCommands: { r1: { start: "serve r1", stop: "kill r1", ready: "http://127.0.0.1:1/ok" } }, workers: { providers: {} } }) as never;
+    const waitJob = async () => { for (let i = 0; i < 100; i++) { await new Promise((r) => setTimeout(r, 20)); if (spawned.length) return; } };
+    for (const [hdr, re] of [[{ "user-agent": "curl/8" }, /caller=cockpit-script ua=curl\/8.*\(explicit\)/], [{ "user-agent": "Mozilla/5.0", origin: "http://127.0.0.1:1" }, /caller=cockpit-web .*\(explicit\)/]] as const) {
+      const home = mkdtempSync(join(tmpdir(), "cockpitop-"));
+      const deps = mk(home);
+      spawned.length = 0;
+      up = false;
+      markRuntimeStopped(home, "r1");
+      await runCockpitAction({ action: "runtime", target: "r1", value: "start" }, deps, {}, cockpitCaller(hdr, "127.0.0.1"));
+      await waitJob();
+      expect(spawned).toEqual(["serve r1"]);
+      for (let i = 0; i < 50 && isRuntimeStopped(home, "r1"); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(isRuntimeStopped(home, "r1")).toBe(false);
+      expect(readFileSync(join(home, "logs", "daemon.log"), "utf8")).toMatch(re);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

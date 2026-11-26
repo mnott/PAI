@@ -348,7 +348,7 @@ export function liveAutostartDeps(): AutostartDeps {
         }
       }
       const { defaultDeps, runtimeStartStop } = await import("../router/cockpit-actions.js");
-      return runtimeStartStop(runtime, "start", defaultDeps());
+      return runtimeStartStop(runtime, "start", defaultDeps(), { caller: "daemon-autostart" });
     },
     alert: async (text) => {
       const { callAiBroker } = await import("../cli/lib/aibroker-client.js");

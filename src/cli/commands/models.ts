@@ -91,7 +91,7 @@ export const modelsCommand: CommandDef = {
       const runtime = words[1];
       if (!runtime) throw new Error(`usage: pai models ${op} <runtime> (configured: ${Object.keys(readRuntimeCommands()).join(", ") || "none"})`);
       const { defaultDeps, runtimeStartStop, runtimeSwitch } = await import("../../router/cockpit-actions.js");
-      const r = op === "switch" ? await runtimeSwitch(runtime, defaultDeps()) : await runtimeStartStop(runtime, op, defaultDeps(), { model: typeof ctx.opts.model === "string" ? ctx.opts.model : undefined });
+      const r = op === "switch" ? await runtimeSwitch(runtime, defaultDeps()) : await runtimeStartStop(runtime, op, defaultDeps(), { model: typeof ctx.opts.model === "string" ? ctx.opts.model : undefined, caller: "pai models", allowStopped: true });
       process.stdout.write(r.message + "\n");
       if (!r.ok) process.exitCode = 1;
       return;
