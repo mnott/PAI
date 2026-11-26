@@ -85,6 +85,9 @@ function overdueReason(s: WorkerStatus, nowMs: number, p: ReroutePolicy, sched: 
   if (s.rerouted || s.continuedBy || s.origin === "chat" || s.paused || providerPinned(s)) return null;
   if (s.noEscalate) return null;
   if (honourSwitch && escalationSwitchedOff(s, nowMs)) return null;
+  // the loop guard killed this run from outside: the runner's own escalation path never ran (the signal exits
+  // before finalise), so the daemon escalates it once to the cloud here — same rules as a no-convergence stop.
+  if (s.state === "killed" && s.loopStopped) return `loop-guard stop${s.last ? `: ${s.last.slice(0, 120)}` : ""}`;
   if (frozenSince(s.id) !== undefined) return null; // frozen by the operator: no escalation verdict
   if (!s.spec && !s.promptFile) return null;
   const pause = { paused: s.paused, pausedAt: s.pausedAt, pausedMs: s.pausedMs };
@@ -241,7 +244,7 @@ export interface RerouteDeps {
 export interface RerouteResult {
   id: string;
   provider: string;
-  was: "queued" | "running" | "review";
+  was: "queued" | "running" | "review" | "killed";
   branch?: string;
   specFile: string;
   description: string;
@@ -511,7 +514,10 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const load = d.load ?? ((x: string) => loadStatus(d.logDir, x));
   const old = load(id);
   if (!old) throw new Error(`no worker named "${id}"`);
-  if (old.state !== "queued" && old.state !== "running" && old.state !== "review") throw new Error(`worker ${id} is ${old.state}; only a queued, running or review-stopped worker can be rerouted`);
+  // a terminal run restarts only as an automatic escalation of a loop-guard stop (the guard killed it from
+  // outside, so the runner's own escalation path never ran); every other terminal state is history, not a job.
+  const loopStoppedRestart = old.state === "killed" && old.loopStopped === true;
+  if (old.state !== "queued" && old.state !== "running" && old.state !== "review" && !loopStoppedRestart) throw new Error(`worker ${id} is ${old.state}; only a queued, running or review-stopped worker can be rerouted`);
   // the local-only window blocks automatic cloud moves (escalations, pane commands); an operator's own
   // reroute — the CLI, the cockpit — always passes (local-only.ts).
   {
@@ -519,6 +525,8 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     if (why) throw new Error(why);
   }
   const target = await (d.resolve ?? defaultResolve)(where);
+  // a loop-guard stop of a run that was ALREADY on the fallback provider is not an escalation: there is no tier above
+  if (loopStoppedRestart && target.provider === old.provider) throw new Error(`worker ${id} already runs on ${old.provider}: nothing to escalate to`);
   if (target.provider === old.provider) throw new Error(`worker ${id} already runs on ${old.provider}`);
   const text = taskText(d.logDir, old);
   if (d.reason) {
@@ -542,19 +550,21 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
       saveStatus(d.logDir, st, new Date(), true);
     }
   };
-  const branch = old.state === "running" || old.state === "review" ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
+  // a killed loop-stop keeps its worktree/branch record: the continuation continues from it like a review stop
+  const branch = old.state === "running" || old.state === "review" || loopStoppedRestart ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
   const specFile = join(d.logDir, `${id}.reroute.prompt`);
-  const reviewWhy = old.state === "review" ? (old.last ?? "").replace(/\s+/g, " ").trim().slice(0, 300) : "";
-  const note = branch ? `${continuedNote(id, branch)}${reviewWhy ? `. It was stopped for review: ${reviewWhy}` : ""}` : "";
+  const reviewWhy = old.state === "review" ? `stopped for review: ${(old.last ?? "").replace(/\s+/g, " ").trim().slice(0, 300)}` : "";
+  const loopWhy = loopStoppedRestart ? `. It was stopped by the loop guard: ${(old.last ?? "").replace(/\s+/g, " ").trim().slice(0, 300)}` : "";
+  const note = branch ? `${continuedNote(id, branch)}${reviewWhy}${loopWhy}` : "";
   writeFileSync(specFile, note ? `${note}\n\n${text}` : text, "utf8");
   const stop = async (): Promise<void> => {
     markHandover(d.logDir, id, old.rerouted ?? `rerouted to ${target.provider} (${reason})`);
     await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
   };
   const start = async (): Promise<NonNullable<RerouteResult["queuedAtTarget"]> | undefined> => (await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile })) ?? undefined;
-  if (old.state === "review") {
-    // a review-stopped run has no process: nothing to kill. The continuation starts on the target with the branch and the
-    // review reason; the old run stays as the record, marked superseded (rerouted + continuedBy), no longer awaiting review.
+  if (old.state === "review" || loopStoppedRestart) {
+    // a review-stopped or loop-killed run has no process: nothing to kill. The continuation starts on the target with the branch and the
+    // stop reason; the old run stays as the record, marked superseded (rerouted + continuedBy), no longer awaiting review.
     let q: NonNullable<RerouteResult["queuedAtTarget"]> | undefined;
     try {
       q = await start();
@@ -569,7 +579,7 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     if (end.fallThroughTo) end.continuedBy = end.fallThroughTo;
     saveStatus(d.logDir, end, new Date(), true);
     if (q) appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });
-    return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description, ...(q ? { queuedAtTarget: q } : {}) };
+    return { id, provider: target.provider, was: old.state as "review" | "killed", ...(branch ? { branch } : {}), specFile, description: target.description, ...(q ? { queuedAtTarget: q } : {}) };
   }
   if (d.deferKill && old.state === "running") {
     // least impact: the continuation joins the target's queue (it waits there, not running) and the old run keeps working;
@@ -641,7 +651,7 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
     throw e;
   }
   if (q) appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE-QUEUED", { id, provider: target.provider, by, position: q.position, of: q.queued });
-  return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description, ...(q ? { queuedAtTarget: q } : {}) };
+  return { id, provider: target.provider, was: old.state as "queued", ...(branch ? { branch } : {}), specFile, description: target.description, ...(q ? { queuedAtTarget: q } : {}) };
 }
 
 export interface Escalation {

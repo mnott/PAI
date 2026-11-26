@@ -1070,4 +1070,94 @@ describe("failure notices carry the escalation decision", () => {
     expect(continuationNote(dir, "PLAIN")).toBe("no escalation: the run ended without a continuation");
     expect(continuationNote(dir, "GONE")).toBe("no escalation: status gone");
   });
+
+  // 2026-11-26: a continuation that committed read as "is gone" and L0 restarted finished work.
+  it("a continuation that finished clean is reported as finished, not gone", async () => {
+    const { continuationNote } = await import("./run/execute-fold.js");
+    saveStatus(dir, mk("ORIG", { state: "killed", rc: 143, provider: "gyro", fallThroughTo: "CONT" }));
+    saveStatus(dir, mk("CONT", { provider: "anthropic-native", state: "done", rc: 0, fallThroughOf: "ORIG" }));
+    expect(continuationNote(dir, "ORIG")).toBe("no escalation: continuation CONT finished");
+    // the failure notice carries the same clause
+    saveStatus(dir, mk("ORIG2", { state: "killed", rc: 143, provider: "gyro", escalatedTo: "CONT2" }));
+    saveStatus(dir, mk("CONT2", { provider: "anthropic-native", state: "done", rc: 0, fallThroughOf: "ORIG2" }));
+    const { detectSupervisionEvents } = await import("./supervision.js");
+    const ev = await detectSupervisionEvents([loadStatus(dir, "ORIG2")!, loadStatus(dir, "CONT2")!], { now: new Date(), stallMs: 600_000 });
+    expect(ev.find((e) => e.worker === "ORIG2")?.text).toContain("no escalation: continuation CONT2 finished");
+    expect(ev.find((e) => e.worker === "ORIG2")?.text).not.toContain("is gone");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The loop guard kills a run from OUTSIDE (SIGTERM -> rc 143, state killed): the runner's own
+// escalation path never runs, so the daemon must escalate it once to the cloud like a no-convergence
+// stop. It did not (2026-11-26: two loop-stopped local runs parked with "no escalation").
+// ---------------------------------------------------------------------------
+describe("a loop-guard stop escalates once to the cloud", () => {
+  const pol = { queuedMaxMin: 15, stallCalls: 60, stallFailedCalls: 6 };
+  // the daemon's view of a run the guard killed: terminal, marked, with its spec kept
+  const loopStop = (over: Partial<WorkerStatus> = {}): WorkerStatus =>
+    queued({ state: "killed", rc: 143, loopStopped: true, promptFile: join(dir, "spec.txt"), branch: "worker/w1", last: "loop guard: repeated identical failing Bash calls", spawnerSession: "L0", ...over });
+
+  it("escalateOverdue starts exactly one continuation on the fallback, same branch, and the notice names it", async () => {
+    saveStatus(dir, loopStop());
+    const spawned: string[] = [];
+    const done = await escalateOverdue([loadStatus(dir, "w1")!], {
+      logDir: dir,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async () => [],
+      spawn: (s: SpawnSpec) => { spawned.push(s.id); return undefined; },
+    }, Date.now(), pol);
+    expect(done.map((e) => e.id)).toEqual(["w1"]);
+    expect(done[0]!.reason).toMatch(/^loop-guard stop/);
+    expect(spawned).toEqual(["w1"]);
+    expect(loadStatus(dir, "w1")!.rerouted).toContain("fakeB");
+    // the continuation's spec carries the branch it continues and why it was stopped
+    const spec = readFileSync(join(dir, "w1.reroute.prompt"), "utf8");
+    expect(spec).toContain("worker/w1");
+    expect(spec).toContain("loop guard");
+    expect(spec).toContain("do the thing");
+    // a second tick never starts another one
+    await escalateOverdue([loadStatus(dir, "w1")!], { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: (s: SpawnSpec) => { spawned.push(s.id); } }, Date.now(), pol);
+    expect(spawned).toEqual(["w1"]);
+  });
+
+  it("a loop-stopped run already on the fallback provider is not escalated further", async () => {
+    saveStatus(dir, loopStop({ provider: "fakeB" }));
+    const spawned: string[] = [];
+    const done = await escalateOverdue([loadStatus(dir, "w1")!], {
+      logDir: dir,
+      resolve: async () => ({ provider: "fakeB", description: "d" }),
+      kill: async () => [],
+      spawn: (s: SpawnSpec) => { spawned.push(s.id); return undefined; },
+    }, Date.now(), pol);
+    expect(done).toEqual([]);
+    expect(spawned).toEqual([]);
+    expect(loadStatus(dir, "w1")!.rerouted).toContain("nothing to escalate to");
+  });
+
+  it("the local-only window holds a loop-guard stop back with the reason", async () => {
+    const loFile = join(dir, "local-only.json");
+    writeFileSync(loFile, JSON.stringify({ untilMs: Date.now() + 60_000, label: "later", by: "budget" }), "utf8");
+    process.env.PAI_LOCAL_ONLY_FILE = loFile;
+    try {
+      saveStatus(dir, loopStop());
+      const spawned: string[] = [];
+      const done = await escalateOverdue([loadStatus(dir, "w1")!], {
+        logDir: dir,
+        resolve: async () => ({ provider: "fakeB", description: "d" }),
+        kill: async () => [],
+        spawn: (s: SpawnSpec) => { spawned.push(s.id); return undefined; },
+      }, Date.now(), pol);
+      expect(done).toEqual([]);
+      expect(spawned).toEqual([]);
+      expect(loadStatus(dir, "w1")!.rerouted).toBeUndefined(); // the window keeps its marker clean for a later tick
+    } finally {
+      delete process.env.PAI_LOCAL_ONLY_FILE;
+    }
+  });
+
+  it("an existing kill of a terminal run still refuses: only a loop-guard stop restarts", async () => {
+    saveStatus(dir, queued({ state: "killed", rc: 143, promptFile: join(dir, "spec.txt") })); // killed by the operator, not the guard
+    await expect(rerouteWorker("w1", "cloud", { logDir: dir, resolve: async () => ({ provider: "fakeB", description: "d" }), kill: async () => [], spawn: () => undefined })).rejects.toThrow(/is killed/);
+  });
 });

@@ -930,6 +930,9 @@ export function continuationNote(logDir: string, wid: string): string {
   if (to) {
     const cont = loadStatus(logDir, to);
     if (cont && !isTerminal(cont.state)) return `escalating to ${cont.provider ?? "the cloud"} as ${to} (same branch) - wait for it, do not restart`;
+    // a continuation that finished clean did the work: say so, not "gone" (2026-11-26: a committed
+    // continuation read as gone and L0 restarted the task)
+    if (cont && cont.state === "done" && (cont.rc ?? 0) === 0) return `no escalation: continuation ${to} finished`;
     return `no escalation: continuation ${to} is gone`;
   }
   if (st.escalated) return `no escalation: ${st.escalated.slice(0, 120)}`;
