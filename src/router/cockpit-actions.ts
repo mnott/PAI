@@ -552,6 +552,18 @@ export async function runtimeSwitch(
   return { ok: true, message: parts.join("; ") };
 }
 
+/** Classify a cockpit HTTP request: the caller label (UI kind, user agent, origin, peer) and whether it is an operator click. */
+export function cockpitCaller(headers: Record<string, string | string[] | undefined>, remote?: string): { caller: string; operator: boolean } {
+  const h = (k: string): string => { const v = headers[k]; return (Array.isArray(v) ? v[0] : v) ?? ""; };
+  const ua = h("user-agent");
+  const origin = h("origin") || h("referer");
+  let kind = "script";
+  if (/pai.?menubar|menubar/i.test(ua) || h("x-pai-client")) kind = "menubar";
+  else if (/Mozilla\//.test(ua) && origin) kind = "web";
+  const clean = (x: string): string => x.replace(/\s+/g, "_").slice(0, 80);
+  return { caller: `cockpit-${kind} ua=${clean(ua) || "none"} origin=${clean(origin) || "none"} peer=${remote ?? "?"}`, operator: kind !== "script" };
+}
+
 /** Who asked for a runtime start: the caller label plus the process (pid, session/worker id from the env when known). */
 function runtimeCaller(opts: { caller?: string }): string {
   const id = process.env.PAI_RUN_ID || process.env.CLAUDE_SESSION_ID || "";
@@ -628,7 +640,9 @@ function claimAction(key: string): boolean {
 export async function runCockpitAction(
   body: { action?: unknown; target?: unknown; value?: unknown; count?: unknown; all?: unknown; class?: unknown; models?: unknown; session?: unknown; clear?: unknown },
   deps: ActionDeps,
-  hooks: ActionHooks = {}
+  hooks: ActionHooks = {},
+  /** Who sent the request (from the HTTP layer): `label` for the logs, `operator` = a UI click (cockpit page / menubar), not a script. */
+  meta: { caller?: string; operator?: boolean } = {}
 ): Promise<ActionResult> {
   const action = typeof body.action === "string" ? body.action : "";
   let target = typeof body.target === "string" ? body.target : "";
@@ -694,7 +708,7 @@ export async function runCockpitAction(
       inFlightActions.delete(claim);
     }
     writeLedgerLine(deps, action, `${runtime}:${op}`, `job ${id}: started`);
-    void finishRuntimeJob(deps, hooks, id, runtime, op);
+    void finishRuntimeJob(deps, hooks, id, runtime, op, meta);
     return { ok: true, message: `${op === "start" ? "starting" : "stopping"} ${runtime}`, jobId: id };
   }
   if (action === "memory.embed" || action === "memory.index") {
@@ -1004,8 +1018,9 @@ async function daemonTriggerPass(kind: RunKind): Promise<string> {
 
 /** Runs the runtime job (hook or configured commands), records its outcome in the job file;
  *  runtimeStartStop already wrote the RUNTIME-START/STOP line. */
-async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string, runtime: string, op: "start" | "stop"): Promise<void> {
-  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id, caller: "cockpit-action" }));
+async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string, runtime: string, op: "start" | "stop", meta: { caller?: string; operator?: boolean } = {}): Promise<void> {
+  // a cockpit/menubar click is an explicit operator start and lifts the stopped marker; a script POST does not
+  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id, caller: meta.caller ?? "cockpit-action", allowStopped: meta.operator === true }));
   const end = (state: "done" | "failed", message: string): void =>
     writeCockpitJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state, message, at: new Date().toISOString() });
   let state: "done" | "failed" = "done";
