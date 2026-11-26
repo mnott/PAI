@@ -110,3 +110,39 @@ describe("callerIdentity term resolution", () => {
     expect(r.term).toBe("JOB");
   });
 });
+
+describe("start failures are visible (2026-11-26 detached starts)", () => {
+  it("resolveHostSession retries a failed session listing instead of reading it as no live session", async () => {
+    let calls = 0;
+    const d: HostDeps = {
+      ...deps,
+      sleep: async () => undefined,
+      listSessions: async () => {
+        if (++calls <= 2) throw new Error("osascript timed out after 5000 ms");
+        return [{ id: "MINE", tty: "/dev/ttys014", jobPid: 200 }];
+      },
+    };
+    const h = await resolveHostSession({}, d, 300);
+    expect(calls).toBe(3);
+    expect(h.uid).toBe("MINE");
+  });
+
+  it("recordStartFailure keeps the error in status and <id>.log; supervision quotes it", async () => {
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { saveStatus, loadStatus, recordStartFailure } = await import("./status.js");
+    const { detectSupervisionEvents } = await import("./supervision.js");
+    const dir = mkdtempSync(join(tmpdir(), "startfail-"));
+    const s = { id: "W1", pid: 1, state: "running", started: "2026-11-26 23:09:24", updated: "2026-11-26 23:09:41", turns: 0, tools: 0, last: "starting", rc: null, secs: null, label: "x", provider: "anthropic", model: "sonnet", cwd: dir, term: "", spawnerSession: "own" } as never;
+    saveStatus(dir, s);
+    recordStartFailure(dir, "W1", new Error("no pane: ITERM_SESSION_ID names X, which is not a live iTerm2 session"));
+    const after = loadStatus(dir, "W1")!;
+    expect(after.state).toBe("failed");
+    expect(after.rc).toBe(1);
+    expect(after.startError).toMatch(/not a live iTerm2 session/);
+    expect(readFileSync(join(dir, "W1.log"), "utf8")).toMatch(/failed to start: no pane/);
+    const ev = await detectSupervisionEvents([after], { stallMs: 600_000, now: new Date(), isAlive: () => false });
+    expect(ev[0].text).toMatch(/failed rc=1 \(no pane: ITERM_SESSION_ID/);
+  });
+});

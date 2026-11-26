@@ -10,6 +10,7 @@
 import { ledgerStamp } from "./ledger.js";
 import { execFile, execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -77,6 +78,8 @@ export interface WorkerStatus {
   turns: number;
   tools: number;
   last: string;
+  /** Why the start died (spawn, pane, worktree, argument, route error): the full text, also in <id>.log; supervision quotes it. */
+  startError?: string;
   rc: number | null;
   /** uhp engine: id of the last response (what `resume` sends as previous_response_id). */
   uhpResponseId?: string | null;
@@ -1126,6 +1129,28 @@ export function markStartFailed(logDir: string, status: WorkerStatus, err: unkno
   status.rc = status.rc ?? 1;
   status.last = "failed to start: " + (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").slice(0, 200);
   saveStatus(logDir, status);
+}
+
+/**
+ * A start that threw before any model event: the error goes into the status (`startError`, `last`) and into
+ * <id>.log, so a failed worker with turns 0 never reads as a bare "starting" with nothing to follow
+ * (2026-11-26: two detached starts died on a pane error that only reached a runs/start-*.out file).
+ * No status yet = nothing to record. A run that already ended on its own (done, killed) is left alone.
+ */
+export function recordStartFailure(logDir: string, id: string, err: unknown): void {
+  const st = loadStatus(logDir, id);
+  if (!st || st.state === "done" || st.state === "killed" || st.state === "review") return;
+  const msg = (err instanceof Error ? err.message : String(err)).trim();
+  st.state = "failed";
+  st.rc = st.rc ?? 1;
+  st.startError = msg.slice(0, 600);
+  st.last = "failed to start: " + msg.replace(/\s+/g, " ").slice(0, 200);
+  saveStatus(logDir, st);
+  try {
+    appendFileSync(join(logDir, `${id}.log`), `[pai worker] ${id} failed to start: ${msg}\n`);
+  } catch {
+    /* the status carries the error already */
+  }
 }
 
 /** "42s" under 90s, "7m" above — the coarse age the table and bar show. */

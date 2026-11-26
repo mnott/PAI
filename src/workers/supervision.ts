@@ -343,7 +343,7 @@ function eventText(kind: SupervisionKind, s: WorkerStatus, rc: number | null, st
     return `worker ${s.id} ${s.label} thrashing: ${s.consecFails} consecutive failed commands ${tail}`;
   if (kind === "sleeping") return `worker ${s.id} ${s.label} sleeping ${s.sleepSec}s in one command ${tail}`;
   if (kind === "looping") return `worker ${s.id} ${s.label} looping: ?x identical failing ? call ${tail}`;
-  const why = rc === null ? "runner gone" : `rc=${rc}`;
+  const why = (rc === null ? "runner gone" : `rc=${rc}`) + (s.startError ? ` (${s.startError.replace(/\s+/g, " ").slice(0, 200)})` : "");
   return `worker ${s.id} ${s.label} failed ${why}; ${escalationClause(s, statuses)} ${tail}`;
 }
 
