@@ -755,6 +755,14 @@ describe("progress-based time budget", () => {
     expect(budgetCheck(snap({ commits: 2 }), snap({ commits: 2 }), { minutes: 20, cfg }).action).toBe("review");
   });
 
+  it("an owned running build/test job at the checkpoint extends instead of stopping", () => {
+    const d = budgetCheck(snap({ commits: 2 }), snap({ commits: 2, jobActive: true }), { minutes: 20, cfg });
+    expect(d).toEqual({ action: "extend", minutes: 40, why: "extended to 40 min: build/test job running" });
+    const atCap = budgetCheck(snap({}), snap({ jobActive: true }), { minutes: 20, cfg, maxMinutes: 20 });
+    expect(atCap.action).toBe("extend");
+    expect(budgetCheck(snap({}), snap({ jobActive: false }), { minutes: 20, cfg }).action).toBe("review");
+  });
+
   it("read-only jobs progress on successful tool calls only", () => {
     expect(budgetProgress(snap({}), snap({ toolsOk: 4 }))).toBeNull();
     expect(budgetProgress(snap({}), snap({ toolsOk: 4 }), true)).toContain("4 successful tool calls");

@@ -41,9 +41,11 @@ export interface BudgetSnapshot {
   toolsOk: number;
   /** Commits on the run's branch. */
   commits: number;
+  /** A build/test job the worker owns is running or waiting in the build queue (its time is the job's, not idleness). */
+  jobActive?: boolean;
 }
 
-export const emptySnapshot = (): BudgetSnapshot => ({ progressAtMs: 0, testsPassed: 0, toolsOk: 0, commits: 0 });
+export const emptySnapshot = (): BudgetSnapshot => ({ progressAtMs: 0, testsPassed: 0, toolsOk: 0, commits: 0, jobActive: false });
 
 /**
  * Successful test runs that count as progress: a re-run of the same command with an identical result
@@ -93,10 +95,13 @@ export function budgetCheck(
   cur: BudgetSnapshot,
   o: { readOnly?: boolean; minutes: number; cfg: TimeBudgetConfig; maxMinutes?: number | null }
 ): { action: "extend"; minutes: number; why: string } | { action: "review"; why: string } {
-  const progress = budgetProgress(prev, cur, o.readOnly === true);
+  let progress = budgetProgress(prev, cur, o.readOnly === true);
+  if (!progress && cur.jobActive) progress = "build/test job running";
   if (progress) {
     const next = nextBudgetMinutes(o.minutes, o.cfg, o.maxMinutes);
     if (next !== null) return { action: "extend", minutes: next, why: `extended to ${next} min: ${progress}` };
+    // at the ceiling an owned running job still is not idleness; the run's own limit ends it
+    if (cur.jobActive && !budgetProgress(prev, cur, o.readOnly === true)) return { action: "extend", minutes: o.minutes, why: `kept at ${o.minutes} min: ${progress}` };
   }
   return { action: "review", why: progress ? `out of time at the ${o.minutes}-min cap: ${progress}` : `no progress in its ${o.minutes}-min allowance` };
 }

@@ -60,7 +60,7 @@ import { isTestCommand } from "../hang-probe.js";
 import { blockedMsOf } from "../active-time.js";
 import { createOperatorServer } from "../operator.js";
 import { reapRunTree } from "./lifecycle.js";
-import { buildsDir, releaseBuildsOf } from "../../builds/queue.js";
+import { buildsDir, listBuildsSync, releaseBuildsOf } from "../../builds/queue.js";
 import { type StreamEvent, type ExecuteArgs } from "./types.js";
 import {
   stdinUserMessage,
@@ -109,6 +109,15 @@ import { unparsedCallPrompt } from "./unparsed-call.js";
 import { announcedActionDecision } from "./announced-action.js";
 import { evaluate } from "../../guard/evaluate.js";
 import type { PreparedRun } from "./execute-prepare.js";
+
+/** A build/test ticket of this worker (running, or waiting for a slot) whose gate process is alive. */
+function ownsLiveBuildJob(wid: string): boolean {
+  try {
+    return listBuildsSync(buildsDir()).some((t) => t.worker === wid && (t.state === "running" || t.state === "waiting"));
+  } catch {
+    return false;
+  }
+}
 
 export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const { config, logDir, target, model, label, parsed, limit, systemWaiver } = a;
@@ -441,6 +450,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     testsPassed: distinctTestRuns(toolFold.bashRuns, isTestCommand),
     toolsOk,
     commits: worktree ? commitLines(worktree.dir, worktree.base).length : (status.commits ?? 0),
+    jobActive: ownsLiveBuildJob(wid),
   });
   let budgetPrev = snapBudget();
   let stopBudget: (() => void) | null = null;
