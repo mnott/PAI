@@ -7,21 +7,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-/**
- * The path a --spec value resolves to; "-" (stdin) passes through unchanged.
- * A relative path resolves against the invoking process cwd first and only
- * falls back to the target cwd (--cwd) when it does not exist there.
- */
-export function resolveSpecPath(spec: string, cwd: string, callerCwd: string = process.cwd()): string {
-  if (spec === "-") return "-";
-  const first = resolve(callerCwd, spec);
-  if (existsSync(first)) return first;
-  const second = resolve(cwd, spec);
-  return existsSync(second) ? second : first;
+/** The path a --spec value resolves to for display/recording; "-" (stdin) passes through unchanged. */
+export function resolveSpecPath(spec: string, cwd: string): string {
+  return spec === "-" ? "-" : resolve(cwd, spec);
 }
 
 /** The prompt text a --spec value reads: the file's exact bytes, or stdin's. */
-export function readSpecPrompt(spec: string, cwd: string, callerCwd: string = process.cwd()): string {
+export function readSpecPrompt(spec: string, cwd: string): string {
   if (spec === "-") {
     let content: string;
     try {
@@ -32,11 +24,8 @@ export function readSpecPrompt(spec: string, cwd: string, callerCwd: string = pr
     if (!content) throw new Error("--spec -: stdin was empty");
     return content;
   }
-  const path = resolveSpecPath(spec, cwd, callerCwd);
-  if (!existsSync(path)) {
-    const tried = [...new Set([resolve(callerCwd, spec), resolve(cwd, spec)])];
-    throw new Error(`--spec: file not found: ${tried.join(" or ")}`);
-  }
+  const path = resolveSpecPath(spec, cwd);
+  if (!existsSync(path)) throw new Error(`--spec: file not found: ${path}`);
   const content = readFileSync(path, "utf8");
   if (!content) throw new Error(`--spec: file is empty: ${path}`);
   return content;
