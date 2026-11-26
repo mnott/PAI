@@ -263,6 +263,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai more` | Every other command, by group |
 | `pai new` | Start a new session in a new or existing folder |
 | `pai notes` | List the markdown session notes |
+| `pai notes audit` | Report generic, mismatched, mixed-topic and empty session notes |
 | `pai notes list` | List the markdown session notes (same as `pai notes`) |
 | `pai notify` | Notification settings: status, set, test, send |
 | `pai notify get` | Same as status |

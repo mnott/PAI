@@ -26,6 +26,26 @@ pai notes my-project --status open --limit 5
 
 See also: `pai session info`, `pai ls`
 
+### pai notes audit
+
+Report generic, mismatched, mixed-topic and empty session notes
+
+```
+pai notes audit [options]
+```
+
+Read-only scan of a project's session notes. Reports generic titles (New Session, untitled), titles that do not match the TOPIC comment, notes with several unrelated AI Summary blocks (word overlap below the summary worker's topic threshold) and empty or stub notes. Always exits 0; nothing is modified.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--project DIR` | string | — | Project directory (default: current directory) |
+| `--json` | flag | — | Print JSON |
+
+```sh
+pai notes audit
+pai notes audit --project ~/work/app --json
+```
+
 ### pai notes list
 
 List the markdown session notes (same as `pai notes`)
@@ -54,6 +74,7 @@ pai notes list my-project
 
 | Command | Description |
 |---|---|
+| `pai notes audit` | Report generic, mismatched, mixed-topic and empty session notes |
 | `pai notes list` | List the markdown session notes (same as `pai notes`) |
 
 ## See also

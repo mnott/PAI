@@ -10,16 +10,26 @@ const line = (type: string, text: string) =>
   JSON.stringify({ type, message: { content: text }, timestamp: "2026-01-01T00:00:00Z" }) + "\n";
 
 describe("session summary debounce", () => {
-  it("50 Stop events in 10 min trigger at most 1 summary", () => {
+  it("50 Stop events in 10 min with little new text trigger at most 1 summary", () => {
     const t0 = 1_000_000_000;
     let state: { at: number; offset: number } | undefined;
     let runs = 0;
     for (let i = 0; i < 50; i++) {
       const now = t0 + i * 12_000;
-      const g = shouldSummarize(state, { intervalMs: 30 * 60_000, now, newTextChars: () => 99_999 });
+      const g = shouldSummarize(state, { intervalMs: 10 * 60_000, now, newTextChars: () => 1_000 });
       if (g.run) { runs++; state = { at: now, offset: i }; }
     }
     expect(runs).toBe(1);
+  });
+
+  it("a Stop with >= 6000 new chars summarizes inside the interval; the minutes trigger needs a little text", () => {
+    const st = { at: 0, offset: 0 };
+    const o = { intervalMs: 10 * 60_000 };
+    expect(shouldSummarize(st, { ...o, now: 60_000, newTextChars: () => 6_000 }).run).toBe(true);
+    expect(shouldSummarize(st, { ...o, now: 60_000, newTextChars: () => 5_999 }).run).toBe(false);
+    expect(shouldSummarize(st, { ...o, now: 11 * 60_000, newTextChars: () => 300 }).run).toBe(true);
+    expect(shouldSummarize(st, { ...o, now: 11 * 60_000, newTextChars: () => 0 }).run).toBe(false);
+    expect(shouldSummarize(st, { ...o, now: 60_000, minChars: 100, newTextChars: () => 150 }).run).toBe(true);
   });
 
   it("after the interval, needs enough new text; final always runs", () => {
@@ -265,5 +275,32 @@ describe("planSummarySpawn in work mode speed (no local model)", () => {
     const plan = await planSummarySpawn("local", "sonnet", { probe: async () => false, resolveLocal, mode: () => "speed" });
     expect(asked).toBe(false);
     expect(plan.provider).not.toBe("loc");
+  });
+});
+
+describe("pai notes audit (read-only)", () => {
+  it("flags generic, mismatched, mixed and empty notes; healthy note clean; nothing modified", async () => {
+    const { auditNotes } = await import("../cli/commands/notes-audit.js");
+    const { mkdirSync, readdirSync, readFileSync: rf } = await import("node:fs");
+    const root = mkdtempSync(join(tmpdir(), "notes-audit-"));
+    const dir = join(root, "Notes", "2026", "11");
+    mkdirSync(dir, { recursive: true });
+    const pad = "Detailed body line about the work performed in this session.\n".repeat(10);
+    const w = (n: string, c: string) => writeFileSync(join(dir, n), c);
+    w("0001 - 2026-11-01 - New Session.md", `# Session 0001: New Session\n\n${pad}`);
+    w("0002 - 2026-11-01 - Cooking.md", `# Session 0002: Cooking pasta recipes\n<!-- TOPIC: Fix gradle build failure -->\n\n${pad}`);
+    w("0003 - 2026-11-01 - Mixed.md", `# Session 0003: Router work\n\n## Work Done\n\n### AI Summary (10:00:00)\n\nRouter latency tuning for cloud providers\n\n### AI Summary (11:00:00)\n\nWatercolor painting gallery invoices\n\n## Next Steps\n`);
+    w("0004 - 2026-11-01 - Empty.md", `# Session 0004: Router cleanup\n`);
+    w("0005 - 2026-11-01 - Healthy.md", `# Session 0005: Router latency tuning\n<!-- TOPIC: Router latency tuning -->\n\n${pad}`);
+    const before = readdirSync(dir).map((f) => rf(join(dir, f), "utf-8"));
+    const r = auditNotes(root);
+    const kinds = (n: string) => r.findings.filter((f) => f.file.includes(n)).map((f) => f.kind);
+    expect(kinds("0001")).toEqual(["generic-title"]);
+    expect(kinds("0002")).toEqual(["topic-mismatch"]);
+    expect(kinds("0003")).toContain("mixed-topics");
+    expect(kinds("0004")).toContain("empty");
+    expect(kinds("0005")).toEqual([]);
+    expect(readdirSync(dir).map((f) => rf(join(dir, f), "utf-8"))).toEqual(before);
+    rmSync(root, { recursive: true });
   });
 });
