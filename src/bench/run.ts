@@ -141,7 +141,11 @@ export const MAX_CONSECUTIVE_STOPS = 3;
  */
 export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key" | "codeGraph">, benchDir: string, set: string, rep: number, v: Verdict, secs: number): void {
   const res = join(o.dir, "results", set, o.key, `rep${rep}.json`);
-  if (existsSync(res)) return;
+  // A finished rep's own summary file stands (writeFailedResult's rule). But a killed real series left an
+  // in-progress checkpoint at the same path: it is not a verdict, so a stopped rep must still be graded
+  // from the work dir and overwrite it (fault 2026-11-26 dualA: watchdog fired after the engine stalled).
+  const stale = existsSync(res) ? JSON.parse(readFileSync(res, "utf8")) : null;
+  if (stale && stale.status !== "in-progress") return;
   mkdirSync(join(o.dir, "results", set, o.key), { recursive: true });
   const error = `watchdog-stopped: ${v.reason} ${v.detail}`;
   if (set !== "real") {

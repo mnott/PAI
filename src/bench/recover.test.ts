@@ -75,8 +75,10 @@ describe("recover_real_rep grades a stopped real rep from the work dir", () => {
     mkdirSync(work, { recursive: true });
     writeFileSync(join(work, "mirror-sync-token.tests.log"), "      Tests  16 passed (16)\n");
     writeFileSync(join(work, "mirror-sync-token.worker.json"), JSON.stringify({ duration_ms: 3000 }));
+    // tsx -e evaluates the snippet as CommonJS (argv[0] is plain node), so a bare ".js" specifier does not
+    // resolve to the TS source; import the .ts file URL, which is what run.js resolves to at runtime.
     const res = spawnSync("npx", ["tsx", "-e", `
-      import { writeStoppedResult } from "./src/bench/run.js";
+      import { writeStoppedResult } from "file://${join(process.cwd(), "src", "bench", "run.ts")}";
       writeStoppedResult({ dir: "${dir}", key: "gyro-s2" }, "${join(process.cwd(), "bench")}", "real", 1, { reason: "IDLE", detail: "900s without worker activity" }, 7925);
     `], { stdio: "ignore" });
     expect(res.status).toBe(0);
@@ -94,14 +96,16 @@ describe("recover_real_rep grades a stopped real rep from the work dir", () => {
     writeFileSync(join(work, "a.tests.log"), "      Tests  3 passed (3)\n");
     writeFileSync(join(work, "a.worker.json"), JSON.stringify({ duration_ms: 1000 }));
     const marker = join(dir, "PWNED");
-    const error = 'watchdog-stopped: IDLE $(touch "' + marker + '") `touch ' + marker + '` \\$(id)';
+    // the injection payload is the Verdict detail: run.ts builds error = `watchdog-stopped: ${reason} ${detail}`,
+    // so this is exactly what reaches recover.sh's argv.
+    const detail = '$(touch "' + marker + '") `touch ' + marker + '` \\$(id)';
     const res = spawnSync("npx", ["tsx", "-e", `
-      import { writeStoppedResult } from "./src/bench/run.js";
-      writeStoppedResult({ dir: "${dir}", key: "inj" }, "${join(process.cwd(), "bench")}", "real", 1, { reason: "IDLE", detail: "900s" }, 60);
+      import { writeStoppedResult } from "file://${join(process.cwd(), "src", "bench", "run.ts")}";
+      writeStoppedResult({ dir: "${dir}", key: "inj" }, "${join(process.cwd(), "bench")}", "real", 1, { reason: "IDLE", detail: ${JSON.stringify(detail)} }, 60);
     `], { stdio: "ignore", env: { ...process.env, TASKS: 'a $(touch "' + marker + '")' } });
     expect(res.status).toBe(0);
     const r = JSON.parse(readFileSync(join(dir, "results", "real", "inj", "rep1.json"), "utf8"));
-    expect(r.error).toBe(error); // stored verbatim
+    expect(r.error).toBe(`watchdog-stopped: IDLE ${detail}`); // stored verbatim
     expect(existsSync(marker)).toBe(false); // nothing executed
     expect(r.tasks.length).toBe(1);
     expect(r.passed).toBe(1);
