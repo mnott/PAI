@@ -1019,8 +1019,8 @@ async function daemonTriggerPass(kind: RunKind): Promise<string> {
 /** Runs the runtime job (hook or configured commands), records its outcome in the job file;
  *  runtimeStartStop already wrote the RUNTIME-START/STOP line. */
 async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string, runtime: string, op: "start" | "stop", meta: { caller?: string; operator?: boolean } = {}): Promise<void> {
-  // a cockpit/menubar click is an explicit operator start and lifts the stopped marker; a script POST does not
-  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id, caller: meta.caller ?? "cockpit-action", allowStopped: meta.operator === true }));
+  // any cockpit HTTP start is an explicit action from outside the daemon: it wins over the stopped marker (only in-daemon automatic paths are blocked)
+  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id, caller: meta.caller ?? "cockpit-action", allowStopped: true }));
   const end = (state: "done" | "failed", message: string): void =>
     writeCockpitJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state, message, at: new Date().toISOString() });
   let state: "done" | "failed" = "done";

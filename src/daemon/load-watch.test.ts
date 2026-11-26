@@ -1142,7 +1142,7 @@ describe("stopped on purpose holds for every runtime start path (runtimeStartSto
   });
 });
 
-describe("cockpit runtime start is an operator action; scripts stay blocked", () => {
+describe("cockpit HTTP runtime start always wins over the stopped marker", () => {
   it("cockpitCaller classifies web/menubar as operator, curl/none as script, and keeps ua/origin/peer", async () => {
     const { cockpitCaller } = await import("../router/cockpit-actions.js");
     const web = cockpitCaller({ "user-agent": "Mozilla/5.0 (Macintosh) Safari", origin: "http://127.0.0.1:7777" }, "127.0.0.1");
@@ -1153,10 +1153,9 @@ describe("cockpit runtime start is an operator action; scripts stay blocked", ()
     expect(cockpitCaller({}).operator).toBe(false);
   });
 
-  it("POST runtime start: operator click lifts the stopped marker and starts; a script is refused and logged", async () => {
+  it("POST runtime start: every cockpit HTTP start (script or UI) lifts the stopped marker and starts; the caller is logged", async () => {
     const { runCockpitAction, cockpitCaller } = await import("../router/cockpit-actions.js");
     const { markRuntimeStopped, isRuntimeStopped } = await import("../workers/model-runtimes.js");
-    const home = mkdtempSync(join(tmpdir(), "cockpitop-"));
     const spawned: string[] = [];
     let up = false;
     const ops: RuntimeOpDeps = {
@@ -1164,20 +1163,21 @@ describe("cockpit runtime start is an operator action; scripts stay blocked", ()
       spawnDetached: (cmd) => { spawned.push(cmd); up = true; return { exit: new Promise(() => undefined) }; },
       getUrl: async () => up, runCmd: async () => 0, now: () => Date.now(), sleep: async () => undefined,
     };
-    const deps = { home, ledger: join(home, "ledger.log"), runtimeOps: ops, runtimeCommands: { r1: { start: "serve r1", stop: "kill r1", ready: "http://127.0.0.1:1/ok" } }, workers: { providers: {} } } as never;
-    const waitJob = async () => { for (let i = 0; i < 100; i++) { await new Promise((r) => setTimeout(r, 20)); if (spawned.length || /refused/.test(readFileSync(join(home, "logs", "daemon.log"), "utf8"))) return; } };
-    markRuntimeStopped(home, "r1");
-    await runCockpitAction({ action: "runtime", target: "r1", value: "start" }, deps, {}, cockpitCaller({ "user-agent": "curl/8" }, "127.0.0.1"));
-    await waitJob();
-    expect(spawned).toEqual([]);
-    expect(isRuntimeStopped(home, "r1")).toBe(true);
-    expect(readFileSync(join(home, "logs", "daemon.log"), "utf8")).toMatch(/REFUSED.*caller=cockpit-script ua=curl\/8/);
-    await runCockpitAction({ action: "runtime", target: "r1", value: "start" }, deps, {}, cockpitCaller({ "user-agent": "Mozilla/5.0", origin: "http://127.0.0.1:1" }, "127.0.0.1"));
-    await waitJob();
-    expect(spawned).toEqual(["serve r1"]);
-    for (let i = 0; i < 50 && isRuntimeStopped(home, "r1"); i++) await new Promise((r) => setTimeout(r, 20));
-    expect(isRuntimeStopped(home, "r1")).toBe(false);
-    expect(readFileSync(join(home, "logs", "daemon.log"), "utf8")).toMatch(/caller=cockpit-web .*\(explicit\)/);
-    rmSync(home, { recursive: true, force: true });
+    const mk = (home: string) => ({ home, ledger: join(home, "ledger.log"), runtimeOps: ops, runtimeCommands: { r1: { start: "serve r1", stop: "kill r1", ready: "http://127.0.0.1:1/ok" } }, workers: { providers: {} } }) as never;
+    const waitJob = async () => { for (let i = 0; i < 100; i++) { await new Promise((r) => setTimeout(r, 20)); if (spawned.length) return; } };
+    for (const [hdr, re] of [[{ "user-agent": "curl/8" }, /caller=cockpit-script ua=curl\/8.*\(explicit\)/], [{ "user-agent": "Mozilla/5.0", origin: "http://127.0.0.1:1" }, /caller=cockpit-web .*\(explicit\)/]] as const) {
+      const home = mkdtempSync(join(tmpdir(), "cockpitop-"));
+      const deps = mk(home);
+      spawned.length = 0;
+      up = false;
+      markRuntimeStopped(home, "r1");
+      await runCockpitAction({ action: "runtime", target: "r1", value: "start" }, deps, {}, cockpitCaller(hdr, "127.0.0.1"));
+      await waitJob();
+      expect(spawned).toEqual(["serve r1"]);
+      for (let i = 0; i < 50 && isRuntimeStopped(home, "r1"); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(isRuntimeStopped(home, "r1")).toBe(false);
+      expect(readFileSync(join(home, "logs", "daemon.log"), "utf8")).toMatch(re);
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
