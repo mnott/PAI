@@ -14,7 +14,7 @@ import { isLoopbackProvider } from "../run-env.js";
 import { LOCAL_MECHANISM_LINE, NoLocalServerError, isLocalCandidate, resolveLocalProvider, tierProviderNames } from "../local-provider.js";
 import { ledgerPath, workersLogDir } from "../paths.js";
 import { appendLedger } from "../ledger.js";
-import { UNLABELED } from "../status.js";
+import { UNLABELED, recordStartFailure } from "../status.js";
 import { returnControlsIfHeld } from "../controls.js";
 import { routeRun } from "../policy.js";
 import {
@@ -556,6 +556,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     await returnControlsIfHeld(logDir, workerId);
     return rc;
   } catch (e) {
+    if (workerId) recordStartFailure(logDir, workerId, e);
     await returnControlsIfHeld(logDir, workerId);
     if (e instanceof Error && e.message.startsWith("key file")) {
       throw new Error(
