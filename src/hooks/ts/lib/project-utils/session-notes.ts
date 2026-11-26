@@ -2,7 +2,7 @@
  * Session note creation, editing, checkpointing, renaming, and finalization.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, appendFileSync, openSync, closeSync, unlinkSync, statSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 
@@ -93,15 +93,56 @@ export function getCurrentNotePath(notesDir: string): string | null {
   return findLatestIn(notesDir);
 }
 
+const CLAIM_STALE_MS = 5 * 60 * 1000;
+
+function numberTaken(monthDir: string, number: string): boolean {
+  return readdirSync(monthDir).some(f => f.startsWith(`${number} `) || f.startsWith(`${number}_`) || f.startsWith(`${number}-`));
+}
+
+/**
+ * Atomically claim the next note number across processes: an exclusive
+ * ("wx") "NNNN.claim" file in the month dir. On EEXIST try the next number;
+ * claims older than a few minutes are stale and replaced. After winning a
+ * claim, re-check that no note with that number appeared meanwhile (a
+ * competitor may have written the note and released its claim).
+ */
+function claimNoteNumber(notesDir: string, monthDir: string): { number: string; release: () => void } {
+  let n = parseInt(getNextNoteNumber(notesDir), 10);
+  for (let attempt = 0; attempt < 10000; attempt++, n++) {
+    const number = String(n).padStart(4, '0');
+    const claimPath = join(monthDir, `${number}.claim`);
+    if (numberTaken(monthDir, number)) continue;
+    let fd: number;
+    try {
+      fd = openSync(claimPath, 'wx');
+    } catch (err: any) {
+      if (err?.code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - statSync(claimPath).mtimeMs > CLAIM_STALE_MS) {
+          unlinkSync(claimPath);
+          n--; // retry same number
+        }
+      } catch { /* vanished: retry next */ }
+      continue;
+    }
+    closeSync(fd);
+    const release = () => { try { unlinkSync(claimPath); } catch { /* ignore */ } };
+    if (numberTaken(monthDir, number)) { release(); continue; }
+    return { number, release };
+  }
+  throw new Error('could not claim a session note number');
+}
+
 /**
  * Create a new session note.
  * Format: "NNNN - YYYY-MM-DD - New Session.md" filed into YYYY/MM subdirectory.
  * Claude MUST rename at session end with a meaningful description.
  */
 export function createSessionNote(notesDir: string, description: string): string {
-  const noteNumber = getNextNoteNumber(notesDir);
-  const date = localDateString();
   const monthDir = getMonthDir(notesDir);
+  const claim = claimNoteNumber(notesDir, monthDir);
+  const noteNumber = claim.number;
+  const date = localDateString();
   const filename = `${noteNumber} - ${date} - New Session.md`;
   const filepath = join(monthDir, filename);
 
@@ -127,7 +168,11 @@ export function createSessionNote(notesDir: string, description: string): string
 **Tags:** #Session
 `;
 
-  writeFileSync(filepath, content);
+  try {
+    writeFileSync(filepath, content, { flag: 'wx' });
+  } finally {
+    claim.release();
+  }
   console.error(`Created session note: ${filename}`);
 
   return filepath;
