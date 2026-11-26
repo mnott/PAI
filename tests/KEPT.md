@@ -93,3 +93,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/workers/specfile.test.ts | a | spec path resolved against the target cwd instead of the invoking cwd so a relative spec from another checkout was not found |
 | src/daemon/session-lifecycle.harness.test.ts | a | session-note lifecycle (start/name/periodic/topic split+links/cwd move/compact/end) and seeded stress invariants; guards APPS/PAI#35 root-cause fixes |
 | src/hooks/ts/lib/project-utils/session-notes.test.ts | a | Multi-process race: 8 concurrent createSessionNote calls must get distinct numbers (duplicate 0001 notes) |
+| src/workers/job-watch.test.ts | a | worker 20261127-000037-4179 stopped for no progress while waiting on a build that ended seconds before the checkpoint (a2ea325d only read the instant queue) |

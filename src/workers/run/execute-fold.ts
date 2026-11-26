@@ -60,7 +60,8 @@ import { isTestCommand } from "../hang-probe.js";
 import { blockedMsOf } from "../active-time.js";
 import { createOperatorServer } from "../operator.js";
 import { reapRunTree } from "./lifecycle.js";
-import { buildsDir, listBuildsSync, releaseBuildsOf } from "../../builds/queue.js";
+import { buildsDir, releaseBuildsOf } from "../../builds/queue.js";
+import { createJobWatch } from "../job-watch.js";
 import { type StreamEvent, type ExecuteArgs } from "./types.js";
 import {
   stdinUserMessage,
@@ -109,15 +110,6 @@ import { unparsedCallPrompt } from "./unparsed-call.js";
 import { announcedActionDecision } from "./announced-action.js";
 import { evaluate } from "../../guard/evaluate.js";
 import type { PreparedRun } from "./execute-prepare.js";
-
-/** A build/test ticket of this worker (running, or waiting for a slot) whose gate process is alive. */
-function ownsLiveBuildJob(wid: string): boolean {
-  try {
-    return listBuildsSync(buildsDir()).some((t) => t.worker === wid && (t.state === "running" || t.state === "waiting"));
-  } catch {
-    return false;
-  }
-}
 
 export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const { config, logDir, target, model, label, parsed, limit, systemWaiver } = a;
@@ -445,14 +437,17 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     }
   };
   let toolsOk = 0;
+  const jobWatch = createJobWatch({ wid, logDir });
+  let budgetPrevAt = Date.now();
   const snapBudget = (): BudgetSnapshot => ({
     progressAtMs: status.progressAt ? Date.parse(status.progressAt.replace(" ", "T")) : 0,
     testsPassed: distinctTestRuns(toolFold.bashRuns, isTestCommand),
     toolsOk,
     commits: worktree ? commitLines(worktree.dir, worktree.base).length : (status.commits ?? 0),
-    jobActive: ownsLiveBuildJob(wid),
+    jobActive: jobWatch.activeSince(budgetPrevAt),
   });
   let budgetPrev = snapBudget();
+  budgetPrevAt = Date.now();
   let stopBudget: (() => void) | null = null;
   /** The allowance this timer was armed for; a hand extend re-arms instead of checkpointing. */
   const armBudget = (): void => {
@@ -474,6 +469,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           // ps counts the allowance from its start like a minutes-based limit
           status.deadlineAt = Date.now() + d.minutes * 60_000;
           budgetPrev = cur;
+          budgetPrevAt = Date.now();
           reanchorBudget();
           saveStatus(logDir, status);
           process.stderr.write(`pai worker: ${wid} ${d.why}\n`);
@@ -492,7 +488,10 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   };
   armBudget();
   if (headless && budgetMin) {
-    const budgetPoll = setInterval(raisedBudget, 15_000);
+    const budgetPoll = setInterval(() => {
+      jobWatch.sample();
+      raisedBudget();
+    }, 15_000);
     budgetPoll.unref();
     const stopBudgetRun = stopDeadline;
     stopDeadline = () => {
