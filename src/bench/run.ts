@@ -153,6 +153,16 @@ export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key" | "codeGr
       return;
     }
   }
+  if (set === "real") {
+    // A stopped real series must not discard finished tasks (fault 2026-11-26 dualA: watchdog fired after
+    // the engine stalled and the rep read 0/5 although three tasks had already passed their hidden tests).
+    // The per-task checkpoint realset.sh writes after every task is authoritative; if it is missing or was
+    // never advanced, recover_real_rep grades from the work dir (tests.log = finished, worker.json = interrupted).
+    const label = `${o.key}-rep${rep}`;
+    const work = join(o.dir, "work", "real", label);
+    const g = spawnSync("bash", ["-c", `TASKS="${process.env.TASKS ?? ""}" . "${join(benchDir, "recover.sh")}"; recover_real_rep "${join(o.dir, "results", "real", o.key)}" "${o.key}" ${rep} "${work}" "${label}" "${error.replace(/"/g, '\\"')}"`], { stdio: "ignore" });
+    if (g.status === 0 && existsSync(res)) return; // graded from the checkpoint / work dir
+  }
   const tasksDir = join(benchDir, "tasks");
   const n = set === "real" && existsSync(tasksDir) ? readdirSync(tasksDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
   writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "stopped", n, passed: 0, wall_s: secs, error, graded: false, tasks: [], ...(o.codeGraph ? { code_graph: o.codeGraph } : {}) }, null, 1));
