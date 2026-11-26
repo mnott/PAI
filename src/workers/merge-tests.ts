@@ -162,7 +162,19 @@ export function resolveVerify(cwd: string, configured: string): ResolvedVerify {
   }
   if (existsSync(join(cwd, "pyproject.toml")) || existsSync(join(cwd, "pytest.ini")) || existsSync(join(cwd, "setup.py"))) return { cmd: "python3 -m pytest -q", runner: "pytest" };
   if (existsSync(join(cwd, "go.mod"))) return { cmd: "go test ./...", runner: "go test" };
-  return { cmd: "", runner: "none (no package.json, pytest or go.mod; nothing to run)" };
+  const pubspec = join(cwd, "pubspec.yaml");
+  if (existsSync(pubspec) && existsSync(join(cwd, "test"))) {
+    let flutter = false;
+    try {
+      const y = parseYaml(readFileSync(pubspec, "utf8")) as { dependencies?: Record<string, unknown> } | null;
+      const d = y?.dependencies;
+      flutter = !!d && typeof d === "object" && "flutter" in d;
+    } catch {
+      /* unreadable pubspec: plain dart */
+    }
+    return flutter ? { cmd: "flutter test", runner: "flutter test" } : { cmd: "dart test", runner: "dart test" };
+  }
+  return { cmd: "", runner: "none (no package.json, pytest, go.mod or pubspec.yaml with test/; nothing to run)" };
 }
 
 /** Run the verify command for the merge `oldHead..HEAD`; never throws. */
