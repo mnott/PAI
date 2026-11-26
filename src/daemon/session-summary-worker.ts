@@ -17,7 +17,6 @@
  * thrown (not swallowed) so the work queue retry logic handles them.
  */
 
-import { contentToText } from "./content-text.js";
 import { deferIfQuiet } from "./quiet.js";
 import {
   existsSync,
@@ -60,14 +59,6 @@ import { addNoteSession } from "../session/note-sessions.js";
 
 /** Minimum interval between summaries for the same project (ms). */
 const SUMMARY_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
-
-/** Maximum JSONL content to feed to the summarizer (characters). */
-/** Max JSONL chars per model. Opus/Sonnet can handle much more than Haiku. */
-const MAX_JSONL_CHARS: Record<string, number> = {
-  haiku: 50_000,
-  sonnet: 200_000,
-  opus: 500_000,
-};
 
 /** Minimum new user/assistant text (chars) since the last summary of a session. */
 const MIN_NEW_TEXT_CHARS = 20_000;
@@ -117,9 +108,10 @@ function saveSessionState(key: string, st: SessionSummaryState): void {
  */
 export function shouldSummarize(
   state: SessionSummaryState | undefined,
-  opts: { final?: boolean; intervalMs: number; now?: number; newTextChars: () => number },
+  opts: { final?: boolean; force?: boolean; intervalMs: number; now?: number; newTextChars: () => number },
 ): { run: boolean; reason: string } {
   if (opts.final) return { run: true, reason: "final" };
+  if (opts.force) return { run: true, reason: "forced" };
   if (!state) return { run: true, reason: "first" };
   const age = (opts.now ?? Date.now()) - state.at;
   if (age < opts.intervalMs) return { run: false, reason: `last summary ${Math.round(age / 1000)}s ago` };
@@ -133,30 +125,71 @@ export function capPrompt(prompt: string, max = MAX_PROMPT_CHARS): string {
   return prompt.length <= max ? prompt : prompt.slice(prompt.length - max);
 }
 
-/** Read bytes [from, size) of a file, but at most the last `maxBytes`, aligned to a line start. */
-function readTail(path: string, from: number, maxBytes: number): { text: string; size: number } {
+/** Safety cap on the transcript range scanned in one run (the newest part wins). */
+const MAX_SCAN_BYTES = 512 * 1024 * 1024;
+const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Stream the complete lines of bytes [from, size) of a file to `onLine`.
+ * The whole range is scanned, not a raw-byte tail: a transcript is mostly tool
+ * results, so the last N bytes of a long session hold almost no user/assistant
+ * text and used to make "new chars" read ~1 KB after hours of work.
+ * Returns the offset to resume from: the end of the last complete line, or the
+ * file size when the trailing unterminated line is complete JSON.
+ */
+function scanLines(path: string, from: number, onLine: (line: string) => void): number {
   const fd = openSync(path, "r");
   try {
     const size = fstatSync(fd).size;
     let start = Math.max(0, Math.min(from, size));
-    let trimmed = false;
-    if (size - start > maxBytes) { start = size - maxBytes; trimmed = true; }
-    const buf = Buffer.alloc(size - start);
-    let got = 0;
-    while (got < buf.length) {
-      const n = readSync(fd, buf, got, buf.length - got, start + got);
+    let skipFirst = false;
+    if (size - start > MAX_SCAN_BYTES) { start = size - MAX_SCAN_BYTES; skipFirst = true; }
+    const buf = Buffer.alloc(SCAN_CHUNK_BYTES);
+    let pos = start;
+    let carry: Buffer = Buffer.alloc(0);
+    while (pos < size) {
+      const n = readSync(fd, buf, 0, Math.min(buf.length, size - pos), pos);
       if (n <= 0) break;
-      got += n;
+      pos += n;
+      let data = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : Buffer.from(buf.subarray(0, n));
+      let lineStart = 0;
+      for (;;) {
+        const nl = data.indexOf(10, lineStart);
+        if (nl < 0) break;
+        if (skipFirst) skipFirst = false;
+        else onLine(data.toString("utf-8", lineStart, nl));
+        lineStart = nl + 1;
+      }
+      carry = data.subarray(lineStart);
     }
-    let text = buf.subarray(0, got).toString("utf-8");
-    if (trimmed) {
-      const nl = text.indexOf("\n");
-      text = nl >= 0 ? text.slice(nl + 1) : "";
+    if (carry.length && !skipFirst) {
+      const tail = carry.toString("utf-8");
+      try { JSON.parse(tail); onLine(tail); return size; } catch { return size - carry.length; }
     }
-    return { text, size };
+    return size;
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * Text the user or assistant wrote: string content and `text` blocks only.
+ * tool_result / tool_use / thinking blocks are tool output (fetched pages, file
+ * dumps), never the session's own words, so they neither count as new text nor
+ * reach the summarizer prompt (a fetched page <title> used to become the note title).
+ */
+export function conversationText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((c) => {
+      if (typeof c === "string") return c;
+      const block = c as Record<string, unknown>;
+      return block?.type === "text" && block.text ? String(block.text) : "";
+    })
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 }
 
 /** Maximum user messages to include in the prompt. */
@@ -330,7 +363,7 @@ export interface ExtractedContent {
  * Parse a JSONL transcript and extract relevant content.
  * Filters noise, truncates to model-appropriate size from the end of the file.
  */
-export function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet", fromOffset = 0): ExtractedContent {
+export function extractFromJsonl(jsonlPath: string, _tier: ModelTier = "sonnet", fromOffset = 0): ExtractedContent {
   const result: ExtractedContent = {
     userMessages: [],
     filesModified: [],
@@ -340,76 +373,54 @@ export function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet", 
     recentText: "",
   };
 
-  // Only the part after the last summarized offset is read, never the whole
-  // (possibly hundreds of MB) transcript; the newest content wins when capped.
-  const maxChars = MAX_JSONL_CHARS[tier] ?? 200_000;
-  let raw: string;
-  try {
-    const r = readTail(jsonlPath, fromOffset, maxChars);
-    raw = r.text;
-    result.endOffset = r.size;
-  } catch (e) {
-    throw new Error(`Could not read JSONL at ${jsonlPath}: ${e}`);
-  }
-
-  const lines = raw.trim().split("\n");
   const seenMessages = new Set<string>();
 
-  for (const line of lines) {
-    if (!line.trim()) continue;
-
+  const handle = (line: string): void => {
+    if (!line.trim()) return;
+    // tool results dominate the transcript; skip their (huge) lines unparsed
+    if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"') && !line.includes('"timestamp"')) return;
     let entry: Record<string, unknown>;
     try {
       entry = JSON.parse(line);
     } catch {
-      continue;
+      return;
     }
 
-    // Track earliest timestamp
     if (entry.timestamp && !result.sessionStartTime) {
       result.sessionStartTime = String(entry.timestamp);
     }
 
-    // Extract user messages
-    if (entry.type === "user" || entry.type === "assistant") {
-      const m = entry.message as Record<string, unknown> | undefined;
-      if (m?.content) {
-        const t = contentToText(m.content);
-        if (t && !isNoise(t)) {
-          result.textChars += t.length;
-          result.recentText = (result.recentText + "\n" + t).slice(-TOPIC_PROBE_CHARS);
-        }
-      }
-    }
-    if (entry.type === "user") {
-      const msg = entry.message as Record<string, unknown> | undefined;
-      if (msg?.content) {
-        const text = contentToText(msg.content);
-        if (text && !isNoise(text) && !seenMessages.has(text)) {
-          seenMessages.add(text);
-          result.userMessages.push(text.slice(0, 500));
-        }
+    if (entry.type !== "user" && entry.type !== "assistant") return;
+    const msg = entry.message as Record<string, unknown> | undefined;
+    if (!msg?.content) return;
+    const t = conversationText(msg.content);
+    if (t && !isNoise(t)) {
+      result.textChars += t.length;
+      result.recentText = (result.recentText + "\n" + t).slice(-TOPIC_PROBE_CHARS);
+      if (entry.type === "user" && !seenMessages.has(t)) {
+        seenMessages.add(t);
+        result.userMessages.push(t.slice(0, 500));
+        if (result.userMessages.length > MAX_USER_MESSAGES * 4) result.userMessages = result.userMessages.slice(-MAX_USER_MESSAGES);
       }
     }
 
-    // Extract file modifications from assistant tool_use blocks
-    if (entry.type === "assistant") {
-      const msg = entry.message as Record<string, unknown> | undefined;
-      if (msg?.content && Array.isArray(msg.content)) {
-        for (const block of msg.content as Array<Record<string, unknown>>) {
-          if (block.type === "tool_use") {
-            const name = block.name as string;
-            const input = block.input as Record<string, unknown> | undefined;
-            if ((name === "Edit" || name === "Write") && input?.file_path) {
-              const fp = String(input.file_path);
-              if (!result.filesModified.includes(fp)) {
-                result.filesModified.push(fp);
-              }
-            }
-          }
+    // file modifications from assistant tool_use blocks
+    if (entry.type === "assistant" && Array.isArray(msg.content)) {
+      for (const block of msg.content as Array<Record<string, unknown>>) {
+        if (block.type !== "tool_use") continue;
+        const input = block.input as Record<string, unknown> | undefined;
+        if ((block.name === "Edit" || block.name === "Write") && input?.file_path) {
+          const fp = String(input.file_path);
+          if (!result.filesModified.includes(fp)) result.filesModified.push(fp);
         }
       }
     }
+  };
+
+  try {
+    result.endOffset = scanLines(jsonlPath, fromOffset, handle);
+  } catch (e) {
+    throw new Error(`Could not read JSONL at ${jsonlPath}: ${e}`);
   }
 
   // Limit user messages
@@ -575,6 +586,16 @@ export async function spawnSummarizer(prompt: string, tier: ModelTier = "sonnet"
  * Extract the TOPIC: line from the summarizer output.
  * Returns the topic string, or null if not found.
  */
+/**
+ * Title to rename a note to after a summary: the summary's "# Session:" title,
+ * or, for a note still named "New Session", its TOPIC line. Null: keep the name.
+ */
+export function noteRenameTitle(notePath: string, summaryText: string): string | null {
+  const heading = summaryText.match(/^# Session:\s*(.+)$/m)?.[1]
+    ?? (/ - New Session\.md$/.test(basename(notePath)) ? extractTopic(summaryText) : null);
+  return heading ? heading.trim() : null;
+}
+
 function extractTopic(summaryText: string): string | null {
   const match = summaryText.match(/^TOPIC:\s*(.+)$/m);
   if (!match) return null;
@@ -860,9 +881,8 @@ function writeSessionNote(
 
   // Try to rename with a meaningful title from the summary
   if (notePath) {
-    const titleMatch = summaryText.match(/^# Session:\s*(.+)$/m);
-    if (titleMatch) {
-      const title = titleMatch[1].trim();
+    const title = noteRenameTitle(notePath, summaryText);
+    if (title) {
       if (title.length > 5 && title.length < 80) {
         const newPath = renameSessionNote(notePath, title);
         if (newPath !== notePath) {
@@ -1237,11 +1257,12 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   const fromOffset = prevState?.offset ?? 0;
   const gate = shouldSummarize(prevState, {
     final,
+    force,
     intervalMs,
     newTextChars: () => extractFromJsonl(jsonlPath!, selectedModel, fromOffset).textChars,
   });
   let runReason = gate.reason;
-  if (onCooldown || !gate.run) {
+  if ((onCooldown && !force) || !gate.run) {
     // the debounce would skip this Stop: a cheap topic probe may still call for a summary now
     const skipWhy = onCooldown ? "last summary was less than 30 minutes ago" : gate.reason;
     const probe = await probeTopicShift({

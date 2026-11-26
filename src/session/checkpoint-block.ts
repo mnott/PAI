@@ -57,6 +57,9 @@ export const TODO_LOCATIONS = [
   "TODO.md",
 ];
 
+/** First words of the note that heads content an auto write carried forward from an unmarked block. */
+const CARRIED_FORWARD_MARK = "_Carried forward from the previous checkpoint";
+
 export const MARKER_OPEN = "<!-- pai:checkpoint";
 export const MARKER_CLOSE = "<!-- /pai:checkpoint -->";
 
@@ -841,12 +844,29 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
       archiveEntry = toArchiveEntry(existing.lines, existing.meta);
     }
 
+    // Case 3b — an earlier auto write already carried unattributable content
+    // forward (case 3). That text exists nowhere else, and the digest this write
+    // brings would replace the whole block and cut the carried part off, so
+    // carry it forward again, byte for byte, until a model checkpoint takes over.
+    if (existing.meta?.authored === "auto") {
+      const start = existing.lines.findIndex((l) => l.trim().startsWith(CARRIED_FORWARD_MARK));
+      if (start !== -1) {
+        let end = existing.lines.findIndex((l, i) => i > start && l.trim() === MARKER_CLOSE);
+        if (end === -1) end = existing.lines.length;
+        const carried = trimBlankEdges(existing.lines.slice(start, end)).join("\n");
+        if (carried) {
+          effectiveBody = carried;
+          carriedForward = true;
+        }
+      }
+    }
+
     // Case 3 — unmarked block holding content nobody can attribute to us.
     if (!existing.meta && !isBoilerplateOnly(existing.lines)) {
       const salvaged = extractSectionContent(existing.lines);
       if (salvaged) {
         effectiveBody = [
-          "_Carried forward from the previous checkpoint (author unknown — this",
+          `${CARRIED_FORWARD_MARK} (author unknown — this`,
           "block predates checkpoint authorship markers):_",
           "",
           salvaged,

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { shouldSummarize, capPrompt, extractFromJsonl, probeTopicShift, resetTopicProbeState, isDaemonLlmTranscript } from "./session-summary-worker.js";
+import { shouldSummarize, noteRenameTitle, capPrompt, extractFromJsonl, probeTopicShift, resetTopicProbeState, isDaemonLlmTranscript } from "./session-summary-worker.js";
 import { planSummarySpawn, DAEMON_LLM_ENV_MARKER } from "../workers/daemon-llm.js";
 import { enqueueDedupedPerSession, resetQueueForTests } from "./work-queue.js";
 
