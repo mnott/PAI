@@ -51,9 +51,10 @@ const TREE_REWRITE: { name: string; pattern: RegExp }[] = [
 ];
 
 /**
- * Every `git checkout` with arguments is blocked: path restores rewrite the
- * tree, and `<branch>` / `-b` / `-B` move the shared checkout's HEAD (which
- * made `pai worker merge` refuse). Only the bare form and --help pass.
+ * `git checkout` only rewrites the tree when it names paths (`-- <paths>`,
+ * with or without a leading ref) or restores everything (`git checkout .`).
+ * A bare `git checkout <branch>` is a branch switch, not covered here —
+ * `git switch` above is the tree-rewriting form of that.
  */
 const CHECKOUT_INVOCATION = /\bgit(?:\s+-C\s+\S+)?\s+checkout\s+([^&;|`\n)]*)/g;
 
@@ -62,8 +63,8 @@ function checkoutRewritesTree(command: string): boolean {
   let m: RegExpExecArray | null;
   while ((m = CHECKOUT_INVOCATION.exec(command))) {
     const args = m[1].trim();
-    if (args === "" || /^(--help|-h)$/.test(args)) continue; // read-only
-    return true; // path restore, branch switch, -b/-B create: all move or rewrite the shared checkout
+    if (args === ".") return true;
+    if (/(^|\s)--(\s|$)/.test(args)) return true;
   }
   return false;
 }
