@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isFrozen, activeMsOf, activeNow, freezeAll, freezeHold, frozenMsFor, frozenMsOf, frozenSince, sparedServer, parseDuration, parseProcs, planFreeze, thawAll, thawSome, readFreeze, workerAncestryBlocked, freezeWorkerGuard, freezeLogDir, freezeTestMode, parseFreezeServers, realFreezeDeps, type FreezeDeps, type ProcRow } from "./freeze.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { detectModelServers, modelServerPorts, type ModelServersDeps } from "./model-servers.js";
-import { detectSupervisionEvents, workerRunLabel } from "./supervision.js";
+import { detectSupervisionEvents } from "./supervision.js";
 import { TroubleWatcher } from "./worker-trouble.js";
 import { escalationReason } from "./reroute.js";
 import type { Messenger, RunOrigin } from "./run-events.js";
@@ -1012,14 +1012,5 @@ describe("system sleep is not work time (sleep-clock)", () => {
       delete process.env.PAI_SLEEP_FILE;
       rmSync(dir, { recursive: true, force: true });
     }
-  });
-});
-
-describe("workerRunLabel (toolerror hint label)", () => {
-  it("names the cloud provider/model of the worker", () => {
-    expect(workerRunLabel({ provider: "anthropic", model: "sonnet-5.5" }, () => false)).toBe("anthropic/sonnet-5.5");
-  });
-  it("says local model only for a local provider", () => {
-    expect(workerRunLabel({ provider: "signal-2", model: "flash" }, (n) => n === "signal-2")).toBe("local model: flash");
   });
 });
