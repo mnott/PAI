@@ -41,7 +41,7 @@ W.setSummarizerForTests(fake.fn);
 
 const MIN = 60_000;
 let seq = 0;
-const T0 = Date.now();
+const T0 = new Date(2026, 10, 26, 8, 0, 0).getTime(); // fixed morning: runs must not depend on the time of day (midnight crossing)
 const setNow = (ms: number) => { vi.setSystemTime(ms); };
 const uuid = () => `00000000-0000-4000-8000-${String(++seq).padStart(12, "0")}`;
 
@@ -287,6 +287,30 @@ function checkInvariants(dirs: string[], cursors: Map<string, number[]>, label: 
   }
 }
 
+describe("session note lifecycle regression", () => {
+  it("cwd move with little new text still claims the new project's stub (stress seeds 63/117/140/190)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const P = mkProject("reg-a"), Q = mkProject("reg-b");
+    const id = uuid();
+    const t = new TranscriptBuilder(join(root, "claude", "projects", "reg", `${id}.jsonl`), id, P);
+    fake.reset();
+    setNow(T0);
+    sessionStart(P);
+    t.turn("Dark mode palette color tokens contrast theme switch", 7000);
+    fake.push(summaryText("Dark mode palette", "Dark Mode Palette", ["Did palette"]));
+    await stop(P, id, t.path);
+    // moves on 1 minute later with 1 KB of new text: below the chars and minutes gates
+    setNow(T0 + MIN);
+    t.moveTo(Q).turn("Newsletter signup form double opt in mail", 1000);
+    sessionStart(Q);
+    fake.push(summaryText("Newsletter signup form", "Newsletter Signup Form", ["Did signup"]));
+    await stop(Q, id, t.path);
+    expect(notesOf(Q).map(base).join()).not.toContain("New Session");
+    expect(notesOf(Q)).toHaveLength(1);
+    vi.useRealTimers();
+  });
+});
+
 describe("session note lifecycle stress", () => {
   it(`seeded random runs (${STRESS_SEEDS} seeds)`, async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -302,7 +326,7 @@ describe("session note lifecycle stress", () => {
         return { id, tb: new TranscriptBuilder(join(root, "claude", "projects", `s${seed}`, `${id}.jsonl`), id, proj[0]), cwd: proj[0], idx: i, topic: 0, started: false };
       });
       const cursors = new Map<string, number[]>();
-      let clock = Date.now();
+      let clock = new Date(2026, 10, 26, 8, 0, 0).getTime();
       fake.reset();
       fake.fallback = (prompt) => {
         const t = TOPICS.find((x) => prompt.includes(x[1].split(" ")[0])) ?? TOPICS[0];

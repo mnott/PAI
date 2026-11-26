@@ -1391,7 +1391,13 @@ async function handleSessionSummaryNow(payload: SessionSummaryPayload): Promise<
     newTextChars: () => extractFromJsonl(jsonlPath!, selectedModel, fromOffset).textChars,
   });
   let runReason = gate.reason;
-  if ((onCooldown && !force) || !gate.run) {
+  // The session moved to another project: its work belongs in a note there now, so the
+  // chars/minutes debounce must not leave the new project's session-start stub unclaimed.
+  const movedCwd = !!prevState?.note && !!sessionId && existsSync(prevState.note)
+    && !prevState.note.startsWith(findNotesDir(cwd).path + "/")
+    && extractFromJsonl(jsonlPath!, selectedModel, fromOffset).textChars > 0;
+  if (movedCwd) runReason = "cwd moved";
+  if (!movedCwd && ((onCooldown && !force) || !gate.run)) {
     // the debounce would skip this Stop: a cheap topic probe may still call for a summary now
     const skipWhy = onCooldown ? "last summary was less than 30 minutes ago" : gate.reason;
     const probe = await probeTopicShift({
