@@ -16,7 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { stripApiKey, withLoginIdentity } from "../workers/run-env.js";
 import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
@@ -42,7 +42,7 @@ import type { JobRunProgress } from "../memory/job-progress.js";
 import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { connect as netConnect } from "node:net";
-import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, exclusivePeers, exclusiveRefusalText, readSwitchParked, writeSwitchParked, markRuntimeStopped, clearRuntimeStopped, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
+import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, exclusivePeers, exclusiveRefusalText, readSwitchParked, writeSwitchParked, markRuntimeStopped, clearRuntimeStopped, isRuntimeStopped, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
 export const RUNTIME_START_EVENT = "RUNTIME-START";
@@ -512,7 +512,7 @@ export async function runtimeSwitch(
       return { ok: false, message: `switch to ${runtime} failed: ${peer} is still up ${Math.round(downMs / 1000)} s after its stop (${still}); ${runtime} not started; workers resumed` };
     }
   }
-  const started = await runtimeStartStop(runtime, "start", deps, { exclude: stoppedPeers });
+  const started = await runtimeStartStop(runtime, "start", deps, { exclude: stoppedPeers, caller: "runtime-switch", allowStopped: true });
   if (!started.ok) {
     if (!stoppedPeers.length) return { ok: false, message: started.message };
     // roll back: clear any half-started target, bring the stopped peers back, resume exactly the workers this switch parked
@@ -520,7 +520,7 @@ export async function runtimeSwitch(
     const restarted: string[] = [];
     const failedBack: string[] = [];
     for (const peer of stoppedPeers) {
-      const r = await runtimeStartStop(peer, "start", deps, { exclude: [runtime] });
+      const r = await runtimeStartStop(peer, "start", deps, { exclude: [runtime], caller: "runtime-switch-rollback", allowStopped: true });
       (r.ok ? restarted : failedBack).push(r.ok ? peer : `${peer}: ${r.message}`);
     }
     const parkedList = parkedNow.length ? `; parked: ${parkedNow.join(", ")}` : "";
@@ -552,6 +552,23 @@ export async function runtimeSwitch(
   return { ok: true, message: parts.join("; ") };
 }
 
+/** Who asked for a runtime start: the caller label plus the process (pid, session/worker id from the env when known). */
+function runtimeCaller(opts: { caller?: string }): string {
+  const id = process.env.PAI_RUN_ID || process.env.CLAUDE_SESSION_ID || "";
+  return `${opts.caller ?? "unknown"} pid=${process.pid}${id ? ` id=${id}` : ""} argv=${process.argv.slice(1, 3).join(" ").slice(0, 80)}`;
+}
+
+/** One line in daemon.log for every runtime start attempt (best effort). */
+function logRuntimeStart(home: string, line: string): void {
+  try {
+    const f = `${home}/logs/daemon.log`;
+    mkdirSync(dirname(f), { recursive: true });
+    appendFileSync(f, `[pai-daemon] ${line}\n`);
+  } catch {
+    /* logging must not break the start */
+  }
+}
+
 /** The runtime start/stop through the configured commands: the shell run, the ledger line, the job file.
  *  Shared by the cockpit action and `pai models start|stop`. */
 export async function runtimeStartStop(
@@ -559,9 +576,20 @@ export async function runtimeStartStop(
   op: "start" | "stop",
   deps: ActionDeps,
     /** `exclude`: runtimes a switch itself stopped (or is replacing); the exclusivity check ignores them. */
-  opts: { model?: string; jobId?: string; exclude?: string[] } = {}
+  opts: { model?: string; jobId?: string; exclude?: string[]; caller?: string; allowStopped?: boolean } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
+  if (op === "start") {
+    const who = runtimeCaller(opts);
+    // a runtime stopped on purpose starts only on an explicit operator start (`pai models start`, MCP model_runtime start); the marker is a file, so it holds across daemon restarts
+    if (isRuntimeStopped(deps.home, runtime) && !opts.allowStopped) {
+      const msg = `${runtime} was stopped on purpose; only an explicit \`pai models start ${runtime}\` starts it (refused: ${who})`;
+      logRuntimeStart(deps.home, `runtime start ${runtime}: REFUSED, stopped on purpose, caller=${who}`);
+      appendLedger(deps.ledger, RUNTIME_START_EVENT, { who: "cockpit", runtime, caller: who.replace(/\s+/g, "_"), result: "refused: stopped on purpose" });
+      return { ok: false, message: msg };
+    }
+    logRuntimeStart(deps.home, `runtime start ${runtime}: caller=${who}${opts.jobId ? ` job=${opts.jobId}` : ""}${opts.allowStopped ? " (explicit)" : ""}`);
+  }
   const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime]);
   if (refused) return { ok: false, message: refused };
   if (op === "start") {
@@ -576,6 +604,7 @@ export async function runtimeStartStop(
   appendLedger(deps.ledger, op === "start" ? RUNTIME_START_EVENT : RUNTIME_STOP_EVENT, {
     who: "cockpit",
     runtime,
+    ...(op === "start" ? { caller: runtimeCaller(opts).replace(/\s+/g, "_") } : {}),
     result: r.ok ? "ok" : `error: ${r.message}`,
     log: runtimeLogFile(deps.home, runtime),
   });
@@ -976,7 +1005,7 @@ async function daemonTriggerPass(kind: RunKind): Promise<string> {
 /** Runs the runtime job (hook or configured commands), records its outcome in the job file;
  *  runtimeStartStop already wrote the RUNTIME-START/STOP line. */
 async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string, runtime: string, op: "start" | "stop"): Promise<void> {
-  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id }));
+  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id, caller: "cockpit-action" }));
   const end = (state: "done" | "failed", message: string): void =>
     writeCockpitJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state, message, at: new Date().toISOString() });
   let state: "done" | "failed" = "done";

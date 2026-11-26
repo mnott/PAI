@@ -23,6 +23,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { resolveTarget } from "./routing.js";
+import { readMode, type WorkMode } from "./mode.js";
 import { resolveLocalProvider } from "./local-provider.js";
 import { ensureNoMcpConfig, workersLogDir } from "./paths.js";
 import { buildRunEnv, loopbackRouterChoice, withLoginIdentity } from "./run-env.js";
@@ -188,6 +189,17 @@ export interface SummaryPlanDeps {
   probe?: () => Promise<boolean>;
   /** Seam: the running local provider's name, or throws when none answers (default: resolveLocalProvider). */
   resolveLocal?: (workers: WorkersConfig, logDir: string) => Promise<{ name: string }>;
+  /** Seam: the persisted work mode (default: readMode of workers.yaml). `speed` = no local model, summaries use the cloud. */
+  mode?: () => WorkMode;
+}
+
+/** Work mode `speed` means no local model: a background consumer (session summary) must not use or wake a local runtime. */
+function localForbidden(deps: SummaryPlanDeps): boolean {
+  try {
+    return (deps.mode ?? (() => readMode()))() === "speed";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -218,6 +230,7 @@ export async function planSummarySpawn(
   let modelId: string | undefined;
   let local = false;
   if (want === "local") {
+    if (localForbidden(deps)) return planLlmSpawn(tier, deps.configPath, probe);
     try {
       name = (await (deps.resolveLocal ?? resolveLocalProvider)(workers, logDir)).name;
     } catch {
@@ -232,5 +245,6 @@ export async function planSummarySpawn(
   const provider = workers.providers[name];
   if (!provider) return planLlmSpawn(tier, deps.configPath, probe);
   const isLocal = local || isLocalProvider(provider.baseUrl);
+  if (isLocal && localForbidden(deps)) return planLlmSpawn(tier, deps.configPath, probe);
   return providerPlan(provider, name, workers, tier, modelId, probe, isLocal ? LOCAL_TIMEOUT_MS : LLM_TIMEOUT_MS[tier]);
 }

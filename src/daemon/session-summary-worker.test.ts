@@ -257,3 +257,13 @@ describe("every headless side-work spawn carries the daemon marker", () => {
     expect(r.stdout).toContain(`${DAEMON_LLM_ENV_MARKER}=1`);
   });
 });
+
+describe("planSummarySpawn in work mode speed (no local model)", () => {
+  it("never uses or wakes a local runtime: cloud tier, resolveLocal not even asked", async () => {
+    let asked = false;
+    const resolveLocal = async () => { asked = true; return { name: "loc" }; };
+    const plan = await planSummarySpawn("local", "sonnet", { probe: async () => false, resolveLocal, mode: () => "speed" });
+    expect(asked).toBe(false);
+    expect(plan.provider).not.toBe("loc");
+  });
+});

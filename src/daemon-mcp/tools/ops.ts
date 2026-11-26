@@ -96,7 +96,7 @@ export async function modelRuntime(args: ModelRuntimeArgs): Promise<WorkerToolRe
     if (action !== "start" && action !== "stop" && action !== "switch") return error(new Error(`unknown action "${String(action)}" (expected: status, start, stop, switch)`));
     if (!args.runtime) return error(new Error(`runtime is required for action "${action}"`));
     const { defaultDeps, runtimeStartStop, runtimeSwitch } = await import("../../router/cockpit-actions.js");
-    const r = action === "switch" ? await runtimeSwitch(args.runtime, defaultDeps()) : await runtimeStartStop(args.runtime, action, defaultDeps(), { model: args.model });
+    const r = action === "switch" ? await runtimeSwitch(args.runtime, defaultDeps()) : await runtimeStartStop(args.runtime, action, defaultDeps(), { model: args.model, caller: "mcp model_runtime", allowStopped: true });
     return r.ok ? text(r.message) : error(new Error(r.message));
   } catch (e) {
     return error(e);
