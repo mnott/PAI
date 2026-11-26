@@ -337,7 +337,7 @@ describe("session note lifecycle stress", () => {
     vi.useRealTimers();
     process.stderr.write(`\n=== stress: seeds=${STRESS_SEEDS} runs=${runs} failures=${failures}\n${failed.slice(0, 10).join("\n")}\n`);
     expect(failures, failed.slice(0, 5).join("; ")).toBe(0);
-  }, 600_000);
+  }, Math.max(600_000, STRESS_SEEDS * 30_000));
 });
 
 afterAll(() => { try { rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ } });

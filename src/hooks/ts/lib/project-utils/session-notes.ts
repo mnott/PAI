@@ -441,6 +441,11 @@ export function finalizeSessionNote(notePath: string, summary: string): string {
   writeFileSync(notePath, content);
   console.error(`Session note finalized: ${basename(notePath)}`);
 
+  // A note that already carries a conversation title keeps its name: it is linked
+  // from neighbouring notes, and the first "### " heading of its Work Done
+  // ("AI Summary (10:00:00)") is no title.
+  if (!/ - New Session\.md$/.test(basename(notePath))) return notePath;
+
   const meaningfulName = extractMeaningfulName(content, summary);
   if (meaningfulName) {
     return renameSessionNote(notePath, meaningfulName);

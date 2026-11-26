@@ -163,7 +163,7 @@ function scanLines(path: string, from: number, onLine: (line: string) => void): 
     let start = Math.max(0, Math.min(from, size));
     let skipFirst = false;
     if (size - start > MAX_SCAN_BYTES) { start = size - MAX_SCAN_BYTES; skipFirst = true; }
-    const buf = Buffer.alloc(SCAN_CHUNK_BYTES);
+    const buf = Buffer.allocUnsafe(Math.max(1, Math.min(SCAN_CHUNK_BYTES, size - start)));
     let pos = start;
     let carry: Buffer = Buffer.alloc(0);
     while (pos < size) {

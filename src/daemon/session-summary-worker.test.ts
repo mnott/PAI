@@ -10,16 +10,26 @@ const line = (type: string, text: string) =>
   JSON.stringify({ type, message: { content: text }, timestamp: "2026-01-01T00:00:00Z" }) + "\n";
 
 describe("session summary debounce", () => {
-  it("50 Stop events in 10 min trigger at most 1 summary", () => {
+  it("50 Stop events in 10 min with little new text trigger at most 1 summary", () => {
     const t0 = 1_000_000_000;
     let state: { at: number; offset: number } | undefined;
     let runs = 0;
     for (let i = 0; i < 50; i++) {
       const now = t0 + i * 12_000;
-      const g = shouldSummarize(state, { intervalMs: 30 * 60_000, now, newTextChars: () => 99_999 });
+      const g = shouldSummarize(state, { intervalMs: 10 * 60_000, now, newTextChars: () => 1_000 });
       if (g.run) { runs++; state = { at: now, offset: i }; }
     }
     expect(runs).toBe(1);
+  });
+
+  it("a Stop with >= 6000 new chars summarizes inside the interval; the minutes trigger needs a little text", () => {
+    const st = { at: 0, offset: 0 };
+    const o = { intervalMs: 10 * 60_000 };
+    expect(shouldSummarize(st, { ...o, now: 60_000, newTextChars: () => 6_000 }).run).toBe(true);
+    expect(shouldSummarize(st, { ...o, now: 60_000, newTextChars: () => 5_999 }).run).toBe(false);
+    expect(shouldSummarize(st, { ...o, now: 11 * 60_000, newTextChars: () => 300 }).run).toBe(true);
+    expect(shouldSummarize(st, { ...o, now: 11 * 60_000, newTextChars: () => 0 }).run).toBe(false);
+    expect(shouldSummarize(st, { ...o, now: 60_000, minChars: 100, newTextChars: () => 150 }).run).toBe(true);
   });
 
   it("after the interval, needs enough new text; final always runs", () => {
