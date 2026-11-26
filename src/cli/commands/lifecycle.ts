@@ -4,6 +4,7 @@
  */
 
 import { CliError, OPT, type CommandDef } from "../define.js";
+import { auditNotes, renderAudit } from "./notes-audit.js";
 import { legacy } from "../lib/legacy.js";
 import { SHELL_INIT } from "../lib/shell-init.js";
 import { cmdList as cmdNotesList } from "./session/commands.js";
@@ -117,6 +118,22 @@ export const notesTop: CommandDef = {
   examples: ["pai notes", "pai notes my-project --status open --limit 5"],
   seeAlso: ["pai session info", "pai ls"],
   subcommands: [
+    {
+      name: "audit",
+      summary: "Report generic, mismatched, mixed-topic and empty session notes",
+      description:
+        "Read-only scan of a project's session notes. Reports generic titles (New Session, untitled), titles that do not match the TOPIC comment, notes with several unrelated AI Summary blocks (word overlap below the summary worker's topic threshold) and empty or stub notes. Always exits 0; nothing is modified.",
+      options: [
+        { name: "project", type: "string", value: "DIR", summary: "Project directory (default: current directory)" },
+        { ...OPT.json, summary: "Print JSON" },
+      ],
+      examples: ["pai notes audit", "pai notes audit --project ~/work/app --json"],
+      run: (c) => {
+        const r = auditNotes((c.opts.project as string | undefined) ?? process.cwd());
+        console.log(c.opts.json === true ? JSON.stringify(r, null, 2) : renderAudit(r));
+        return 0;
+      },
+    },
     {
       name: "list",
       summary: "List the markdown session notes (same as `pai notes`)",
