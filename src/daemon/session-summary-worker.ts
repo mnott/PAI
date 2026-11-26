@@ -60,8 +60,12 @@ import { addNoteSession } from "../session/note-sessions.js";
 /** Minimum interval between summaries for the same project (ms). */
 const SUMMARY_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
 
-/** Minimum new user/assistant text (chars) since the last summary of a session. */
-const MIN_NEW_TEXT_CHARS = 20_000;
+/** Default: new user/assistant text (chars) since the last note write that triggers a summary on any Stop. */
+const MIN_NEW_TEXT_CHARS = 6_000;
+/** Default: minutes since the last note write after which a Stop with a little new text triggers a summary. */
+const DEFAULT_INTERVAL_MINUTES = 10;
+/** The time trigger needs at least this much new text (a Stop with nothing new writes nothing). */
+const MIN_TIME_TRIGGER_CHARS = 200;
 /** Hard cap on the whole prompt; the newest content is kept. */
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_EXISTING_NOTE_CHARS = 40_000;
@@ -75,7 +79,12 @@ const TOPIC_PROBE_INTERVAL_MS = 5 * 60 * 1000;
 const TOPIC_PROBE_CHARS = 6_000;
 
 /** Per-session summary state: when it last ran and how far into the transcript. */
-export interface SessionSummaryState { at: number; offset: number }
+export interface SessionSummaryState {
+  at: number;
+  offset: number;
+  /** The note this session last wrote (follows the session across notes and projects). */
+  note?: string;
+}
 
 function sessionStateFile(): string {
   return paiHomePath("summary-sessions.json");
@@ -102,22 +111,30 @@ function saveSessionState(key: string, st: SessionSummaryState): void {
 
 /**
  * Decide whether a session needs a new summary. A final run (real session end)
- * always summarizes. Otherwise: at most once per `intervalMs`, and only when
- * at least MIN_NEW_TEXT_CHARS of new text arrived since the last offset.
+ * always summarizes. Otherwise, on a Stop between compacts:
+ *   - at least `minChars` (default 6000) of new conversation text since the last
+ *     summary, or
+ *   - at least `intervalMs` (default 10 min) since the last note write and a
+ *     little new text (`timeMinChars`).
  * `newTextChars` is evaluated lazily because it reads the transcript tail.
  */
 export function shouldSummarize(
   state: SessionSummaryState | undefined,
-  opts: { final?: boolean; force?: boolean; intervalMs: number; now?: number; newTextChars: () => number },
+  opts: {
+    final?: boolean; force?: boolean; intervalMs: number; now?: number; newTextChars: () => number;
+    minChars?: number; timeMinChars?: number;
+  },
 ): { run: boolean; reason: string } {
   if (opts.final) return { run: true, reason: "final" };
   if (opts.force) return { run: true, reason: "forced" };
   if (!state) return { run: true, reason: "first" };
   const age = (opts.now ?? Date.now()) - state.at;
-  if (age < opts.intervalMs) return { run: false, reason: `last summary ${Math.round(age / 1000)}s ago` };
   const n = opts.newTextChars();
-  if (n < MIN_NEW_TEXT_CHARS) return { run: false, reason: `only ${n} new chars` };
-  return { run: true, reason: `${n} new chars` };
+  if (n >= (opts.minChars ?? MIN_NEW_TEXT_CHARS)) return { run: true, reason: `${n} new chars` };
+  if (age >= opts.intervalMs && n >= (opts.timeMinChars ?? MIN_TIME_TRIGGER_CHARS)) {
+    return { run: true, reason: `${n} new chars, ${Math.round(age / 60_000)} min since last note write` };
+  }
+  return { run: false, reason: `only ${n} new chars, last summary ${Math.round(age / 1000)}s ago` };
 }
 
 /** Keep the newest `max` chars. */
@@ -750,9 +767,10 @@ export async function probeTopicShift(o: {
 // ---------------------------------------------------------------------------
 
 /** Topic of the session's current note (today's), or null. */
-function currentNoteTopic(cwd: string): string | null {
+function currentNoteTopic(cwd: string, sessionId?: string): string | null {
   try {
-    const p = getCurrentNotePath(findNotesDir(cwd).path);
+    const dir = findNotesDir(cwd).path;
+    const p = sessionId ? findNoteBySessionId(dir, sessionId) : getCurrentNotePath(dir);
     return p ? extractExistingNoteTitle(p) : null;
   } catch {
     return null;
@@ -794,6 +812,8 @@ function writeSessionNote(
   summaryText: string,
   filesModified: string[],
   sessionId?: string,
+  previousNote?: string,
+  userMessages: string[] = [],
 ): string | null {
   // Never create/update a note from a body-less summary — that is the born-stub
   // path (empty scaffold → stripped to a footer-only stub on finalize/rename).
@@ -805,23 +825,22 @@ function writeSessionNote(
   }
 
   const notesInfo = findNotesDir(cwd);
-  // Identity first: the note this session already owns. Falling back to the
-  // positional lookup only when there is no session id keeps older callers
-  // working, but the fallback is what used to create duplicates.
-  let notePath = (sessionId && findNoteBySessionId(notesInfo.path, sessionId))
-    || getCurrentNotePath(notesInfo.path);
-
   const today = new Date().toISOString().split("T")[0];
-
-  // Extract the new topic from the summarizer output
   const newTopic = extractTopic(summaryText);
 
-  if (notePath) {
-    const noteFilename = basename(notePath);
-    // Check if this note is from today
-    const dateMatch = noteFilename.match(/(\d{4}-\d{2}-\d{2})/);
-    const noteDate = dateMatch ? dateMatch[1] : "";
+  // Identity first: the note this session already owns. With a session id the
+  // positional lookup (numerically highest note) is never used: it is a position,
+  // not an identity, and handed one session another session's note.
+  const owned = sessionId ? findNoteBySessionId(notesInfo.path, sessionId) : null;
+  let notePath: string | null = owned ?? (sessionId ? null : getCurrentNotePath(notesInfo.path));
 
+  /** The note this session wrote before the one written now: closed and linked to it. */
+  let closeAfter: string | null = null;
+  /** True when the note was created or adopted now: it gets its conversation title (file name). */
+  let fresh = false;
+
+  if (notePath) {
+    const noteDate = basename(notePath).match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
     if (noteDate === today) {
       // Check for topic shift — two signals:
       // 1. TOPIC: line from summarizer vs existing note title (word overlap)
@@ -829,23 +848,18 @@ function writeSessionNote(
       const existingTitle = extractExistingNoteTitle(notePath);
       let topicShifted = false;
 
-      // Signal 1: summarizer topic vs existing note title
       if (newTopic && existingTitle) {
         const overlap = computeTopicOverlap(newTopic, existingTitle);
         process.stderr.write(
           `[session-summary] Topic overlap: ${(overlap * 100).toFixed(1)}%` +
           ` (new="${newTopic}", existing="${existingTitle}")\n`
         );
-
         if (overlap < TOPIC_OVERLAP_THRESHOLD) {
           topicShifted = true;
-          process.stderr.write(
-            `[session-summary] Topic shift detected (word overlap) — creating new note.\n`
-          );
+          process.stderr.write(`[session-summary] Topic shift detected (word overlap) — creating new note.\n`);
         }
       }
 
-      // Signal 2: topic boundary marker from topic-detect-worker
       if (!topicShifted) {
         const boundaryPath = join(notesInfo.path, "topic-boundary.json");
         if (existsSync(boundaryPath)) {
@@ -862,45 +876,110 @@ function writeSessionNote(
                 );
               }
             }
-            // Consume the boundary file (one-shot)
-            unlinkSync(boundaryPath);
+            unlinkSync(boundaryPath); // one-shot
           } catch { /* ignore invalid boundary file */ }
         }
       }
 
       if (topicShifted) {
-        // Different topic — create a NEW note (topic-based split)
-        notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId);
+        closeAfter = notePath;
+        notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId, undefined, userMessages);
+        fresh = true;
       } else {
-        // Same topic — update existing note
         updateNoteWithSummary(notePath, summaryText);
-        process.stderr.write(
-          `[session-summary] Updated existing note: ${noteFilename}\n`
-        );
+        process.stderr.write(`[session-summary] Updated existing note: ${basename(notePath)}\n`);
       }
     } else {
       // Different day — create a new note
-      notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId);
+      closeAfter = notePath;
+      notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId, undefined, userMessages);
+      fresh = true;
     }
   } else {
-    // No note exists — create one
-    notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId);
+    // The session owns no note here. The session-start hook left a stub for it:
+    // fill that in place instead of creating a second file beside it.
+    const stub = sessionId ? findUnclaimedStub(notesInfo.path) : null;
+    notePath = createNoteFromSummary(notesInfo.path, summaryText, sessionId, stub ?? undefined, userMessages);
+    fresh = true;
+    // Work moved here from another note (cwd change): that note is closed and linked.
+    if (previousNote && existsSync(previousNote) && previousNote !== notePath) closeAfter = previousNote;
   }
 
-  // Try to rename with a meaningful title from the summary
-  if (notePath) {
+  // A new note gets its conversation title as file name. Later updates keep the
+  // name: links between notes point at it.
+  if (notePath && fresh) {
     const title = noteRenameTitle(notePath, summaryText);
-    if (title) {
-      if (title.length > 5 && title.length < 80) {
-        const newPath = renameSessionNote(notePath, title);
-        if (newPath !== notePath) {
-          notePath = newPath;
-        }
-      }
+    if (title && title.length > 5 && title.length < 80) {
+      notePath = renameSessionNote(notePath, title);
     }
   }
 
+  if (notePath && closeAfter && closeAfter !== notePath) linkNotes(closeAfter, notePath);
+
   return notePath;
+}
+
+const noteStem = (p: string): string => basename(p).replace(/\.md$/, "");
+
+/**
+ * Close `prev` (this session moved on to `next`) and link both ways:
+ * prev gets Status Completed and "Continued in [[next]]", its session marker
+ * becomes an ended marker (it no longer owns the session); next gets "Continues
+ * from [[prev]]". Idempotent.
+ */
+export function linkNotes(prev: string, next: string): void {
+  try {
+    let p = readFileSync(prev, "utf-8");
+    const nextLink = `[[${noteStem(next)}]]`;
+    p = p.replace(/<!-- SESSION: (\S+) -->/g, "<!-- SESSION-ENDED: $1 -->");
+    p = p.replace("**Status:** In Progress", "**Status:** Completed");
+    if (!p.includes("**Completed:**")) p = p.replace(/^(\*\*Status:\*\* Completed)$/m, `$1\n**Completed:** ${new Date().toISOString()}`);
+    if (!p.includes(nextLink)) p = p.replace(/^(\*\*Status:\*\*.*(?:\n\*\*Completed:\*\*.*)?)$/m, `$1\n**Continued in:** ${nextLink}`);
+    if (!p.includes(nextLink)) p += `\n**Continued in:** ${nextLink}\n`;
+    writeFileSync(prev, p, "utf-8");
+
+    let n = readFileSync(next, "utf-8");
+    const prevLink = `[[${noteStem(prev)}]]`;
+    if (!n.includes(prevLink)) {
+      n = /^\*\*Status:\*\*.*$/m.test(n)
+        ? n.replace(/^(\*\*Status:\*\*.*)$/m, `$1\n**Continues from:** ${prevLink}`)
+        : n + `\n**Continues from:** ${prevLink}\n`;
+      writeFileSync(next, n, "utf-8");
+    }
+  } catch (e) {
+    process.stderr.write(`[session-summary] Could not link ${basename(prev)} → ${basename(next)}: ${e}\n`);
+  }
+}
+
+/** Month directories searched for a session's note: this month and the previous one. */
+function noteMonthDirs(notesDir: string): string[] {
+  const now = new Date();
+  return [0, -1].map((delta) => {
+    const d = new Date(now.getFullYear(), now.getMonth() + delta, 1);
+    return join(notesDir, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, "0"));
+  });
+}
+
+/**
+ * The session-start stub nobody has claimed: a "New Session" note without a
+ * session marker. The newest one wins.
+ */
+function findUnclaimedStub(notesDir: string): string | null {
+  let best: { path: string; num: number } | null = null;
+  for (const dir of noteMonthDirs(notesDir)) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      const m = f.match(/^(\d{3,4}) - .* - New Session\.md$/);
+      if (!m) continue;
+      const p = join(dir, f);
+      try {
+        if (/<!-- SESSION(-ENDED)?: /.test(readFileSync(p, "utf-8"))) continue;
+      } catch { continue; }
+      const num = Number(m[1]);
+      if (!best || num > best.num) best = { path: p, num };
+    }
+  }
+  return best?.path ?? null;
 }
 
 /**
@@ -992,35 +1071,32 @@ function updateNoteWithSummary(notePath: string, summaryText: string): void {
 function findNoteBySessionId(notesDir: string, sessionId: string): string | null {
   if (!sessionId || !existsSync(notesDir)) return null;
   const marker = `<!-- SESSION: ${sessionId} -->`;
-
-  const now = new Date();
-  const dirs = [0, -1].map((delta) => {
-    const d = new Date(now.getFullYear(), now.getMonth() + delta, 1);
-    return join(notesDir, String(d.getFullYear()),
-                String(d.getMonth() + 1).padStart(2, "0"));
-  });
-
-  for (const dir of dirs) {
+  let best: { path: string; num: number } | null = null;
+  for (const dir of noteMonthDirs(notesDir)) {
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".md")) continue;
       const p = join(dir, f);
       try {
-        if (readFileSync(p, "utf-8").includes(marker)) return p;
+        if (!readFileSync(p, "utf-8").includes(marker)) continue;
+        const num = Number(f.match(/^(\d+)/)?.[1] ?? 0);
+        if (!best || num > best.num) best = { path: p, num };
       } catch { /* unreadable file is not a match */ }
     }
   }
-  return null;
+  return best?.path ?? null;
 }
 
 function createNoteFromSummary(
   notesDir: string,
   summaryText: string,
   sessionId?: string,
+  /** An existing stub to fill in place instead of creating a new file. */
+  stubPath?: string,
+  userMessages: string[] = [],
 ): string | null {
   try {
-    // Create the note with a placeholder title
-    const notePath = createSessionNote(notesDir, "New Session");
+    const notePath = stubPath ?? createSessionNote(notesDir, "New Session");
 
     // We will overwrite the entire content with the AI-generated summary, preserving
     // the note number (derived from the filename) and adding the standard footer.
@@ -1049,6 +1125,10 @@ function createNoteFromSummary(
 
     // The session marker is what later checkpoints of THIS session match on to
     // find and update this note rather than creating another one beside it.
+    // What the user asked for: context a new note starts with, so it is not only the model's summary.
+    const asked = userMessages.slice(-6).map((m) => `- ${m.replace(/\s+/g, " ").trim().slice(0, 200)}`);
+    const requests = asked.length ? `\n## User Requests\n\n${asked.join("\n")}\n` : "";
+
     const finalContent = `# Session ${noteNumber}: ${title}
 ${topic ? `<!-- TOPIC: ${topic} -->` : ""}${sessionId ? `\n<!-- SESSION: ${sessionId} -->` : ""}
 
@@ -1058,7 +1138,7 @@ ${topic ? `<!-- TOPIC: ${topic} -->` : ""}${sessionId ? `\n<!-- SESSION: ${sessi
 ---
 
 ${aiBody}
-
+${requests}
 ---
 
 ## Next Steps
@@ -1204,7 +1284,9 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // force=true bypasses the cooldown (used by stop-hook at session end so a
   // final summary is always produced regardless of recent PreCompact runs).
   // -------------------------------------------------------------------------
-  const onCooldown = !force && !final && isOnCooldown(cwd);
+  // The per-project cooldown is the legacy debounce for payloads without a session id;
+  // a session is debounced by its own state (chars / minutes, see shouldSummarize).
+  const onCooldown = !sessionId && !force && !final && isOnCooldown(cwd);
 
   // -------------------------------------------------------------------------
   // Step 1: Find the JSONL transcript
@@ -1261,12 +1343,16 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   const stateKey = sessionId ?? jsonlPath;
   const prevState = loadSessionStates()[stateKey];
   const cfgMin = (daemonConfig as { session_summary_interval_minutes?: number } | undefined)?.session_summary_interval_minutes;
-  const intervalMs = (typeof cfgMin === "number" && cfgMin >= 0 ? cfgMin : 30) * 60 * 1000;
+  const intervalMs = (typeof cfgMin === "number" && cfgMin >= 0 ? cfgMin : DEFAULT_INTERVAL_MINUTES) * 60 * 1000;
+  const cfgChars = (daemonConfig as { session_summary_min_chars?: number } | undefined)?.session_summary_min_chars;
+  const minChars = typeof cfgChars === "number" && cfgChars >= 0 ? cfgChars : MIN_NEW_TEXT_CHARS;
   const fromOffset = prevState?.offset ?? 0;
   const gate = shouldSummarize(prevState, {
     final,
-    force,
+    // `force` (set by the Stop hook) only skips the legacy cooldown; it must not
+    // bypass the chars/minutes gate, or every Stop would summarize.
     intervalMs,
+    minChars,
     newTextChars: () => extractFromJsonl(jsonlPath!, selectedModel, fromOffset).textChars,
   });
   let runReason = gate.reason;
@@ -1277,7 +1363,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
       key: stateKey,
       jsonlPath,
       fromOffset,
-      currentTopic: currentNoteTopic(cwd),
+      currentTopic: currentNoteTopic(cwd, sessionId),
     });
     if (probe.reason !== "probe rate limit") process.stderr.write(`[session-summary] Topic probe ${stateKey}: ${probe.reason}.\n`);
     if (!probe.shifted) {
@@ -1291,11 +1377,12 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // A transcript with fewer than 2 real user messages is not a session worth
   // summarizing (a daemon LLM run, a one-shot probe, a stub). Summarizing one
   // spends a model slot for nothing.
-  if (extracted.userMessages.length < 2) {
+  // An already-summarized session continues with whatever new messages arrive.
+  if (extracted.userMessages.length < (prevState ? 1 : 2)) {
     process.stderr.write(
       `[session-summary] Fewer than 2 user messages (${extracted.userMessages.length}) in transcript — skipping.\n`
     );
-    if (prevState) saveSessionState(stateKey, { at: Date.now(), offset: extracted.endOffset });
+    if (prevState) saveSessionState(stateKey, { ...prevState, at: Date.now(), offset: extracted.endOffset });
     return;
   }
 
@@ -1322,7 +1409,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
 
   // Check for existing note to merge with
   const notesInfo = findNotesDir(cwd);
-  const existingNotePath = getCurrentNotePath(notesInfo.path);
+  const existingNotePath = sessionId ? findNoteBySessionId(notesInfo.path, sessionId) : getCurrentNotePath(notesInfo.path);
   let existingNote: string | undefined;
 
   if (existingNotePath) {
@@ -1361,7 +1448,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
     // Don't throw — this is a soft failure. The existing PreCompact checkpoint
     // is sufficient. Just mark the cooldown so we don't retry too soon.
     markCooldown(cwd);
-    saveSessionState(stateKey, { at: Date.now(), offset: fromOffset });
+    saveSessionState(stateKey, { ...prevState, at: Date.now(), offset: fromOffset });
     return;
   }
 
@@ -1372,7 +1459,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // -------------------------------------------------------------------------
   // Step 5: Write the session note
   // -------------------------------------------------------------------------
-  const notePath = writeSessionNote(cwd, summaryText, extracted.filesModified, sessionId);
+  const notePath = writeSessionNote(cwd, summaryText, extracted.filesModified, sessionId, prevState?.note, extracted.userMessages);
 
   if (notePath) {
     process.stderr.write(
@@ -1400,7 +1487,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
 
   // Mark cooldown
   markCooldown(cwd);
-  saveSessionState(stateKey, { at: Date.now(), offset: extracted.endOffset });
+  saveSessionState(stateKey, { at: Date.now(), offset: extracted.endOffset, note: notePath ?? prevState?.note });
 
   process.stderr.write("[session-summary] Done.\n");
 }
