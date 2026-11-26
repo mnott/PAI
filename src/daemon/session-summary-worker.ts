@@ -630,7 +630,7 @@ function extractExistingNoteTitle(notePath: string): string | null {
  * Uses lowercased, normalized words. Stop words and very short words
  * are excluded to avoid false positives on common terms.
  */
-function computeTopicOverlap(topicA: string, topicB: string): number {
+export function computeTopicOverlap(topicA: string, topicB: string): number {
   const stopWords = new Set([
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
     "of", "with", "by", "from", "is", "was", "are", "were", "be", "been",
@@ -668,7 +668,7 @@ function computeTopicOverlap(topicA: string, topicB: string): number {
 // to trigger a split. 0.3 was too aggressive: incremental work on the same project
 // (e.g., "Flutter Rewrite" vs "Fix Transcription in Flutter") was splitting into
 // separate notes on every compaction.
-const TOPIC_OVERLAP_THRESHOLD = 0.15;
+export const TOPIC_OVERLAP_THRESHOLD = 0.15;
 
 // ---------------------------------------------------------------------------
 // Topic probe between debounced summaries
