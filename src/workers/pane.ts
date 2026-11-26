@@ -1068,6 +1068,8 @@ export interface HostDeps {
   commandsOf(pids: number[]): Map<number, string>;
   /** Every open iTerm session. Empty when iTerm is not running; rejects when the listing fails. */
   listSessions(): Promise<ItermSession[]>;
+  /** Pause between listing attempts (tests inject a no-op). */
+  sleep?(ms: number): Promise<void>;
   /** Pids of `claude attach <id>` client processes for a Claude session (short or full id). */
   attachClients?(cid: string): number[];
   /** Clients of the Claude daemon that runs this session (processes connected to its control.sock, helpers excluded), newest started first; tty as ps prints it. Several means the daemon cannot say which shows the session. */
@@ -1317,8 +1319,19 @@ export async function resolveHostSession(
 ): Promise<HostSession> {
   let sessions: ItermSession[] = [];
   let listFail = "";
+  // a failed listing is not "no live session": parallel starts make osascript time out in turns
+  // (2026-11-26: a detached start read it as "ITERM_SESSION_ID ... is not a live iTerm2 session"), so retry before giving up
+  const pause = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   try {
-    sessions = await deps.listSessions();
+    for (let n = 0; ; n++) {
+      try {
+        sessions = await deps.listSessions();
+        break;
+      } catch (e) {
+        if (n >= 3) throw e;
+        await pause(1000 * 2 ** n + Math.floor(Math.random() * 500));
+      }
+    }
   } catch (e) {
     listFail = `session listing failed: ${(e as Error).message?.trim().split("\n")[0] ?? e}`;
   }

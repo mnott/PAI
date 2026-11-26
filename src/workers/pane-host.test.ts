@@ -112,6 +112,21 @@ describe("callerIdentity term resolution", () => {
 });
 
 describe("start failures are visible (2026-11-26 detached starts)", () => {
+  it("resolveHostSession retries a failed session listing instead of reading it as no live session", async () => {
+    let calls = 0;
+    const d: HostDeps = {
+      ...deps,
+      sleep: async () => undefined,
+      listSessions: async () => {
+        if (++calls <= 2) throw new Error("osascript timed out after 5000 ms");
+        return [{ id: "MINE", tty: "/dev/ttys014", jobPid: 200 }];
+      },
+    };
+    const h = await resolveHostSession({}, d, 300);
+    expect(calls).toBe(3);
+    expect(h.uid).toBe("MINE");
+  });
+
   it("recordStartFailure keeps the error in status and <id>.log; supervision quotes it", async () => {
     const { mkdtempSync, readFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
