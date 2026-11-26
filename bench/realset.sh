@@ -2,7 +2,7 @@
 # Real-task set for a cloud model: one worker per PAI task in a throwaway clone, hidden tests judge it (escalation off).
 # Usage: realset.sh <provider> <model|-> <rep> [key]   -> results/real/<key>/rep<rep>.json, label <key>-rep<rep>
 set -u
-. "$(dirname "$0")/lib.sh"; . "$(dirname "$0")/config.sh"; . "$(dirname "$0")/instrument.sh"; . "$(dirname "$0")/recover.sh"   # BENCH = this dir (tasks/ = the real tasks), mktree, runtests, write_bench_config, recover_real_rep
+. "$(dirname "$0")/lib.sh"; . "$(dirname "$0")/config.sh"; . "$(dirname "$0")/instrument.sh"   # BENCH = this dir (tasks/ = the real tasks), mktree, runtests, write_bench_config
 provider=${1:?provider} model=${2:?model or -} rep=${3:?rep}
 if [ -n "${4:-}" ]; then key=$4; elif [ "$model" = - ]; then key=$provider; else key=$provider-$model; fi
 label=$key-rep$rep
@@ -31,12 +31,7 @@ for t in $TASKS; do
     '{task:$t, ok:$ok, wall_s:$s, worker_rc:$rc, is_error:(.is_error//null), instrument_fault:(if $inst=="unknown" then (if ((.result//"")|test("<tool_call>[\\s\\S]{0,200}?(<parameter=|</function>)")) then "malformed-tool-call" else null end) elif $inst=="" then null else $inst end), duration_ms, ttft_ms, output_tokens:(.usage.output_tokens//null), num_turns, cost_usd:.total_cost_usd}' "$log.worker.json" 2>/dev/null) \
     || row="{\"task\":\"$t\",\"ok\":$ok,\"wall_s\":$secs,\"worker_rc\":$wrc,\"is_error\":true}"
   [ -n "$row" ] || row="{\"task\":\"$t\",\"ok\":$ok,\"wall_s\":$secs,\"worker_rc\":$wrc,\"is_error\":true}"
-  rows+=("$row")
-  # per-task checkpoint: a series killed mid-run (watchdog, engine stall) must still be gradeable from
-  # what this loop already wrote in the work dir — never discard finished tasks (fault 2026-11-26 dualA)
-  printf '%s\n' "${rows[@]}" | jq -s --arg m "$key" --argjson rep "$rep" --arg err "in-progress" '
-    {set:"real", model:$m, rep:$rep, status:"in-progress", graded:true, n:length, passed:(map(select(.ok))|length), tasks:.}' > "$out/rep$rep.json.tmp" && mv -f "$out/rep$rep.json.tmp" "$out/rep$rep.json"
-  rm -rf "$TREE"
+  rows+=("$row"); rm -rf "$TREE"
 done
 printf '%s\n' "${rows[@]}" | jq -s --arg m "$key" --argjson rep "$rep" --argjson wall $(( $(date +%s) - t00 )) --arg cg "${BENCH_CODE_GRAPH:-}" '
   {set:"real", model:$m, rep:$rep, wall_s:$wall, n:length, passed:(map(select(.ok))|length),
