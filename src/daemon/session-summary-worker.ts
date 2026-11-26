@@ -504,6 +504,14 @@ function configuredSummaryModel(): string | undefined {
  *   - haiku: fallback / budget mode
  * Returns the generated text, or null if spawning fails.
  */
+type SummarizerFn = (prompt: string, tier: ModelTier, modelSpec?: string) => Promise<string | null>;
+let summarizerOverride: SummarizerFn | null = null;
+
+/** Test seam: replace the summary model call (null restores the real one). */
+export function setSummarizerForTests(fn: SummarizerFn | null): void {
+  summarizerOverride = fn;
+}
+
 export async function spawnSummarizer(prompt: string, tier: ModelTier = "sonnet", modelSpec?: string): Promise<string | null> {
   const claudeBin = findClaudeBinary();
   if (!claudeBin) {
@@ -723,7 +731,7 @@ export async function probeTopicShift(o: {
   if (!answer?.trim()) {
     // the helper chain is empty or down (no apple-fm on Linux): the summary model answers the same prompt
     try {
-      answer = await (o.fallback ?? ((p) => spawnSummarizer(p, "haiku")))(`${task}\n\n${input}`);
+      answer = await (o.fallback ?? ((p) => (summarizerOverride ?? spawnSummarizer)(p, "haiku")))(`${task}\n\n${input}`);
     } catch {
       answer = null;
     }
@@ -1344,7 +1352,7 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
     `(session=${stateKey} ${runReason} offset=${fromOffset}->${extracted.endOffset})...\n`
   );
 
-  const summaryText = await spawnSummarizer(prompt, selectedModel, configuredSummaryModel());
+  const summaryText = await (summarizerOverride ?? spawnSummarizer)(prompt, selectedModel, configuredSummaryModel());
 
   if (!summaryText) {
     process.stderr.write(

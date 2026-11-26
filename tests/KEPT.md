@@ -90,3 +90,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/bench/recover.test.ts | a | fault 2026-11-26 night series h2h-g2-dualA/B: watchdog stopped a real rep after finished tasks and wrote an empty tasks list (0/5 although 3 tasks had hidden-test logs); pins recover_real_rep grading finished/interrupted/not-run tasks from the work dir |
 | src/workers/merge-tests.test.ts | a | merge verify runner detection (pubspec/flutter/dart) regression guard |
 | src/session/checkpoint-block.test.ts | a | Continue handover truncation regression 2026-11-26: a 6000-char previous Continue must survive an auto checkpoint |
+| src/daemon/session-lifecycle.harness.test.ts | a | session-note lifecycle (start/name/periodic/topic split+links/cwd move/compact/end) and seeded stress invariants; guards APPS/PAI#35 root-cause fixes |
