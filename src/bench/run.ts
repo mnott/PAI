@@ -141,7 +141,11 @@ export const MAX_CONSECUTIVE_STOPS = 3;
  */
 export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key" | "codeGraph">, benchDir: string, set: string, rep: number, v: Verdict, secs: number): void {
   const res = join(o.dir, "results", set, o.key, `rep${rep}.json`);
-  if (existsSync(res)) return;
+  // A finished rep's own summary file stands (writeFailedResult's rule). But a killed real series left an
+  // in-progress checkpoint at the same path: it is not a verdict, so a stopped rep must still be graded
+  // from the work dir and overwrite it (fault 2026-11-26 dualA: watchdog fired after the engine stalled).
+  const stale = existsSync(res) ? JSON.parse(readFileSync(res, "utf8")) : null;
+  if (stale && stale.status !== "in-progress") return;
   mkdirSync(join(o.dir, "results", set, o.key), { recursive: true });
   const error = `watchdog-stopped: ${v.reason} ${v.detail}`;
   if (set !== "real") {
@@ -152,6 +156,18 @@ export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key" | "codeGr
       writeFileSync(res, JSON.stringify({ ...r, status: "stopped", error, ...(o.codeGraph ? { code_graph: o.codeGraph } : {}) }, null, 1));
       return;
     }
+  }
+  if (set === "real") {
+    // A stopped real series must not discard finished tasks (fault 2026-11-26 dualA: watchdog fired after
+    // the engine stalled and the rep read 0/5 although three tasks had already passed their hidden tests).
+    // The per-task checkpoint realset.sh writes after every task is authoritative; if it is missing or was
+    // never advanced, recover_real_rep grades from the work dir (tests.log = finished, worker.json = interrupted).
+    const label = `${o.key}-rep${rep}`;
+    const work = join(o.dir, "work", "real", label);
+    // everything travels as argv / env, never interpolated into the script text: $, backticks and \ in a
+    // path or error message must not be executed (review 2026-11-26). recover.sh reads TASKS from the env.
+    const g = spawnSync("bash", ["-c", '. "$1"; shift; recover_real_rep "$@"', "recover", join(benchDir, "recover.sh"), join(o.dir, "results", "real", o.key), o.key, String(rep), work, label, error], { stdio: "ignore", env: { ...process.env, TASKS: process.env.TASKS ?? "" } });
+    if (g.status === 0 && existsSync(res)) return; // graded from the checkpoint / work dir
   }
   const tasksDir = join(benchDir, "tasks");
   const n = set === "real" && existsSync(tasksDir) ? readdirSync(tasksDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
