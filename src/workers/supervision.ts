@@ -303,6 +303,9 @@ export function escalationClause(s: WorkerStatus, statuses: WorkerStatus[]): str
       const where = cont.provider ?? "the cloud";
       return `escalating to ${where} as ${to} (same branch) - wait for it, do not restart`;
     }
+    // a continuation that finished clean did the work: say so, not "gone" (2026-11-26: a committed
+    // continuation read as gone and L0 restarted the task)
+    if (cont && cont.state === "done" && (cont.rc ?? 0) === 0) return `no escalation: continuation ${to} finished`;
     return `no escalation: continuation ${to} is gone`;
   }
   if (s.escalated) return `no escalation: ${s.escalated.slice(0, 120)}`;
