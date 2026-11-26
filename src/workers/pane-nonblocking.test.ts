@@ -2,7 +2,7 @@
  * pane-nonblocking.test.ts — the daemon's pane tasks never hold the event loop on an external call:
  * a fake `ps` / `osascript` / `pgrep` that sleeps 10 s is killed at its limit while a loop timer keeps firing.
  */
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +16,10 @@ vi.mock("node:child_process", async (orig) => {
 });
 import { closeEndedPanes, paneMayClose, saveEntry } from "./pane.js";
 import { psTableAsync } from "./ps-table.js";
+import { retryPaneOpen, withPaneOpenLock } from "./pane-open-lock.js";
+import { requireVisiblePane } from "./run/pane-handles.js";
+import * as paneLaunch from "./pane-launch.js";
+vi.mock("./pane-launch.js", async (orig) => ({ ...(await orig<typeof import("./pane-launch.js")>()), launchPane: vi.fn() }));
 import { osascriptJxa } from "./pane.js";
 import { ownsPidAsync, ownsPidCachedAsync, type WorkerStatus } from "./status.js";
 import { detectSupervisionEvents, type SupervisionEvent } from "./supervision.js";
@@ -155,5 +159,51 @@ describe("the pane reaper tick runs no synchronous child process", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("pane open: lock + retry on osascript timeouts, paneless when it never opens", () => {
+  const fake = (body: string): void => {
+    writeFileSync(join(bin, "osascript"), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(bin, "osascript"), 0o755);
+  };
+  const deps = { timeouts: [300, 300, 300], backoffMs: 1 };
+
+  it("an osascript that times out once is retried and the open succeeds", async () => {
+    const mark = join(bin, "seen");
+    fake(`if [ -e "${mark}" ]; then echo ok; exit 0; fi\ntouch "${mark}"\nexec sleep 10`);
+    const logDir = mkdtempSync(join(tmpdir(), "open-log-"));
+    const r = await retryPaneOpen(logDir, async () => (await osascriptJxa("1", [])).stdout.trim(), deps);
+    expect(r).toBe("ok");
+    expect(existsSync(join(logDir, "pane-open.lock"))).toBe(false);
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  it("an osascript that always times out: 3 tries then the timeout propagates; the start goes paneless", async () => {
+    fake("exec sleep 10");
+    const logDir = mkdtempSync(join(tmpdir(), "open-log-"));
+    let n = 0;
+    await expect(retryPaneOpen(logDir, async () => { n++; await osascriptJxa("1", []); }, deps)).rejects.toThrow(/timed out/);
+    expect(n).toBe(3);
+    rmSync(logDir, { recursive: true, force: true });
+  }, 60_000);
+
+  it("requireVisiblePane returns false and records why when every open times out", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "open-log-"));
+    vi.mocked(paneLaunch.launchPane).mockRejectedValue(new Error("osascript timed out after 5000 ms"));
+    const ok = await requireVisiblePane(logDir, { panes: { required: true } } as never, "w-test", "term", undefined, false, join(logDir, "ledger.jsonl"), false, {});
+    expect(ok).toBe(false);
+    expect(paneLaunch.noTerminalReasons.get("w-test")).toMatch(/paneless/);
+
+    rmSync(logDir, { recursive: true, force: true });
+  }, 60_000);
+
+  it("a stale lock (dead pid) is taken over; a live fresh one is waited out then ignored", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "open-log-"));
+    writeFileSync(join(logDir, "pane-open.lock"), JSON.stringify({ pid: 2 ** 22 + 12345, at: Date.now() }));
+    expect(await withPaneOpenLock(logDir, async () => "got")).toBe("got");
+    writeFileSync(join(logDir, "pane-open.lock"), JSON.stringify({ pid: process.pid, at: Date.now() }));
+    expect(await withPaneOpenLock(logDir, async () => "got2", { waitMs: 300 })).toBe("got2");
+    rmSync(logDir, { recursive: true, force: true });
   });
 });
