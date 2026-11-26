@@ -378,6 +378,27 @@ function emitEvent(onEvent: (e: StreamEvent) => void, line: string): void {
   }
 }
 
+/**
+ * Fold a continuation's result into the run's result so the printed stats cover the whole run: turns, duration,
+ * cost and usage are summed (each resumed invocation reports only its own), the answer text is the latest one.
+ */
+export function foldContinuationResult(base: StreamEvent, cont: StreamEvent): void {
+  const b = base as Record<string, unknown>;
+  const c = cont as Record<string, unknown>;
+  for (const k of ["num_turns", "duration_ms", "duration_api_ms", "total_cost_usd"]) {
+    if (typeof c[k] === "number") b[k] = (typeof b[k] === "number" ? (b[k] as number) : 0) + (c[k] as number);
+  }
+  if (cont.usage) {
+    const u: Record<string, unknown> = { ...(base.usage ?? {}) };
+    for (const [k, v] of Object.entries(cont.usage as Record<string, unknown>)) {
+      if (typeof v === "number") u[k] = (typeof u[k] === "number" ? (u[k] as number) : 0) + v;
+    }
+    base.usage = u as StreamEvent["usage"];
+  }
+  if (typeof cont.result === "string" && cont.result) base.result = cont.result;
+  if (cont.is_error !== undefined) base.is_error = cont.is_error;
+}
+
 export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
   let cmd: string[] = [...(a.claudeCmd ?? ["claude"])];
   cmd.push(...modelFlagArgs(true, a.model, a.callerPinnedModel));

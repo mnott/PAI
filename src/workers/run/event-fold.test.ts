@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loopStopResult } from "./finalise.js";
+import { loopStopResult, foldContinuationResult } from "./finalise.js";
+import type { StreamEvent } from "./types.js";
 import { createResultFold, finalResultEvent, type StreamEventLike } from "./event-fold.js";
 import { preEventFailure } from "./pane-handles.js";
 
@@ -147,5 +148,20 @@ describe("preEventFailure summary", () => {
     const dir = mkdtempSync(join(tmpdir(), "prefail-kill2-"));
     writeFileSync(join(dir, "w2.kill"), JSON.stringify({ ts: "t", by: "pane audit", pid: 1, ppid: 2, cwd: "/" }));
     expect(preEventFailure(143, 0, CONNECTORS_WARNING, dir, "w2")).toBe("stopped by pane audit before its first model turn");
+  });
+});
+
+describe("foldContinuationResult", () => {
+  it("sums turns, tokens, duration and cost over the first run and its continuations; the answer is the latest", () => {
+    const base: StreamEvent = { type: "result", num_turns: 1, duration_ms: 6414, result: "first", usage: { input_tokens: 1, output_tokens: 10 } };
+    (base as Record<string, unknown>).total_cost_usd = 0.03;
+    foldContinuationResult(base, { type: "result", num_turns: 2, duration_ms: 5210, result: "second", usage: { input_tokens: 2, output_tokens: 70 } });
+    foldContinuationResult(base, { type: "result", num_turns: 45, duration_ms: 687960, result: "All 40 files written", usage: { input_tokens: 5, output_tokens: 9396 }, total_cost_usd: 0.5 } as StreamEvent);
+    expect(base.num_turns).toBe(48);
+    expect(base.duration_ms).toBe(699584);
+    expect(base.usage?.output_tokens).toBe(9476);
+    expect(base.usage?.input_tokens).toBe(8);
+    expect((base as Record<string, unknown>).total_cost_usd).toBeCloseTo(0.53);
+    expect(base.result).toBe("All 40 files written");
   });
 });

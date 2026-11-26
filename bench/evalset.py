@@ -23,6 +23,50 @@ def prep(s, d):
             f.write(json.dumps({k: t[k] for k in keep}) + "\n")
 
 
+def whole_run(w, logdir=None):
+    """Older PAI printed only the first result of a run that continued (announced-action / unparsed-call restarts).
+    Sum every result line of the run's own event log (worker_ids) so turns/tokens/duration cover the whole run."""
+    logdir = logdir or os.path.expanduser("~/.pai/logs/workers")
+    tot = {"num_turns": 0, "duration_ms": 0, "total_cost_usd": 0.0}
+    usage, n, last = {}, 0, None
+    for wid in w.get("worker_ids") or ([w["worker_id"]] if w.get("worker_id") else []):
+        try:
+            lines = open(os.path.join(logdir, wid + ".jsonl"), errors="replace").read().splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            if '"type":"result"' not in ln:
+                continue
+            try:
+                e = json.loads(ln)
+            except ValueError:
+                continue
+            if e.get("type") != "result" or e.get("num_turns") == 0:
+                continue
+            n += 1
+            last = e
+            for k in tot:
+                tot[k] += e.get(k) or 0
+            for k, v in (e.get("usage") or {}).items():
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    usage[k] = usage.get(k, 0) + v
+    if n < 2:
+        # the continuation's result never reached the event log: the run's own status still counts every turn
+        for wid in w.get("worker_ids") or ([w["worker_id"]] if w.get("worker_id") else []):
+            try:
+                t = json.load(open(os.path.join(logdir, wid + ".status"))).get("turns")
+            except (OSError, ValueError):
+                continue
+            if isinstance(t, int) and t > (w.get("num_turns") or 0):
+                w = dict(w, num_turns=t)
+        return w
+    r = dict(w, usage=dict(w.get("usage") or {}, **usage), **tot)
+    if isinstance(last.get("result"), str):
+        r["result"] = last["result"]
+    r["is_error"] = last.get("is_error", r.get("is_error"))
+    return r
+
+
 def grade(s, d, res, key, rep, wall, wrc, wjson, inst="unknown"):
     from codeeval import run_tests, extract
     tasks, rows = load(s), []
@@ -53,6 +97,7 @@ def grade(s, d, res, key, rep, wall, wrc, wjson, inst="unknown"):
         w = json.load(open(wjson))
     except Exception:
         w = {}
+    w = whole_run(w)
     u = w.get("usage") or {}
     out_tok, dur = u.get("output_tokens"), w.get("duration_ms")
     ntp = sum(r["ok"] for r in rows)
