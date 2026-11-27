@@ -2112,6 +2112,8 @@ async function mergeWorkerInner(
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   markSuperseded(logDir, st);
+  const orphans = unmergedChildren(logDir, id);
+  if (orphans.length) console.log(`${orphans.length} children not merged: ${orphans.join(", ")} — merge them next`);
   invalidatePendingCache(logDir, st.cwd);
   const base = `merged ${st.branch} into ${st.cwd} (${
     live
