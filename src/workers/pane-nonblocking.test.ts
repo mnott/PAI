@@ -207,3 +207,32 @@ describe("pane open: lock + retry on osascript timeouts, paneless when it never 
     rmSync(logDir, { recursive: true, force: true });
   });
 });
+
+describe("a pane failure never refuses a start", () => {
+  it("an unverifiable pane (launchPane null, PaneUnverified reason) runs paneless", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "open-log-"));
+    vi.mocked(paneLaunch.launchPane).mockImplementation(async (o) => {
+      paneLaunch.noTerminalReasons.set(o.id, "pane unavailable, running headless: pane verification failed: pane for w-x already open");
+      return null;
+    });
+    const ok = await requireVisiblePane(logDir, { panes: { required: true } } as never, "w-x", "term", undefined, false, join(logDir, "ledger.jsonl"), false, {});
+    expect(ok).toBe(false);
+    rmSync(logDir, { recursive: true, force: true });
+  });
+  it("an unexpected open error also runs paneless", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "open-log-"));
+    vi.mocked(paneLaunch.launchPane).mockRejectedValue(new Error("pane verification failed: pane for w-y already open"));
+    const ok = await requireVisiblePane(logDir, { panes: { required: true } } as never, "w-y", "term", undefined, false, join(logDir, "ledger.jsonl"), false, {});
+    expect(ok).toBe(false);
+    rmSync(logDir, { recursive: true, force: true });
+  });
+  it("a retry after a timed-out open closes the half-opened pane first", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "open-log-"));
+    const { openPane } = await import("./run/pane-handles.js");
+    let n = 0;
+    const launch = vi.fn(async () => { if (n++ === 0) throw new Error("osascript timed out after 5000 ms"); return null; });
+    await openPane({ logDir, config: {} as never, id: "w-z", kind: "worker", term: "t" }, launch as never);
+    expect(launch).toHaveBeenCalledTimes(2);
+    rmSync(logDir, { recursive: true, force: true });
+  }, 30_000);
+});
