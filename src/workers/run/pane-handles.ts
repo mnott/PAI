@@ -13,7 +13,7 @@ import { saveStatus, type WorkerStatus } from "../status.js";
 import { closePaneForWorker, frontmostItermSession, headlessAllowed, resolveHostSession } from "../pane.js";
 import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
-import { isOsascriptTimeout, retryPaneOpen } from "../pane-open-lock.js";
+import { isOsascriptTimeout, markPaneOpenWaiting, retryPaneOpen } from "../pane-open-lock.js";
 import { type OwnedPane } from "../pane-exec.js";
 import { type StatusLineSpec } from "../pane-bar.js";
 import { stripApiKey } from "../strip-api-key.js";
@@ -21,12 +21,14 @@ import { stripApiKey } from "../strip-api-key.js";
 /** launchPane serialized across processes by the pane-open lock, retried on osascript timeouts (5/10/20 s). `launch` is a test seam. */
 export function openPane(o: Parameters<typeof launchPane>[0], launch: typeof launchPane = launchPane): Promise<OwnedPane | null> {
   let attempt = 0;
+  // queued behind the pane-open lock the run has no launch record yet: the marker keeps the pane audit from stopping it as unlaunched
+  const unmark = markPaneOpenWaiting(o.logDir, o.id);
   return retryPaneOpen(o.logDir, async () => {
     // a timed-out attempt may still have opened its pane in iTerm: close it before the retry, or the retry
     // finds `pane exec <id>` running and reports "already open" (2026-11-27)
     if (attempt++ > 0) await closePaneForWorker(o.logDir, o.id).catch(() => false);
     return launch(o);
-  });
+  }).finally(unmark);
 }
 
 /** The panes opened FIRST for the runs of this process, per worker id, until the run's command starts in them. */

@@ -17,10 +17,10 @@ import { join } from "node:path";
 import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptListing, saveEntry, type PaneEntry } from "./pane.js";
 import { readWorkersSection } from "./config.js";
 import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
+import { paneOpenWaiting } from "./pane-open-lock.js";
 import { itermUuid, scopeKey } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { killTree } from "./kill-tree.js";
 import { appendStopEvent, requestKill } from "./endreason.js";
 import { loadRecentStatusesCached, loadLiveStatusesCached, loadStatus, refreshCachedStatus, isLive, isLiveAsync, isChatPane, ownsPid, ownsPidCached, ownsPidCachedAsync, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
@@ -166,7 +166,7 @@ export async function runningProcsAsync(logDir: string, nowMs = Date.now()): Pro
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
     if (s.rerouted && s.fallThroughTo) continue;
     const r = launches.get(s.id);
-    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), ...(r ? { launchMs: Math.max(r.openedMs ?? 0, r.startedMs) } : {}), ...(r && (pidAlive(r.wrapper) || pidAlive(r.caller)) ? { launching: true } : {}), live: await isLiveAsync(s, ownsPidCachedAsync), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
+    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), ...(r ? { launchMs: Math.max(r.openedMs ?? 0, r.startedMs) } : {}), ...((r && (pidAlive(r.wrapper) || pidAlive(r.caller))) || paneOpenWaiting(logDir, s.id, nowMs) ? { launching: true } : {}), live: await isLiveAsync(s, ownsPidCachedAsync), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
   for (const p of loadPaneRunStatuses(logDir)) if (p.state === "running" || !(p.startedMs < nowMs - AUDIT_RECENT_MS)) procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs, ended: p.state !== "running" });
@@ -280,7 +280,7 @@ export async function auditTick(
     /** The pane session a worker itself recorded (status.pane.session, else its pane-exec launch record), "" when none. */
     ownSession?: (wid: string) => string;
     /** Stops a worker through the normal end path (kill-tree: SIGTERM, the runner salvages and ends). */
-    stop?: (wid: string, why: string) => Promise<unknown>;
+    follow?: (wid: string, why: string) => Promise<unknown>;
     /** Opens a new follow pane for a running worker whose pane vanished; rejects when it cannot (default: split in a live host tab). */
     reopen?: (wid: string, v: PaneVerdict, tabs: TabMap) => Promise<unknown>;
     /** Liveness of the pane launcher's processes (its wrapper and caller): a live one means its pane is still being opened. Default: process.kill(pid, 0). */
@@ -402,7 +402,7 @@ export async function auditTick(
         Object.assign(v, { mark: "ok", session: norm(rec.session), tab: tabs.get(norm(rec.session)), why: "pane landed mid-tick" });
         continue;
       }
-      if (await reopenOrFall(logDir, v, tabs, deps.reopen, deps.stop, clock())) {
+      if (await reopenOrFall(logDir, v, tabs, deps.reopen, clock())) {
         delete next[v.id];
         continue;
       }
@@ -428,9 +428,9 @@ export async function auditTick(
       continue;
     }
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, clock());
-    // a worker without its pane does not run on: it ends through the normal path, which salvages its work.
+    // a worker without its pane keeps running: it gets a follow pane and a warning.
     if (v.kind === "worker" && v.mark === "NO PANE" && !v.session) {
-      await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, clock());
+      await followUnpaned(logDir, v.id, v.why ?? "no pane", deps.follow, clock());
     }
   }
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
@@ -477,7 +477,6 @@ async function reopenOrFall(
   v: PaneVerdict,
   tabs: TabMap,
   reopen: ((wid: string, v: PaneVerdict, tabs: TabMap) => Promise<unknown>) | undefined,
-  stop: ((wid: string, why: string) => Promise<unknown>) | undefined,
   now: Date
 ): Promise<boolean> {
   const nowMs = now.getTime();
@@ -496,8 +495,7 @@ async function reopenOrFall(
       appendLedger(ledgerPath(logDir), "PANE-REOPEN-FAILED", { id: v.id, tries: st.tries + 1, why: err }, now);
       delete all[v.id];
       writeFileSync(reopenFile(logDir), JSON.stringify(all), "utf8");
-      await stopUnpaned(logDir, v.id, `pane gone and could not be reopened: ${err}`, stop, now);
-      return false;
+      return false; // the run goes on: the audit never stops it
     }
     // backoff 15 s, 30 s, ... capped at 2 min
     all[v.id] = { firstMs: st.firstMs, tries: st.tries + 1, nextMs: nowMs + Math.min(15_000 * 2 ** st.tries, 120_000) };
@@ -514,11 +512,28 @@ function readJsonAny<T>(file: string): Record<string, T> {
   }
 }
 
-/** End a worker that runs without a registered pane (kill-tree is the normal end path); ledgered PANE-STOPPED. */
-async function stopUnpaned(logDir: string, id: string, why: string, stop: ((wid: string, why: string) => Promise<unknown>) | undefined, now: Date): Promise<void> {
-  appendLedger(ledgerPath(logDir), "PANE-STOPPED", { id, why }, now);
-  await (stop ?? ((wid, reason) => killTree(logDir, wid, { only: true, by: "pane audit", reason })))(id, why).catch(() => undefined);
+/**
+ * A worker that runs without a registered pane is never stopped: the audit only measures. It logs one warning naming
+ * why the run had no pane (PANE-UNPANED) and opens a follow pane for it, as `pai worker pane <id>` does. A failed
+ * open is logged too and the run goes on.
+ */
+async function followUnpaned(logDir: string, id: string, why: string, follow: ((wid: string, why: string) => Promise<unknown>) | undefined, now: Date): Promise<void> {
+  appendLedger(ledgerPath(logDir), "PANE-UNPANED", { id, why }, now);
+  try {
+    await (follow ?? defaultFollow(logDir))(id, why);
+  } catch (e) {
+    appendLedger(ledgerPath(logDir), "PANE-FOLLOW-FAILED", { id, why: e instanceof Error ? e.message : String(e) }, now);
+  }
 }
+
+const defaultFollow = (logDir: string) => async (wid: string): Promise<void> => {
+  if (process.env.VITEST || process.env.PAI_TEST) return; // a test world never reaches a real iTerm
+  const host = (await listItermTabs()).keys().next().value;
+  if (!host) throw new Error("no live iTerm session to split");
+  const env = { ...process.env, ITERM_SESSION_ID: host } as NodeJS.ProcessEnv;
+  const r = await openPaneForWorker(logDir, readWorkersSection().workers, wid, host, env, undefined, true);
+  if (!r.session) throw new Error(r.message);
+};
 
 export interface LaunchFinding {
   id: string;
@@ -540,7 +555,7 @@ export interface LaunchAuditDeps {
   /** Whether a pane is registered for the worker (default: the pane registry). */
   registered?: (id: string) => boolean;
   /** Stops an unlaunched worker (default: kill-tree). */
-  stop?: (wid: string, why: string) => Promise<unknown>;
+  follow?: (wid: string, why: string) => Promise<unknown>;
   /** Whether the live process `pid` is still the one this launch started (start time and, for the wrapper, its command). */
   owns?: (pid: number, r: LaunchRecord, side: "wrapper" | "child") => boolean | Promise<boolean>;
   /** Whether the record's iTerm session now belongs to another launch or registered worker. */
@@ -680,6 +695,8 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
     // grace from the later of spawn and pane-launch attempt, on a fresh clock; a start after the clock is young, never abs-distance
     const rec = launchingNow(w.id);
     if (w.exec || w.exempt) continue;
+    // queued behind the pane-open lock: no launch record or status pane yet, the launcher process still lives
+    if (paneOpenWaiting(logDir, w.id, injectedClock ? nowMs : freshNowMs(nowMs))) continue;
     if (withinStartGrace(injectedClock ? nowMs : freshNowMs(nowMs), w.startedMs, rec ? Math.max(rec.openedMs ?? 0, rec.startedMs) : undefined, graceMs)) continue;
     // before the stop: re-check the pane registry uncached (a `registered` seam keeps its injected world)
     if (d.registered ? registered(w.id) : loadRegistry(logDir).some((e) => e.worker === w.id)) continue;
@@ -708,9 +725,9 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
         continue;
       }
       const why = "running without having been started through the pane launcher";
-      appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why }, clock());
-      await stopUnpaned(logDir, w.id, why, d.stop, clock());
-      out.push({ id: w.id, kind: "unlaunched", action: "stopped" });
+      appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why: `${why}; warning only, the run is not stopped` }, clock());
+      await followUnpaned(logDir, w.id, why, d.follow, clock());
+      out.push({ id: w.id, kind: "unlaunched", action: "follow pane opened" });
     }
   }
   writeFileSync(join(logDir, "pane-audit-unlaunched.json"), JSON.stringify(flagged), "utf8");
