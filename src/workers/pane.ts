@@ -1999,7 +1999,7 @@ export async function openVerifiedPane(
   const verify = seam.verify ?? verifyPane;
   if (env.TMUX) {
     const r = await openPaneForWorker(logDir, config, wid, term, env, seam.command);
-    if (!r.message.startsWith("pane opened")) throw new Error(`pane verification failed: ${r.message}`);
+    if (!r.message.startsWith("pane opened")) throw new PaneUnverifiedError(`pane verification failed: ${r.message}`);
     return "tmux pane";
   }
   const envUid = itermUuid(env.ITERM_SESSION_ID ?? "");
@@ -2019,7 +2019,12 @@ export async function openVerifiedPane(
   // the selected one still gets its split (the operator finds it there); only the visibility proof is skipped.
   const hostShown = await (seam.hostSelected ?? hostTabSelected)(hostUid);
   let r = await split(logDir, config, wid, term, env, seam.command);
-  if (!r.session) throw new Error(`pane verification failed: ${r.message}`);
+  if (!r.session) {
+    // "already open" for a new id: an earlier, timed-out attempt's pane (osascript timed out after iTerm opened it).
+    // Close it and go paneless: a pane problem never refuses a start.
+    await closePaneForWorker(logDir, wid, ops).catch(() => false);
+    throw new PaneUnverifiedError(`pane verification failed: ${r.message}`);
+  }
   if (!hostShown) {
     placements.set(wid, "split");
     process.stderr.write("[pai worker] pane: split in the host tab (not the selected one)\n");

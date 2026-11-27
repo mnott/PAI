@@ -10,7 +10,7 @@ import { readMarker } from "../endreason.js";
 import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { saveStatus, type WorkerStatus } from "../status.js";
-import { frontmostItermSession, headlessAllowed, resolveHostSession } from "../pane.js";
+import { closePaneForWorker, frontmostItermSession, headlessAllowed, resolveHostSession } from "../pane.js";
 import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
 import { isOsascriptTimeout, retryPaneOpen } from "../pane-open-lock.js";
@@ -20,7 +20,13 @@ import { stripApiKey } from "../strip-api-key.js";
 
 /** launchPane serialized across processes by the pane-open lock, retried on osascript timeouts (5/10/20 s). `launch` is a test seam. */
 export function openPane(o: Parameters<typeof launchPane>[0], launch: typeof launchPane = launchPane): Promise<OwnedPane | null> {
-  return retryPaneOpen(o.logDir, () => launch(o));
+  let attempt = 0;
+  return retryPaneOpen(o.logDir, async () => {
+    // a timed-out attempt may still have opened its pane in iTerm: close it before the retry, or the retry
+    // finds `pane exec <id>` running and reports "already open" (2026-11-27)
+    if (attempt++ > 0) await closePaneForWorker(o.logDir, o.id).catch(() => false);
+    return launch(o);
+  });
 }
 
 /** The panes opened FIRST for the runs of this process, per worker id, until the run's command starts in them. */
@@ -117,7 +123,8 @@ export async function requireVisiblePane(
     if (!pane) {
       const why = noTerminalReasons.get(wid) ?? "no terminal to open one in";
       // a restart of an earlier run (reroute, fall-through) must not drop the work: with no terminal anywhere it runs headless
-      if (!restart) return refuse(why);
+      if (!restart && !/^pane unavailable/.test(why)) return refuse(why);
+      if (!restart) process.stderr.write(`[pai worker] warning: ${why}\n`);
       appendLedger(ledger, "PANE-WAIVED", { id: wid, kind: "restart", why });
       process.stderr.write(`[pai worker] pane waived for ${wid}: restart with ${why}\n`);
       return false;
@@ -135,7 +142,12 @@ export async function requireVisiblePane(
       process.stderr.write(`[pai worker] pane waived for ${wid}: ${why}\n`);
       return false;
     }
-    return refuse((e instanceof Error ? e.message : String(e)).slice(0, 300));
+    // any other pane failure: the run starts paneless with a warning, never exit 1 for a pane problem
+    const why = `pane open failed (${(e instanceof Error ? e.message : String(e)).slice(0, 250)}); started paneless`;
+    noTerminalReasons.set(wid, why);
+    appendLedger(ledger, "PANE-PANELESS", { id: wid, why });
+    process.stderr.write(`[pai worker] warning: pane waived for ${wid}: ${why}\n`);
+    return false;
   }
 }
 
