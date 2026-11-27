@@ -11,7 +11,7 @@ import { shortText } from "../args.js";
 import { parseAg2Report } from "../agentish.js";
 import type { HelperDeps } from "../helper.js";
 import { proofIsEmpty } from "../helper-uses.js";
-import { bashCommand, toolResultFailed, toolResultText } from "./stream.js";
+import { bashCommand, bashResultFailed, toolResultText } from "./stream.js";
 
 export interface ToolFoldOpts {
   logDir: string;
@@ -61,7 +61,7 @@ export function createToolFold(o: ToolFoldOpts): ToolFold {
           if (hint) o.inject(`[harness] ${hint}`);
         }
       }
-      if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block), output: text.slice(-400) });
+      if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: bashResultFailed(bashCommand(use.input), block), output: text.slice(-400) });
     },
   };
 }
