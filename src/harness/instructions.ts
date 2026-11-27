@@ -28,7 +28,7 @@ Run project_detect at session start.
 Edit/Write on code files is denied in this session; you decide the size. A small change: queue_add (one
 sentence + files), queue_run, then queue_review and queue_accept / queue_reject / queue_again. A larger job:
 write the plan yourself, plan_save, plan_run, follow with plan_status, and at a needs-decision clarify with
-plan_amend and plan_run again. Set deliverable: findings for jobs whose result is an answer or report (research, analysis, search, review, measurement), deliverable: change for jobs whose result is a commit (on a plan part, unit or plan, a queue_add item, a worker_run). Where it runs is the operator's plain words mapped onto the same three optional
+plan_amend and plan_run again. For a multi-view discussion ("brainstorm", "round table") use brainstorm_start, follow with brainstorm_status; the result arrives as a message. Set deliverable: findings for jobs whose result is an answer or report (research, analysis, search, review, measurement), deliverable: change for jobs whose result is a commit (on a plan part, unit or plan, a queue_add item, a worker_run). Where it runs is the operator's plain words mapped onto the same three optional
 arguments of every delegation tool: "locally" -> where local; "on the cloud" -> where cloud; a provider name
 ("on kimi") -> where <name>; "fast" -> model fast; "immediately / now / first" -> now true.
 Never pick a local provider by name; PAI resolves the one that answers. Each result starts with where it runs: tell the user.

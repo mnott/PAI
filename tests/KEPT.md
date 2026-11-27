@@ -97,3 +97,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/workers/build-artefacts-kept.test.ts | a | 2026-11-27 APK of worker 002130-19395 deleted with worktree, intermediates copied into checkout |
 | src/brainstorm/board.test.ts | c | brainstorm board wire: append-only, sequence numbers, blocking wait semantics other sessions' prompts depend on (issue APPS/PAI#36) |
 | src/hooks/ts/lib/edit-gate.test.ts | c | planner lock must not block pai brainstorm post/wait CLI calls (quoted > text, --file); the round-table loop depends on it (issue APPS/PAI#36) |
+| src/brainstorm/start.test.ts | c | pai brainstorm contract: the prompts carry the board id, the literal wait loop and CLOSED semantics workers depend on; post/wait exit codes 0/3/4 (harness teaches them); result.md shape |
