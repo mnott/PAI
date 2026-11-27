@@ -73,6 +73,7 @@ export interface SetupOptions {
   embedding?: string;
   daName?: string;
   router?: { enabled?: boolean; port?: number; bind?: string };
+  dictationModel?: string;
   noAibroker?: boolean;
   dryRun?: boolean;
   /** yes/no components by key (see questions.ts): true/false forced, absent = ask / default. */
