@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { endpointRegistry, instanceEngineKey, pickInstance, type LocalInstance } from "./local-instances.js";
-import { capacityGate, currentBuildId, providerCap, instanceUp, instanceCachedUp, resetInstanceHealth, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
+import { capacityGate, sessionScopeKey, currentBuildId, providerCap, instanceUp, instanceCachedUp, resetInstanceHealth, fairOrder, isStaleBuild, liveQueue, moveUp, queueRows, reorderQueue, reorderQueueTo, writeTicket, type QueueEntry, type QueueRow } from "./capacity.js";
 import { setWorkerPaused } from "./engine-control.js";
 import { finishDeferredMoves, rerouteWorker } from "./reroute.js";
 import { requeueStaleWaiters } from "./stale-requeue.js";
@@ -16,6 +16,7 @@ import type { WorkersConfig } from "./config.js";
 import { admitResumedWaiters, applyPriority, resumeWorker } from "./preempt.js";
 import { holdsSlot, loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { schedulerView } from "./scheduler.js";
+import { sessionCapApplies, sessionHolds } from "./run/gate.js";
 
 let dir: string;
 beforeEach(() => {
@@ -910,5 +911,58 @@ describe("local-idle sample does not block the loop", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---- session max_parallel: local-only by default, never blocks a run's own ancestors ----
+describe("session max_parallel gate", () => {
+  const sess = (id: string, o: Partial<WorkerStatus> = {}): WorkerStatus => ({ ...st(id), state: "running", sessionKey: "S", provider: "gyro", started: "2026-11-27 09:00:00", ...o }) as WorkerStatus;
+  const isLocalName = (p: string): boolean => p === "gyro";
+  const runGate = async (self: WorkerStatus, profile: { max_parallel_scope?: "all" } = {}): Promise<"ran" | "waited"> => {
+    saveStatus(dir, self);
+    const applies = sessionCapApplies(profile, isLocalName(self.provider));
+    if (!applies) return "ran";
+    const gate = capacityGate({
+      logDir: dir,
+      self: { id: self.id, provider: self.provider },
+      cap: 1,
+      config: {},
+      scope: { key: sessionScopeKey("S"), label: "session S", holds: sessionHolds("S", self.id, dir, () => profile, isLocalName) },
+      isAlive: () => true,
+      sleep: () => new Promise((r) => setTimeout(r, 5)),
+    });
+    return Promise.race([gate.then(() => "ran" as const), new Promise<"waited">((r) => setTimeout(() => r("waited"), 300))]);
+  };
+
+  it("an L2 child of a running L1 holding the only slot starts (the tree counts as one)", async () => {
+    saveStatus(dir, sess("l1"));
+    expect(await runGate(sess("l2", { parent: "l1" }))).toBe("ran");
+  });
+
+  it("a grandchild also passes its ancestors, but a sibling's slot still counts", async () => {
+    saveStatus(dir, sess("l1"));
+    saveStatus(dir, sess("l2", { parent: "l1" }));
+    expect(await runGate(sess("l3", { parent: "l2" }))).toBe("ran");
+    expect(await runGate(sess("l4", { parent: "l1" }))).toBe("waited");
+  });
+
+  it("two cloud workers with max_parallel 1 both run", async () => {
+    saveStatus(dir, sess("c1", { provider: "anthropic" }));
+    expect(await runGate(sess("c2", { provider: "anthropic" }))).toBe("ran");
+  });
+
+  it("two local workers: the second waits", async () => {
+    saveStatus(dir, sess("a1"));
+    expect(await runGate(sess("a2"))).toBe("waited");
+  });
+
+  it("scope all restores the cap for cloud workers", async () => {
+    saveStatus(dir, sess("c1", { provider: "anthropic" }));
+    expect(await runGate(sess("c2", { provider: "anthropic" }), { max_parallel_scope: "all" })).toBe("waited");
+  });
+
+  it("a cloud holder does not block a local run by default", async () => {
+    saveStatus(dir, sess("c1", { provider: "anthropic" }));
+    expect(await runGate(sess("a1"))).toBe("ran");
   });
 });

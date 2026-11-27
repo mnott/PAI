@@ -71,8 +71,10 @@ export interface SessionProfile {
   workers_implicit?: boolean;
   fallback?: ProfileTarget[];
   parallel_min?: number;
-  /** Most workers of this session running at once, on any provider (1 = one after the other). */
+  /** Most local workers of this session running at once (1 = one after the other); cloud workers only with max_parallel_scope "all". */
   max_parallel?: number;
+  /** What max_parallel counts: unset = workers routed to local providers only (cloud workers are never capped); "all" = every worker, as before. */
+  max_parallel_scope?: "all";
   /** "off": the stall/queue escalation never moves this session's workers to the cloud (default on). */
   escalate?: "off";
   /** With escalate off: epoch ms when the switch expires by itself (absent = until turned on). */
@@ -111,6 +113,7 @@ function cleanProfile(v: unknown): SessionProfile {
   }
   if (typeof r.parallel_min === "number" && Number.isInteger(r.parallel_min) && r.parallel_min > 0) out.parallel_min = r.parallel_min;
   if (typeof r.max_parallel === "number" && Number.isInteger(r.max_parallel) && r.max_parallel > 0) out.max_parallel = r.max_parallel;
+  if (r.max_parallel_scope === "all") out.max_parallel_scope = "all";
   if (r.escalate === "off") {
     out.escalate = "off";
     if (typeof r.escalate_until === "number" && Number.isFinite(r.escalate_until) && r.escalate_until > 0) out.escalate_until = r.escalate_until;
@@ -200,6 +203,7 @@ export interface ProfilePatch {
   fallback?: ProfileTarget[] | null;
   parallel_min?: number | null;
   max_parallel?: number | null;
+  max_parallel_scope?: "all" | null;
   escalate?: "off" | null;
   escalate_until?: number | null;
   routes?: Record<string, string[]> | null;
@@ -215,7 +219,7 @@ export interface ProfilePatch {
 export function updateProfile(name: string, patch: ProfilePatch, path: string = profilesPath(), caller: ProfileCaller = "session-profile-set"): SessionProfile {
   const profiles = readProfiles(path);
   const next: SessionProfile = { ...(profiles[name] ?? {}) };
-  for (const k of ["chat", "workers", "workers_implicit", "fallback", "parallel_min", "max_parallel", "escalate", "escalate_until", "routes", "route_notes"] as const) {
+  for (const k of ["chat", "workers", "workers_implicit", "fallback", "parallel_min", "max_parallel", "max_parallel_scope", "escalate", "escalate_until", "routes", "route_notes"] as const) {
     if (!(k in patch)) continue;
     const v = patch[k];
     if (v === null || v === undefined) delete next[k];
