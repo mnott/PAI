@@ -48,8 +48,10 @@ export interface SessionProfileArgs {
   fallback?: ProfileTarget[] | null;
   /** Skip fallback targets with a concurrency cap below this in batch spawns; 0 clears. */
   parallel_min?: number | null;
-  /** Most of this session's workers running at once, on any provider (1 = one after the other); 0/null clears. */
+  /** Most of this session's local workers running at once (1 = one after the other; cloud workers are not capped); 0/null clears. */
   max_parallel?: number | null;
+  /** "all": max_parallel also counts cloud workers; "local" (default) clears it. */
+  max_parallel_scope?: "all" | "local";
   /** Routing rows this session overrides: class -> ordered models ("gyro-m", "anthropic/sonnet"); a class set to null/[] clears its override, null clears all. */
   routes?: Record<string, string[] | null> | null;
   /** "off": this session's workers are never moved to the cloud by the stall rule; "on" (default) turns it back on. */
@@ -77,7 +79,7 @@ export async function describeProfile(name: string, profile: SessionProfile | nu
     `workers: ${tgt(p.workers)}`,
     `fallback: ${p.fallback?.length ? p.fallback.map(tgt).join(", ") : "none (global order)"}`,
     `parallel_min: ${p.parallel_min ?? "not set"}`,
-    `max_parallel: ${p.max_parallel ?? "not set (parallel)"}`,
+    `max_parallel: ${p.max_parallel ? `${p.max_parallel} (${p.max_parallel_scope === "all" ? "all workers, cloud included" : "local workers only; cloud workers are not capped"})` : "not set (parallel)"}`,
     `escalate: ${escalationOff(p) ? `off${p.escalate_until ? ` until ${new Date(p.escalate_until).toLocaleString()}` : ""}` : "on"}`,
     `route overrides: ${p.routes && Object.keys(p.routes).length ? Object.entries(p.routes).map(([c, m]) => `${c}=${m.join(">")}`).join(", ") : "none (global table)"}`,
     `next worker spawn: ${single.description}`,
@@ -117,6 +119,7 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
     if ("fallback" in args) patch.fallback = args.fallback?.length ? args.fallback : null;
     if ("parallel_min" in args) patch.parallel_min = args.parallel_min ? args.parallel_min : null;
     if ("max_parallel" in args) patch.max_parallel = args.max_parallel ? args.max_parallel : null;
+    if (args.max_parallel_scope !== undefined) patch.max_parallel_scope = args.max_parallel_scope === "all" ? "all" : null;
     if (args.escalate !== undefined) {
       if (args.escalate !== "on" && args.escalate !== "off") return fail('escalate takes "on" or "off"');
       if (args.until && args.escalate === "on") return fail("until goes with escalate off");

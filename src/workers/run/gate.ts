@@ -687,6 +687,37 @@ function queuedOf(q: QueuedFile, label: string | undefined, logDir: string): Que
  * both the pooled and the fresh-spawn path pass through. `status` is the
  * run's saved status; its capacity/warmup/last fields carry the queue line.
  */
+/** Whether a session's max_parallel applies to a run: all workers with scope "all", else local ones only. */
+export function sessionCapApplies(profile: { max_parallel_scope?: "all" } | undefined | null, runLocal: boolean): boolean {
+  return runLocal || profile?.max_parallel_scope === "all";
+}
+
+/** True when `candidate` is on the launch-parent chain above `id` (PAI_WORKER_ID of the launching worker -> status.parent). */
+export function isAncestorOf(logDir: string, candidate: string, id: string, load: (logDir: string, id: string) => Pick<WorkerStatus, "parent"> | null = loadStatus): boolean {
+  const seen = new Set<string>([id]);
+  for (let cur = load(logDir, id)?.parent; cur && !seen.has(cur); cur = load(logDir, cur)?.parent) {
+    if (cur === candidate) return true;
+    seen.add(cur);
+  }
+  return false;
+}
+
+/**
+ * Which runs count against a session's max_parallel for run `self`: the session's own, local ones (all with scope "all"),
+ * never self's ancestors — an orchestrator holding the only slot must not block the sub-workers it waits for (CaseLeaf
+ * deadlock 2026-11-27: L2 children queued 40 min behind their own L1). The tree counts as one: the ancestor holds the slot.
+ */
+export function sessionHolds(
+  key: string,
+  self: string,
+  logDir: string,
+  profile: () => { max_parallel_scope?: "all" } | undefined | null,
+  providerLocal: (provider: string) => boolean,
+  load?: (logDir: string, id: string) => Pick<WorkerStatus, "parent"> | null,
+): (s: WorkerStatus) => boolean {
+  return (s) => s.sessionKey === key && (profile()?.max_parallel_scope === "all" || providerLocal(s.provider)) && !isAncestorOf(logDir, s.id, self, load);
+}
+
 export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
   // a reroute's SIGTERM turns this process into the restart's follower instead of ending it (follow-reroute.ts)
   const guard = guardQueuedRun(a.logDir, wid);
@@ -817,12 +848,23 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, 
     // the pane opened before the wait shows its place in line (pane-exec reads the file)
     onQueued: (line) => paneHandles.get(wid)?.setQueued(line === null ? null : queuedOf(line, a.label, logDir)),
   };
-  // the session's own limit ("one after the other"): same gate, counted per session across providers
+  // the session's own limit ("one after the other"): counts local workers only unless the profile says scope "all"
   const max = status.sessionKey ? getProfile(status.sessionKey)?.max_parallel : undefined;
   if (status.sessionKey && max) {
     const key = status.sessionKey;
-    // the cap is re-read from the profile on every poll: a cleared max_parallel (undefined = unlimited) releases the waiter
-    await capacityGate({ ...gate, capOf: () => getProfile(key)?.max_parallel, holdOf: undefined, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
+    const providerLocal = (name: string): boolean => {
+      try {
+        const p = readWorkersCached().providers[name];
+        return p ? isLocalProvider(p.baseUrl) : false;
+      } catch {
+        return false;
+      }
+    };
+    // a cloud run is outside a local-only cap: it never waits on it
+    if (sessionCapApplies(getProfile(key), local)) {
+      // the cap is re-read from the profile on every poll: a cleared max_parallel (undefined = unlimited) releases the waiter
+      await capacityGate({ ...gate, capOf: () => getProfile(key)?.max_parallel, holdOf: undefined, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: sessionHolds(key, wid, a.logDir, () => getProfile(key), providerLocal) }, cap: max });
+    }
   }
   await capacityGate(gate);
   await staggerGate({
