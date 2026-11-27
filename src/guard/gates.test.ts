@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
 import { decideSamplerGate } from "../hooks/ts/lib/sampler-gate.js";
 import { decidePreGates, decideWorkerGate } from "./gates.js";
+import { hostSimulatorReason } from "../hooks/ts/lib/host-simulator-guard.js";
 import { modelServerReason } from "../hooks/ts/lib/model-server-guard.js";
 import { WORKER_CHILD_ROUTE_REASON, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 
@@ -328,5 +329,46 @@ describe("sampler gate: no mactop/htop/btop/glances/asitop, no powermetrics with
   it("is part of the Bash gate set (sessions and workers)", () => {
     const d = decidePreGates({ kind: "tool_call", tool: "Bash", input: { command: "mactop --headless" }, cwd: "/tmp", env: {} } as never, { bash: { localAnswer: () => null } } as never);
     expect(d?.action).toBe("deny");
+  });
+});
+
+describe("host simulator guard", () => {
+  const r = (command: string, env: Record<string, string | undefined> = {}) => hostSimulatorReason(command, env, false);
+  it("denies host simulator boot, launch, io, Simulator/Device Hub, xcodebuild test on a simulator", () => {
+    for (const c of [
+      "xcrun simctl boot ABC",
+      "cd x && xcrun simctl launch booted com.app",
+      "xcrun simctl io booted screenshot a.png",
+      "open -a Simulator",
+      'open -a "Simulator"',
+      "open /Applications/Xcode.app/Contents/Developer/Applications/Simulator.app",
+      'open -a "Device Hub"',
+      "open -a DeviceHub",
+      "xcodebuild test -scheme A -destination 'platform=iOS Simulator,name=iPhone 16'",
+      "bash -c 'xcrun simctl boot X'",
+    ]) expect(r(c), c).toContain("vmac run");
+  });
+  it("allows read-only simctl, plain text, device builds and non-simulator tests", () => {
+    for (const c of [
+      "xcrun simctl list devices",
+      "xcrun simctl getenv booted HOME",
+      "grep -rn 'simctl boot' src",
+      'git commit -m "docs: xcrun simctl boot is denied"',
+      "echo open -a Simulator",
+      "xcodebuild build -scheme A -destination 'generic/platform=iOS'",
+      "xcodebuild test -scheme A -destination 'platform=macOS'",
+    ]) expect(r(c), c).toBeNull();
+  });
+  it("honours the override and the guest markers", () => {
+    expect(r("xcrun simctl boot X", { VMAC_HOST_SIM: "1" })).toBeNull();
+    expect(r("VMAC_HOST_SIM=1 xcrun simctl boot X")).toBeNull();
+    expect(r("xcrun simctl boot X", { VMAC_GUEST: "1" })).toBeNull();
+    expect(r("xcrun simctl boot X", { CASELEAF_IN_VM: "1" })).toBeNull();
+    expect(hostSimulatorReason("xcrun simctl boot X", {}, true)).toBeNull();
+  });
+  it("is wired into the Bash gate chain", () => {
+    const d = decidePreGates({ tool: "Bash", input: { command: "open -a Simulator" }, cwd: "/w", env: {} }, { bash: { localAnswer: () => "x" } } as never);
+    expect(d?.action).toBe("deny");
+    expect(d?.message).toContain("vmac run");
   });
 });
