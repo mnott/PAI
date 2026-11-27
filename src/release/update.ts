@@ -103,3 +103,35 @@ export function formatUpdate(r: UpdateReport): string {
   if (r.updated) return `${r.package} ${r.installed} -> ${r.latest}: installed from ${r.assetUrl}; run \`pai reload\``;
   return `${r.package} ${r.installed} -> ${r.latest}: update available (run \`pai update${r.package.endsWith("/pai") ? "" : ` --package ${baseName(r.package)}`}\`)`;
 }
+
+export interface CompanionReport {
+  report: UpdateReport | null;
+  /** Set when AIBroker was upgraded: outcome of `aibroker restart`. */
+  restart?: "restarted" | "restart-failed";
+  /** Set when the companion check itself failed (never fails `pai update`). */
+  error?: string;
+}
+
+/** AIBroker rides along with `pai update`: same release route as `pai setup`; skipped when not installed. */
+export async function updateCompanion(opts: { check?: boolean }, deps: UpdateDeps = {}): Promise<CompanionReport> {
+  const run = deps.run ?? realRun;
+  try {
+    const installed = await (deps.installed ?? ((n) => defaultInstalled(n, run)))("aibroker");
+    if (!installed) return { report: null };
+    const report = await updatePackage({ package: "aibroker", check: opts.check }, { ...deps, installed: async () => installed });
+    if (!report.updated) return { report };
+    const r = await run("aibroker", ["restart"], { cwd: process.cwd() });
+    return { report, restart: r.code === 0 ? "restarted" : "restart-failed" };
+  } catch (e) {
+    return { report: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export function formatCompanion(c: CompanionReport): string | null {
+  if (c.error) return `aibroker: update check failed: ${c.error}`;
+  if (!c.report) return null;
+  let s = formatUpdate(c.report);
+  if (c.restart === "restarted") s += "; daemon restarted (aibroker restart)";
+  if (c.restart === "restart-failed") s += "; `aibroker restart` failed, run it manually";
+  return s;
+}

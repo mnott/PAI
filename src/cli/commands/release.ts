@@ -5,7 +5,7 @@
 import { resolve } from "node:path";
 import { CliError, OPT, type CommandDef } from "../define.js";
 import { parseStep, runRelease } from "../../release/release.js";
-import { formatUpdate, updatePackage, UpdateFailed } from "../../release/update.js";
+import { formatCompanion, formatUpdate, updateCompanion, updatePackage, UpdateFailed } from "../../release/update.js";
 
 const out = (s: string): void => void process.stdout.write(s + "\n");
 
@@ -45,7 +45,7 @@ export const updateCmd: CommandDef = {
   name: "update",
   summary: "Update PAI (or another package) to the latest GitHub Release",
   description:
-    "Reads the installed version, asks the GitHub API for the latest release of the package's repository (package.json `repository`) and, when it is newer, runs `npm i -g <release package url>`. `--check` only reports. `--package aibroker` does the same for AIBroker or any other package installed with `npm i -g` from a release. Run `pai reload` afterwards. " +
+    "Reads the installed version, asks the GitHub API for the latest release of the package's repository (package.json `repository`) and, when it is newer, runs `npm i -g <release package url>`. `--check` only reports. `--package aibroker` does the same for AIBroker or any other package installed with `npm i -g` from a release. Without `--package`, the installed AIBroker is checked and upgraded the same way (and its daemon restarted with `aibroker restart`); `--check` reports it too. Run `pai reload` afterwards. " +
     "`--source` is the old behaviour for a source checkout: pull, rebuild, restart the daemon.",
   options: [
     { name: "check", type: "boolean", default: false, summary: "Only report whether a newer release exists" },
@@ -58,6 +58,10 @@ export const updateCmd: CommandDef = {
     try {
       const r = await updatePackage({ package: typeof ctx.opts.package === "string" ? ctx.opts.package : undefined, check: ctx.opts.check === true });
       out(formatUpdate(r));
+      if (typeof ctx.opts.package !== "string") {
+        const c = formatCompanion(await updateCompanion({ check: ctx.opts.check === true }));
+        if (c) out(c);
+      }
       return 0;
     } catch (e) {
       if (e instanceof UpdateFailed) throw new CliError(e.message, "pai update --check");

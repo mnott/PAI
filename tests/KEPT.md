@@ -95,3 +95,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/hooks/ts/lib/project-utils/session-notes.test.ts | a | Multi-process race: 8 concurrent createSessionNote calls must get distinct numbers (duplicate 0001 notes) |
 | src/workers/job-watch.test.ts | a | worker 20261127-000037-4179 stopped for no progress while waiting on a build that ended seconds before the checkpoint (a2ea325d only read the instant queue) |
 | src/workers/build-artefacts-kept.test.ts | a | 2026-11-27 APK of worker 002130-19395 deleted with worktree, intermediates copied into checkout |
+| src/release/update.test.ts | a | update companion: AIBroker version compare and install command fakes |
