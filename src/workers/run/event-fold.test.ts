@@ -6,6 +6,8 @@ import { loopStopResult, foldContinuationResult } from "./finalise.js";
 import type { StreamEvent } from "./types.js";
 import { createResultFold, finalResultEvent, type StreamEventLike } from "./event-fold.js";
 import { preEventFailure } from "./pane-handles.js";
+import { bashResultFailed, isBrainstormCommand, toolResultFailed } from "./stream.js";
+import { createToolFold } from "./tool-fold.js";
 
 // The resumed worker's stream (20261119-045451-23508): the replayed task notification and its num_turns-0 result
 // arrive BEFORE the real turn for the new prompt; arming the end on that result closed stdin and reaped the
@@ -163,5 +165,35 @@ describe("foldContinuationResult", () => {
     expect(base.usage?.input_tokens).toBe(8);
     expect((base as Record<string, unknown>).total_cost_usd).toBeCloseTo(0.53);
     expect(base.result).toBe("All 40 files written");
+  });
+});
+
+describe("brainstorm exit codes", () => {
+  const res = (text: string) => ({ is_error: true, content: text });
+  it("recognises brainstorm wait/post, word-bounded", () => {
+    expect(isBrainstormCommand("pai brainstorm wait 3 --since 2")).toBe(true);
+    expect(isBrainstormCommand('cd x && pai brainstorm post 3 "a" --as moderator')).toBe(true);
+    expect(isBrainstormCommand("pai brainstorm waitress")).toBe(false);
+    expect(isBrainstormCommand("echo brainstorm wait")).toBe(false);
+  });
+  it("exit 3 and 4 of a brainstorm command are not failures", () => {
+    for (const code of [3, 4]) {
+      const b = res(`Exit code ${code}\nstate=x`);
+      expect(toolResultFailed(b)).toBe(true);
+      expect(bashResultFailed("pai brainstorm wait 3", b)).toBe(false);
+    }
+  });
+  it("exit 1 of a brainstorm wait still fails; exit 3 of another command fails", () => {
+    expect(bashResultFailed("pai brainstorm wait 3", res("Exit code 1\nboom"))).toBe(true);
+    expect(bashResultFailed("pai brainstorm wait 3", res("Exit code 2"))).toBe(true);
+    expect(bashResultFailed("make test", res("Exit code 3"))).toBe(true);
+  });
+  it("tool fold records brainstorm exit 3 as not failed in bashRuns", () => {
+    const fold = createToolFold({ logDir: tmpdir(), worker: "w", provider: "p", label: "l", granted: [], cwd: tmpdir(), inject: () => {} } as never);
+    fold.onToolUse({ id: "a", name: "Bash", input: { command: "pai brainstorm wait 3" } } as never);
+    fold.onToolResult({ tool_use_id: "a", is_error: true, content: "Exit code 3" } as never);
+    fold.onToolUse({ id: "b", name: "Bash", input: { command: "make" } } as never);
+    fold.onToolResult({ tool_use_id: "b", is_error: true, content: "Exit code 3" } as never);
+    expect(fold.bashRuns.map((r) => r.failed)).toEqual([false, true]);
   });
 });

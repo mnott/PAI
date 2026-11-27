@@ -1665,6 +1665,57 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
     async (args) => planAmend(args, delegation)
   );
   server.tool(
+    "brainstorm_start",
+    "Start a round table: one moderator and N participants (cloud workers) discuss a goal on a shared board and return at once. The result lands in result.md and as a message to this session. Watch with `pai brainstorm watch <id>`.",
+    {
+      goal: z.string().min(1),
+      participants: z.number().int().min(1).max(12).optional().describe("Default 3."),
+      lenses: z.array(z.string()).optional().describe("One lens per participant (cycled); default: six built-in lenses."),
+      max_minutes: z.number().positive().optional().describe("Time box, default 20."),
+      rounds: z.number().int().min(1).optional().describe("Moderated rounds, default 3."),
+      context: z.array(z.string()).optional().describe("Files every participant should read."),
+      local: localArg,
+    },
+    async (args) => {
+      try {
+        const { startBrainstorm, callerSession } = await import("../brainstorm/start.js");
+        const r = await startBrainstorm({
+          goal: args.goal,
+          participants: args.participants,
+          lenses: args.lenses,
+          maxMinutes: args.max_minutes,
+          rounds: args.rounds,
+          context: args.context,
+          local: args.local,
+          caller: callerSession(),
+        });
+        return { content: [{ type: "text" as const, text: `brainstorm ${r.id} started (${Object.keys(r.workers).length} workers)\nboard: ${r.dir}/board.md\nwatch: ${r.watch}\nstatus: brainstorm_status ${r.id}` }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `brainstorm_start error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      }
+    }
+  );
+  server.tool(
+    "brainstorm_status",
+    "State of a brainstorm board: open, closed or deadline passed, the post count, the last posts, and the result path once closed.",
+    { id: z.string().min(1), last: z.number().int().min(1).max(50).optional().describe("How many recent posts to show, default 5.") },
+    async (args) => {
+      try {
+        const { loadIndex, readPosts, renderPost, boardDir } = await import("../brainstorm/board.js");
+        const { existsSync } = await import("node:fs");
+        const idx = loadIndex(args.id);
+        if (!idx) throw new Error(`no brainstorm board "${args.id}"`);
+        const state = idx.closed ? "closed" : idx.deadlineMs !== null && Date.now() >= idx.deadlineMs ? "deadline passed" : "open";
+        const posts = readPosts(args.id).slice(-(args.last ?? 5));
+        const res = join(boardDir(args.id), "result.md");
+        const text = [`${args.id}: ${idx.goal}`, `state: ${state}, ${idx.count} posts`, existsSync(res) ? `result: ${res}` : "", "", ...posts.map(renderPost)].join("\n");
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `brainstorm_status error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      }
+    }
+  );
+  server.tool(
     "queue_add",
     "Queue one small change described in a sentence (plus likely files, optional screenshot). Use for small changes; then queue_run. Set deliverable: findings for an item whose result is an answer or report, not a commit.",
     {

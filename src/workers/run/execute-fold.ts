@@ -78,6 +78,8 @@ import {
   isReadOnlyJob,
   toolResultText,
   toolResultFailed,
+  bashResultFailed,
+  isBrainstormCommand,
   adoptInitModel,
   shouldRetryReport,
   isEmptyResponse,
@@ -566,19 +568,22 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         for (const block of blocks) {
           if (block.type !== "tool_result") continue;
           sawResult = true;
-          status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
+          const useEarly = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
+          const brainstorm = useEarly?.name === "Bash" && isBrainstormCommand(bashCommand(useEarly.input));
+          const failed = brainstorm ? bashResultFailed(bashCommand(useEarly!.input), block) : toolResultFailed(block);
+          status.consecFails = failed ? (status.consecFails ?? 0) + 1 : 0;
           status.sleepSec = null;
           if (recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString())) {
             const d = parseDenialText(toolResultText(block.content), "?");
             if (d) state.trouble?.onDenial(d.hook, d.reason);
           }
-          if (!toolResultFailed(block)) toolsOk += 1;
+          if (!failed) toolsOk += 1;
           toolFold.onToolResult(block);
           const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
           // progress clock: a "change" job counts edits/commits; a "findings" job counts any write it makes
           const progressed = !!use && (status.deliverable === "findings" ? isFindingsProgressTool(use.name, use.input) : isProgressTool(use.name, use.input));
-          if (use && !toolResultFailed(block) && use.name === "Bash" && isConvergenceCommand(bashCommand(use.input))) status.convergedAt = nowStamp();
-          if (use && !toolResultFailed(block) && (progressed || readOnly)) {
+          if (use && !failed && use.name === "Bash" && isConvergenceCommand(bashCommand(use.input))) status.convergedAt = nowStamp();
+          if (use && !failed && (progressed || readOnly || brainstorm)) {
             status.progressAt = nowStamp();
             status.turnsAtProgress = status.turns;
             const sched = readSchedFile(logDir);
