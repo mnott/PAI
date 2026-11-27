@@ -2026,6 +2026,8 @@ async function mergeWorkerInner(
     if (related.output) void growthAlarm(logDir, st.cwd, related.output);
     // a timed-out run is not a verdict: un-land the merge without a revert commit (so a retry needs no revert-of-revert) and say so
     if (related.status === "timeout") throw new Error(unlandAfterVerifyTimeout(st.cwd, oldHead, mergeCommit, related.line));
+    // a failed dependency install is setup, not a red suite: un-land like a timeout, name it plainly
+    if (related.status === "setup") throw new Error(unlandAfterVerifyTimeout(st.cwd, oldHead, mergeCommit, related.line, "fix the install (network, registry, lockfile) in the merge target and re-run `pai worker merge`"));
     // "failed" already survived the serial re-run (flaky-under-load is its own status): revert like the other gates
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
@@ -2665,7 +2667,7 @@ export function runVerify(cwd: string, cmd: string, oldHead: string, keep?: { lo
  * just made and the tracked tree is clean, main moves back to `oldHead` (no revert commit: a retry is a plain
  * merge). If anything landed on top meanwhile the merge stays and the message says so. Never MERGE REVERTED.
  */
-function unlandAfterVerifyTimeout(cwd: string, oldHead: string, mergeCommit: string, line: string): string {
+function unlandAfterVerifyTimeout(cwd: string, oldHead: string, mergeCommit: string, line: string, retry?: string): string {
   const head = git(cwd, ["rev-parse", "HEAD"]);
   let state: string;
   if (head === mergeCommit && !git(cwd, ["status", "--porcelain", "--untracked-files=no"]).trim()) {

@@ -5,7 +5,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { parseGateFailure, saveMergeGateLog } from "./gate-log.js";
@@ -21,7 +21,7 @@ export interface RelatedSettings {
 }
 
 export interface RelatedResult {
-  status: "passed" | "failed" | "skipped" | "timeout";
+  status: "passed" | "failed" | "skipped" | "timeout" | "setup";
   /** The one line printed and recorded in the ledger. */
   line: string;
   failing: string[];
@@ -177,6 +177,21 @@ export function resolveVerify(cwd: string, configured: string): ResolvedVerify {
   return { cmd: "", runner: "none (no package.json, pytest, go.mod or pubspec.yaml with test/; nothing to run)" };
 }
 
+/** True when package.json exists and node_modules is missing or older than package-lock.json. */
+export function depsNeedInstall(cwd: string): boolean {
+  if (!existsSync(join(cwd, "package.json"))) return false;
+  const nm = join(cwd, "node_modules");
+  if (!existsSync(nm)) return true;
+  try {
+    const lock = join(cwd, "package-lock.json");
+    if (!existsSync(lock)) return false;
+    const marker = join(nm, ".package-lock.json");
+    return !existsSync(marker) || statSync(lock).mtimeMs > statSync(marker).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
 /** Run the verify command for the merge `oldHead..HEAD`; never throws. */
 export function runRelatedTests(
   cwd: string,
@@ -201,10 +216,24 @@ export function runRelatedTests(
   const env: NodeJS.ProcessEnv = stripApiKey({ ...process.env, NO_COLOR: "1" });
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
+  // a fresh target checkout has no node_modules: install first, so the gate fails on the change, not on a missing toolchain
+  let depsNote = "";
+  if (/\b(npm|npx|node|tsc|tsx|vitest|jest|mocha)\b/.test(resolved.cmd) && depsNeedInstall(cwd)) {
+    const t0 = Date.now();
+    const install = existsSync(join(cwd, "package-lock.json")) ? "npm ci" : "npm install";
+    const ir = runner(cwd, env, [install], timeoutSec, pipeGraceMs);
+    const secs = Math.round((Date.now() - t0) / 1000);
+    if (ir.timedOut || ir.code !== 0 || ir.signal || ir.error) {
+      const why = ir.timedOut ? "timed out" : ir.error ? ir.error.split("\n")[0].slice(0, 200) : ir.signal ? `killed by ${ir.signal}` : `exit ${ir.code ?? 1}`;
+      const tail = ir.output.trim().split("\n").slice(-5).join(" | ").slice(0, 400);
+      return { status: "setup", line: `deps install failed (${install}, ${secs}s, ${why}): ${tail}`, failing: [], output: ir.output.slice(-20_000) };
+    }
+    depsNote = `deps installed (${secs}s); `;
+  }
   const r = runner(cwd, env, [resolved.cmd], timeoutSec, pipeGraceMs);
   // a timeout says nothing about the code: it is its own status, never a red suite (the gate must not revert on it)
   if (r.timedOut) return { status: "timeout", line: `verify timed out after ${timeoutSec}s`, failing: [] };
-  if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (runner: ${resolved.runner}; ${resolved.cmd})`, failing: [], output: r.output.slice(-20_000) };
+  if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `${depsNote}passed (runner: ${resolved.runner}; ${resolved.cmd})`, failing: [], output: r.output.slice(-20_000) };
   const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
   const tail = r.output.trim().split("\n").slice(-5).join(" | ").slice(0, 400);
   // keep the FULL output (stdout+stderr) on disk and name what failed: the ledger's 300-char
@@ -215,7 +244,7 @@ export function runRelatedTests(
   const summary = summarizeGateFailure(r.output);
   return {
     status: "failed",
-    line: `failed (runner: ${resolved.runner}; ${resolved.cmd}) (${exit}): ${tail}`,
+    line: `${depsNote}failed (runner: ${resolved.runner}; ${resolved.cmd}) (${exit}): ${tail}`,
     failing: f.names,
     ...(f.assert ? { assert: f.assert } : {}),
     ...(f.hints.length ? { hints: f.hints } : {}),
