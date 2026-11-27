@@ -12,6 +12,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai audit`](audit.md) | Find out where tokens are being spent |
 | [`pai backup`](backup.md) | Back up the registry, config and Postgres database |
 | [`pai bench`](bench.md) | Local-model quality check: run the eval sets and real tasks, print the comparison table |
+| [`pai brainstorm`](brainstorm.md) | Round table: a moderator and N cloud participants discuss a goal on a shared board |
 | [`pai budget`](budget.md) | The local-only budget window: local-only, status, approve |
 | [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, release, doctor, npm-auth, mirror-sync |
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
@@ -124,6 +125,12 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai bench` | Local-model quality check: run the eval sets and real tasks, print the comparison table |
 | `pai bench run` | Run the sets for one provider under a watchdog |
 | `pai bench table` | Print the comparison table (markdown) from the results |
+| `pai brainstorm` | Round table: a moderator and N cloud participants discuss a goal on a shared board |
+| `pai brainstorm ls` | List brainstorm boards, newest first |
+| `pai brainstorm post` | Post to a brainstorm board (the only way the board is written) |
+| `pai brainstorm show` | Goal, state, workers and every post of a board |
+| `pai brainstorm wait` | Block until the board has posts after --since, is closed, or the deadline passes |
+| `pai brainstorm watch` | Live view of a board until it closes or the deadline passes |
 | `pai budget` | The local-only budget window: local-only, status, approve |
 | `pai budget approve` | One-time cloud pass for one worker, from the gatekeeper session only |
 | `pai budget local-only` | The machine-wide local-only window: no cloud starts until --until (off closes it) |
