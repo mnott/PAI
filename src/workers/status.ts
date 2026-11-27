@@ -1039,6 +1039,19 @@ export async function isLiveAsync(
   return (status.state === "running" || status.state === "queued") && (await owns(status));
 }
 
+/**
+ * Write "lost" for a run whose pid is gone, from a FRESH read: the listing the caller judged may be older than the
+ * runner's own final write (the async variant awaits a `ps` per worker, and a run that ends in that window saves
+ * done/failed first). A stale copy written over it recorded a finished worker as lost (rc null) and `wait` as failed.
+ * False when the status is no longer running/queued.
+ */
+function markLost(logDir: string, id: string, now: Date): boolean {
+  const cur = loadStatus(logDir, id);
+  if (!cur || (cur.state !== "running" && cur.state !== "queued")) return false;
+  saveStatus(logDir, { ...cur, state: "lost", rc: null, last: "process ended without a final status" }, now);
+  return true;
+}
+
 /** reconcileStatuses with an async owns: awaits each check and yields to the loop between workers. */
 export async function reconcileStatusesAsync(
   logDir: string,
@@ -1051,7 +1064,7 @@ export async function reconcileStatusesAsync(
     if ((s.state !== "running" && s.state !== "queued") || (await owns(s))) continue;
     const upd = Date.parse((s.updated ?? "").replace(" ", "T"));
     if (Number.isNaN(upd) || now.getTime() - upd < graceMs) continue;
-    saveStatus(logDir, { ...s, state: "lost", rc: null, last: "process ended without a final status" }, now);
+    if (!markLost(logDir, s.id, now)) continue;
     lost.push(s.id);
   }
   return lost;
@@ -1117,7 +1130,7 @@ export function reconcileStatuses(
     if ((s.state !== "running" && s.state !== "queued") || owns(s)) continue;
     const upd = Date.parse((s.updated ?? "").replace(" ", "T"));
     if (Number.isNaN(upd) || now.getTime() - upd < graceMs) continue;
-    saveStatus(logDir, { ...s, state: "lost", rc: null, last: "process ended without a final status" }, now);
+    if (!markLost(logDir, s.id, now)) continue;
     lost.push(s.id);
   }
   return lost;
