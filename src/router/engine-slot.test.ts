@@ -594,6 +594,11 @@ describe("/cockpit/queue off the event loop", () => {
       const id = `20260101-0000${String(i).padStart(5, "0")}-${i}`;
       writeFileSync(join(dir, `${id}.status`), JSON.stringify({ id, state: "done", provider: "anthropic", model: "m", started: "2026-01-01 00:00:00", label: "x", cwd: "/tmp" }));
     }
+    // the in-process walk is the stall the thread must avoid: time it once (thread off) and
+    // judge the thread's loop lag against it, so a loaded machine inflates both sides alike
+    const inline0 = Date.now();
+    await cockpitQueueAsync(() => dir);
+    const inlineMs = Date.now() - inline0;
     enableQueueThread();
     let maxLag = 0;
     let last = Date.now();
@@ -608,7 +613,7 @@ describe("/cockpit/queue off the event loop", () => {
       const t0 = Date.now();
       await cockpitQueueAsync(() => dir);
       expect(Date.now() - t0).toBeLessThan(50);
-      expect(maxLag).toBeLessThan(200);
+      expect(maxLag).toBeLessThan(Math.max(200, inlineMs / 2));
     } finally {
       clearInterval(timer);
       enableQueueThread(false);
