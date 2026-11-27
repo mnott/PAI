@@ -477,7 +477,6 @@ async function reopenOrFall(
   v: PaneVerdict,
   tabs: TabMap,
   reopen: ((wid: string, v: PaneVerdict, tabs: TabMap) => Promise<unknown>) | undefined,
-  stop: ((wid: string, why: string) => Promise<unknown>) | undefined,
   now: Date
 ): Promise<boolean> {
   const nowMs = now.getTime();
