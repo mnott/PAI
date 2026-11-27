@@ -92,7 +92,7 @@ export function splitSegments(cmd: string): string[] {
   return segs.map((s) => s.trim()).filter(Boolean);
 }
 
-function words(seg: string): string[] {
+export function words(seg: string): string[] {
   const out: string[] = [];
   const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
   for (let m = re.exec(seg); m; m = re.exec(seg)) out.push(m[1] ?? m[2] ?? m[3]);
