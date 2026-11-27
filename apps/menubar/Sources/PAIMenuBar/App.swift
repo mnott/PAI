@@ -17,7 +17,7 @@ final class SettingsWindowController: NSWindowController {
     convenience init() {
         let settings = SettingsView()
         let hosting = NSHostingView(rootView: AnyView(settings))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 340),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 560),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "PAI Settings"
         window.contentView = hosting
@@ -60,6 +60,7 @@ struct SettingsView: View {
                     endpoints.extras.append(newHost); newHost = ""; endpoints.extrasChanged()
                 }
             }
+            DictationSettingsSection()
         }
         .padding(12)
         .frame(width: 440)
@@ -83,6 +84,11 @@ final class Poller: ObservableObject {
                 await Store.shared.refresh(baseURL: EndpointManager.shared.baseURL)
                 let running = (Store.shared.queue?.jobs() ?? []).filter { $0.state == "running" }.count
                 title = Store.shared.error != nil ? "PAI ✕" : menuTitle(running: running, gpu: Store.shared.system?.current?.gpu)
+                switch DictationController.shared.status {
+                case .recording: title = "● " + title
+                case .transcribing: title = "… " + title
+                default: break
+                }
                 // 1 s while the popover is open, 15 s while closed; sliced so open/close takes effect at once
                 let began = Date()
                 while Date().timeIntervalSince(began) < (visible ? Store.openInterval : Store.closedInterval) {
@@ -106,7 +112,7 @@ struct PAIApp: App {
             PopoverRoot(store: Store.shared, endpoints: EndpointManager.shared, visible: $poller.visible)
         } label: {
             Image(nsImage: makeMenuBarIcon())
-            Text(poller.title).task { poller.start() }
+            Text(poller.title).task { poller.start(); DictationController.shared.start() }
         }
         .menuBarExtraStyle(.window)
     }
