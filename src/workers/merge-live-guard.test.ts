@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -661,5 +661,64 @@ describe("addWorktree snapshot content", () => {
     const info = addWorktree(logDir, "snap-2", repo);
     expect(info.snapshot).toBe(false);
     expect(info.base).toBe(git(repo, ["rev-parse", "HEAD"]));
+  });
+});
+
+describe("L2 stranded by a merged L1", () => {
+  /** repo with an L1 and an L2 whose start branch is the L1's; the L1 is merged (branch deleted) when asked. */
+  async function stranded(l1Merged: boolean): Promise<{ repo: string; logDir: string }> {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "l1", { file: "l1.txt" });
+    makeWorker(repo, logDir, "l2", { file: "l2.txt", from: "worker/l1" });
+    saveStatus(logDir, { ...loadStatus(logDir, "l2")!, parent: "l1", startBranch: "worker/l1" });
+    if (l1Merged) {
+      const out = await mergeWorker(logDir, "l1", { verifyTests: false, rebuild: false, cliRoot: null });
+      expect(out).toContain("merged worker/l1");
+    }
+    return { repo, logDir };
+  }
+  const capture = () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
+    return { lines, done: () => spy.mockRestore() };
+  };
+
+  it("retargets to the branch the L1 landed on and says so", async () => {
+    const { repo, logDir } = await stranded(true);
+    expect(() => git(repo, ["rev-parse", "--verify", "-q", "refs/heads/worker/l1"])).toThrow();
+    const c = capture();
+    try {
+      expect(await mergeWorker(logDir, "l2", { verifyTests: false, rebuild: false, cliRoot: null })).toContain("merged worker/l2");
+    } finally {
+      c.done();
+    }
+    expect(c.lines.join("\n")).toContain("merging into main");
+    expect(existsSync(join(repo, "l2.txt"))).toBe(true);
+  });
+
+  it("refuses while the recorded branch still exists", async () => {
+    const { repo, logDir } = await stranded(false);
+    git(repo, ["checkout", "-q", "-b", "other"]);
+    await expect(mergeWorker(logDir, "l2", { verifyTests: false, rebuild: false, cliRoot: null })).rejects.toThrow(/wrong branch/);
+  });
+
+  it("refuses and names the L1 when it landed elsewhere", async () => {
+    const { repo, logDir } = await stranded(true);
+    git(repo, ["checkout", "-q", "-b", "elsewhere", "HEAD^1"]);
+    await expect(mergeWorker(logDir, "l2", { verifyTests: false, rebuild: false, cliRoot: null })).rejects.toThrow(/merge worker l1/);
+  });
+
+  it("an L1 merged with an unmerged L2 lists the child", async () => {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "l1", { file: "l1.txt" });
+    makeWorker(repo, logDir, "l2", { file: "l2.txt", from: "worker/l1" });
+    saveStatus(logDir, { ...loadStatus(logDir, "l2")!, parent: "l1" });
+    const c = capture();
+    try {
+      await mergeWorker(logDir, "l1", { verifyTests: false, rebuild: false, cliRoot: null });
+    } finally {
+      c.done();
+    }
+    expect(c.lines.join("\n")).toContain("1 children not merged: l2");
   });
 });
