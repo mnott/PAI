@@ -5,6 +5,7 @@ import type { CommandDef, OptDef } from "../define.js";
 import { legacy } from "../lib/legacy.js";
 import { runSetup } from "./setup/index.js";
 import { validBind, validPort } from "./setup/steps/19-router.js";
+import { DICTATION_MODELS } from "./setup/dictation-models.js";
 import { setupOptions } from "./setup/utils.js";
 import { COMPONENTS, componentFlag, renderQuestions, setupQuestions } from "./setup/questions.js";
 
@@ -20,7 +21,7 @@ export const setupCommand: CommandDef = {
   name: "setup",
   summary: "First-time setup: storage, search, hooks, daemon, router",
   description:
-    "Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit (port, reach), AIBroker (messaging; installed automatically) and the first index.\n" +
+    "Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit (port, reach), the dictation model on macOS (change later with `pai setup --dictation-model ID`; never downloaded), AIBroker (messaging; installed automatically) and the first index.\n" +
     "Safe to run again. With --yes it takes every default and asks nothing; every question has a flag, so `pai setup --yes <flags>` can express any answer. `pai setup --questions [--json]` lists the questions with their flags, defaults and current values (for callers without a terminal).",
   options: [
     { name: "yes", short: "y", type: "boolean", default: false, summary: "Take every default (or the flag given) and read no input" },
@@ -34,6 +35,7 @@ export const setupCommand: CommandDef = {
     { name: "no-router", type: "boolean", summary: "Do not enable the router and cockpit" },
     { name: "router-port", type: "number", value: "PORT", summary: "Cockpit port (default: config router.port, 8790)" },
     { name: "router-bind", type: "string", value: "SCOPE", summary: "Who reaches the cockpit: loopback (default), tailscale or an IPv4 address" },
+    { name: "dictation-model", type: "string", value: "ID", summary: "Dictation transcription model (macOS): large-v3-turbo-q5_0 (default), medium, small or base; rerun with it to change later. Never downloads: prints the curl command when missing" },
     { name: "no-aibroker", type: "boolean", default: false, summary: "Do not install AIBroker (the messaging layer)" },
     ...componentOptions,
     { name: "dry-run", type: "boolean", default: false, summary: "Validate the flags, print the AIBroker install commands and change nothing (other steps are not previewed)" },
@@ -71,6 +73,10 @@ export function applySetupFlags(opts: Record<string, unknown>): void {
   if (embedding && !["snowflake", "bge", "nomic", "ollama", "none"].includes(embedding)) {
     throw new Error(`--embedding must be snowflake, bge, nomic, ollama or none, got "${embedding}"`);
   }
+  const dictModel = opts["dictation-model"] as string | undefined;
+  if (dictModel !== undefined && !DICTATION_MODELS.some((m) => m.id === dictModel)) {
+    throw new Error(`--dictation-model must be one of ${DICTATION_MODELS.map((m) => m.id).join(", ")}, got "${dictModel}"`);
+  }
   const port = opts["router-port"];
   if (port !== undefined && validPort(port) === null) throw new Error(`--router-port must be a number from 1024 to 65535, got "${port}"`);
   const bind = opts["router-bind"];
@@ -94,6 +100,7 @@ export function applySetupFlags(opts: Record<string, unknown>): void {
     port: opts["router-port"] as number | undefined,
     bind: opts["router-bind"] as string | undefined,
   };
+  setupOptions.dictationModel = opts["dictation-model"] as string | undefined;
   setupOptions.answers = answers;
 }
 

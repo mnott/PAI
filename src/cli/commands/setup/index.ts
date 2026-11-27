@@ -26,6 +26,7 @@ import {
   stepDirectories,
   stepTaskBus,
   stepWorkers,
+  stepDictation,
   stepInitialIndex,
   stepSummary,
 } from "./steps/index.js";
@@ -123,6 +124,9 @@ export async function runSetup(): Promise<void> {
 
     // Step 11c: Worker providers (optional subagent routing)
     const workersConfig = await step("stepWorkers", () => stepWorkers(rl));
+
+    // Step 11d: Dictation model (macOS only; writes ~/.pai/dictation.json, never downloads)
+    await step("stepDictation", () => stepDictation(rl));
 
     // Write config after gathering all choices
     const allUpdates = { ...storageConfig, ...embeddingConfig, ...taskConfig, ...workersConfig, ...routerConfig };
