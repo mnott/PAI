@@ -236,3 +236,19 @@ export function initContextWindow(e: StreamEvent): number | null {
   if (/\[1m\]$/.test((e.model ?? "").trim())) return 1_000_000;
   return null;
 }
+
+/** True when a Bash command runs `pai brainstorm wait` or `pai brainstorm post` (word-bounded). */
+export function isBrainstormCommand(command: string): boolean {
+  return /(?:^|[\s;&|(])pai\s+brainstorm\s+(?:wait|post)(?=\s|$)/.test(command);
+}
+
+/**
+ * toolResultFailed with the brainstorm wait contract applied: exit 3 (deadline) and exit 4 (closed)
+ * of a brainstorm command are normal outcomes, not failures. Any other failure still fails.
+ */
+export function bashResultFailed(command: string, block: { is_error?: boolean; content?: unknown }): boolean {
+  if (!toolResultFailed(block)) return false;
+  if (!isBrainstormCommand(command)) return true;
+  const m = toolResultText(block.content).match(/Exit code (\d+)/);
+  return !(m !== null && (m[1] === "3" || m[1] === "4"));
+}
