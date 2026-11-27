@@ -1359,6 +1359,8 @@ function mergeSnapshotWorker(
   const s = { ...st, merged: true };
   saveStatus(logDir, s);
   markSuperseded(logDir, st);
+  const orphans = unmergedChildren(logDir, id);
+  if (orphans.length) console.log(`${orphans.length} children not merged: ${orphans.join(", ")} \u2014 merge them next`);
   const base =
     diff.length > 0
       ? `merged worker ${id}'s changes (branch ${branch}) into ${st.cwd} as commit "${msg}": ` +
@@ -1865,6 +1867,31 @@ function configuredMergeVerify(): string | undefined {
 
 const MERGE_KEEP = "merge in progress:";
 
+/**
+ * The recorded start branch of a worker started inside an L1's worktree is that L1's branch (worker/<id>).
+ * Once the L1 is merged and its branch deleted the L2 is stranded; this says whether the checkout's current
+ * branch is where the L1 landed. Never ok while the recorded branch still exists (wrong-branch protection).
+ */
+function retargetedStart(logDir: string, cwd: string, startBranch: string, now: string): { ok: boolean; l1: string } | null {
+  const m = /^worker\/(.+)$/.exec(startBranch);
+  if (!m) return null;
+  if (spawnSync("git", ["-C", cwd, "show-ref", "--verify", "--quiet", `refs/heads/${startBranch}`]).status === 0) return null;
+  const l1 = m[1];
+  const l1st = loadStatus(logDir, l1);
+  if (!l1st?.merged || !now) return l1st?.merged ? { ok: false, l1 } : null;
+  let landed = "";
+  try { landed = git(cwd, ["log", "-1", "--format=%H", "--fixed-strings", `--grep=merge worker ${l1} (`, now]); } catch { /* none */ }
+  return { ok: !!landed, l1 };
+}
+
+function unmergedChildren(logDir: string, id: string): string[] {
+  try {
+    return loadStatuses(logDir).filter((c) => c.parent === id && c.branch && !c.merged && c.state !== "discarded" as string).map((c) => c.id);
+  } catch {
+    return [];
+  }
+}
+
 async function mergeWorkerInner(
   logDir: string,
   id: string,
@@ -1895,10 +1922,15 @@ async function mergeWorkerInner(
     let now = "";
     try { now = git(st.cwd, ["symbolic-ref", "-q", "--short", "HEAD"]); } catch { /* detached */ }
     if (now !== st.startBranch) {
-      throw new Error(
-        `worker ${id}: the checkout ${st.cwd} had branch ${st.startBranch} when the worker started but has ${now || "a detached HEAD"} now; ` +
-          `merging would land on the wrong branch. Check out ${st.startBranch} there again, then merge.`
-      );
+      const re = callerId ? null : retargetedStart(logDir, st.cwd, st.startBranch, now);
+      if (re?.ok) console.log(`worker ${id}: its merge target ${st.startBranch} (worker ${re.l1}) was merged into ${now} and deleted; merging into ${now}`);
+      else {
+        throw new Error(
+          `worker ${id}: the checkout ${st.cwd} had branch ${st.startBranch} when the worker started but has ${now || "a detached HEAD"} now; ` +
+            `merging would land on the wrong branch. Check out ${st.startBranch} there again, then merge.` +
+            (re ? ` ${st.startBranch} no longer exists and ${re.l1} was merged, but not into ${now || "this HEAD"}: check out the branch that holds \`merge worker ${re.l1}\` and re-run pai worker merge ${id}.` : "")
+        );
+      }
     }
   }
   restoreGitIdentity(logDir, id, st.cwd);
