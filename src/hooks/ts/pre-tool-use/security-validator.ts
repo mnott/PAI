@@ -17,6 +17,7 @@
  * based on your threat model and environment.
  */
 
+import { readStdinToEnd } from '../lib/read-stdin.js';
 import { decide, denyDecision, type HookInput } from './security-decision.js';
 
 // ============================================================================
@@ -27,29 +28,14 @@ async function main(): Promise<void> {
   let input: HookInput;
 
   try {
-    // Read stdin to end of input; the timer only bounds a hung pipe.
-    const chunks: Buffer[] = [];
-    let timer: NodeJS.Timeout | undefined;
-    const timeoutPromise = new Promise<Buffer[]>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('timeout')), 2000);
-    });
-    const readPromise = (async () => {
-      for await (const chunk of process.stdin) {
-        chunks.push(chunk);
-      }
-      return chunks;
-    })();
-
+    // Wait for EOF; the load-scaled bound only catches a hung pipe.
     let text = '';
     try {
-      const result = await Promise.race([readPromise, timeoutPromise]);
-      text = Buffer.concat(result).toString('utf-8');
+      text = await readStdinToEnd();
     } catch {
       // Without the payload the delete and git guards cannot run: fail closed.
       emit(denyDecision('The hook input could not be read in time, so the command cannot be checked. Retry the command.'));
       return;
-    } finally {
-      clearTimeout(timer);
     }
 
     if (!text.trim()) {

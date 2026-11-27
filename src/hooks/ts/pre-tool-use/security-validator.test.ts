@@ -179,3 +179,28 @@ describe("security-validator", () => {
     expect(r.stderr).toContain("could not be parsed");
   }, 40_000);
 });
+
+describe("stdin bound", () => {
+  it("scales with load above the core count and caps at 30 s", async () => {
+    const { stdinBoundMs } = await import("../lib/read-stdin.js");
+    expect(stdinBoundMs(1, 18)).toBe(2000);
+    expect(stdinBoundMs(106, 18)).toBe(30_000);
+    expect(stdinBoundMs(28, 18)).toBe(12_000);
+  });
+
+  it("accepts a slow writer within the bound, rejects a hung pipe after it", async () => {
+    const { readStdinToEnd } = await import("../lib/read-stdin.js");
+    const slow = (async function* () {
+      await new Promise((r) => setTimeout(r, 150));
+      yield Buffer.from('{"a":1}');
+    })();
+    await expect(readStdinToEnd(slow, 2000)).resolves.toBe('{"a":1}');
+    const hung = (async function* () {
+      await new Promise((r) => setTimeout(r, 5000));
+      yield Buffer.from("x");
+    })();
+    const t0 = Date.now();
+    await expect(readStdinToEnd(hung, 200)).rejects.toThrow("timeout");
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+});
