@@ -1,7 +1,12 @@
 /** setup must never overwrite user config values; skipped steps must write nothing. */
 
 import { describe, it, expect } from "vitest";
-import { deepMergeUserWins } from "./utils.js";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { deepMergeUserWins, setupOptions } from "./utils.js";
+import { DICTATION_MODELS, dictationCurlCommand, dictationModelDirs, installedModelPath, readDictationModelId, writeDictationModelId } from "./dictation-models.js";
+import { stepDictation } from "./steps/20-dictation.js";
 
 const USER = {
   storageBackend: "sqlite",
@@ -93,5 +98,41 @@ describe("skipped steps return nothing", () => {
     setupOptions.router = { enabled: false };
     const { stepRouter } = await import("./steps/19-router.js");
     expect(await stepRouter({} as never)).toEqual({ router: { enabled: false } });
+  });
+});
+
+describe("dictation model step", () => {
+  it("catalog and search order", () => {
+    expect(DICTATION_MODELS.map((m) => [m.id, m.sizeMB])).toEqual([["large-v3-turbo-q5_0", 574], ["medium", 1530], ["small", 466], ["base", 142]]);
+    expect(dictationModelDirs("/h")[1]).toBe(join("/h", ".cache", "aibroker-stt"));
+    const hit = join("/h", ".cache", "aibroker-stt", "ggml-small.bin");
+    expect(installedModelPath("small", "/h", (p) => p === hit)).toBe(hit);
+    expect(installedModelPath("base", "/h", () => false)).toBeNull();
+    expect(dictationCurlCommand("small")).toContain("resolve/main/ggml-small.bin");
+  });
+  it("write merges and keeps other keys", () => {
+    const p = join(mkdtempSync(join(tmpdir(), "dict-")), "sub", "dictation.json");
+    writeDictationModelId("base", p);
+    writeFileSync(p, JSON.stringify({ language: "de", modelId: "x" }));
+    writeDictationModelId("small", p);
+    expect(JSON.parse(readFileSync(p, "utf8"))).toEqual({ language: "de", modelId: "small" });
+    expect(readDictationModelId(p)).toBe("small");
+  });
+  it("step skips on non-macOS and honours the flag", async () => {
+    const home = mkdtempSync(join(tmpdir(), "dict-home-"));
+    process.env.PAI_HOME = home;
+    try {
+      expect(await stepDictation({} as never, "linux")).toBeNull();
+      setupOptions.yes = true;
+      setupOptions.dictationModel = "base";
+      expect(await stepDictation({} as never, "darwin")).toBe("base");
+      expect(readDictationModelId(join(home, "dictation.json"))).toBe("base");
+      setupOptions.dictationModel = undefined;
+      expect(await stepDictation({} as never, "darwin")).toBe("base");
+    } finally {
+      delete process.env.PAI_HOME;
+      setupOptions.yes = false;
+      setupOptions.dictationModel = undefined;
+    }
   });
 });

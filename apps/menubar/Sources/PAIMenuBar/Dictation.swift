@@ -33,6 +33,31 @@ final class DictationController: ObservableObject {
 
     func start() { registerHotkey() }
 
+    private var recorderMonitor: Any?
+    @Published private(set) var recordingHotkey = false
+
+    /// Capture the next key combination (Esc cancels, bare non-F keys are ignored).
+    func recordHotkey() {
+        stopRecordingHotkey()
+        recordingHotkey = true
+        recorderMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
+            guard let self else { return ev }
+            if ev.keyCode == 53 { self.stopRecordingHotkey(); return nil }
+            let mods = carbonModifiers(fromEventFlags: ev.modifierFlags.rawValue)
+            let code = UInt32(ev.keyCode)
+            if isValidDictationHotkey(keyCode: code, modifiers: mods) {
+                self.settings.hotkey = DictationHotkey(keyCode: code, modifiers: mods)
+                self.stopRecordingHotkey()
+            }
+            return nil
+        }
+    }
+
+    func stopRecordingHotkey() {
+        if let m = recorderMonitor { NSEvent.removeMonitor(m); recorderMonitor = nil }
+        recordingHotkey = false
+    }
+
     // MARK: hotkey
 
     private func registerHotkey() {
@@ -180,7 +205,12 @@ struct DictationSettingsSection: View {
             }
             HStack {
                 Text("Hotkey").frame(width: 70, alignment: .leading)
-                Text(dictation.settings.hotkey.display).font(.body.monospaced())
+                Text(dictation.recordingHotkey ? "press keys… (Esc cancels)" : dictation.settings.hotkey.display).font(.body.monospaced())
+                Button(dictation.recordingHotkey ? "Cancel" : "Record") {
+                    dictation.recordingHotkey ? dictation.stopRecordingHotkey() : dictation.recordHotkey()
+                }.controlSize(.mini)
+                Button("Reset to default") { dictation.stopRecordingHotkey(); dictation.settings.hotkey = .default }
+                    .controlSize(.mini).disabled(dictation.settings.hotkey == .default)
                 Spacer()
                 Text(dictation.status.label).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }

@@ -39,6 +39,37 @@ public func availableModels(home: String = NSHomeDirectory(), exists: (String) -
     dictationModels.filter { dictationModelPath($0, home: home, exists: exists) != nil }
 }
 
+/// Virtual key code (ANSI layout) to display name.
+public let dictationKeyNames: [UInt32: String] = [
+    0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H", 34: "I", 38: "J", 40: "K", 37: "L", 46: "M",
+    45: "N", 31: "O", 35: "P", 12: "Q", 15: "R", 1: "S", 17: "T", 32: "U", 9: "V", 13: "W", 7: "X", 16: "Y", 6: "Z",
+    29: "0", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
+    122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
+    123: "←", 124: "→", 125: "↓", 126: "↑",
+    49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 117: "Fwd Delete", 53: "Esc", 76: "Enter",
+    115: "Home", 119: "End", 116: "Page Up", 121: "Page Down",
+    24: "=", 27: "-", 30: "]", 33: "[", 39: "'", 41: ";", 42: "\\", 43: ",", 44: "/", 47: ".", 50: "`",
+]
+
+public let dictationFunctionKeyCodes: Set<UInt32> = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
+
+/// Raw NSEvent.ModifierFlags bits (shift 1<<17, control 1<<18, option 1<<19, command 1<<20) to a Carbon mask.
+public func carbonModifiers(fromEventFlags raw: UInt) -> UInt32 {
+    var m: UInt32 = 0
+    if raw & (1 << 20) != 0 { m |= 256 }
+    if raw & (1 << 17) != 0 { m |= 512 }
+    if raw & (1 << 19) != 0 { m |= 2048 }
+    if raw & (1 << 18) != 0 { m |= 4096 }
+    return m
+}
+
+/// A hotkey needs at least one modifier; F-keys alone are allowed. Esc is never valid (it cancels recording).
+public func isValidDictationHotkey(keyCode: UInt32, modifiers: UInt32) -> Bool {
+    if keyCode == 53 { return false }
+    if modifiers & (256 | 512 | 2048 | 4096) != 0 { return true }
+    return dictationFunctionKeyCodes.contains(keyCode)
+}
+
 public struct DictationHotkey: Codable, Equatable, Sendable {
     public var keyCode: UInt32
     /// Carbon modifier mask (cmdKey 256, shiftKey 512, optionKey 2048, controlKey 4096).
@@ -52,8 +83,7 @@ public struct DictationHotkey: Codable, Equatable, Sendable {
         if modifiers & 2048 != 0 { s += "⌥" }
         if modifiers & 512 != 0 { s += "⇧" }
         if modifiers & 256 != 0 { s += "⌘" }
-        let names: [UInt32: String] = [49: "Space", 36: "Return", 48: "Tab", 96: "F5", 97: "F6", 98: "F7", 100: "F8"]
-        return s + (names[keyCode] ?? "key \(keyCode)")
+        return s + (dictationKeyNames[keyCode] ?? "key \(keyCode)")
     }
 }
 

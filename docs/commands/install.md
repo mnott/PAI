@@ -8,7 +8,7 @@ First-time setup: storage, search, hooks, daemon, router
 pai install [options]
 ```
 
-Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit (port, reach), AIBroker (messaging; installed automatically) and the first index.
+Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit (port, reach), the dictation model on macOS (change later with `pai setup --dictation-model ID`; never downloaded), AIBroker (messaging; installed automatically) and the first index.
 Safe to run again. With --yes it takes every default and asks nothing; every question has a flag, so `pai setup --yes <flags>` can express any answer. `pai setup --questions [--json]` lists the questions with their flags, defaults and current values (for callers without a terminal).
 
 Shortcut for `pai setup`.
@@ -26,6 +26,7 @@ Shortcut for `pai setup`.
 | `--no-router` | flag | — | Do not enable the router and cockpit |
 | `--router-port PORT` | number | — | Cockpit port (default: config router.port, 8790) |
 | `--router-bind SCOPE` | string | — | Who reaches the cockpit: loopback (default), tailscale or an IPv4 address |
+| `--dictation-model ID` | string | — | Dictation transcription model (macOS): large-v3-turbo-q5_0 (default), medium, small or base; rerun with it to change later. Never downloads: prints the curl command when missing |
 | `--no-aibroker` | flag | — | Do not install AIBroker (the messaging layer) |
 | `--no-claude-md` | flag | — | Skip: Write ~/.claude/CLAUDE.md from the PAI template? |
 | `--no-skill` | flag | — | Skip: Install the PAI skill? |

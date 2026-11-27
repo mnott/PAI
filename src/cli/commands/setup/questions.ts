@@ -6,6 +6,7 @@
  */
 
 import { loadConfig } from "../../../daemon/config.js";
+import { DEFAULT_DICTATION_MODEL, DICTATION_MODELS, readDictationModelId } from "./dictation-models.js";
 import { readConfigRaw } from "./utils.js";
 
 export interface SetupQuestion {
@@ -87,6 +88,11 @@ export function setupQuestions(): SetupQuestion[] {
   };
   const daName = () => q.push({ id: "da-name", step: "Settings", question: "What should your assistant be called?", type: "string", flag: "--da-name", default: "PAI" });
   const aibroker = () => q.push({ id: "aibroker", step: "AIBroker", question: "Install AIBroker (messaging)?", type: "bool", flag: "--no-aibroker", default: true });
+  q.push({
+    id: "dictation-model", step: "Dictation", question: "Which transcription model for dictation (macOS menu bar app)?", type: "choice",
+    flag: "--dictation-model", default: DEFAULT_DICTATION_MODEL, allowed: DICTATION_MODELS.map((m) => m.id), ...cur(readDictationModelId()),
+    note: "Setup never downloads: when the model is missing it prints the curl command. Skipped on non-macOS.",
+  });
   // Wizard order: the name precedes settings; router and AIBroker sit between the daemon and MCP.
   for (const comp of COMPONENTS) {
     if (comp.key === "settings") daName();
