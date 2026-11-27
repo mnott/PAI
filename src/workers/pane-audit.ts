@@ -528,6 +528,7 @@ async function followUnpaned(logDir: string, id: string, why: string, follow: ((
 }
 
 const defaultFollow = (logDir: string) => async (wid: string): Promise<void> => {
+  if (process.env.VITEST || process.env.PAI_TEST) return; // a test world never reaches a real iTerm
   const host = (await listItermTabs()).keys().next().value;
   if (!host) throw new Error("no live iTerm session to split");
   const env = { ...process.env, ITERM_SESSION_ID: host } as NodeJS.ProcessEnv;

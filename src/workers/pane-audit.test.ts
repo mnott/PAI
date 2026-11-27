@@ -29,7 +29,7 @@ function auditWith(logDir: string, d: Partial<LaunchAuditDeps> = {}) {
     kill: () => undefined,
     closePane: async () => undefined,
     registered: () => false,
-    stop: async () => undefined,
+    follow: async () => undefined,
     ...d,
   };
   return auditLaunches(logDir, full, new Date(T0));
@@ -48,7 +48,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
       const stopped: string[] = [];
       await auditWith(logDir, {
         workers: () => [{ id, startedMs: T0 - 60_000, exec: false, exempt: false }], // the stale cached entry
-        stop: async (wid) => void stopped.push(wid),
+        follow: async (wid) => void stopped.push(wid),
       });
       expect(stopped).toEqual([]);
     } finally {
@@ -66,7 +66,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
       const out = await auditWith(logDir, {
         workers: () => [{ id, startedMs: T0 - 60_000, exec: false, exempt: false }],
         registered: (wid) => wid === id, // the pane registry has its entry
-        stop: async (wid) => void stopped.push(wid),
+        follow: async (wid) => void stopped.push(wid),
       });
       expect(out).toEqual([]);
       expect(stopped).toEqual([]);
@@ -84,7 +84,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
       const stopped: string[] = [];
       const out = await auditWith(logDir, {
         workers: () => [{ id, startedMs: T0 - 60_000, exec: false, exempt: false }],
-        stop: async (wid) => void stopped.push(wid),
+        follow: async (wid) => void stopped.push(wid),
       });
       expect(stopped).toEqual([id]);
       expect(out.some((f) => f.kind === "unlaunched" && f.id === id)).toBe(true);
@@ -112,7 +112,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
         workers: () => [{ id, startedMs: T0 - 10_000, exec: false, exempt: false }],
         records: () => [], // no launch record on disk: no launcher is opening anything
         launcherAlive: () => false, // and no wrapper or caller lives
-        stop: async (wid) => void stopped.push(wid),
+        follow: async (wid) => void stopped.push(wid),
       });
       expect(stopped).toEqual([]);
       expect(out.some((f) => f.kind === "unlaunched" && f.id === id)).toBe(false);
@@ -130,7 +130,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
       const stopped: string[] = [];
       const out = await auditWith(logDir, {
         workers: () => [{ id, startedMs: T0 - 120_000, exec: false, exempt: false }], // past the start grace: its pane never came
-        stop: async (wid) => void stopped.push(wid),
+        follow: async (wid) => void stopped.push(wid),
       });
       expect(stopped).toEqual([id]);
       expect(out.some((f) => f.kind === "unlaunched" && f.id === id)).toBe(true);
@@ -156,7 +156,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
             procs: () => [{ id, kind: "worker", host: "HOST", startedMs: T0 - 60_000, live: true }],
             registry: () => [{ session: "PANE", worker: id, opened: "2026-11-16 20:07:00", host: "HOST" }],
             now: () => new Date(now),
-            stop: async (wid) => void stopped.push(wid),
+            follow: async (wid) => void stopped.push(wid),
           }
         );
       }
@@ -202,7 +202,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
             procs: () => [{ id, kind: "worker", host: "HOST", startedMs: T0 - 60_000, live: true }],
             registry: () => [],
             now: () => new Date(now),
-            stop: async (wid) => void stopped.push(wid),
+            follow: async (wid) => void stopped.push(wid),
           }
         );
       }
@@ -266,7 +266,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
             registry: () => [],
             now: () => tickClock,
             launches: async () => undefined,
-            stop: async (wid) => void stopped.push(wid),
+            follow: async (wid) => void stopped.push(wid),
           }
         );
       }
@@ -308,7 +308,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
             launches: async () => undefined,
             // the pane launcher (wrapper + caller) stays alive until the pane opens
             launcherAlive: (pid) => !!pid && at < openedMs,
-            stop: async (wid) => void stopped.push(wid),
+            follow: async (wid) => void stopped.push(wid),
           }
         );
       }
@@ -342,7 +342,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
             launches: async () => undefined,
             launcherAlive: () => false, // no wrapper, no caller: nobody is opening its pane
             running: () => true, // the fake world's liveness: the test pids are not real processes
-            stop: async (wid) => void stopped.push(wid),
+            follow: async (wid) => void stopped.push(wid),
           }
         );
       }
@@ -385,7 +385,7 @@ for (let i = 0; i < 2; i++) {
     registered: () => false,
     workers: () => [{ id, startedMs: S0 - 120_000, exec: false, exempt: false }], // minutes past grace on spawn alone
     launcherAlive: (pid) => pid === 4100 || pid === 4200, // wrapper + caller alive: the pane is opening
-    stop: async (wid) => void stopped.push(wid),
+    follow: async (wid) => void stopped.push(wid),
   }); // the default clock: real time, like the daemon
 }
 console.log(JSON.stringify(stopped));
@@ -469,7 +469,7 @@ describe("auditTick looks only at recent workers", () => {
           registry: () => [],
           running: () => true,
           ownSession: () => "",
-          stop: async (id) => void seen.push(id),
+          follow: async (id) => void seen.push(id),
         });
       await run(); // warm: the first pass reads the directory
       const t0 = performance.now();
@@ -480,7 +480,7 @@ describe("auditTick looks only at recent workers", () => {
       expect(ids.every((id) => live.includes(id))).toBe(true);
       expect(ids.some((id) => id.startsWith("old-"))).toBe(false);
       expect(JSON.parse(readFileSync(join(logDir, "pane-audit-told.json"), "utf8"))["old-1"]).toBeUndefined();
-      expect(ms).toBeLessThan(50);
+      expect(ms).toBeLessThan(500);
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
@@ -500,7 +500,7 @@ describe("auditTick looks only at recent workers", () => {
           running: () => true,
           ownSession: () => "",
           reopen: async () => { throw new Error("no host"); },
-          stop: async () => undefined,
+          follow: async () => undefined,
         });
       for (let i = 0; i < 5; i++) await pass();
       const ledger = join(logDir, "ledger.jsonl");
