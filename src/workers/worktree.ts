@@ -579,9 +579,23 @@ export const KNOWLEDGE_IGNORE_NAMES = ["node_modules", "dist", ".pai-scratch", "
 /** Text knowledge by extension: salvage is for knowledge, so only these ride back to the checkout. A gitignored build product (Obsidian/main.js, 2026-10-27) must not. */
 const KNOWLEDGE_SUFFIXES = [".md", ".markdown", ".txt", ".org", ".rst"];
 
+/** Build intermediates: never salvaged into the checkout, never kept (a intermediates note is not knowledge). */
+export const BUILD_INTERMEDIATE_NAMES = ["intermediates", ".gradle", "DerivedData", ".dart_tool"];
+
+/** A finished build deliverable: kept in leftovers/<id>/ with its relative path even when it sits under a regenerable build/ dir. */
+const ARTEFACT_SUFFIXES = [".ipa", ".apk", ".aab", ".app.zip", ".tgz", ".vsix", ".dmg"];
+
+export function isBuildArtefact(rel: string): boolean {
+  const parts = rel.split("/").filter(Boolean);
+  if (parts.some((p) => BUILD_INTERMEDIATE_NAMES.includes(p) || p === "node_modules" || p === "Pods")) return false;
+  const last = parts[parts.length - 1] ?? "";
+  return ARTEFACT_SUFFIXES.some((x) => last.endsWith(x));
+}
+
 function isKnowledgeFile(rel: string): boolean {
   const parts = rel.split("/").filter(Boolean);
-  if (parts.some((p) => KNOWLEDGE_IGNORE_NAMES.includes(p))) return false;
+  if (parts.some((p) => KNOWLEDGE_IGNORE_NAMES.includes(p) || BUILD_INTERMEDIATE_NAMES.includes(p))) return false;
+  if (parts[0] === "build") return false;
   return KNOWLEDGE_SUFFIXES.some((x) => parts[parts.length - 1]?.endsWith(x));
 }
 
@@ -691,12 +705,30 @@ export function salvageOutputs(cwd: string, wtDir: string, id: string): string[]
     return lines;
   }
   const leftovers = join(dirname(dirname(resolve(wtDir))), "leftovers", id);
+  const artefacts: string[] = [];
+  try {
+    for (const l of git(wtDir, ["status", "--porcelain", "--ignored", "--untracked-files=all", "-z"]).split("\0")) {
+      if (l.startsWith("!! ") && !l.endsWith("/") && isBuildArtefact(l.slice(3))) artefacts.push(l.slice(3));
+    }
+  } catch {
+    /* best effort */
+  }
+  for (const rel of artefacts) {
+    try {
+      const src = join(wtDir, rel);
+      const size = treeSize(src);
+      moveEntry(src, join(leftovers, rel));
+      lines.push(`kept build artefact ${rel} (${fmtBytes(size)}) from worker ${id} in ${join(leftovers, rel)}`);
+    } catch (e) {
+      lines.push(`could not keep build artefact ${rel} from worker ${id}: ${(e as Error).message}`);
+    }
+  }
   let moved = 0;
   let left = 0;
   let leftBytes = 0;
   for (const rel of entries) {
     const parts = rel.split("/");
-    if (parts.some((p) => REGENERABLE_NAMES.includes(p))) continue;
+    if (parts.some((p) => REGENERABLE_NAMES.includes(p) || BUILD_INTERMEDIATE_NAMES.includes(p))) continue;
     const src = join(wtDir, rel);
     try {
       if (!existsSync(src)) continue;
