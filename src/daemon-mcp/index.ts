@@ -38,7 +38,6 @@ import { loadConfig } from "../daemon/config.js";
 import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
 import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
-import { readSkill, SKILL_PROMPT, SKILL_URI } from "./skill.js";
 import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, release, routerService, testsAudit, testsKeep, testsPrune, workerGc, workerKill, updateCheck, workerMerge } from "./tools/ops.js";
 import { dropItermBundleId } from "../utils/env.js";
 
@@ -313,17 +312,6 @@ export function buildServer(): { server: McpServer; handlers: Map<string, ToolHa
       })
     );
   }
-
-  // The skill itself: single source skills/PAI/SKILL.md, served as resource and prompt.
-  server.resource(
-    "PAI skill",
-    SKILL_URI,
-    { mimeType: "text/markdown", description: "Full guidance for using the pai MCP tools." },
-    async () => ({ contents: [{ uri: SKILL_URI, mimeType: "text/markdown", text: readSkill() }] })
-  );
-  server.prompt(SKILL_PROMPT, "Full guidance for using the pai MCP tools.", () => ({
-    messages: [{ role: "user" as const, content: { type: "text" as const, text: readSkill() } }],
-  }));
 
   // -------------------------------------------------------------------------
   // Tool: memory_search

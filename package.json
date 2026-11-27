@@ -13,7 +13,6 @@
   },
   "files": [
     "dist",
-    "skills",
     "!dist/**/*.map",
     "!dist/.prune-manifest.json",
     "templates",
