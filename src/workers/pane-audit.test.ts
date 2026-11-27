@@ -75,7 +75,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
     }
   });
 
-  it("a genuinely unlaunched worker (no pane anywhere on disk) is still stopped", async () => {
+  it("a genuinely unlaunched worker (no pane anywhere on disk) is never stopped: it gets a follow pane", async () => {
     const logDir = makeLogDir();
     const id = "20261116-201326-46957";
     try {
@@ -121,7 +121,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
     }
   });
 
-  it("a continuation past the start grace with no pane anywhere is still stopped", async () => {
+  it("a continuation past the start grace with no pane anywhere is never stopped: it gets a follow pane", async () => {
     const logDir = makeLogDir();
     const id = "20261116-231502-57595";
     try {
@@ -322,7 +322,7 @@ describe("auditLaunches never stops a worker launched in a pane", () => {
     }
   });
 
-  it("(c) a genuinely unpaned running worker past grace with no launcher is still stopped", async () => {
+  it("(c) a genuinely unpaned running worker past grace with no launcher is never stopped: it gets a follow pane", async () => {
     const logDir = makeLogDir();
     const id = "20261117-010900-11111";
     try {
@@ -509,6 +509,60 @@ describe("auditTick looks only at recent workers", () => {
       const { ledgerPath } = await import("./paths.js");
       try { text = readFileSync(ledgerPath(logDir), "utf8"); } catch { /* none */ }
       expect((text.match(/PANE-VIOLATION/g) ?? []).length).toBeLessThanOrEqual(1);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// 2026-11-27: nine L1 orchestrators started L2 workers at once; the pane-open lock queued them past the start
+// grace while neither a launch record nor status.pane existed yet, and the audit stopped them (rc 143, "no pane
+// recorded" / "not started through the pane launcher"). Measured on four ids: status pane null, turns 0, last
+// "starting", killed 49-84 s after start. The audit is instrumentation: it never stops a run.
+describe("the pane audit never stops a run", () => {
+  it("a run queued behind the pane-open lock is spared (marker of its live launcher process)", async () => {
+    const logDir = makeLogDir();
+    const id = "20261127-201713-42902";
+    try {
+      writeFileSync(join(logDir, `${id}.status`), statusJson(id, 42902));
+      loadStatusesCached(logDir);
+      const { markPaneOpenWaiting } = await import("./pane-open-lock.js");
+      markPaneOpenWaiting(logDir, id, process.pid, T0 - 50_000);
+      const followed: string[] = [];
+      const killed: number[] = [];
+      const out = await auditWith(logDir, {
+        workers: () => [{ id, startedMs: T0 - 60_000, exec: false, exempt: false }],
+        follow: async (wid) => void followed.push(wid),
+        kill: (pid) => void killed.push(pid),
+      });
+      expect(followed).toEqual([]);
+      expect(killed).toEqual([]);
+      expect(out).toEqual([]);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("an unlaunched run past the grace gets a warning and a follow pane, never a stop", async () => {
+    const logDir = makeLogDir();
+    const id = "20261127-201738-54317";
+    try {
+      writeFileSync(join(logDir, `${id}.status`), statusJson(id, 54317));
+      loadStatusesCached(logDir);
+      const followed: string[] = [];
+      const killed: number[] = [];
+      const out = await auditWith(logDir, {
+        workers: () => [{ id, startedMs: T0 - 120_000, exec: false, exempt: false }],
+        follow: async (wid) => void followed.push(wid),
+        kill: (pid) => void killed.push(pid),
+      });
+      expect(followed).toEqual([id]);
+      expect(killed).toEqual([]);
+      expect(out.some((f) => f.id === id && f.action === "follow pane opened")).toBe(true);
+      const { ledgerPath } = await import("./paths.js");
+      const text = readFileSync(ledgerPath(logDir), "utf8");
+      expect(text).toContain("PANE-UNPANED");
+      expect(text).not.toContain("PANE-STOPPED");
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }

@@ -107,3 +107,34 @@ export async function retryPaneOpen<T>(
     deps
   );
 }
+
+/** A run queued behind the pane-open lock (up to WAIT_MS + the three timed tries) has no launch record yet: this marker is its proof of life. */
+const WAITING_MAX_MS = WAIT_MS + PANE_OPEN_TIMEOUTS_MS.reduce((a, b) => a + b, 0) + 10_000;
+const waitingPath = (logDir: string, id: string): string => join(logDir, "pane-open-waiting", `${id}.json`);
+
+/** Mark `id` as waiting for / opening its pane (this process); returns the remover. */
+export function markPaneOpenWaiting(logDir: string, id: string, pid = process.pid, at = Date.now()): () => void {
+  try {
+    mkdirSync(join(logDir, "pane-open-waiting"), { recursive: true });
+    writeFileSync(waitingPath(logDir, id), JSON.stringify({ pid, at }), "utf8");
+  } catch {
+    /* a marker is a courtesy: the open itself never fails on it */
+  }
+  return () => {
+    try {
+      unlinkSync(waitingPath(logDir, id));
+    } catch {
+      /* gone */
+    }
+  };
+}
+
+/** True while the process that queued `id` for a pane lives and the wait is within its bound. */
+export function paneOpenWaiting(logDir: string, id: string, now = Date.now(), alive: (pid: number) => boolean = pidAlive): boolean {
+  try {
+    const m = JSON.parse(readFileSync(waitingPath(logDir, id), "utf8")) as { pid: number; at: number };
+    return Number.isInteger(m.pid) && now - m.at < WAITING_MAX_MS && alive(m.pid);
+  } catch {
+    return false;
+  }
+}
