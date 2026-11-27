@@ -14,7 +14,7 @@ import { Readable } from "node:stream";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { followWorkers, workerEnded } from "./viewer.js";
-import { reconcileStatuses, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, reconcileStatusesAsync, reconcileStatuses, saveStatus, type WorkerStatus } from "./status.js";
 
 let dir: string;
 
@@ -138,5 +138,27 @@ describe("followWorkers exits on a killed worker", () => {
     // it must NOT return within 1.5 s: the run revived
     const raced = await Promise.race([p.then(() => "returned"), new Promise((r) => setTimeout(() => r("still-following"), 1500))]);
     expect(raced).toBe("still-following");
+  });
+});
+
+describe("reconcileStatusesAsync race with the runner's final write", () => {
+  it("does not overwrite a done status saved while the ownership check was awaited", async () => {
+    const id = "20261127-101429-80164";
+    const st: WorkerStatus = {
+      id, label: "finishing-worker", cwd: dir, provider: "test", state: "running", rc: null, last: "",
+      term: "", model: "", turns: 0, tools: 0, secs: null, pid: 999999,
+      started: "2026-11-27 10:14:29", updated: "2026-11-27 10:14:29",
+    };
+    saveStatus(dir, st);
+    // the runner ends (writes done) while the daemon's `ps` for this worker is still pending
+    const owns = async () => {
+      saveStatus(dir, { ...st, state: "done", rc: 0, secs: 109, last: "R r=+" });
+      return false;
+    };
+    const lost = await reconcileStatusesAsync(dir, new Date("2026-11-27T10:16:35"), 120_000, owns);
+    expect(lost).toEqual([]);
+    const after = loadStatus(dir, id);
+    expect(after?.state).toBe("done");
+    expect(after?.rc).toBe(0);
   });
 });
