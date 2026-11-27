@@ -514,6 +514,21 @@ final class ANEAndModeTests: XCTestCase {
 }
 
 final class DictationTests: XCTestCase {
+    func testHotkeyRecorderPieces() {
+        XCTAssertEqual(carbonModifiers(fromEventFlags: 1 << 18 | 1 << 19), 4096 | 2048)
+        XCTAssertEqual(carbonModifiers(fromEventFlags: 1 << 20 | 1 << 17), 256 | 512)
+        XCTAssertEqual(carbonModifiers(fromEventFlags: 1 << 16), 0) // caps lock ignored
+        XCTAssertTrue(isValidDictationHotkey(keyCode: 49, modifiers: 256))
+        XCTAssertFalse(isValidDictationHotkey(keyCode: 0, modifiers: 0))
+        XCTAssertTrue(isValidDictationHotkey(keyCode: 111, modifiers: 0))
+        XCTAssertFalse(isValidDictationHotkey(keyCode: 53, modifiers: 256))
+        XCTAssertEqual(DictationHotkey(keyCode: 0, modifiers: 256 | 512).display, "⇧⌘A")
+        XCTAssertEqual(DictationHotkey(keyCode: 126, modifiers: 4096).display, "⌃↑")
+        XCTAssertEqual(DictationHotkey(keyCode: 109, modifiers: 0).display, "F10")
+        XCTAssertEqual(DictationHotkey.default.display, "⌃⌥Space")
+        XCTAssertEqual(DictationHotkey(keyCode: 250, modifiers: 256).display, "⌘key 250")
+    }
+
     func testModelPathSearchOrder() {
         let m = dictationModel(id: "base")!
         let dirs = dictationModelDirs(home: "/h")
