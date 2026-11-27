@@ -8,7 +8,7 @@ Update PAI (or another package) to the latest GitHub Release
 pai update [options]
 ```
 
-Reads the installed version, asks the GitHub API for the latest release of the package's repository (package.json `repository`) and, when it is newer, runs `npm i -g <release package url>`. `--check` only reports. `--package aibroker` does the same for AIBroker or any other package installed with `npm i -g` from a release. Run `pai reload` afterwards. `--source` is the old behaviour for a source checkout: pull, rebuild, restart the daemon.
+Reads the installed version, asks the GitHub API for the latest release of the package's repository (package.json `repository`) and, when it is newer, runs `npm i -g <release package url>`. `--check` only reports. `--package aibroker` does the same for AIBroker or any other package installed with `npm i -g` from a release. Without `--package`, the installed AIBroker is checked and upgraded the same way (and its daemon restarted with `aibroker restart`); `--check` reports it too. Run `pai reload` afterwards. `--source` is the old behaviour for a source checkout: pull, rebuild, restart the daemon.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

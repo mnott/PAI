@@ -98,3 +98,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/brainstorm/board.test.ts | c | brainstorm board wire: append-only, sequence numbers, blocking wait semantics other sessions' prompts depend on (issue APPS/PAI#36) |
 | src/hooks/ts/lib/edit-gate.test.ts | c | planner lock must not block pai brainstorm post/wait CLI calls (quoted > text, --file); the round-table loop depends on it (issue APPS/PAI#36) |
 | src/brainstorm/start.test.ts | c | pai brainstorm contract: the prompts carry the board id, the literal wait loop and CLOSED semantics workers depend on; post/wait exit codes 0/3/4 (harness teaches them); result.md shape |
+| src/release/update.test.ts | a | update companion: AIBroker version compare and install command fakes |
