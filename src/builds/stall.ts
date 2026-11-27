@@ -13,7 +13,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { patchTicket, releaseStalled, stallReleaseLine, type BuildTicket } from "./queue.js";
+import { patchTicket, releaseStalled, removeTicket, stallReleaseLine, type BuildTicket } from "./queue.js";
 import { killProcessTree, processTree, treeBusy } from "../workers/wait-on.js";
 
 export interface StallDeps {
@@ -114,13 +114,19 @@ export async function stallTick(dir: string, tickets: BuildTicket[], minutes: nu
       if (t.stalledAt) await patchTicket(dir, t.id, { stalledAt: undefined });
       continue;
     }
-    // Held, silent and idle for the release threshold: release the lock and kill the tree. A tree that
-    // still burns CPU is left to the flag-only path below (a slow build is not a hang).
+    // Held and silent for the release threshold. A finished job (tree gone) is only cleaned up; an idle
+    // tree is released and killed after a second liveness check (cpu time growth / loopback i/o, which also
+    // sees a Gradle client waiting on its detached daemon); a tree that burns CPU is a slow build, not a hang.
     const rel = deps.release;
     if (rel && now - prev.outAt >= rel.minutes * 60_000) {
       const root = treeRoot(t);
       const pct = rel.cpuPct(root);
-      if (pct === null || pct < (rel.maxCpuPct ?? DEFAULT_RELEASE_MAX_CPU_PCT)) {
+      if (pct === null) {
+        await cleanFinished(dir, t, now - prev.outAt, tickets, deps, rel);
+        state.delete(t.id);
+        continue;
+      }
+      if (pct < (rel.maxCpuPct ?? DEFAULT_RELEASE_MAX_CPU_PCT) && !(await deps.busy(root)).busy) {
         await releaseStall(dir, t, root, pct, now - prev.outAt, files, tickets, rel, deps);
         state.delete(t.id);
         flagged.push(t.id);
@@ -130,7 +136,7 @@ export async function stallTick(dir: string, tickets: BuildTicket[], minutes: nu
     // Silent logs over a busy tree are a slow build, not a hang (see the header): reset the quiet
     // window like a log change would, and clear a flag raised before the tree went busy again.
     if ((await deps.busy(treeRoot(t))).busy) {
-      state.set(t.id, { sig, since: now, busy: true, outAt: prev.outAt });
+      state.set(t.id, { sig, since: now, busy: true, outAt: now });
       if (t.stalledAt) await patchTicket(dir, t.id, { stalledAt: undefined });
       continue;
     }
@@ -163,6 +169,16 @@ async function deliver(deps: StallDeps, t: BuildTicket, text: string): Promise<b
   }
 }
 
+/** The build's process tree is gone: the command finished (or died) and only its ticket is left. Not a stall:
+ *  no stall record, no kill, no stall wording; the ticket is removed so the key is free. */
+async function cleanFinished(dir: string, t: BuildTicket, quietMs: number, tickets: BuildTicket[], deps: StallDeps, rel: StallReleaseDeps): Promise<void> {
+  await removeTicket(dir, t.id);
+  rel.ledger("BUILD-FINISHED-CLEAN", { id: t.id, gate: t.pid, cmd: t.cmd, key: t.key ?? "-", quiet: `${mins(quietMs)}m` });
+  deps.log(`BUILD-FINISHED-CLEAN ${t.id} ${t.label} quiet=${mins(quietMs)}m`);
+  const behind = tickets.filter((x) => x.state === "waiting" && x.key && x.key === t.key);
+  await deliver(deps, t, `build ${t.label}${t.key ? ` [${t.key}]` : ""} (${t.id}) finished (process tree gone); ticket cleaned, lock free; ${behind.length} job(s) waiting`);
+}
+
 async function releaseStall(dir: string, t: BuildTicket, root: number, pct: number | null, quietMs: number, files: string[], tickets: BuildTicket[], rel: StallReleaseDeps, deps: StallDeps): Promise<void> {
   const quietMin = Math.max(1, Math.floor(quietMs / 60_000));
   const last = files.map((f) => deps.lastLine(f)).filter(Boolean).pop() ?? "";
@@ -172,7 +188,7 @@ async function releaseStall(dir: string, t: BuildTicket, root: number, pct: numb
   } catch {
     /* diagnosis never blocks the release */
   }
-  if (pct !== null) await rel.kill(root).catch(() => undefined);
+  await rel.kill(root).catch(() => undefined);
   await releaseStalled(dir, t.id, quietMin);
   rel.ledger("BUILD-STALL-RELEASE", { id: t.id, pid: root, gate: t.pid, cmd: t.cmd, key: t.key ?? "-", quiet: `${quietMin}m`, cpu: pct === null ? "gone" : `${pct}%`, saved: saved ?? "-" });
   deps.log(`BUILD-STALL-RELEASE ${t.id} ${t.label} quiet=${quietMin}m cpu=${pct === null ? "gone" : pct + "%"} last=${last || "-"}`);
@@ -204,8 +220,8 @@ export function realReleaseDeps(dir: string, minutes: number, ledger: StallRelea
       } catch {
         ps = "(process tree gone)\n";
       }
-      writeFileSync(`${base}.ps.txt`, ps, "utf8");
-      if (process.platform !== "darwin") return `${base}.ps.txt`;
+      writeFileSync(base, ps, "utf8"); // the diagnosis file named in the release message; a sample goes next to it
+      if (process.platform !== "darwin") return base;
       // sample the compiler/test process if there is one, else the tree root
       const rows = ps.split("\n").slice(1);
       const hit = rows.find((r) => /xcodebuild|xctest|swift-frontend|clang|testmanagerd/.test(r));

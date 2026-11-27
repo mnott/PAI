@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runBuild } from "./gate.js";
 import { enqueue, listBuilds, patchTicket, tryStart } from "./queue.js";
-import { directAlert, stallTick, type StallDeps, type StallReleaseDeps, type StallState } from "./stall.js";
+import { directAlert, realReleaseDeps, stallTick, type StallDeps, type StallReleaseDeps, type StallState } from "./stall.js";
 
 // 2026-11-17: a mac build lock was held 3 h 45 min with no output while the machine ran at load ~160;
 // every worker of the project queued behind it and failed, and the stall alert reached the session 10 h late.
@@ -75,15 +75,50 @@ describe("stalled lock release", () => {
     expect(await tryStart(dir, w.id, 1, q())).toBe(true);
   });
 
-  it("releases without a kill when the build process is gone", async () => {
-    await holder();
+  it("a finished job (tree gone) gets its ticket cleaned with a finished message, not a stall release", async () => {
+    const id = await holder();
     const rel = release({ cpuPct: () => null });
-    const d = mkDeps({ release: rel }, () => 0, []);
+    const ev: string[] = [];
+    const d = mkDeps({ release: rel }, () => 0, ev);
     const state: StallState = new Map();
     await tick(state, d);
     clock += 16 * 60_000;
-    expect(await tick(state, d)).toHaveLength(1);
+    await tick(state, d);
     expect(rel.killed).toEqual([]);
+    expect((await listBuilds(dir, { isAlive: alive })).find((t) => t.id === id)).toBeUndefined();
+    expect(ev.some((e) => /finished \(process tree gone\); ticket cleaned/.test(e))).toBe(true);
+    expect(ev.some((e) => /stalled|killed/.test(e))).toBe(false);
+  });
+
+  it("a silent job whose tree is busy by cpu-time growth (idle %cpu) is not killed and its quiet window restarts", async () => {
+    const id = await holder();
+    const rel = release({ cpuPct: () => 0.1 });
+    const d = mkDeps({ release: rel, busy: async () => ({ busy: true, why: "cpu +3s" }) }, () => 0, []);
+    const state: StallState = new Map();
+    for (let i = 0; i < 8; i++) {
+      clock += 5 * 60_000;
+      await tick(state, d);
+    }
+    expect(rel.killed).toEqual([]);
+    expect((await listBuilds(dir, { isAlive: alive })).find((t) => t.id === id)?.state).toBe("running");
+    // the tree goes idle: the window counts from the last busy sample, so no instant kill
+    const idle = mkDeps({ release: rel }, () => 0, []);
+    await tick(state, idle);
+    expect(rel.killed).toEqual([]);
+  });
+
+  it("a real stall writes the diagnosis file named in the message", async () => {
+    await holder();
+    const ev: string[] = [];
+    const rel = { ...realReleaseDeps(dir, 15, () => undefined), cpuPct: () => 0.1, kill: async () => undefined };
+    const d = mkDeps({ release: rel }, () => 0, ev);
+    const state: StallState = new Map();
+    await tick(state, d);
+    clock += 16 * 60_000;
+    await tick(state, d);
+    const m = ev.join("\n").match(/diagnosis: (\S+)\)/);
+    expect(m).not.toBeNull();
+    expect(existsSync((m as RegExpMatchArray)[1])).toBe(true);
   });
 
   it("never releases an active build with output, nor a silent but CPU-busy tree", async () => {

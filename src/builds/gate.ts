@@ -271,7 +271,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
       if (aborted) killChild();
     });
     const t = await getTicket(o.dir, ticket.id);
-    if (t?.state === "superseded" && t.goneReason === "stalled") {
+    if (t?.state === "superseded" && t.goneReason === "stalled" && code !== 0) {
       out(`pai build: ${stallReleaseLine({ id: ticket.id, label, minutes: Number(t.goneBy?.replace(/\D+/g, "")) || 0, at: 0 })}`);
       return RELEASED_EXIT;
     }
