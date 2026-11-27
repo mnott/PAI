@@ -512,3 +512,54 @@ final class ANEAndModeTests: XCTestCase {
         XCTAssertNil(activityLine(idle))
     }
 }
+
+final class DictationTests: XCTestCase {
+    func testModelPathSearchOrder() {
+        let m = dictationModel(id: "base")!
+        let dirs = dictationModelDirs(home: "/h")
+        XCTAssertNil(dictationModelPath(m, home: "/h", exists: { _ in false }))
+        XCTAssertEqual(dictationModelPath(m, home: "/h", exists: { $0 == dirs[1] + "/ggml-base.bin" || $0 == dirs[2] + "/ggml-base.bin" }), dirs[1] + "/ggml-base.bin")
+        XCTAssertEqual(dictationModelPath(m, home: "/h", exists: { _ in true }), dirs[0] + "/ggml-base.bin")
+        let avail = availableModels(home: "/h", exists: { $0.hasSuffix("/ggml-small.bin") })
+        XCTAssertEqual(avail.map(\.id), ["small"])
+    }
+
+    func testSettings() throws {
+        let dir = NSTemporaryDirectory() + "dict-\(UUID().uuidString)"
+        let path = dir + "/dictation.json"
+        XCTAssertEqual(DictationSettings.load(path: path), DictationSettings())
+        var s = DictationSettings()
+        s.language = "de"; s.pushToTalk = true; s.modelId = "small"
+        try s.save(path: path)
+        XCTAssertEqual(DictationSettings.load(path: path), s)
+        try? FileManager.default.removeItem(atPath: dir)
+        XCTAssertEqual(DictationHotkey.default.display, "⌃⌥Space")
+    }
+
+    func testWavData() {
+        let d = wavData(pcm16: [1, -2, 3], sampleRate: 16000)
+        XCTAssertEqual(d.count, 44 + 6)
+        XCTAssertEqual(String(decoding: d.prefix(4), as: UTF8.self), "RIFF")
+        XCTAssertEqual(String(decoding: d[8..<12], as: UTF8.self), "WAVE")
+        XCTAssertEqual(wavData(pcm16: [], sampleRate: 16000).count, 44)
+    }
+
+    func testInferenceRequest() {
+        let req = inferenceRequest(url: URL(string: "http://127.0.0.1:8178")!, wav: Data([1, 2]), language: "de", boundary: "B")
+        XCTAssertEqual(req.url?.path, "/inference")
+        XCTAssertEqual(req.httpMethod, "POST")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Type"), "multipart/form-data; boundary=B")
+        let body = String(decoding: req.httpBody!, as: UTF8.self)
+        XCTAssertTrue(body.contains("name=\"language\"\r\n\r\nde\r\n"))
+        XCTAssertTrue(body.contains("name=\"file\"; filename=\"audio.wav\""))
+        XCTAssertTrue(body.hasSuffix("--B--\r\n"))
+    }
+
+    func testParseInference() {
+        func p(_ t: String) -> String? { parseInference(Data("{\"text\":\"\(t)\"}".utf8)) }
+        XCTAssertEqual(p("  Hello world.\\n"), "Hello world.")
+        XCTAssertNil(p("Thank you."))
+        XCTAssertNil(p("..."))
+        XCTAssertNil(parseInference(Data("garbage".utf8)))
+    }
+}
