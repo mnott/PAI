@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +19,12 @@ afterAll(() => {
   }
 });
 
+/** Every temp dir a test makes; removed after each test so nothing leaks into TMPDIR. */
+const tmpDirs: string[] = [];
+afterEach(() => {
+  for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 }
@@ -26,6 +32,7 @@ function git(cwd: string, args: string[]): string {
 /** One repo + logDir pair per test (the in-process status cache keys on path). */
 function fixture(): { repo: string; logDir: string } {
   const base = mkdtempSync(join(tmpdir(), "merge-live-"));
+  tmpDirs.push(base);
   const repo = join(base, "repo");
   mkdirSync(repo, { recursive: true });
   git(repo, ["init", "-q", "-b", "main"]);
@@ -561,6 +568,7 @@ function makeSnapshotWorker(
   // the snapshot commit and the worker's own commits live in a throwaway repo
   // (the merge only reads them from `repo` via fetch; their content is irrelevant to the message)
   const snapRepo = mkdtempSync(join(tmpdir(), "snap-src-"));
+  tmpDirs.push(snapRepo);
   git(snapRepo, ["init", "-q", "-b", "main"]);
   git(snapRepo, ["config", "user.email", "t@t"]);
   git(snapRepo, ["config", "user.name", "t"]);
