@@ -696,6 +696,19 @@ describe("L2 stranded by a merged L1", () => {
     expect(existsSync(join(repo, "l2.txt"))).toBe(true);
   });
 
+  it("retargets when the L1 ended unmerged and its branch is gone", async () => {
+    const { repo, logDir } = await stranded(false);
+    git(repo, ["worktree", "remove", "--force", join(logDir, "worktrees", "l1")]);
+    git(repo, ["branch", "-D", "worker/l1"]);
+    const c = capture();
+    try {
+      expect(await mergeWorker(logDir, "l2", { verifyTests: false, rebuild: false, cliRoot: null })).toContain("merged worker/l2");
+    } finally {
+      c.done();
+    }
+    expect(c.lines.join("\n")).toContain("ended without merging and its branch is gone; merging into main");
+  });
+
   it("refuses while the recorded branch still exists", async () => {
     const { repo, logDir } = await stranded(false);
     git(repo, ["checkout", "-q", "-b", "other"]);
