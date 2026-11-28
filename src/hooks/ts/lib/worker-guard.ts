@@ -381,6 +381,8 @@ function defaultScratchDirs(env: Record<string, string | undefined>): string[] {
   if (tmp) out.push(tmp);
   out.push("/tmp/pai-scratch");
   if (tmp) out.push(`${tmp.replace(/^\/private/, "")}/pai-scratch`);
+  // scratch dirs of the run(s) a resume continues (PAI_SCRATCH_ALSO, ":"-separated)
+  for (const d of (env.PAI_SCRATCH_ALSO ?? "").split(":")) if (d) out.push(d.replace(/\/+$/, ""));
   return out;
 }
 

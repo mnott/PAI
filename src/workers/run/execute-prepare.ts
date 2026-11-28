@@ -4,7 +4,7 @@
  * ends here (refused start, --print-cmd dry run).
  */
 
-import { applyScratchEnv, linkScratchModules, scratchPromptLine } from "../scratch.js";
+import { applyScratchEnv, linkScratchModules, scratchDir, scratchPromptLine } from "../scratch.js";
 import { NOTE_TOKEN_ENV, newNoteToken } from "../note-delivery.js";
 import { TroubleWatcher } from "../worker-trouble.js";
 import type { BashRun, WorkerReport } from "../report.js";
@@ -248,6 +248,9 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (originTenant === "local") delete env.PAI_WORKER_TENANT;
   else env.PAI_WORKER_TENANT = originTenant;
   const scratch = applyScratchEnv(env, wid);
+  // a resumed model still holds the origin run's scratch path in its context: the write guard allows it too
+  if (a.resumeOf) env.PAI_SCRATCH_ALSO = scratchDir(a.resumeOf);
+  else delete env.PAI_SCRATCH_ALSO;
   // the router's fair queue shares a local engine between owning sessions
   addSchedulingHeaders(env, { session: session?.name || spawnerSession || itermUuid(term), worker: wid, priority: a.queuePriority });
   const noteToken = newNoteToken();
