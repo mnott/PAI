@@ -116,11 +116,8 @@ identity:
 # fallback). Providers/classes/mcp_sets live in workers.yaml, not here.
 workers:
   enabled: true
+  # Cache-keepalive cadence in seconds; shipped default 0 (off).
   cacheKeepaliveSecs: 15
-  # Run native-Anthropic workers through `caveman claude`. Off (default) pins
-  # them to api.anthropic.com even when settings.json routes claude through a
-  # proxy; see docs/worker.md, "What a worker is".
-  caveman: false
   # Daemon reaper (default true): every 30 s, kill processes with ppid 1, older
   # than 2 min and over 50% CPU in two samples 30 s apart that live under the
   # workers slots/ or worktrees/ dirs (orphans of a timed-out foreground
