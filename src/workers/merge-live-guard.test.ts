@@ -737,6 +737,26 @@ describe("L2 stranded by a merged L1", () => {
     expect(c.lines.join("\n")).toContain("merging into main");
   });
 
+  it("no commits to merge: a worktree whose only change is the deleted .pai-keep marker is removed with its branch", async () => {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "done1", { file: "d.txt", extra: { ".pai-keep": "kept\n" } });
+    git(repo, ["merge", "-q", "--no-edit", "worker/done1"]);
+    rmSync(join(worktreePath(logDir, "done1"), ".pai-keep"));
+    const out = await mergeWorker(logDir, "done1", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(out).toContain("removed the worktree and branch");
+    expect(existsSync(worktreePath(logDir, "done1"))).toBe(false);
+    expect(() => git(repo, ["rev-parse", "--verify", "-q", "refs/heads/worker/done1"])).toThrow();
+  });
+
+  it("no commits to merge: real uncommitted work is salvaged and merged, never discarded by the marker-only removal", async () => {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "done2", { file: "d2.txt" });
+    git(repo, ["merge", "-q", "--no-edit", "worker/done2"]);
+    writeFileSync(join(worktreePath(logDir, "done2"), "scratch.txt"), "x\n");
+    await mergeWorker(logDir, "done2", { verifyTests: false, rebuild: false, cliRoot: null });
+    expect(existsSync(join(repo, "scratch.txt"))).toBe(true);
+  });
+
   it("refuses while the recorded branch still exists", async () => {
     const { repo, logDir } = await stranded(false);
     git(repo, ["checkout", "-q", "-b", "other"]);
