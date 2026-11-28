@@ -136,6 +136,19 @@ and never PAILot, and it never reopens anything.
   registers its pane again (`PANE-REREGISTERED`) instead of killing the
   worker. Dropping an entry is itself a ledger row (`PANE-ENTRY-DROP`: run,
   session, caller, reason).
+- A running worker without a registered pane is never stopped: the audit logs
+  `PANE-UNPANED` (run, why it had no pane) and opens a follow pane for it, as
+  `pai worker pane <id>` does. If that open fails, `PANE-FOLLOW-FAILED` is
+  logged and the run goes on.
+- A registered pane that vanished is reopened with backoff (15 s, doubling,
+  capped at 2 min). After `reopenGraceMs` without success the audit logs
+  `PANE-REOPEN-FAILED` (run, tries, reason); the run goes on and is not
+  stopped.
+- A run spared from a stop at the last look gets one `PANE-SPARED` row per run
+  per tick (`pane audit: spared <id>: <why>`), ledger only.
+- Queued exemption: a run with state `queued` is skipped, and so is a run whose
+  launcher is queued behind the pane-open lock (no launch record or pane yet,
+  launcher still alive); neither is judged or flagged as unlaunched.
 
 Processes younger than `panes.audit.startGraceSecs` (30) or ended within
 `panes.audit.endGraceSecs` (60) are not judged; a wrapper that outlives its child

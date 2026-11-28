@@ -37,7 +37,11 @@ One page, grouped by what you want to do. Each item gives the command to type or
 
 ### Session notes
 
-Every session writes its own notes in the background. `pai notes list` shows them; say "consolidate notes" to merge duplicates or "reconstruct sessions" to rebuild notes from old transcripts. See [session notes](session-notes.md), [`pai notes`](commands/notes.md).
+Every session writes its own notes in the background. `pai notes list` shows them; say "consolidate notes" to merge duplicates or "reconstruct sessions" to rebuild notes from old transcripts. `pai notes audit` is a read-only scan that reports generic titles, titles that do not match the topic, notes with unrelated summary blocks, and empty or stub notes; it changes nothing. See [session notes](session-notes.md), [`pai notes`](commands/notes.md).
+
+### Brainstorm
+
+`pai brainstorm "<goal>"` starts a moderator and N cloud participants (default 3, `--local` for the local provider) that discuss the goal on a shared append-only board and returns at once. They run until the moderator posts CLOSED or the time box (`--max-minutes`, default 20) ends; the result lands in `~/.pai/brainstorm/<id>/result.md` and as a message to the calling session. `pai brainstorm ls|show|watch|wait|post` inspect and write boards. See [`pai brainstorm`](commands/brainstorm.md).
 
 ### Context preservation and auto-compact
 
@@ -355,7 +359,7 @@ Say "do research", "extract wisdom" or "analyze content". Skill `/research` runs
 
 ### Setup and update
 
-`pai setup` does first-time setup (storage, search, hooks, daemon); `pai update` updates PAI. Or tell Claude "set up PAI". See [install](install/index.md), [`pai setup`](commands/setup.md), [`pai update`](commands/update.md).
+`pai setup` does first-time setup (storage, search, hooks, daemon); `pai update` updates PAI and, when AIBroker is installed, upgrades it the same way and restarts it with `aibroker restart` (`--check` only reports). Or tell Claude "set up PAI". See [install](install/index.md), [`pai setup`](commands/setup.md), [`pai update`](commands/update.md).
 
 ### Daemon and configuration
 

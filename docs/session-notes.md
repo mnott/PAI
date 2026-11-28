@@ -4,6 +4,8 @@ Every session is documented without you doing anything. A background daemon read
 
 List the notes with `pai notes [PROJECT] [--limit N]`; they are also searchable (`pai memory search`, [Search](search.md)).
 
+`pai notes audit [--project DIR] [--json]` scans a project's notes read-only and reports generic titles (New Session, untitled), titles that do not match the `TOPIC` comment, notes with several unrelated AI Summary blocks (word overlap below the 15% topic threshold) and empty or stub notes. It always exits 0 and modifies nothing. For a multi-worker discussion see `pai brainstorm` ([docs](commands/brainstorm.md)); `pai update` also upgrades an installed AIBroker.
+
 ## What a note contains
 
 - **Work Done**: what was accomplished
