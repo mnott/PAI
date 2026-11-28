@@ -41,7 +41,12 @@ import { parseLastResultEvent } from "./keepalive.js";
 export const SMOKE_PROVIDER_NAME = "merge-smoke";
 const SMOKE_PROMPT = "Reply with exactly one word: ok";
 const SMOKE_MODEL = "smoke-stub";
-/** Base bound on the detached start + its wait at idle load; the whole smoke stays under ~20 s. Scaled by host load (smokeBound). */
+/**
+ * Base bound on the smoke's RUN only — the detached start + its wait at idle load — NOT on waiting for the
+ * machine-wide test slot: a queued smoke can hold the slot queue for minutes and that wait must not be read
+ * as a hung start (2026-11-28 gate output: "bound 116 s" printed, then "ok (274.2 s)" — the reported ms had
+ * the slot wait folded in). Scaled by host load (smokeBound); the slot wait is reported separately.
+ */
 export const SMOKE_TIMEOUT_MS = 60_000;
 
 /** The smoke bound for the current host load: base while load <= cores, linear in load/cores, capped at 6x. */
@@ -63,6 +68,8 @@ export interface SmokeStartDeps {
   env?: NodeJS.ProcessEnv;
   /** Test seam: the process spawner the production start helper (startDetachedWorker) uses. */
   spawn?: typeof spawnSession;
+  /** Test seam for the machine-wide test slot: acquire returns a lease, release frees it (default: the real file lock). */
+  slot?: { acquire: () => Promise<{ release: () => void }> };
 }
 
 export interface SmokeRunOpts {
@@ -76,7 +83,10 @@ export interface SmokeRunOpts {
 
 export interface SmokeStartResult {
   ok: boolean;
+  /** The smoke's own run time (start + wait for its end): what the bound applies to. */
   ms: number;
+  /** Time spent waiting for the machine-wide test slot before the run began; excluded from `ms` and from the bound. */
+  waitedMs?: number;
   /** On failure: the first error line, for `smoke start failed: <line>`. */
   error?: string;
   id?: string;
@@ -224,6 +234,7 @@ function insertProviderBlock(text: string, block: string): string {
  * crash, bad result, timeout) reads as { ok: false, error }.
  */
 export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps: SmokeStartDeps = {}): Promise<SmokeStartResult> {
+  // the slot wait is measured from here and excluded from the run time below: the bound covers the run only
   const t0 = Date.now();
   const bound = opts.timeoutMs === undefined ? smokeBound() : null;
   const timeoutMs = opts.timeoutMs ?? bound!.ms;
@@ -251,11 +262,16 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     return env;
   };
   const runOpts = (o: SmokeRunOpts): SmokeRunOpts => ({ ...o, env: childEnv(deps.env ?? process.env), ...(deps.spawn ? { spawn: deps.spawn } : {}) });
-  // the worker's own test runs must not fight the gate's slot; held here while the smoke runs
-  const lease = holdsTestSlot() ? null : await acquireTestSlot();
+  // the worker's own test runs must not fight the gate's slot; held here while the smoke runs. The wait is
+  // outside the run clock below: the bound covers the run only, never the queue for the slot.
+  const lease = holdsTestSlot() ? null : await (deps.slot?.acquire ?? acquireTestSlot)();
+  // the run clock starts after the slot is acquired: a minutes-long queue for the slot is wait, not a hung start
+  const tRun = Date.now();
   let runId: string | null = null;
   let stub: { url: string; close: () => Promise<void> } | null = null;
   const ops = deps.addProvider || deps.removeProvider ? null : new TempCopyProviderOps();
+  /** The reported parts: run time (bound-checked) plus the slot wait, kept separate. */
+  const parts = (): { ms: number; waitedMs?: number } => ({ ms: Date.now() - tRun, ...(tRun > t0 ? { waitedMs: tRun - t0 } : {}) });
   try {
     stub = await serve();
     if (ops) ops.add(stub.url);
@@ -263,13 +279,13 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     const id = newWorkerId();
     const r = await start(runOpts({ id, cwd: opts.cwd, timeoutMs }));
     runId = r.id;
-    if (r.rc !== 0) return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}${r.why ? `: ${r.why}` : ""}`, id: r.id };
+    if (r.rc !== 0) return { ...(note ? { note } : {}), ok: false, ...parts(), error: `worker run exited ${r.rc}${r.why ? `: ${r.why}` : ""}`, id: r.id };
     const ev = parseLastResultEvent(eventsPath(workersLogDir(readWorkersSection().workers), r.id));
-    if (!ev || typeof ev.result !== "string" || !ev.result.trim()) return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: "no result event from the smoke worker", id: r.id };
-    if (ev.is_error) return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: `worker result is an error: ${ev.result.trim().split("\n")[0].slice(0, 200)}`, id: r.id };
-    return { ...(note ? { note } : {}), ok: true, ms: Date.now() - t0, id: r.id };
+    if (!ev || typeof ev.result !== "string" || !ev.result.trim()) return { ...(note ? { note } : {}), ok: false, ...parts(), error: "no result event from the smoke worker", id: r.id };
+    if (ev.is_error) return { ...(note ? { note } : {}), ok: false, ...parts(), error: `worker result is an error: ${ev.result.trim().split("\n")[0].slice(0, 200)}`, id: r.id };
+    return { ...(note ? { note } : {}), ok: true, ...parts(), id: r.id };
   } catch (e) {
-    return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: (e instanceof Error ? e.message : String(e)).split("\n")[0].slice(0, 300) };
+    return { ...(note ? { note } : {}), ok: false, ...parts(), error: (e instanceof Error ? e.message : String(e)).split("\n")[0].slice(0, 300) };
   } finally {
     try {
       if (ops) ops.remove();
