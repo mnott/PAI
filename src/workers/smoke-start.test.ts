@@ -83,6 +83,48 @@ describe("smokeStart", () => {
     expect(Date.now() - t0).toBeLessThan(5_000); // the 45 s housekeeping never stands between the smoke and its start
   }, 60_000);
 
+  it("a slow test-slot wait plus a fast run reports both parts and passes: the bound covers the run only", async () => {
+    // the merge-gate evidence of 2026-11-28: "bound 116 s" printed, then "ok (274.2 s)" — t0 was taken before
+    // acquireTestSlot(), so a minutes-long queue for the machine-wide slot read as run time over the bound.
+    // The slot wait is now measured separately and never counted against timeoutMs.
+    const logDir = workersLogDir(readWorkersSection().workers);
+    let seenTimeout: number | undefined;
+    const r = await smokeStart(
+      { cwd: ".", timeoutMs: 1_000 },
+      {
+        ...stub,
+        // a slot held for 2.5 s — well past the injected 1 s bound — released before the run begins
+        slot: { acquire: async () => { await new Promise((res) => setTimeout(res, 2_500)); return { release: () => {} }; } },
+        start: async (o) => {
+          seenTimeout = o.timeoutMs;
+          standInRun(logDir, o.id); // a fast run that ends rc 0 with a valid result
+          return { rc: 0, id: o.id };
+        },
+      }
+    );
+    expect(r.ok).toBe(true); // the slot queue never fails the smoke
+    expect(seenTimeout).toBe(1_000); // the bound handed to the run is unchanged
+    expect(r.waitedMs).toBeDefined();
+    expect(r.waitedMs! >= 2_400).toBe(true); // the wait really happened and is reported as wait
+    expect(r.ms).toBeLessThan(1_000); // the run alone stayed under the bound
+  }, 30_000);
+
+  it("a run over the bound fails with the wait excluded from the reported run time", async () => {
+    const r = await smokeStart(
+      { cwd: ".", timeoutMs: 1_000 },
+      {
+        ...stub,
+        slot: { acquire: async () => { await new Promise((res) => setTimeout(res, 2_000)); return { release: () => {} }; } }, // a 2 s slot wait before the run begins
+        start: async () => { await new Promise((res) => setTimeout(res, 3_000)); return { rc: 124, id: "slow" }; }, // defaultStart's timeout shape
+      }
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("worker run exited 124");
+    expect(r.waitedMs).toBeDefined();
+    expect(r.waitedMs! >= 1_900).toBe(true); // the slot wait is attributed to the wait, not the run
+    expect(r.ms).toBeGreaterThanOrEqual(3_000); // the reported run time is the run itself, over the bound
+  }, 30_000);
+
 });
 
 // The false failure of merge 2026-11-19 14:31, reproduced at the wait that made it: a worker start whose inline

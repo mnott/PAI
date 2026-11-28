@@ -376,7 +376,7 @@ describe("smoke start after a merge build", () => {
     const { repo, logDir } = f();
     const r = rig(async () => ({ ok: true, ms: 1200 }));
     const out = await mergeWorker(logDir, "sm", { ...r.opts, cliRoot: repo });
-    expect(out).toContain("smoke start: ok (1.2 s)");
+    expect(out).toContain("smoke start: ok (run 1.2 s)");
     expect(r.events).toEqual(["build", "smoke", "restartVerify", "restartGate"]);
   });
 

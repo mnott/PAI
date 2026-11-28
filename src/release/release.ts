@@ -51,7 +51,7 @@ export interface ReleaseDeps {
    */
   restartGate?: RestartGateFn | null;
   /** Smoke start of the built CLI before tagging. Absent = the live one for the PAI repo only; null = none. */
-  smoke?: ((cwd: string) => Promise<{ ok: boolean; ms: number; error?: string }>) | null;
+  smoke?: ((cwd: string) => Promise<{ ok: boolean; ms: number; waitedMs?: number; error?: string }>) | null;
 }
 
 /** The release's restart gate: prepare before `npm run build`, check-and-roll-back after. Null when the gate does not apply. */
@@ -363,9 +363,10 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
       const smoke = deps.smoke === undefined ? (pkg.name === "@tekmidian/pai" ? async (cwd: string) => (await import("../workers/smoke-start.js")).smokeStart({ cwd }) : null) : deps.smoke;
       if (smoke) {
         step = "test";
-        const sm = await smoke(repo).catch((e: unknown) => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
+        const sm = await smoke(repo).catch((e: unknown): { ok: boolean; ms: number; waitedMs?: number; error?: string } => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
         if (!sm.ok) throw new StepFailed(`smoke start failed: ${(sm.error ?? "unknown error").split("\n")[0]}`);
-        print(`smoke: ok (${(sm.ms / 1000).toFixed(1)} s)`);
+        // the bound covers the run only; a long queue for the machine-wide test slot is reported as wait, not time
+        print(`smoke: ok (run ${(sm.ms / 1000).toFixed(1)} s${sm.waitedMs ? `, waited ${(sm.waitedMs / 1000).toFixed(1)} s for the test slot` : ""})`);
       }
     }
 

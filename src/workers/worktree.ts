@@ -2317,7 +2317,8 @@ async function rebuildDist(
     const smoke = opts.smoke ?? (opts.build === undefined ? async (cwd: string) => (await import("./smoke-start.js")).smokeStart({ cwd }) : null);
     if (smoke) {
       const sm = await smoke(target).catch((e: unknown): SmokeStartResult => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
-      if (sm.ok) smokeNote = `${sm.note ? `${sm.note}\n` : ""}smoke start: ok (${(sm.ms / 1000).toFixed(1)} s)\n`;
+      // the bound covers the run only; a long queue for the machine-wide test slot is reported as wait, not time
+      if (sm.ok) smokeNote = `${sm.note ? `${sm.note}\n` : ""}smoke start: ok (run ${(sm.ms / 1000).toFixed(1)} s${sm.waitedMs ? `, waited ${(sm.waitedMs / 1000).toFixed(1)} s for the test slot` : ""})\n`;
       else {
         const err = (sm.error ?? "unknown error").split("\n")[0] + (sm.note ? ` (${sm.note.replace(/^smoke start: /, "")})` : "");
         let tail = "";
