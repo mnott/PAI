@@ -16,6 +16,7 @@
  * cloud.
  */
 
+import { cpus, loadavg } from "node:os";
 import { appendLedger } from "./ledger.js";
 import type { WorkerStatus } from "./status.js";
 import type { RunLimit } from "./deadline.js";
@@ -43,6 +44,13 @@ export interface BudgetSnapshot {
   commits: number;
   /** A build/test job the worker owns is running or waiting in the build queue (its time is the job's, not idleness). */
   jobActive?: boolean;
+  /** A tool call that started and has not returned (e.g. `tools/build.sh --wait`): first 60 chars of its description. */
+  inFlight?: string | null;
+}
+
+/** ponytail: tiny local load factor (load per core, 1 when not overloaded, capped at 4); no shared helper on main. */
+export function loadFactor(load: number = loadavg()[0] ?? 0, cores: number = cpus().length || 1): number {
+  return load > cores ? Math.min(load / cores, 4) : 1;
 }
 
 export const emptySnapshot = (): BudgetSnapshot => ({ progressAtMs: 0, testsPassed: 0, toolsOk: 0, commits: 0, jobActive: false });
@@ -93,17 +101,24 @@ export function budgetLimit(minutes: number, t0: number = Date.now()): RunLimit 
 export function budgetCheck(
   prev: BudgetSnapshot,
   cur: BudgetSnapshot,
-  o: { readOnly?: boolean; minutes: number; cfg: TimeBudgetConfig; maxMinutes?: number | null }
+  o: { readOnly?: boolean; minutes: number; cfg: TimeBudgetConfig; maxMinutes?: number | null; load?: number; cores?: number; turns?: number; tools?: number }
 ): { action: "extend"; minutes: number; why: string } | { action: "review"; why: string } {
   let progress = budgetProgress(prev, cur, o.readOnly === true);
   if (!progress && cur.jobActive) progress = "build/test job running";
+  if (!progress && cur.inFlight) progress = `tool call running: ${cur.inFlight.slice(0, 60)}`;
+  const load = o.load ?? 0; // callers pass os.loadavg; unset = unscaled (deterministic tests)
+  const lf = loadFactor(load, o.cores);
+  const jobLike = !!cur.jobActive || !!cur.inFlight;
   if (progress) {
     const next = nextBudgetMinutes(o.minutes, o.cfg, o.maxMinutes);
     if (next !== null) return { action: "extend", minutes: next, why: `extended to ${next} min: ${progress}` };
     // at the ceiling an owned running job still is not idleness; the run's own limit ends it
-    if (cur.jobActive && !budgetProgress(prev, cur, o.readOnly === true)) return { action: "extend", minutes: o.minutes, why: `kept at ${o.minutes} min: ${progress}` };
+    if (jobLike && !budgetProgress(prev, cur, o.readOnly === true)) return { action: "extend", minutes: o.minutes, why: `kept at ${o.minutes} min: ${progress}` };
   }
-  return { action: "review", why: progress ? `out of time at the ${o.minutes}-min cap: ${progress}` : `no progress in its ${o.minutes}-min allowance` };
+  // a slow host is not idleness: at load above the core count the no-progress window is stretched by load/cores (max 4x)
+  if (!progress && lf > 1) return { action: "extend", minutes: o.minutes, why: `kept at ${o.minutes} min: host load ${(load).toFixed(0)} (x${lf.toFixed(1)} window)` };
+  const m = `${o.turns !== undefined ? `${o.turns} turns, ` : ""}${o.tools !== undefined ? `${o.tools} tool calls, ` : ""}load ${(load).toFixed(1)}`;
+  return { action: "review", why: progress ? `out of time at the ${o.minutes}-min cap: ${progress}` : `no progress in its ${o.minutes}-min allowance (${m})` };
 }
 
 /** The ps/cockpit time-column tooltip: "budget 40m (extended 1x)". */

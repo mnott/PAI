@@ -515,6 +515,34 @@ export function taskText(logDir: string, s: WorkerStatus): string {
 }
 
 /**
+ * The whole stored task of `s`: the original spec of the root of its resume chain, then each later hop's
+ * own prompt (a resume note) in order. A resumed run's promptFile holds only its note, so the last hop alone is not the task.
+ */
+export function fullTaskText(logDir: string, s: WorkerStatus): string {
+  const chain: WorkerStatus[] = [s];
+  const seen = new Set([s.id]);
+  for (let cur: WorkerStatus | null = s; cur.resumedFrom && !seen.has(cur.resumedFrom); ) {
+    const prev: WorkerStatus | null = loadStatus(logDir, cur.resumedFrom);
+    if (!prev) break;
+    seen.add(prev.id);
+    chain.unshift(prev);
+    cur = prev;
+  }
+  const texts: string[] = [];
+  for (const [i, c] of chain.entries()) {
+    let t = "";
+    try {
+      t = taskText(logDir, c).trim();
+    } catch {
+      continue;
+    }
+    if (t && !texts.includes(t)) texts.push(i === 0 ? t : `--- note from ${c.id} ---\n${t}`);
+  }
+  if (!texts.length) throw new Error(`worker ${s.id} kept no copy of its task`);
+  return texts.join("\n\n");
+}
+
+/**
  * Move worker `id` to `where` (cloud, local or a provider name). Throws when it is not queued or running,
  * already runs there, or its task is not recoverable; nothing is stopped before those checks pass.
  */

@@ -4,6 +4,7 @@
  * lives on one RunState (see execute-prepare.ts).
  */
 
+import { loadavg } from "node:os";
 import { parseDeliverable } from "../deliverable.js";
 import { spawnOrigin } from "../pane-waiver.js";
 import { grantedToolNames, recordToolError } from "../tool-errors.js";
@@ -439,6 +440,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     }
   };
   let toolsOk = 0;
+  const inFlightTools = new Map<string, string>();
   const jobWatch = createJobWatch({ wid, logDir });
   let budgetPrevAt = Date.now();
   const snapBudget = (): BudgetSnapshot => ({
@@ -447,6 +449,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     toolsOk,
     commits: worktree ? commitLines(worktree.dir, worktree.base).length : (status.commits ?? 0),
     jobActive: jobWatch.activeSince(budgetPrevAt),
+    inFlight: [...inFlightTools.values()][0] ?? null,
   });
   let budgetPrev = snapBudget();
   budgetPrevAt = Date.now();
@@ -464,7 +467,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       budgetLimit(budgetMin),
       () => {
         const cur = snapBudget();
-        const d = budgetCheck(budgetPrev, cur, { readOnly, minutes: budgetMin!, cfg: config.timeBudget, maxMinutes: limit?.minutes ?? null });
+        const d = budgetCheck(budgetPrev, cur, { readOnly, minutes: budgetMin!, cfg: config.timeBudget, maxMinutes: limit?.minutes ?? null, turns: status.turns, tools: status.tools, load: loadavg()[0] });
         fireBudget(status, ledger, { ...d, minutes: "minutes" in d ? d.minutes : budgetMin! });
         if (d.action === "extend") {
           budgetMin = d.minutes;
@@ -548,6 +551,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         if (block.type === "tool_use") {
           status.tools += 1;
           toolFold.onToolUse(block);
+          if (block.id) inFlightTools.set(block.id, describeTool(block.name ?? "?", block.input));
           status.last = describeTool(block.name ?? "?", block.input);
           // a long single sleep is worth seeing while it runs (supervision's
           // "sleeping" kind) — set when issued, cleared when it completes
@@ -568,6 +572,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         for (const block of blocks) {
           if (block.type !== "tool_result") continue;
           sawResult = true;
+          if (block.tool_use_id) inFlightTools.delete(block.tool_use_id);
           const useEarly = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
           const brainstorm = useEarly?.name === "Bash" && isBrainstormCommand(bashCommand(useEarly.input));
           const failed = brainstorm ? bashResultFailed(bashCommand(useEarly!.input), block) : toolResultFailed(block);

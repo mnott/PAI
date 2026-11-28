@@ -7,12 +7,21 @@
  */
 import { statSync } from "node:fs";
 import { buildsDir, listBuildsSync } from "../builds/queue.js";
-import { loadStatus } from "./status.js";
+import { alive, loadStatus, loadStatuses } from "./status.js";
 
 /** A build/test ticket of this worker (running, or waiting for a slot) whose gate process is alive. */
 export function ownsLiveBuildJob(wid: string, dir: string = buildsDir()): boolean {
   try {
     return listBuildsSync(dir).some((t) => t.worker === wid && (t.state === "running" || t.state === "waiting"));
+  } catch {
+    return false;
+  }
+}
+
+/** A child worker of `wid` (status.parent) is queued or running with a live process: an L1 with a live child is never idle. */
+export function hasLiveChild(logDir: string, wid: string): boolean {
+  try {
+    return loadStatuses(logDir).some((c) => c.parent === wid && (c.state === "queued" || (c.state === "running" && alive(c.pid))));
   } catch {
     return false;
   }
@@ -48,7 +57,7 @@ export function createJobWatch(o: JobWatchOpts): JobWatch {
   let lastSample = now();
   const sample = (): boolean => {
     const t = now();
-    const hit = ownsLiveBuildJob(o.wid, o.dir) || waitedLogGrowing(o.logDir, o.wid, lastSample);
+    const hit = ownsLiveBuildJob(o.wid, o.dir) || hasLiveChild(o.logDir, o.wid) || waitedLogGrowing(o.logDir, o.wid, lastSample);
     lastSample = t;
     if (hit) lastSeen = t;
     return hit;
