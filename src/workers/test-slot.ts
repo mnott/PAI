@@ -26,10 +26,6 @@ export interface SlotOptions {
   log?: (s: string) => void;
   pollMs?: number;
   isAlive?: (pid: number) => boolean;
-  /** Test seam: a clock for the wait loop (default Date.now). */
-  now?: () => number;
-  /** Test seam: a sleeper for the wait loop (default setTimeout / Atomics.wait). */
-  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface SlotLease {
