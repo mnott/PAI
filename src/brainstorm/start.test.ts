@@ -65,6 +65,19 @@ describe("startBrainstorm", () => {
     expect(meta.caller).toBe("sess");
     expect(r.id).toMatch(/^bs-\d{8}-\d{6}-[0-9a-f]{4}$/);
   });
+  it("a half-started brainstorm stops the workers that did start", async () => {
+    let n = 0;
+    const spawn: SpawnFn = async (argv) => {
+      if (argv.some((a) => a.endsWith(" moderator"))) throw new Error("moderator boom");
+      return { id: `w${++n}`, state: "running" };
+    };
+    const killed: string[] = [];
+    const kill = async (id: string) => void killed.push(id);
+    await expect(startBrainstorm({ goal: "G", participants: 2 }, { spawn, kill, root: dir })).rejects.toThrow(
+      /^brainstorm bs-\S+: 1 worker\(s\) did not start .*2 started worker\(s\) stopped/s,
+    );
+    expect(killed.sort()).toEqual(["w1", "w2"]);
+  });
   it("--where local only with local", async () => {
     const { calls } = await run(true);
     for (const c of calls) expect(c[c.indexOf("--where") + 1]).toBe("local");
