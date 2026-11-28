@@ -52,7 +52,7 @@ means 3 workers in line at one engine, not 3 CPUs. Consequences in code:
 
 **Slot lending.** A worker waiting on a long Bash tool call does not use the model. After
 20 s (`src/workers/status.ts:1302`, `DEFAULT_TOOL_LEND_MS`) `slotLent` (`:1315`) is true,
-`holdsSlot` (`:1308`) stops counting it, and the next queued worker is admitted. On return the
+`holdsSlot` (`:1310`) stops counting it, and the next queued worker is admitted. On return the
 worker queues for its slot back: `src/workers/tool-wait.ts:16` (`markToolWait`), `:26`
 (`returnFromToolWait`), `src/workers/capacity.ts:888` (`waitsForSlotBack`), `:896`
 (`slotBackPosition`). Jenkins has no equivalent because a shell step holds its executor.
