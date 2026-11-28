@@ -18,9 +18,7 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { cpus, loadavg } from "node:os";
 import { join } from "node:path";
-import { loadScaledBoundMs } from "../hooks/ts/lib/read-stdin.js";
 import { queueDir } from "./capacity.js";
 import { escalationPolicy } from "./config.js";
 import { DEFAULT_ESCALATE } from "./escalation.js";
@@ -376,7 +374,7 @@ export async function abandonRestart(logDir: string, idFile: string, pid: number
 export async function startDetachedWorker(
   logDir: string,
   args: string[],
-  o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; start?: typeof spawnSession; load?: { load: number; cores: number } } = {}
+  o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; start?: typeof spawnSession } = {}
 ): Promise<string> {
   const runs = join(logDir, "runs");
   mkdirSync(runs, { recursive: true });
@@ -396,19 +394,13 @@ export async function startDetachedWorker(
       return false;
     }
   };
-  // timeoutMs is the idle-host base: the wall clock stretches with host load (CPU starvation, not a hang), capped at 6x
-  const baseMs = o.timeoutMs ?? 15_000;
-  const ld = o.load ?? { load: loadavg()[0] ?? 0, cores: cpus().length || 1 };
-  const boundMs = loadScaledBoundMs(baseMs, ld.load, ld.cores);
-  const deadline = Date.now() + boundMs;
+  const deadline = Date.now() + (o.timeoutMs ?? 15_000);
   for (;;) {
     const id = existsSync(idFile) ? readFileSync(idFile, "utf8").trim() : "";
     if (id) return id;
     const out = (): string => (existsSync(outPath) ? readFileSync(outPath, "utf8").trim().split("\n").slice(-5).join("\n") : "");
     if (!alive()) throw new Error(out() || "worker failed to start");
-    if (Date.now() > deadline) throw new Error(
-        `worker did not start within ${Math.round(boundMs / 1000)}s (bound ${Math.round(boundMs / 1000)} s at load ${Math.round(ld.load)}/${ld.cores}; process ${pid} still alive but never announced an id: stuck in spawn / node startup / pane launch, before the queue gate)${out() ? `: ${out()}` : ""}`
-      );
+    if (Date.now() > deadline) throw new Error(`worker did not start within ${Math.round((o.timeoutMs ?? 15_000) / 1000)}s${out() ? `: ${out()}` : ""}`);
     await new Promise((r) => setTimeout(r, 100));
   }
 }

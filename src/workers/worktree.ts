@@ -2287,9 +2287,9 @@ async function rebuildDist(
     const smoke = opts.smoke ?? (opts.build === undefined ? async (cwd: string) => (await import("./smoke-start.js")).smokeStart({ cwd }) : null);
     if (smoke) {
       const sm = await smoke(target).catch((e: unknown): SmokeStartResult => ({ ok: false, ms: 0, error: e instanceof Error ? e.message : String(e) }));
-      if (sm.ok) smokeNote = `${sm.note ? `${sm.note}\n` : ""}smoke start: ok (${(sm.ms / 1000).toFixed(1)} s)\n`;
+      if (sm.ok) smokeNote = `smoke start: ok (${(sm.ms / 1000).toFixed(1)} s)\n`;
       else {
-        const err = (sm.error ?? "unknown error").split("\n")[0] + (sm.note ? ` (${sm.note.replace(/^smoke start: /, "")})` : "");
+        const err = (sm.error ?? "unknown error").split("\n")[0];
         let tail = "";
         try {
           (opts.revertMergeCommits ?? revertMerge)(target, oldHead);

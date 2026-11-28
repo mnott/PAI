@@ -24,8 +24,7 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { cpus, loadavg, tmpdir } from "node:os";
-import { loadScaledBoundMs } from "../hooks/ts/lib/read-stdin.js";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LOOPBACK_HOST } from "../utils/loopback.js";
 import { readWorkersSection } from "./config.js";
@@ -41,14 +40,8 @@ import { parseLastResultEvent } from "./keepalive.js";
 export const SMOKE_PROVIDER_NAME = "merge-smoke";
 const SMOKE_PROMPT = "Reply with exactly one word: ok";
 const SMOKE_MODEL = "smoke-stub";
-/** Base bound on the detached start + its wait at idle load; the whole smoke stays under ~20 s. Scaled by host load (smokeBound). */
+/** Hard cap on the detached start + its wait; the whole smoke stays under ~20 s. */
 export const SMOKE_TIMEOUT_MS = 60_000;
-
-/** The smoke bound for the current host load: base while load <= cores, linear in load/cores, capped at 6x. */
-export function smokeBound(baseMs = SMOKE_TIMEOUT_MS, load = loadavg()[0] ?? 0, cores = cpus().length || 1): { ms: number; note: string } {
-  const ms = loadScaledBoundMs(baseMs, load, cores);
-  return { ms, note: `smoke start: bound ${Math.round(ms / 1000)} s at load ${Math.round(load)}/${cores}` };
-}
 
 /** Spawn seam of the smoke (tests inject a runner; no real CLI is started). */
 export interface SmokeStartDeps {
@@ -80,8 +73,6 @@ export interface SmokeStartResult {
   /** On failure: the first error line, for `smoke start failed: <line>`. */
   error?: string;
   id?: string;
-  /** The bound used and the host load ("smoke start: bound 180 s at load 138/16"). */
-  note?: string;
 }
 
 /**
@@ -225,9 +216,7 @@ function insertProviderBlock(text: string, block: string): string {
  */
 export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps: SmokeStartDeps = {}): Promise<SmokeStartResult> {
   const t0 = Date.now();
-  const bound = opts.timeoutMs === undefined ? smokeBound() : null;
-  const timeoutMs = opts.timeoutMs ?? bound!.ms;
-  const note = bound?.note;
+  const timeoutMs = opts.timeoutMs ?? SMOKE_TIMEOUT_MS;
   const serve = deps.serve ?? startStubServer;
   // an injected runner still runs through the real env prep (deps.env), so a test can prove the smoke start
   // carries PAI_NO_WORKTREE_GC=1 without spawning a CLI
@@ -263,13 +252,13 @@ export async function smokeStart(opts: { cwd: string; timeoutMs?: number }, deps
     const id = newWorkerId();
     const r = await start(runOpts({ id, cwd: opts.cwd, timeoutMs }));
     runId = r.id;
-    if (r.rc !== 0) return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}${r.why ? `: ${r.why}` : ""}`, id: r.id };
+    if (r.rc !== 0) return { ok: false, ms: Date.now() - t0, error: `worker run exited ${r.rc}${r.why ? `: ${r.why}` : ""}`, id: r.id };
     const ev = parseLastResultEvent(eventsPath(workersLogDir(readWorkersSection().workers), r.id));
-    if (!ev || typeof ev.result !== "string" || !ev.result.trim()) return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: "no result event from the smoke worker", id: r.id };
-    if (ev.is_error) return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: `worker result is an error: ${ev.result.trim().split("\n")[0].slice(0, 200)}`, id: r.id };
-    return { ...(note ? { note } : {}), ok: true, ms: Date.now() - t0, id: r.id };
+    if (!ev || typeof ev.result !== "string" || !ev.result.trim()) return { ok: false, ms: Date.now() - t0, error: "no result event from the smoke worker", id: r.id };
+    if (ev.is_error) return { ok: false, ms: Date.now() - t0, error: `worker result is an error: ${ev.result.trim().split("\n")[0].slice(0, 200)}`, id: r.id };
+    return { ok: true, ms: Date.now() - t0, id: r.id };
   } catch (e) {
-    return { ...(note ? { note } : {}), ok: false, ms: Date.now() - t0, error: (e instanceof Error ? e.message : String(e)).split("\n")[0].slice(0, 300) };
+    return { ok: false, ms: Date.now() - t0, error: (e instanceof Error ? e.message : String(e)).split("\n")[0].slice(0, 300) };
   } finally {
     try {
       if (ops) ops.remove();
