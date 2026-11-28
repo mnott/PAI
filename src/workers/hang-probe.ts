@@ -53,7 +53,7 @@ function splitOutsideQuotes(command: string): string[] {
   return parts;
 }
 
-function segments(command: string): string[] {
+export function segments(command: string): string[] {
   return splitOutsideQuotes(command).map((raw) => {
     let seg = raw.replace(/["']/g, "").trim();
     for (;;) {

@@ -22,7 +22,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { dropDataHeredocBodies, dropHeredocBodies } from "./heredoc.js";
-import { HANG_MARKER } from "../../../workers/hang-probe.js";
+import { HANG_MARKER, segments as commandSegments } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
 import { activeAntipattern, fillMessage, loadAntipatterns, shippedAntipattern } from "./antipatterns.js";
 import { dispositionOf, modelOf, paramsForModel } from "./antipattern-lifecycle.js";
@@ -1138,6 +1138,20 @@ const STALL_TEST_RUN = /\b(?:vitest|jest|pytest|tsc|tsdown|xcodebuild|npm (?:run
 /** A test or build run: counts as a call, never reset, never denied. */
 export const isTestRun = (command: string): boolean => STALL_TEST_RUN.test(command);
 
+/**
+ * A blocking wait on a build, test or child worker (build.sh/vm.sh with --wait or test, `pai worker wait|wait-on|wait-file|test-run`):
+ * progress, not reading. Judged on the executed words of each segment, never on quoted arguments.
+ */
+export function isWaitCommand(command: string): boolean {
+  return commandSegments(command).some((seg) => {
+    const w = seg.split(/\s+/).filter(Boolean);
+    const exe = (w[0] ?? "").replace(/^.*\//, "");
+    if (/^(?:build|vm)\.sh$/.test(exe)) return w.slice(1).some((a) => a === "--wait" || a === "test");
+    if (exe === "pai" && w[1] === "worker") return ["wait", "wait-on", "wait-file", "wait-url", "test-run"].includes(w[2] ?? "");
+    return false;
+  });
+}
+
 type StallState = NonNullable<LoopState["stall"]>;
 type StallKind = "note1" | "note2" | "deny";
 
@@ -1158,6 +1172,7 @@ export function stallStep(prev: LoopState["stall"], tool: string, input: string 
   } else if (tool === "Bash") {
     if (bashWritesRepoFile(command)) return { stall: { calls: 0, since: now, edited: true }, n: 0, min: 0 };
     if (cur.edited && bashWritesAnyFile(command)) return { stall: { calls: 0, since: now, edited: true }, n: 0, min: 0 };
+    if (isWaitCommand(command)) return { stall: cur, n: cur.calls, min: Math.floor((now - cur.since) / 60_000) }; // waiting is not reading: the streak neither grows nor fires
     readOnly = !isTestRun(command);
   } else if (tool === "Read" || tool === "Grep" || tool === "Glob") readOnly = true;
   else return { stall: cur, n: cur.calls, min: Math.floor((now - cur.since) / 60_000) };
@@ -1196,12 +1211,13 @@ function withStall(base: LoopStep, tool: string, input: string | Record<string, 
   return out;
 }
 
-/** Compact fixture syntax for the no-edit-stall tests block: R Read, G Grep/Glob, B read-only Bash, T test run, E Edit, W Write (repo), S scratch write, H bash heredoc write (repo). */
+/** Compact fixture syntax for the no-edit-stall tests block: R Read, G Grep/Glob, B read-only Bash, T test run, Q wait on a build/test/child, E Edit, W Write (repo), S scratch write, H bash heredoc write (repo). */
 const STALL_TOKENS: Record<string, [string, Record<string, unknown> | string]> = {
   R: ["Read", { file_path: "src/a.ts" }],
   G: ["Grep", { pattern: "x" }],
   B: ["Bash", "git log --oneline -3"],
   T: ["Bash", "npx vitest run"],
+  Q: ["Bash", "tools/build.sh --wait"],
   E: ["Edit", { file_path: "src/a.ts" }],
   W: ["Write", { file_path: "src/b.ts" }],
   S: ["Write", { file_path: "/tmp/scratch.txt" }],
