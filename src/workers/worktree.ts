@@ -1874,12 +1874,14 @@ const MERGE_KEEP = "merge in progress:";
  * Once the L1 is merged and its branch deleted the L2 is stranded; this says whether the checkout's current
  * branch is where the L1 landed. Never ok while the recorded branch still exists (wrong-branch protection).
  */
-function retargetedStart(logDir: string, cwd: string, startBranch: string, now: string): { ok: boolean; l1: string } | null {
+function retargetedStart(logDir: string, cwd: string, startBranch: string, now: string): { ok: boolean; l1: string; ended?: boolean } | null {
   const m = /^worker\/(.+)$/.exec(startBranch);
   if (!m) return null;
   if (spawnSync("git", ["-C", cwd, "show-ref", "--verify", "--quiet", `refs/heads/${startBranch}`]).status === 0) return null;
   const l1 = m[1];
   const l1st = loadStatus(logDir, l1);
+  // the L1 ended without merging (done, failed or discarded) and its branch is gone: nothing left to land on
+  if (l1st && !l1st.merged) return !liveWorker(logDir, l1) && now ? { ok: true, l1, ended: true } : null;
   if (!l1st?.merged || !now) return l1st?.merged ? { ok: false, l1 } : null;
   let landed = "";
   try { landed = git(cwd, ["log", "-1", "--format=%H", "--fixed-strings", `--grep=merge worker ${l1} (`, now]); } catch { /* none */ }
@@ -1925,7 +1927,7 @@ async function mergeWorkerInner(
     try { now = git(st.cwd, ["symbolic-ref", "-q", "--short", "HEAD"]); } catch { /* detached */ }
     if (now !== st.startBranch) {
       const re = callerId ? null : retargetedStart(logDir, st.cwd, st.startBranch, now);
-      if (re?.ok) console.log(`worker ${id}: its merge target ${st.startBranch} (worker ${re.l1}) was merged into ${now} and deleted; merging into ${now}`);
+      if (re?.ok) console.log(`worker ${id}: its merge target ${st.startBranch} (worker ${re.l1}) ${re.ended ? "ended without merging and its branch is gone" : `was merged into ${now} and deleted`}; merging into ${now}`);
       else {
         throw new Error(
           `worker ${id}: the checkout ${st.cwd} had branch ${st.startBranch} when the worker started but has ${now || "a detached HEAD"} now; ` +
