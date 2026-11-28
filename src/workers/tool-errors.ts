@@ -16,6 +16,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { maxOf } from "../utils/min-max.js";
+import { redactSecrets } from "../utils/redact.js";
 import { join } from "node:path";
 import { BENCH_MARKER } from "../registry/registrable.js";
 import { isLocalProvider, readWorkersSection } from "./config.js";
@@ -381,7 +382,7 @@ export function summarizeToolInput(input: unknown): string | undefined {
   const i = input as Record<string, unknown>;
   const str = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : "");
   const s = [str("file_path") || str("path"), str("pattern"), str("command")].filter(Boolean).join(" ");
-  return s ? s.replace(/\s+/g, " ").slice(0, INPUT_MAX) : undefined;
+  return s ? redactSecrets(s).replace(/\s+/g, " ").slice(0, INPUT_MAX) : undefined;
 }
 
 export function clipRaw(text: string): string {
@@ -397,14 +398,15 @@ export function recordToolError(
 ): void {
   try {
     if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+    const text = redactSecrets(rec.text);
     const line: ToolErrorRecord = {
       ts: now,
       worker: rec.worker,
       provider: rec.provider,
       label: rec.label,
       tool: rec.tool,
-      signature: normalizeError(rec.tool, rec.text),
-      raw: clipRaw(rec.text),
+      signature: normalizeError(rec.tool, text),
+      raw: clipRaw(text),
     };
     const input = summarizeToolInput(rec.input);
     if (input) line.input = input;
@@ -609,7 +611,7 @@ export function recordToolErrorCandidates(records: readonly ToolErrorRecord[], n
       const w = upsertCandidate({
         category: "tool-loop",
         action: "deny",
-        message: `${workers}: ${g.sample}${g.sampleInput ? ` (input: ${g.sampleInput})` : ""} | ${trigger} failed ${recs.length}x in ${TOOL_ERROR_CANDIDATE_WINDOW_MS / 86_400_000}d`,
+        message: `${workers}: ${redactSecrets(g.sample)}${g.sampleInput ? ` (input: ${redactSecrets(g.sampleInput)})` : ""} | ${trigger} failed ${recs.length}x in ${TOOL_ERROR_CANDIDATE_WINDOW_MS / 86_400_000}d`,
         input,
         workers: [...new Set(recs.map((r) => r.worker))],
         observed: `${trigger} failed ${recs.length}x in ${TOOL_ERROR_CANDIDATE_WINDOW_MS / 86_400_000}d across workers ${workers} — repeated model tool error, suggested fix left empty for review`,
@@ -623,7 +625,7 @@ export function recordToolErrorCandidates(records: readonly ToolErrorRecord[], n
 }
 
 export function toolErrorText(g: ToolErrorGroup): string {
-  const what = `${g.signature} ×${g.count} in ${g.workers.join(",")} — sample: ${g.sample}${g.sampleInput ? ` (input: ${g.sampleInput})` : ""}`;
+  const what = `${g.signature} ×${g.count} in ${g.workers.join(",")} — sample: ${redactSecrets(g.sample)}${g.sampleInput ? ` (input: ${redactSecrets(g.sampleInput)})` : ""}`;
   const tail = "harness → stop runs it spoils, fix the cause in PAI/AIBroker, prove it, commit; model → counts against the model, stop the run if it loops; details: pai worker errors";
   if (g.cls === "harness") return `[harness] ${g.hint}: ${what} — fix at the owner. ${tail}`;
   if (g.cls === "model") return `[model ×${g.count}] ${g.hint}: ${what} — counts against the model; stop the run if it loops. ${tail}`;
