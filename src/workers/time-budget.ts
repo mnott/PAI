@@ -116,7 +116,10 @@ export function budgetCheck(
     if (jobLike && !budgetProgress(prev, cur, o.readOnly === true)) return { action: "extend", minutes: o.minutes, why: `kept at ${o.minutes} min: ${progress}` };
   }
   // a slow host is not idleness: at load above the core count the no-progress window is stretched by load/cores (max 4x)
-  if (!progress && lf > 1) return { action: "extend", minutes: o.minutes, why: `kept at ${o.minutes} min: host load ${(load).toFixed(0)} (x${lf.toFixed(1)} window)` };
+  if (!progress && lf > 1) {
+    const next = nextBudgetMinutes(o.minutes, o.cfg, o.maxMinutes);
+    if (next !== null) return { action: "extend", minutes: next, why: `extended to ${next} min: host load ${(load).toFixed(0)} (x${lf.toFixed(1)} window)` };
+  }
   const m = `${o.turns !== undefined ? `${o.turns} turns, ` : ""}${o.tools !== undefined ? `${o.tools} tool calls, ` : ""}load ${(load).toFixed(1)}`;
   return { action: "review", why: progress ? `out of time at the ${o.minutes}-min cap: ${progress}` : `no progress in its ${o.minutes}-min allowance (${m})` };
 }
