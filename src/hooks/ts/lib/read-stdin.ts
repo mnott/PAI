@@ -78,3 +78,13 @@ export async function readStdinToEnd(
     clearTimeout(timer);
   }
 }
+
+/**
+ * A wall-clock bound that survives CPU starvation: `baseMs` while the 1-minute
+ * load is at or below the core count, then growing linearly with load/cores,
+ * capped at `maxFactor` x base. A true hang still hits it, just later.
+ */
+export function loadScaledBoundMs(baseMs: number, load: number, cores: number, maxFactor = 6): number {
+  const factor = Math.min(maxFactor, Math.max(1, load / Math.max(1, cores)));
+  return Math.round(baseMs * factor);
+}
