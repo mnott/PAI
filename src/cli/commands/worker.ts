@@ -43,7 +43,7 @@ import { readQueueTable, runRowAction } from "../../workers/queue-ops.js";
 import { filterBySession, filterByTopic, renderQueueTable } from "../../workers/queue-table.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
-import { announceId, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile, HOST_TERM_ENV } from "../../workers/reroute.js";
+import { announceId, fullTaskText, continuedNote, announceRerunId, rerunFromEnv, startDetachedWorker, RERUN_OF_ENV, RERUN_OF_FILE_ENV, rerunOfFromFile, HOST_TERM_ENV } from "../../workers/reroute.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
 import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -1278,26 +1278,35 @@ const extendCommand: CommandDef = {
       if (st.state !== "review") throw new Error(`worker ${id} is ${st.state}; extend acts on a running worker or one stopped for review`);
       const cap = readWorkersCached().timeBudget.cap;
       const m = Math.max(1, Math.min(minutes, cap));
-      const file = [st.promptFile, st.spec, workerFilePath(dir, id, ".prompt")].find((f): f is string => !!f && f !== "-" && existsSync(f));
-      if (!file) throw new Error(`worker ${id} kept no copy of its task — nothing to restart; resume it with a note instead: pai worker resume ${id} '<note>'`);
+      let task: string;
+      try {
+        task = fullTaskText(dir, st);
+      } catch {
+        throw new Error(`worker ${id} kept no copy of its task — nothing to restart; resume it with a note instead: pai worker resume ${id} '<note>'`);
+      }
+      if (st.branch) task = `${continuedNote(id, st.branch)}\n\n${task}`;
       const ranMs = Date.now() - Date.parse(st.started.replace(" ", "T"));
       // with a budget history the allowance counts from the job's start (the
       // time it already used is spent); without one, DUR is the new allowance
-      const newId = await runWorker({
+      let newId = "";
+      await runWorker({
         providerFlag: st.provider,
         modelFlag: st.model,
         className: st.className,
+        onWorkerStart: (wid) => {
+          newId = wid;
+        },
         ...(st.topic ? { topic: st.topic } : {}),
         ...(st.cwd ? { cwd: st.cwd } : {}),
         label: `${st.label} (extended)`,
-        claudeArgs: ["-p", readFileSync(file, "utf8")],
+        claudeArgs: ["-p", task],
         budgetMin: st.budgetMin ? Math.max(1, Math.ceil((ranMs + m * 60_000) / 60_000)) : m,
         _budgetOverride: true,
         // the chain this review-stop belongs to (fall-through/escalation ids included)
         _priorIds: [...(st.fallThroughOf ? [st.fallThroughOf] : []), id],
       });
       appendLedger(ledger, "WORKER-BUDGET-EXTEND", { id, minutes: m, why: `extended to ${m} min by hand`, restart: newId, byHand: 1 });
-      out(`${id}: extended to ${m} min — restarted as ${newId}, continuing on its branch`);
+      out(`${id}: extended to ${m} min — restarted as ${newId || "?"}, continuing on its branch`);
     }),
 };
 

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { escalationMessage, rerunFromEnv, defaultSpawn, endContinuedOrigins, escalationReason, escalationHeldNote, providerPinned, escalateOverdue, rerouteWorker, taskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
+import { escalationMessage, rerunFromEnv, defaultSpawn, endContinuedOrigins, escalationReason, escalationHeldNote, providerPinned, escalateOverdue, rerouteWorker, taskText, fullTaskText, ID_FILE_ENV, RERUN_ID_FILE_ENV, RERUN_OF_ENV, RERUN_OF_FILE_ENV, URGENT_QUEUED_MIN, type ReroutePolicy, type SpawnSpec } from "./reroute.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 import { getProfile, lastProfileWriteLogError, profilesPath, setProfileLedger, updateProfile, nextClockTime } from "./session-profile-store.js";
 import { namesTarget, resolveWorkers } from "./session-profile.js";
@@ -753,6 +753,24 @@ describe("progress-based time budget", () => {
 
   it("no progress stops for review", () => {
     expect(budgetCheck(snap({ commits: 2 }), snap({ commits: 2 }), { minutes: 20, cfg }).action).toBe("review");
+  });
+
+  it("fullTaskText joins the root spec and later resume notes", () => {
+    const d = mkdtempSync(join(tmpdir(), "fulltask-"));
+    writeFileSync(join(d, "a.prompt"), "ORIGINAL SPEC");
+    writeFileSync(join(d, "b.prompt"), "just a note");
+    saveStatus(d, { id: "a", promptFile: join(d, "a.prompt") } as never);
+    const b = { id: "b", resumedFrom: "a", promptFile: join(d, "b.prompt") } as never;
+    saveStatus(d, b);
+    expect(fullTaskText(d, b)).toBe("ORIGINAL SPEC\n\n--- note from b ---\njust a note");
+  });
+
+  it("an in-flight tool call extends; high load stretches the window; idleness at low load still reviews", () => {
+    const f = budgetCheck(snap({}), snap({ inFlight: "Bash: tools/build.sh x --wait" }), { minutes: 20, cfg, load: 1, cores: 8 });
+    expect(f).toEqual({ action: "extend", minutes: 40, why: "extended to 40 min: tool call running: Bash: tools/build.sh x --wait" });
+    const hot = budgetCheck(snap({}), snap({}), { minutes: 20, cfg, load: 100, cores: 10 });
+    expect(hot.action).toBe("extend");
+    expect(budgetCheck(snap({}), snap({}), { minutes: 20, cfg, load: 2, cores: 8, turns: 10, tools: 7 })).toEqual({ action: "review", why: "no progress in its 20-min allowance (10 turns, 7 tool calls, load 2.0)" });
   });
 
   it("an owned running build/test job at the checkpoint extends instead of stopping", () => {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { enqueue, removeTicket, tryStart } from "../builds/queue.js";
 import { budgetCheck, type BudgetSnapshot } from "./time-budget.js";
-import { createJobWatch, ownsLiveBuildJob } from "./job-watch.js";
+import { createJobWatch, hasLiveChild, ownsLiveBuildJob } from "./job-watch.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 
 let dir: string;
@@ -63,5 +63,22 @@ describe("worker budget checkpoint sees its build job", () => {
     const old = new Date(now - 60_000);
     utimesSync(log, old, old);
     expect(watch.sample()).toBe(false); // silent log, no job
+  });
+});
+
+describe("an L1 with a live child is never idle", () => {
+  const child = (o: Partial<WorkerStatus>) => ({ id: "c1", parent: "l1", state: "running", pid: process.pid, ...o }) as unknown as WorkerStatus;
+  it("a running child of the worker keeps the checkpoint extending, never reviewing", () => {
+    saveStatus(logDir, child({}));
+    expect(hasLiveChild(logDir, "l1")).toBe(true);
+    expect(hasLiveChild(logDir, "other")).toBe(false);
+    const watch = createJobWatch({ wid: "l1", logDir, dir });
+    const active = watch.activeSince(0);
+    expect(active).toBe(true);
+    expect(budgetCheck(snap(false), snap(active), { minutes: 20, cfg, maxMinutes: 20 }).action).toBe("extend");
+  });
+  it("a finished child does not count", () => {
+    saveStatus(logDir, child({ state: "done" }));
+    expect(hasLiveChild(logDir, "l1")).toBe(false);
   });
 });
