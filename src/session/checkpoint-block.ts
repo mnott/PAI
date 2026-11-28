@@ -861,6 +861,29 @@ export function applyContinue(opts: ApplyOptions): ApplyResult {
       }
     }
 
+    // Case 3c — hand-written content sitting ABOVE the marker block.
+    //
+    // The marker is located within the first few lines of the section, so a
+    // human-written block placed directly under "## Continue" and above the auto
+    // block is never seen by case 3b: that scan starts at the carry-forward note
+    // inside the block. The old writer replaced the whole section, which dropped
+    // such text on every checkpoint — reported live on 2026-11-28, where a night
+    // handover under "## Continue" was erased twice (04:48 and 06:12) by the
+    // automatic checkpoint. Everything between the heading and the marker is
+    // content somebody put there deliberately; carry it forward byte for byte,
+    // ahead of whatever case 3b already recovered.
+    if (existing.meta?.authored === "auto") {
+      const markerIdx = existing.lines.findIndex((l) => parseMarker(l) !== null);
+      if (markerIdx > 0) {
+        const above = trimBlankEdges(collapseBlankRuns(existing.lines.slice(1, markerIdx)));
+        if (above.length > 0 && !isBoilerplateOnly(above)) {
+          const salvaged = above.join("\n");
+          effectiveBody = effectiveBody ? `${salvaged}\n\n${effectiveBody}` : salvaged;
+          carriedForward = true;
+        }
+      }
+    }
+
     // Case 3 — unmarked block holding content nobody can attribute to us.
     if (!existing.meta && !isBoilerplateOnly(existing.lines)) {
       const salvaged = extractSectionContent(existing.lines);
