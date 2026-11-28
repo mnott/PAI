@@ -61,7 +61,7 @@ It prints every question setup would ask on this machine, in order, each with `i
 pai setup --yes --storage sqlite --embedding none --router-port 9000 --router-bind loopback --no-hooks
 ```
 
-Tell the user that setup also installs the background daemon as a login service (launchd on macOS, a systemd user unit on Linux) and AIBroker, and that the cockpit is reachable from other devices when its reach is not `loopback`. Setup covers storage, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit, and the first index. It is safe to run again. Without `--storage`, `--yes` picks sqlite unless a local Postgres answers. On macOS setup also asks which dictation transcription model the menu bar app should use (`--dictation-model ID`: `large-v3-turbo-q5_0` default, `medium`, `small`, `base`); it only records the choice and never downloads, it prints the download command when the file is missing. Change it later with `pai setup --dictation-model ID`.
+Tell the user that setup also installs the background daemon as a login service (launchd on macOS, a systemd user unit on Linux) and AIBroker, and that the cockpit is reachable from other devices when its reach is not `loopback`. Setup covers storage, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit, and the first index. It is safe to run again. Without `--storage`, `--yes` picks sqlite unless a local Postgres answers.
 
 Storage choice, ask the user:
 - **sqlite**: keyword search, no extra software. Right for most people and for small machines.
