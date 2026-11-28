@@ -182,17 +182,16 @@ describe("smokeBound (load-scaled start bound)", () => {
 });
 
 describe("startDetachedWorker bound under load", () => {
+  const made: string[] = [];
+  afterAll(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
   it("scales the window with host load and names bound and load in the failure", async () => {
     const dir = mkdtempSync(join(tmpdir(), "smoke-window-load-"));
-    dirs.push(dir);
-    const deadSpawn = (() => 2_147_483_000) as unknown as typeof import("./reroute.js").spawnSession;
-    // a dead process fails at once (no wait), so prove the scaling through the live-process path with a tiny base
+    made.push(dir);
     const slowSpawn = (() => {
       const child = spawn("/bin/sh", ["-c", "sleep 5"], { detached: true, stdio: "ignore" });
       child.unref();
       return child.pid ?? process.pid;
     }) as unknown as typeof import("./reroute.js").spawnSession;
-    void deadSpawn;
     const t0 = Date.now();
     await expect(startDetachedWorker(join(dir, "logs"), ["x"], { cwd: dir, env: {}, timeoutMs: 400, start: slowSpawn, load: { load: 32, cores: 16 } })).rejects.toThrow(/did not start within 1s \(bound 1 s at load 32\/16/);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(700); // 2x of 400 ms, not 400
