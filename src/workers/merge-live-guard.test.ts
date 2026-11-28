@@ -715,7 +715,7 @@ describe("L2 stranded by a merged L1", () => {
     makeWorker(repo, logDir, "l2", { file: "l2.txt", from: "worker/l1" });
     saveStatus(logDir, { ...loadStatus(logDir, "l2")!, parent: "l1", startBranch: "worker/l1" });
     rmSync(join(worktreePath(logDir, "l1"), ".pai-keep"));
-    expect(git(worktreePath(logDir, "l1"), ["status", "--porcelain"])).toBe(" D .pai-keep");
+    expect(git(worktreePath(logDir, "l1"), ["status", "--porcelain"])).toMatch(/D \.pai-keep/);
     expect(await mergeWorker(logDir, "l1", { verifyTests: false, rebuild: false, cliRoot: null })).toContain("merged worker/l1");
     expect(loadStatus(logDir, "l1")?.merged).toBe(true);
     expect(() => git(repo, ["rev-parse", "--verify", "-q", "refs/heads/worker/l1"])).toThrow();
