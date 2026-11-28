@@ -100,3 +100,5 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/brainstorm/start.test.ts | c | pai brainstorm contract: the prompts carry the board id, the literal wait loop and CLOSED semantics workers depend on; post/wait exit codes 0/3/4 (harness teaches them); result.md shape |
 | src/release/update.test.ts | a | update companion: AIBroker version compare and install command fakes |
 | apps/menubar/Tests/PAIMenuBarTests/SpeakerTests.swift | c | pins speaker-label turn parsing, max-overlap assignment and merge for dictation (PAI#33) |
+| src/daemon-mcp/skill.test.ts | c | external contract: pai MCP server ships skills/PAI/SKILL.md as resource skill://pai/SKILL.md and prompt pai-skill over real stdio; short instructions name both (harness-agnostic skill delivery) |
+| src/workers/hang-probe-classify.test.ts | a | regression: ps|grep "vitest" line was wrapped in test-run and waited for the test slot |
