@@ -16,11 +16,15 @@
  * (fixed 2026-11-17; see realDeps.now).
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { buildsDir, listBuildsSync, ordered, ticketKind, type BuildTicket } from "../builds/queue.js";
 import { loadStatus, loadStatuses, ownsPid, pidAlive, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
+
+const execFileAsync = promisify(execFile);
+const PS_MAX_BUFFER = 64 * 1024 * 1024;
 
 export const WAIT_DEFAULT_SECS = 110;
 export const WAIT_CAP_SECS = 590;
@@ -120,22 +124,34 @@ function isZombie(pid: number): boolean {
   }
 }
 
-/** `pid` followed by all its live descendants, parents first (from one `ps` snapshot). */
-export function processTree(pid: number): number[] {
-  let rows: string[] = [];
-  try {
-    rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).split("\n");
-  } catch {
-    return [pid];
-  }
+/** `pid` followed by its descendants, parents first, from `ps -axo pid=,ppid=` output. */
+function parseTree(pid: number, text: string): number[] {
   const kids = new Map<number, number[]>();
-  for (const r of rows) {
+  for (const r of text.split("\n")) {
     const [c, pp] = r.trim().split(/\s+/).map(Number);
     if (Number.isInteger(c) && Number.isInteger(pp)) kids.set(pp, [...(kids.get(pp) ?? []), c]);
   }
   const out = [pid];
   for (let i = 0; i < out.length; i++) out.push(...(kids.get(out[i]) ?? []).filter((k) => !out.includes(k)));
   return out;
+}
+
+/** `pid` followed by all its live descendants, parents first (from one `ps` snapshot). */
+export function processTree(pid: number): number[] {
+  try {
+    return parseTree(pid, execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8", maxBuffer: PS_MAX_BUFFER }));
+  } catch {
+    return [pid];
+  }
+}
+
+/** Like `processTree`, without blocking the event loop (daemon ticks). */
+export async function processTreeAsync(pid: number): Promise<number[]> {
+  try {
+    return parseTree(pid, (await execFileAsync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8", maxBuffer: PS_MAX_BUFFER })).stdout);
+  } catch {
+    return [pid];
+  }
 }
 
 /** `ps -o time=` ("M:SS.cc" or "H:MM:SS.cc") in seconds; NaN when unreadable. */
@@ -145,9 +161,9 @@ export function parseCpuTime(t: string): number {
   return parts.reduce((acc, n) => acc * 60 + n, 0);
 }
 
-function treeCpuSecs(tree: number[]): number {
+async function treeCpuSecs(tree: number[]): Promise<number> {
   try {
-    const rows = execFileSync("ps", ["-axo", "pid=,time="], { encoding: "utf8" }).split("\n");
+    const rows = (await execFileAsync("ps", ["-axo", "pid=,time="], { encoding: "utf8", maxBuffer: PS_MAX_BUFFER })).stdout.split("\n");
     let sum = 0;
     for (const r of rows) {
       const [pid, time] = r.trim().split(/\s+/);
@@ -160,9 +176,9 @@ function treeCpuSecs(tree: number[]): number {
 }
 
 /** An ESTABLISHED TCP connection from the tree to a loopback address (the local model server or router). */
-function treeLoopbackConn(tree: number[]): boolean {
+async function treeLoopbackConn(tree: number[]): Promise<boolean> {
   try {
-    const out = execFileSync("lsof", ["-nP", "-a", "-p", tree.join(","), "-iTCP", "-sTCP:ESTABLISHED"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const { stdout: out } = await execFileAsync("lsof", ["-nP", "-a", "-p", tree.join(","), "-iTCP", "-sTCP:ESTABLISHED"], { encoding: "utf8", maxBuffer: PS_MAX_BUFFER });
     return out.split("\n").some((l) => /->(127\.0\.0\.1|\[::1\]|localhost):\d+/.test(l));
   } catch {
     return false; // lsof exits 1 with no match
@@ -170,9 +186,9 @@ function treeLoopbackConn(tree: number[]): boolean {
 }
 
 /** A `pai worker run` client in the tree: the work runs in a pane under its own deadline, so the client itself is idle by design. */
-function treeWorkerRun(tree: number[]): boolean {
+async function treeWorkerRun(tree: number[]): Promise<boolean> {
   try {
-    const rows = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n");
+    const rows = (await execFileAsync("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: PS_MAX_BUFFER })).stdout.split("\n");
     return rows.some((r) => {
       const m = r.trim().match(/^(\d+)\s+(.*)$/);
       return !!m && tree.includes(Number(m[1])) && isWorkerRunCmd(m[2]);
@@ -195,11 +211,11 @@ const cpuSeen = new Map<number, { cpu: number; at: number }>();
 const CPU_BASELINE_MAX_MS = 10 * 60_000;
 
 export async function treeBusy(pid: number): Promise<{ busy: boolean; why: string }> {
-  const tree = processTree(pid);
-  if (treeWorkerRun(tree)) return { busy: true, why: "worker run in tree" };
-  const before = treeCpuSecs(tree);
+  const tree = await processTreeAsync(pid);
+  if (await treeWorkerRun(tree)) return { busy: true, why: "worker run in tree" };
+  const before = await treeCpuSecs(tree);
   await new Promise((r) => setTimeout(r, 1000));
-  const after = treeCpuSecs(processTree(pid));
+  const after = await treeCpuSecs(await processTreeAsync(pid));
   const prev = cpuSeen.get(pid);
   if (prev && after > prev.cpu) {
     cpuSeen.set(pid, { cpu: after, at: Date.now() });
@@ -212,7 +228,7 @@ export async function treeBusy(pid: number): Promise<{ busy: boolean; why: strin
   // The live sample saw no gain: (re)set the baseline for the next call — keep an older one only while
   // it is still fresh, so a tree idle for longer than the baseline window cannot stay busy forever.
   if (!prev || Date.now() - prev.at > CPU_BASELINE_MAX_MS) cpuSeen.set(pid, { cpu: after, at: Date.now() });
-  if (treeLoopbackConn(tree)) return { busy: true, why: "open loopback connection" };
+  if (await treeLoopbackConn(tree)) return { busy: true, why: "open loopback connection" };
   return { busy: false, why: "no cpu, no i/o" };
 }
 
