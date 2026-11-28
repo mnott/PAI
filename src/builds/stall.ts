@@ -10,11 +10,12 @@
  * of flagging.
  */
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { closeSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { patchTicket, releaseStalled, removeTicket, stallReleaseLine, type BuildTicket } from "./queue.js";
-import { killProcessTree, processTree, treeBusy } from "../workers/wait-on.js";
+import { killProcessTree, processTreeAsync, treeBusy } from "../workers/wait-on.js";
 
 export interface StallDeps {
   /** Size of a file, null when unreadable. */
@@ -37,7 +38,7 @@ export interface StallReleaseDeps {
   /** Largest CPU % of the whole process tree that still counts as idle (default 5). */
   maxCpuPct?: number;
   /** Summed CPU % of the tree rooted at `root`; null when the root is gone. */
-  cpuPct: (root: number) => number | null;
+  cpuPct: (root: number) => number | null | Promise<number | null>;
   /** Save what the tree was doing (sample / ps) before it is killed. Returns the file written, if any. */
   capture: (t: BuildTicket, root: number) => Promise<string | null>;
   /** Kill exactly the processes of the tree rooted at `root`, nothing else. */
@@ -120,7 +121,7 @@ export async function stallTick(dir: string, tickets: BuildTicket[], minutes: nu
     const rel = deps.release;
     if (rel && now - prev.outAt >= rel.minutes * 60_000) {
       const root = treeRoot(t);
-      const pct = rel.cpuPct(root);
+      const pct = await rel.cpuPct(root);
       if (pct === null) {
         await cleanFinished(dir, t, now - prev.outAt, tickets, deps, rel);
         state.delete(t.id);
@@ -196,14 +197,16 @@ async function releaseStall(dir: string, t: BuildTicket, root: number, pct: numb
   await deliver(deps, t, `${stallReleaseLine({ id: t.id, label: t.label, minutes: quietMin, at: 0 })} (${t.label}${t.key ? ` [${t.key}]` : ""}; tree ${pct === null ? "gone" : "killed"}; ${behind.length} job(s) waiting; diagnosis: ${saved ?? "none"})`);
 }
 
+const psAsync = promisify(execFile);
+
 /** Real process probes for the release policy: ps for CPU % and the tree, sample/ps saved next to the build log. */
 export function realReleaseDeps(dir: string, minutes: number, ledger: StallReleaseDeps["ledger"]): StallReleaseDeps {
   return {
     minutes,
-    cpuPct: (root) => {
-      const tree = processTree(root);
+    cpuPct: async (root) => {
+      const tree = await processTreeAsync(root);
       try {
-        const rows = execFileSync("ps", ["-o", "pid=,%cpu=", "-p", tree.join(",")], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split("\n").filter(Boolean);
+        const rows = (await psAsync("ps", ["-o", "pid=,%cpu=", "-p", tree.join(",")], { encoding: "utf8" })).stdout.trim().split("\n").filter(Boolean);
         if (!rows.length) return null;
         return Math.round(rows.reduce((a, r) => a + (Number(r.trim().split(/\s+/)[1]) || 0), 0) * 10) / 10;
       } catch {
@@ -213,10 +216,10 @@ export function realReleaseDeps(dir: string, minutes: number, ledger: StallRelea
     capture: async (t, root) => {
       mkdirSync(dir, { recursive: true });
       const base = join(dir, `${t.id}.stall`);
-      const tree = processTree(root);
+      const tree = await processTreeAsync(root);
       let ps = "";
       try {
-        ps = execFileSync("ps", ["-o", "pid,ppid,stat,%cpu,etime,command", "-p", tree.join(",")], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+        ps = (await psAsync("ps", ["-o", "pid,ppid,stat,%cpu,etime,command", "-p", tree.join(",")], { encoding: "utf8" })).stdout;
       } catch {
         ps = "(process tree gone)\n";
       }

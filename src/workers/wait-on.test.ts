@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
-import { waitOn, realDeps, statusQueue, WAIT_RECIPE, WAIT_VERBS, type WaitOnDeps } from "./wait-on.js";
+import { waitOn, realDeps, processTreeAsync, treeBusy, statusQueue, WAIT_RECIPE, WAIT_VERBS, type WaitOnDeps } from "./wait-on.js";
 import { runWait, waitWorkers } from "./wait.js";
 import { eventsPath } from "./paths.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
@@ -357,5 +357,24 @@ describe("worker wait follows rerouted workers", () => {
     expect(results[0]!.followed).toEqual(["c1"]);
     expect(results[0]!.state).toBe("done");
     expect(results[0]!.ok).toBe(true);
+  });
+});
+
+describe("process probes do not block the event loop", () => {
+  it("ticks keep running while processTreeAsync and treeBusy run", async () => {
+    let ticks = 0;
+    const iv = setInterval(() => ticks++, 5);
+    try {
+      await Promise.all(Array.from({ length: 8 }, () => processTreeAsync(process.pid)));
+      const afterTree = ticks;
+      const tree = await processTreeAsync(process.pid);
+      expect(tree[0]).toBe(process.pid);
+      expect(afterTree).toBeGreaterThan(0);
+      const r = await treeBusy(process.pid);
+      expect(typeof r.busy).toBe("boolean");
+      expect(ticks).toBeGreaterThan(afterTree + 20);
+    } finally {
+      clearInterval(iv);
+    }
   });
 });
