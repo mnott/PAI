@@ -17,6 +17,7 @@
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { removeScratch } from "./scratch.js";
+import { ensureNoSpotlightIndex } from "./no-index.js";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, renameSync, cpSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -395,6 +396,7 @@ export function addWorktree(logDir: string, id: string, cwd: string): WorktreeIn
   }
   // -B: a reusable leftover branch is reset to base; a fresh name is simply created
   recordGitIdentity(logDir, id, cwd);
+  ensureNoSpotlightIndex(worktreesDir(logDir));
   git(cwd, ["worktree", "add", "-B", branch, dir, base]);
   ensureScratchDir(dir);
   provisionDeps(logDir, id, cwd, dir);
