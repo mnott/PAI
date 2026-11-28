@@ -11,7 +11,7 @@ Two files, both under the PAI home (`pai config path`, `pai worker config path`)
 | File | Holds |
 |---|---|
 | `workers.yaml` | `providers`, `tiers`, `classes`, `capabilities`, `mcp_sets`, `active`, `local`, `local_tiers`, `merge.verify` ([keys](workers-config.md)) |
-| `config.yaml`, section `workers` | everything else: `enabled`, `pane`, `routing`, `tree`, `supervision`, `pool`, `cacheKeepaliveSecs`, `defaultMaxMinutes`, `gcOlderThanHours`, `worktreesMaxGb`, `caveman`, ... |
+| `config.yaml`, section `workers` | everything else: `enabled`, `pane`, `routing`, `tree`, `supervision`, `pool`, `cacheKeepaliveSecs`, `defaultMaxMinutes`, `gcOlderThanHours`, `worktreesMaxGb`, ... |
 
 Both are layered over shipped defaults ([config-defaults.md](config-defaults.md)). A fresh install has workers **off** (`workers.enabled: false`), one provider (the built-in `anthropic`, models `default: sonnet`, `fast: haiku`), the three shipped tiers `t0`/`t1`/`t2` and `classes: {}` (the class-to-tier mapping lives in each tier's `classes` list). `pai worker on` enables workers; `pai worker config init` writes a starter `workers.yaml`.
 
@@ -31,7 +31,6 @@ Selected `workers` keys and their shipped values:
 | `priority.sessions` | `{}` | Queue priority per named session, `{ "<session>": high\|normal\|low }`. When a provider is full, queued runs are admitted high before normal before low, oldest first within a priority (sessions still take turns); running workers are never preempted. `pai worker run --priority high\|normal\|low` overrides it for one run. `pai worker priority` lists and changes the entries without editing workers.yaml. `pai worker ps` and the cockpit queue show the priority. |
 | `cacheKeepaliveSecs` | `0` | Daemon cache heartbeat; off. See [cache-keepalive.md](cache-keepalive.md). |
 | `reaper` | `true` | Daemon reaper for orphaned worker processes. |
-| `caveman` | `false` | Run native-Anthropic workers through `caveman claude`; off pins them to `api.anthropic.com`. |
 
 Read or change any of them with `pai config get|set workers.<key>`.
 
