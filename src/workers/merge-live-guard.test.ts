@@ -709,6 +709,26 @@ describe("L2 stranded by a merged L1", () => {
     expect(c.lines.join("\n")).toContain("ended without merging and its branch is gone; merging into main");
   });
 
+  it("an L1 whose only dirty entry is its deleted .pai-keep marker merges, is marked merged and its child retargets", async () => {
+    const { repo, logDir } = fixture();
+    makeWorker(repo, logDir, "l1", { file: "l1.txt", extra: { ".pai-keep": "kept\n" } });
+    makeWorker(repo, logDir, "l2", { file: "l2.txt", from: "worker/l1" });
+    saveStatus(logDir, { ...loadStatus(logDir, "l2")!, parent: "l1", startBranch: "worker/l1" });
+    rmSync(join(worktreePath(logDir, "l1"), ".pai-keep"));
+    expect(git(worktreePath(logDir, "l1"), ["status", "--porcelain"])).toBe(" D .pai-keep");
+    expect(await mergeWorker(logDir, "l1", { verifyTests: false, rebuild: false, cliRoot: null })).toContain("merged worker/l1");
+    expect(loadStatus(logDir, "l1")?.merged).toBe(true);
+    expect(() => git(repo, ["rev-parse", "--verify", "-q", "refs/heads/worker/l1"])).toThrow();
+    expect(existsSync(worktreePath(logDir, "l1"))).toBe(false);
+    const c = capture();
+    try {
+      expect(await mergeWorker(logDir, "l2", { verifyTests: false, rebuild: false, cliRoot: null })).toContain("merged worker/l2");
+    } finally {
+      c.done();
+    }
+    expect(c.lines.join("\n")).toContain("merging into main");
+  });
+
   it("refuses while the recorded branch still exists", async () => {
     const { repo, logDir } = await stranded(false);
     git(repo, ["checkout", "-q", "-b", "other"]);

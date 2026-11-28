@@ -905,7 +905,8 @@ export function uncommittedPaths(wtDir: string, timeoutMs?: number): string[] {
   const untracked = git(wtDir, ["ls-files", "--others", "--exclude-standard"], timeoutMs)
     .split("\n")
     .filter(Boolean);
-  return [...tracked, ...untracked];
+  // the harness's own marker (.pai-keep) is never work: a deleted/added marker is not "dirty"
+  return [...tracked, ...untracked].filter((p) => p !== KEEP_FILE);
 }
 
 /**
