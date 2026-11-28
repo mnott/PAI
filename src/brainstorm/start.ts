@@ -6,7 +6,7 @@
 import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boardDir, brainstormRoot, createBoard } from "./board.js";
+import { boardDir, brainstormRoot, createBoard, post } from "./board.js";
 import type { BrainstormMeta } from "./harvest.js";
 
 export const DEFAULT_LENSES = [
@@ -31,8 +31,11 @@ export interface StartOpts {
   caller?: string;
 }
 
+export type KillFn = (workerId: string) => Promise<void>;
+
 export interface StartDeps {
   spawn?: SpawnFn;
+  kill?: KillFn;
   root?: string;
   now?: Date;
 }
@@ -179,6 +182,11 @@ export const defaultSpawn: SpawnFn = (argv) =>
     });
   });
 
+export const defaultKill: KillFn = (workerId) =>
+  new Promise((resolve) => {
+    execFile(process.env.PAI_BIN || "pai", ["worker", "kill", workerId, "--reason", "brainstorm start failed"], { timeout: 60000 }, () => resolve());
+  });
+
 export function workerArgv(role: string, id: string, specFile: string, minutes: number, local: boolean): string[] {
   return [
     "worker", "run", "--detach", "--class", "research", "--where", local ? "local" : "cloud",
@@ -229,7 +237,16 @@ export async function startBrainstorm(o: StartOpts, deps: StartDeps = {}): Promi
     if (r.status === "fulfilled") meta.workers![jobs[i].role] = r.value.id;
     else failed.push(`${jobs[i].role}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
   });
+  if (failed.length) {
+    const started = { ...meta.workers };
+    const ids = Object.values(started);
+    const kill = deps.kill ?? defaultKill;
+    await Promise.allSettled(ids.map((w) => kill(w)));
+    await post(id, "moderator", "CLOSED start failed", root).catch(() => undefined);
+    meta.workers = {};
+    writeMeta();
+    throw new Error(`brainstorm ${id}: ${failed.length} worker(s) did not start (${failed.join("; ")}); started: ${JSON.stringify(started)}; ${ids.length} started worker(s) stopped`);
+  }
   writeMeta();
-  if (failed.length) throw new Error(`brainstorm ${id}: ${failed.length} worker(s) did not start (${failed.join("; ")}); started: ${JSON.stringify(meta.workers)}`);
   return { id, dir, deadlineMs, workers: meta.workers!, watch: `pai brainstorm watch ${id}` };
 }
