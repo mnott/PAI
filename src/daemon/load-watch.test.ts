@@ -1,9 +1,9 @@
 import { createRequire } from "node:module";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { freshLoadWatchState, loadWatchConfig, loadWatchTick, selectSuspects, stepLoadWatch, type LoadWatchDeps, type PsRow } from "./load-watch.js";
+import { appendLoadLog, freshLoadWatchState, liveLoadWatchDeps, LOAD_WATCH_DEFAULTS, loadWatchConfig, loadWatchTick, selectSuspects, stepLoadWatch, type LoadWatchConfig, type LoadWatchDeps, type LoadWatchMode, type PsRow } from "./load-watch.js";
 import { runRuntimeOp, userToolEnv, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 import {
   lowPriorityConfig,
@@ -118,6 +118,85 @@ describe("episode", () => {
     }
     expect(log.alerts).toHaveLength(2);
     expect(log.alerts[1]).toContain("back under");
+  });
+});
+
+describe("log mode (workers.loadWatch.mode: log)", () => {
+  it("defaults to enforce; mode: log is read from workers.loadWatch", () => {
+    expect(loadWatchConfig(undefined).mode).toBe("enforce");
+    expect(loadWatchConfig({ loadWatch: { mode: "log" } }).mode).toBe("log");
+    expect(loadWatchConfig({ loadWatch: { mode: "nonsense" } }).mode).toBe("enforce"); // anything else falls back to enforce
+  });
+
+  it("writes a sample line per tick and calls no freeze/pause/kill/alert/ledger, even at extreme sustained overload", async () => {
+    const log = { freezes: 0, thaws: 0, kills: [] as number[], alerts: [] as string[], ledger: [] as string[], lines: [] as string[] };
+    let now = 0;
+    const d: LoadWatchDeps = {
+      load5: () => 100,
+      cores: () => 10,
+      swap: async () => ({ total: 2 * 1024 ** 3, used: 1024 ** 3 }),
+      ps: async () => [row(11, 1, 99, "/bin/bash /tmp/pai-scratch/w-ended/loop.sh")],
+      statuses: () => [st("w-live", "running"), st("w-ended", "failed")],
+      freeze: async () => (log.freezes++, "frozen"),
+      thaw: async () => (log.thaws++, "thawed"),
+      kill: (p) => void log.kills.push(p),
+      alert: async (t) => void log.alerts.push(t),
+      ledger: (e, kv) => void log.ledger.push(`${e} pid=${kv.pid}`),
+      write: (r) => void log.lines.push(JSON.stringify(r)),
+      now: () => now,
+      self: 999,
+      logDir: "/logs/workers",
+    };
+    const cfg = loadWatchConfig({ loadWatch: { mode: "log" } });
+    let state = freshLoadWatchState();
+    for (let i = 0; i < 30; i++) {
+      state = await loadWatchTick(state, cfg, d);
+      now += MIN;
+    }
+    expect(log.freezes).toBe(0);
+    expect(log.thaws).toBe(0);
+    expect(log.kills).toEqual([]);
+    expect(log.alerts).toEqual([]);
+    expect(log.ledger).toEqual([]);
+    expect(state).toEqual(freshLoadWatchState()); // the enforce state machine is never touched
+    expect(log.lines).toHaveLength(30); // one line per sample
+    const parsed = JSON.parse(log.lines[0]) as { load5: number; cores: number; workers?: number; swap?: { total: number; used: number }; episode: boolean };
+    expect(parsed.load5).toBe(100);
+    expect(parsed.cores).toBe(10);
+    expect(parsed.workers).toBe(1); // only the non-terminal worker counts
+    expect(parsed.swap).toEqual({ total: 2 * 1024 ** 3, used: 1024 ** 3 });
+    expect(parsed.episode).toBe(false);
+  });
+
+  it("appendLoadLog appends JSONL lines and rotates at the size cap", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loadlog-"));
+    const path = join(dir, "load.jsonl");
+    appendLoadLog(path, { at: "t1", load5: 1, threshold: 30, cores: 10, over: false, episode: false, top: [] });
+    appendLoadLog(path, { at: "t2", load5: 2, threshold: 30, cores: 10, over: false, episode: false, top: [] });
+    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(2); // one line per minute
+    appendLoadLog(path, { at: "t3", load5: 3, threshold: 30, cores: 10, over: false, episode: false, top: [] }, 100); // cap 100 B: the old window rotates out
+    expect(readFileSync(path, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(readFileSync(join(dir, "load.jsonl.1"), "utf8").trim().split("\n")).toHaveLength(2);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("live deps in log mode write the JSONL sample under <home>/logs/load.jsonl and never touch load-watch.json", async () => {
+    const home = mkdtempSync(join(tmpdir(), "loadwatch-log-"));
+    process.env.PAI_HOME = home;
+    try {
+      const cfg: LoadWatchConfig = { ...LOAD_WATCH_DEFAULTS, mode: "log" as LoadWatchMode };
+      const d = liveLoadWatchDeps(join(home, "workers"), "log");
+      await loadWatchTick(freshLoadWatchState(), cfg, d);
+      const text = readFileSync(join(home, "logs", "load.jsonl"), "utf8").trim();
+      expect(text.split("\n")).toHaveLength(1);
+      const r = JSON.parse(text) as { cores: number; workers?: number };
+      expect(r.cores).toBeGreaterThan(0);
+      expect(r.workers).toBe(0); // no worker statuses in an empty home
+      expect(existsSync(join(home, "load-watch.json"))).toBe(false); // enforce mode's status file stays unwritten
+    } finally {
+      delete process.env.PAI_HOME;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

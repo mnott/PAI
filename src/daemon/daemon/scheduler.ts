@@ -1102,11 +1102,12 @@ export function startLoadWatch(): void {
     return;
   }
   const cfg = loadWatchConfig((daemonConfig as { workers?: unknown }).workers);
-  if (!cfg.enabled) {
+  // enabled: false still samples in log mode — statistics must never freeze anything (2026-11-28).
+  if (!cfg.enabled && cfg.mode !== "log") {
     process.stderr.write("[pai-daemon] Load watch: disabled (workers.loadWatch.enabled is false)\n");
     return;
   }
-  const deps = liveLoadWatchDeps(workersLogDir(workers));
+  const deps = liveLoadWatchDeps(workersLogDir(workers), cfg.mode);
   let state: LoadWatchState = freshLoadWatchState();
   let running = false;
   const tick = () => {
@@ -1125,7 +1126,11 @@ export function startLoadWatch(): void {
   const timer = setInterval(tick, cfg.intervalSecs * 1000);
   if (timer.unref) timer.unref();
   setLoadWatchTimer(timer);
-  process.stderr.write(`[pai-daemon] Load watch: every ${cfg.intervalSecs}s (limit ${cfg.maxLoadPerCore} x cores for ${cfg.minutes} min)\n`);
+  process.stderr.write(
+    cfg.mode === "log"
+      ? `[pai-daemon] Load watch: log mode — sampling every ${cfg.intervalSecs}s into logs/load.jsonl (no freeze, no alerts)\n`
+      : `[pai-daemon] Load watch: every ${cfg.intervalSecs}s (limit ${cfg.maxLoadPerCore} x cores for ${cfg.minutes} min)\n`
+  );
 }
 
 // ---------------------------------------------------------------------------

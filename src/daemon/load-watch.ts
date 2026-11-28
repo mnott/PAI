@@ -21,17 +21,27 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 import { appendLedger } from "../workers/ledger.js";
 import { ledgerPath } from "../workers/paths.js";
 import { isTerminal, loadStatuses } from "../workers/status.js";
+import { parseSwapUsage } from "../router/system.js";
 import type { WorkerStatus } from "../workers/status.js";
+
+export type LoadWatchMode = "enforce" | "log";
 
 export interface LoadWatchConfig {
   enabled: boolean;
+  /**
+   * "enforce" (default): freeze + alert on sustained overload.
+   * "log": sample-only — one JSONL line a minute into <PAI home>/logs/load.jsonl
+   * (load5, cores, worker count, swap); never freezes, pauses or alerts. With
+   * enabled: false the sampler still runs in log mode when mode: log is set.
+   */
+  mode: LoadWatchMode;
   /** 5-min load per core above which the machine counts as overloaded. Default 3. */
   maxLoadPerCore: number;
   /** Minutes the load must stay above before the episode starts. Default 10. */
@@ -42,13 +52,14 @@ export interface LoadWatchConfig {
   intervalSecs: number;
 }
 
-export const LOAD_WATCH_DEFAULTS: LoadWatchConfig = { enabled: true, maxLoadPerCore: 3, minutes: 10, thawMinutes: 5, intervalSecs: 60 };
+export const LOAD_WATCH_DEFAULTS: LoadWatchConfig = { enabled: true, mode: "enforce", maxLoadPerCore: 3, minutes: 10, thawMinutes: 5, intervalSecs: 60 };
 
 export function loadWatchConfig(workers: unknown): LoadWatchConfig {
   const b = ((workers as { loadWatch?: Record<string, unknown> } | undefined)?.loadWatch ?? {}) as Record<string, unknown>;
   const num = (k: keyof LoadWatchConfig, d: number): number => (typeof b[k] === "number" && (b[k] as number) > 0 ? (b[k] as number) : d);
   return {
     enabled: typeof b.enabled === "boolean" ? b.enabled : LOAD_WATCH_DEFAULTS.enabled,
+    mode: b.mode === "log" ? "log" : "enforce",
     maxLoadPerCore: num("maxLoadPerCore", LOAD_WATCH_DEFAULTS.maxLoadPerCore),
     minutes: num("minutes", LOAD_WATCH_DEFAULTS.minutes),
     thawMinutes: num("thawMinutes", LOAD_WATCH_DEFAULTS.thawMinutes),
@@ -151,11 +162,22 @@ export interface LoadWatchReading {
   episode: boolean;
   top: { pid: number; cpu: number; command: string }[];
   lastAction?: string;
+  /** log mode: non-terminal worker count at the sample. */
+  workers?: number;
+  /** log mode: swap usage in bytes (sysctl vm.swapusage). */
+  swap?: SwapUsage;
+}
+
+export interface SwapUsage {
+  total: number;
+  used: number;
 }
 
 export interface LoadWatchDeps {
   load5: () => number;
   cores: () => number;
+  /** Swap usage (sysctl vm.swapusage); undefined when the probe fails or is unsupported. */
+  swap?: () => Promise<SwapUsage | undefined>;
   ps: () => Promise<PsRow[]>;
   statuses: () => WorkerStatus[];
   freeze: () => Promise<string>;
@@ -173,6 +195,20 @@ export async function loadWatchTick(state: LoadWatchState, cfg: LoadWatchConfig,
   const load = d.load5();
   const cores = d.cores();
   const threshold = cfg.maxLoadPerCore * cores;
+
+  // log mode: statistics only — one JSONL line a minute, never a freeze/pause/alert.
+  if (cfg.mode === "log") {
+    let swap: SwapUsage | undefined;
+    try {
+      swap = await d.swap?.();
+    } catch {
+      /* the swap probe is a courtesy */
+    }
+    const workers = d.statuses().filter((s) => !isTerminal(s.state)).length;
+    d.write({ at: new Date(d.now()).toISOString(), load5: load, threshold, cores, over: load > threshold, episode: false, top: [], workers, swap });
+    return state; // the enforce state machine is never touched in log mode
+  }
+
   const { state: next, step } = stepLoadWatch(state, load, threshold, cfg, d.now());
   let rows: PsRow[] = [];
   try {
@@ -237,6 +273,28 @@ export async function loadWatchTick(state: LoadWatchState, cfg: LoadWatchConfig,
 
 const readingFile = (): string => paiHomePath("load-watch.json");
 
+/** log mode: the JSONL sample file under <PAI home>/logs/, rotated at 10 MB. */
+export const LOAD_LOG_MAX_BYTES = 10 * 1024 * 1024;
+
+export function loadLogPath(): string {
+  return paiHomePath("logs", "load.jsonl");
+}
+
+/** Append one sample line to the JSONL log, rotating (rename + fresh file) once it passes LOAD_LOG_MAX_BYTES. */
+export function appendLoadLog(path: string, r: LoadWatchReading, maxBytes = LOAD_LOG_MAX_BYTES): void {
+  mkdirSync(join(path, ".."), { recursive: true });
+  let size = 0;
+  try {
+    size = readFileSync(path).length;
+  } catch {
+    /* no file yet */
+  }
+  if (size > maxBytes) {
+    renameSync(path, `${path}.1`); // keep the previous window for one rotation
+  }
+  appendFileSync(path, JSON.stringify(r) + "\n", "utf8");
+}
+
 export function readLoadWatch(): LoadWatchReading | null {
   try {
     return JSON.parse(readFileSync(readingFile(), "utf8")) as LoadWatchReading;
@@ -259,10 +317,20 @@ function psAsync(): Promise<PsRow[]> {
   });
 }
 
-export function liveLoadWatchDeps(logDir: string): LoadWatchDeps {
+function swapAsync(): Promise<SwapUsage | undefined> {
+  return new Promise((resolve) => {
+    execFile("sysctl", ["vm.swapusage"], { timeout: 5_000 }, (err, stdout) => {
+      if (err) resolve(undefined);
+      else resolve(parseSwapUsage(stdout));
+    });
+  });
+}
+
+export function liveLoadWatchDeps(logDir: string, mode: LoadWatchMode = "enforce"): LoadWatchDeps {
   return {
     load5: () => loadavg()[1],
     cores: () => cpus().length,
+    swap: swapAsync,
     ps: psAsync,
     statuses: () => loadStatuses(logDir),
     freeze: async () => {
@@ -291,12 +359,17 @@ export function liveLoadWatchDeps(logDir: string): LoadWatchDeps {
       });
     },
     ledger: (event, kv) => appendLedger(ledgerPath(logDir), event, kv),
+    // enforce mode keeps the single status file; log mode appends the rotating JSONL sample log.
     write: (r) => {
       try {
+        if (mode === "log") {
+          appendLoadLog(loadLogPath(), r);
+          return;
+        }
         mkdirSync(join(readingFile(), ".."), { recursive: true });
         writeFileSync(readingFile(), JSON.stringify(r), "utf8");
       } catch {
-        /* status file is a courtesy */
+        /* the status file / sample log is a courtesy */
       }
     },
     now: () => Date.now(),
