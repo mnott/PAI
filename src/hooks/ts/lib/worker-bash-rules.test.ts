@@ -613,6 +613,17 @@ describe("worker guard GNU sed X,+N range", () => {
   it.skipIf(process.platform !== "darwin")("blocks sed -i on a literal outside path", () => {
     expect(fenceRun("sed -i '' 's/a/b/' /etc/hosts").decision).toBe("deny");
   });
+  it("Write to the origin run's scratch dir is allowed on a resume (PAI_SCRATCH_ALSO), denied without", () => {
+    const tmp = join(fenceBase, "T");
+    const mine = join(tmp, "pai-scratch", "new-id");
+    const old = join(fenceBase, "T2", "pai-scratch", "old-id");
+    const w = (env: Record<string, string>) =>
+      decideWorkerGuard({ tool_name: "Write", tool_input: { file_path: join(old, "a.txt"), content: "x" } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir", TMPDIR: mine, ...env }, fenceCtx) as { decision: string };
+    expect(w({}).decision).toBe("deny");
+    expect(w({ PAI_SCRATCH_ALSO: old }).decision).toBe("allow");
+    const own = decideWorkerGuard({ tool_name: "Write", tool_input: { file_path: join(mine, "a.txt"), content: "x" } } as never, { PAI_WORKER: "1", PAI_WORKER_LOOP_DIR: "/nonexistent-loop-dir", TMPDIR: mine }, fenceCtx) as { decision: string };
+    expect(own.decision).toBe("allow");
+  });
   it.skipIf(process.platform !== "darwin")("allows sed -i.bak inside (GNU form: no separate suffix word)", () => {
     const d = fenceRun(`sed -i.bak 's/a/b/' ${join(fence.wt, "file.txt")}`);
     expect(d.decision).toBe("allow");
