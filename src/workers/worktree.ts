@@ -1897,6 +1897,21 @@ function unmergedChildren(logDir: string, id: string): string[] {
   }
 }
 
+/** True when every file the branch changed since its base has the branch's content in HEAD (a reverted merge is not landed). */
+function branchContentLanded(cwd: string, branch: string, base: string | undefined): boolean {
+  try {
+    // a branch still at its base holds no worker commits (e.g. a reverted merge's tip): nothing proves it landed
+    if (!base || git(cwd, ["rev-parse", branch]) === git(cwd, ["rev-parse", base])) return false;
+    const from = base;
+    const files = git(cwd, ["diff", "--name-only", from, branch]).split("\n").filter(Boolean);
+    if (files.length === 0) return true;
+    git(cwd, ["diff", "--quiet", branch, "HEAD", "--", ...files]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function mergeWorkerInner(
   logDir: string,
   id: string,
@@ -1963,7 +1978,7 @@ async function mergeWorkerInner(
   const reapply = findRevertedMerge(st.cwd, st.branch!);
   if (incoming <= 0 && !reapply) {
     // everything already landed and the tree holds nothing but the harness marker: nothing to protect
-    if (!live && !slot && existsSync(st.worktreeDir!) && uncommittedPaths(st.worktreeDir!).length === 0) {
+    if (!live && !slot && existsSync(st.worktreeDir!) && uncommittedPaths(st.worktreeDir!).length === 0 && branchContentLanded(st.cwd, st.branch!, st.worktreeBase ?? undefined)) {
       removeWorktree(st.cwd, st.worktreeDir!, true);
       try {
         git(st.cwd, ["branch", "-d", st.branch!]);
