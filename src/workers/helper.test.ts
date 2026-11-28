@@ -434,6 +434,24 @@ describe("apple-fm rejections and contention (#31)", () => {
     expect(callsOf(d)[0]).toMatchObject({ model: "apple-fm", ok: false, kind: "busy-fallback", ms: 0 });
   });
 
+  it("a runtime stopped on purpose is skipped without a call or log line", async () => {
+    const kinds: string[] = [];
+    const d = deps(async (w) => {
+      kinds.push(w.kind);
+      return JSON.stringify({ message: { content: "from ollama" } });
+    }, { busy: () => false, stopped: (n) => n === "apple-fm" });
+    expect(await helperComplete({ task: "t", input: "i", label: "tldr" }, d)).toBe("from ollama");
+    expect(kinds).toEqual(["ollama"]);
+    expect(callsOf(d).map((c) => c.model)).not.toContain("apple-fm");
+  });
+
+  it("only a stopped apple-fm: no fetch at all, null", async () => {
+    let n = 0;
+    const d = deps(async () => { n++; return msg("x"); }, { config: { ...DEFAULT_HELPER, models: ["apple-fm"] }, stopped: () => true });
+    expect(await helperComplete({ task: "t", input: "i" }, d)).toBeNull();
+    expect(n).toBe(0);
+  });
+
   it("an idle apple-fm is asked as before", async () => {
     const d = deps(async () => msg("answer"), { busy: () => false });
     expect(await helperComplete({ task: "t", input: "i" }, d)).toBe("answer");

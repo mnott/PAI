@@ -24,6 +24,8 @@ import { Worker, receiveMessageOnPort, MessageChannel } from "node:worker_thread
 import { loadConfig } from "../daemon/config.js";
 import { isLocalProvider, readWorkersSection } from "./config.js";
 import { workersLogDir } from "./paths.js";
+import { paiHomeDir } from "../config/pai-home.js";
+import { isRuntimeStopped } from "./model-runtimes.js";
 import { readSchedFile } from "../router/scheduler.js";
 
 export interface HelperConfig {
@@ -139,6 +141,8 @@ export interface HelperDeps {
   routerModel?: (name: string) => string | null;
   /** Whether a router-served model is busy with a foreign request (default: the router's scheduler snapshot). */
   busy?: (name: string) => boolean;
+  /** Whether a runtime was stopped on purpose (`pai models stop`; default: its stopped marker under the PAI home). Never true for ollama: specs. */
+  stopped?: (name: string) => boolean;
   /** workers.yaml providers as name -> role (default: the workers config). */
   /** Whether an Ollama model tag is installed (default: its manifest exists under ~/.ollama). */
   ollamaInstalled?: (tag: string) => boolean;
@@ -201,6 +205,16 @@ export function recordHelperCall(c: HelperCall, deps: HelperDeps = {}): void {
 export function helperRejected(label: string, model: string, deps: HelperDeps = {}, why?: { reason: string; text?: string | null }): void {
   const sample = why?.text ? why.text.replace(/\s+/g, " ").trim().slice(0, 120) : undefined;
   recordHelperCall({ ts: (deps.now ?? Date.now)(), model, label, ms: 0, ok: false, kind: "rejected", ...(why ? { reason: why.reason } : {}), ...(sample ? { sample } : {}) }, deps);
+}
+
+/** Stopped runtime: the router holds the call until timeout and the cool-down is per process, so skip it at once. */
+function stoppedOnPurpose(spec: string, deps: HelperDeps): boolean {
+  if (spec.startsWith("ollama:")) return false;
+  try {
+    return deps.stopped ? deps.stopped(spec) : isRuntimeStopped(paiHomeDir(), spec);
+  } catch {
+    return false;
+  }
 }
 
 /** Router-served engine busy with a request that is not ours (a batch job holds every slot): helper calls skip it at once. */
@@ -446,7 +460,7 @@ export function helperCompleteSync(req: HelperRequest, deps: HelperDeps = {}): s
   const now = deps.now ?? Date.now;
   for (let i = 0; i < p.specs.length && !out; i++) {
     const spec = p.specs[i];
-    if (!usable(spec, now())) continue;
+    if (!usable(spec, now()) || stoppedOnPurpose(spec, deps)) continue;
     const w = wireFor(spec, req, p.prompt, p.cfg, deps);
     if (!w) continue;
     const t0 = now();
@@ -483,7 +497,7 @@ async function run(p: Plan, req: HelperRequest, deps: HelperDeps, send: (w: Wire
   const deadline = p.start + (req.timeoutMs ?? p.cfg.timeoutMs);
   for (let i = 0; i < p.specs.length; i++) {
     const spec = p.specs[i];
-    if (!usable(spec, now())) continue;
+    if (!usable(spec, now()) || stoppedOnPurpose(spec, deps)) continue;
     const w = wireFor(spec, req, p.prompt, p.cfg, deps);
     if (!w) continue;
     const t0 = now();
