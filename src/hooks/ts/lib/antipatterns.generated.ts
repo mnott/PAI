@@ -567,13 +567,15 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "match": [
         "R R G R R G R R G R R G",
         "R R S R R S R R S R R S",
-        "R B T R B T R B T R B T"
+        "R B T R B T R B T R B T",
+        "R R G Q R R G Q R R G Q R R G"
       ],
       "no_match": [
         "R R G E R R",
         "R W R R R",
         "R R G R R G R R G R R E R R G",
-        "R R R H R R R"
+        "R R R H R R R",
+        "R R G Q Q Q Q Q Q Q Q Q Q Q Q Q Q"
       ]
     },
     "provenance": {

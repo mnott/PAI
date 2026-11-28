@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { workerCanEdit } from "../../../workers/run/argv.js";
 import { effectiveDeliverable, isCodeChangingClass } from "./stall-class.js";
-import { bashWritesRepoFile, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stallStep, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
+import { bashWritesRepoFile, isWaitCommand, emptyLoopState, loopDenyReason, looksRed, recordLoopResult, stallSequence, stallStep, stepLoopGuard, type LoopState, type LoopStep } from "./loop-guard.js";
 import { activeAntipattern, resetAntipatternCache, shippedAntipattern } from "./antipatterns.js";
 import { loadLoopState, logHookError, loopStateFile, saveLoopState } from "./loop-guard-state.js";
 import { announcesAction, announcedActionDecision } from "../../../workers/run/announced-action.js";
@@ -739,5 +739,18 @@ describe("pai worker wait repeats (loop guard)", () => {
 
   it("other repeated commands stay blocked", () => {
     expect(firstDeny("ls /nonexistent-dir-x", "ls: no such file")).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("wait on a build, test or child is progress", () => {
+  const w = (c: string) => isWaitCommand(c);
+  it("classifies by executed word", () => {
+    for (const c of ["tools/build.sh --wait", "tools/vm.sh test foo", "pai worker wait-on 12 --max 590", "pai worker wait abc", "pai worker wait-file x", "cd x && pai worker test-run npx vitest"]) expect(w(c)).toBe(true);
+    for (const c of ["grep -rn 'pai worker wait' src", "echo tools/build.sh --wait", "cat tools/build.sh", "pai worker list"]) expect(w(c)).toBe(false);
+  });
+  it("many waits never deny and never grow the streak", () => {
+    const calls: Call[] = [rd(0), rd(1)];
+    for (let i = 0; i < 60; i++) calls.push(["Bash", "tools/build.sh x --wait"]);
+    expect(run(calls).some((s) => s.deny)).toBe(false);
   });
 });
