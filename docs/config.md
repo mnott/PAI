@@ -124,6 +124,19 @@ workers:
   # command, e.g. a vitest fork). SIGTERM, SIGKILL after 5 s; each kill is
   # logged and noted on the owning worker's status. false turns it off.
   reaper: true
+  # Runaway-load watchdog (default mode "enforce"): one reading a minute; when the
+  # 5-min load stays above maxLoadPerCore x cores for minutes, all workers are frozen
+  # (nothing killed), suspects reported, the operator alerted once, and it thaws after
+  # thawMinutes back under. mode: log samples load5, cores, worker count and swap into
+  # ~/.pai/logs/load.jsonl (one line per minute, rotated at 10 MB) and never freezes,
+  # pauses or alerts — enabled: false still samples in log mode when mode: log is set.
+  loadWatch:
+    enabled: true
+    mode: enforce # "log" = statistics only, no freeze/pause/alert
+    maxLoadPerCore: 3
+    minutes: 10
+    thawMinutes: 5
+    intervalSecs: 60
 ```
 
 `postgres.connectionString` and anything under a `key`/`token`/`secret`/
