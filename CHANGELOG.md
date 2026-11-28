@@ -8,6 +8,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Added
 
+- **`pai brainstorm`:** round table of one moderator and several cloud participants on a shared board (`start`, `post`, `wait`, `watch`, `show`, `ls`), result in `~/.pai/brainstorm/<id>/result.md`; MCP `brainstorm_start` and `brainstorm_status`; the `Brainstorm` skill.
+- **Hotkey dictation (menu bar app):** global hotkey records, sends audio to the whisper-server and pastes the text; hotkey recorder with reset; `pai setup --dictation-model ID` (macOS) records the transcription model, never downloads. Speaker-label core exists but is not wired in yet.
+- **`pai notes audit`:** read-only scan for generic, mismatched, mixed and empty session notes.
+- **`pai update`** also upgrades the installed AIBroker and restarts its daemon.
+- **Worker guard:** denies host iOS simulator runs.
+
 - **Operator-tested projects:** `.pai/checks.yaml` `tests: operator` — the local worker contract names no test commands and the worker Bash guard denies every test command (runners, `xcodebuild … test`, `tools/check.sh`, a build door in test mode); `pai worker run --allow-tests` opts one run back in for a run the operator asked to test.
 
 - **`pai worker discard --worktree PATH [--force]`:** removes any linked worktree (any repo) through the salvage-and-archive path; refuses the main tree and a dirty tree without `--force`. The git guard names it.
