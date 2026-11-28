@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { applyClean, scanClean } from "./clean.js";
 import { loadStatus, loadStatuses, nowStamp } from "./status.js";
 import { archiveWorkerFiles } from "./gc-run.js";
+import { ensureNoSpotlightIndex } from "./no-index.js";
 import { eventsPath, statusPath } from "./paths.js";
 import { latestMergeGateLog } from "./gate-log.js";
 import { recordGitIdentity, restoreGitIdentity } from "./git-identity.js";
@@ -270,5 +271,20 @@ describe("git identity backstop", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("ensureNoSpotlightIndex", () => {
+  it("creates the marker once, idempotently, on darwin only", () => {
+    const d = mkdtempSync(join(tmpdir(), "noidx-"));
+    roots.push(d);
+    const root = join(d, "worktrees");
+    expect(ensureNoSpotlightIndex(root, "linux")).toBe(false);
+    expect(existsSync(join(root, ".metadata_never_index"))).toBe(false);
+    expect(ensureNoSpotlightIndex(root, "darwin")).toBe(true);
+    const m = join(root, ".metadata_never_index");
+    expect(existsSync(m)).toBe(true);
+    expect(ensureNoSpotlightIndex(root, "darwin")).toBe(false);
+    expect(ensureNoSpotlightIndex(join(m, "x"), "darwin")).toBe(false);
   });
 });
