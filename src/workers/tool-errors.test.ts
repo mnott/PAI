@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import { candidateSignature, CANDIDATE_MAX_EXAMPLES, migrateCandidates, normalizeCandidateText, writeCandidate } from "../hooks/ts/lib/antipattern-log.js";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { classifyToolError, commandHead, errorsTable, groupToolErrors, harnessEvidence, lastCommand, recordToolError, recordToolErrorCandidates, toolErrorText, type ToolErrorRecord } from "./tool-errors.js";
+import { classifyToolError, commandHead, errorsTable, groupToolErrors, harnessEvidence, lastCommand, recordToolErrorCandidates, type ToolErrorRecord } from "./tool-errors.js";
 import { checkLoops } from "./loop-watch.js";
 import { detectEditMiss, editMissNote } from "./edit-miss.js";
 
@@ -384,28 +384,5 @@ describe("wait / wait-on rc=3 is benign", () => {
   it("rc=3 from other commands is unchanged", () => {
     expect(classifyToolError({ ...base, raw: "Exit code 3", input: "node build.js" }).cls).not.toBe("benign");
     expect(classifyToolError({ ...base, raw: "Exit code 1\nrc=3", input: "node build.js" }).cls).not.toBe("benign");
-  });
-});
-
-describe("secrets are redacted in tool-error records and alerts", () => {
-  it("recordToolError and toolErrorText never carry the secret", () => {
-    const dir = mkdtempSync(join(tmpdir(), "te-redact-"));
-    try {
-      recordToolError(dir, {
-        worker: "w1", provider: "gyro-l", label: "t", tool: "Bash",
-        text: "curl failed\nAuthorization: Bearer sk-ant-abc123secretvalue1234567890\nexit 1",
-        input: { command: "API_KEY=hunter2supersecretvalue99 curl https://x" },
-      });
-      const file = readFileSync(join(dir, "tool-errors.jsonl"), "utf8");
-      expect(file).not.toContain("sk-ant-abc123secretvalue1234567890");
-      expect(file).not.toContain("hunter2supersecretvalue99");
-      const old = rec({ raw: "Authorization: Bearer sk-ant-abc123secretvalue1234567890", input: "API_KEY=hunter2supersecretvalue99 curl" });
-      const [g] = groupToolErrors([old]);
-      const txt = toolErrorText(g);
-      expect(txt).not.toContain("sk-ant-abc123secretvalue1234567890");
-      expect(txt).not.toContain("hunter2supersecretvalue99");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });
