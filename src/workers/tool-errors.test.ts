@@ -389,20 +389,21 @@ describe("wait / wait-on rc=3 is benign", () => {
 
 describe("secrets are redacted in tool-error records and alerts", () => {
   it("recordToolError and toolErrorText never carry the secret", () => {
+    const TOK = ["sk", "ant", "abc123secretvalue1234567890"].join("-");
     const dir = mkdtempSync(join(tmpdir(), "te-redact-"));
     try {
       recordToolError(dir, {
         worker: "w1", provider: "gyro-l", label: "t", tool: "Bash",
-        text: "curl failed\nAuthorization: Bearer sk-ant-abc123secretvalue1234567890\nexit 1",
+        text: "curl failed\nAuthorization: Bearer " + TOK + "\nexit 1",
         input: { command: "API_KEY=hunter2supersecretvalue99 curl https://x" },
       });
       const file = readFileSync(join(dir, "tool-errors.jsonl"), "utf8");
-      expect(file).not.toContain("sk-ant-abc123secretvalue1234567890");
+      expect(file).not.toContain(TOK);
       expect(file).not.toContain("hunter2supersecretvalue99");
-      const old = rec({ raw: "Authorization: Bearer sk-ant-abc123secretvalue1234567890", input: "API_KEY=hunter2supersecretvalue99 curl" });
+      const old = rec({ raw: "Authorization: Bearer " + TOK + "", input: "API_KEY=hunter2supersecretvalue99 curl" });
       const [g] = groupToolErrors([old]);
       const txt = toolErrorText(g);
-      expect(txt).not.toContain("sk-ant-abc123secretvalue1234567890");
+      expect(txt).not.toContain(TOK);
       expect(txt).not.toContain("hunter2supersecretvalue99");
     } finally {
       rmSync(dir, { recursive: true, force: true });
