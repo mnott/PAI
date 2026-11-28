@@ -25,11 +25,36 @@ export const HANG_MARKER = "[pai hang probe]";
 export const DEFAULT_IDLE_SECS = 60;
 const WRAP = "pai worker test-run";
 
-const TEST_RUNNER = /^(?:npx\s+|bunx\s+|pnpm (?:exec\s+)?|yarn\s+)?(?:vitest|jest|node\s+(?:\S+\s+)*--test\b|npm (?:run )?test|pnpm (?:run )?test|yarn test)\b/;
+const TEST_RUNNER = /^(?:npx\s+|bunx\s+|pnpm (?:exec\s+)?|yarn\s+)?(?:vitest|jest|node\s+(?:\S+\s+)*--test\b|npm (?:run )?test|pnpm (?:run )?test|yarn test|bun test)\b/;
 
 /** Command segments of a shell line, with env prefixes, nohup, `timeout N` and cd removed. */
+function splitOutsideQuotes(command: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let q = "";
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (q) {
+      if (ch === "\\" && q === '"') cur += ch + (command[++i] ?? "");
+      else {
+        if (ch === q) q = "";
+        cur += ch;
+      }
+    } else if (ch === '"' || ch === "'") {
+      q = ch;
+      cur += ch;
+    } else if (ch === "&" || ch === "|" || ch === ";" || ch === "\n") {
+      parts.push(cur);
+      cur = "";
+      while (command[i + 1] === "&" || command[i + 1] === "|") i++;
+    } else cur += ch;
+  }
+  parts.push(cur);
+  return parts;
+}
+
 function segments(command: string): string[] {
-  return command.split(/&&|\|\||[;|\n]/).map((raw) => {
+  return splitOutsideQuotes(command).map((raw) => {
     let seg = raw.replace(/["']/g, "").trim();
     for (;;) {
       const next = seg
