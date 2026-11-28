@@ -48,3 +48,15 @@ PAI ships 27 skills, one per prompt file in `src/daemon-mcp/prompts/`. They are 
 | `/worker` | "start a worker", "run this on a worker" | Run, watch and route subagent workers |
 | `/providers` | "which providers", "switch provider" | List providers and models, show how to switch |
 | `/createskill` | "create skill", "validate skill" | Create, validate, update, or canonicalize a PAI skill |
+
+## Plugin skills
+
+The `pai` plugin (`plugins/`) adds skills that are not generated from prompt files. They are installed with `claude plugin install pai@pai`.
+
+| Skill | Trigger | What it does |
+|-------|---------|-------------|
+| `setup` | "set up PAI", "install PAI" | Phase-based install and check of PAI, workers, router and cockpit (`pai setup`) |
+| `Tasks` | "morning routine", "file a finding", `/tasks` | Task bus routine: `pai task list`, `dispatch`, `add` |
+| `Tests` | "clean up tests", "prune tests" | Prune a project's tests to the governed core (`pai tests audit`, `prune`) |
+| `Brainstorm` | "brainstorm", "round table" | Moderated multi-participant discussion (`pai brainstorm`) |
+| `Reconstruct` | "reconstruct sessions" | Backfill session notes from transcripts and git history |

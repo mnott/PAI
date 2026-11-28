@@ -24,8 +24,10 @@ local only. The app is a client: it never starts a server and never downloads mo
 Catalog: `large-v3-turbo-q5_0` (default, 574 MB), `medium`, `small`, `base`.
 Searched in order: `~/.pai/models/whisper/`, `~/.cache/aibroker-stt/`, the VoiceInk dir
 (`~/Library/Application Support/com.prakashjoshipax.VoiceInk/WhisperModels/`).
-Chosen at setup (the setup flow lists the models and which are installed, then writes
-`modelId`), changed later in Settings > Dictation or by editing `~/.pai/dictation.json`.
+Chosen at setup (macOS only, step 20: `pai setup --dictation-model ID`, or the menu; `--yes` keeps the
+current model or the default; it writes `modelId` and prints the download command when the file is
+missing), changed later with `pai setup --dictation-model ID`, in Settings > Dictation or by editing
+`~/.pai/dictation.json`.
 No auto download; the user runs, e.g.:
 
     mkdir -p ~/.pai/models/whisper && curl -L -o ~/.pai/models/whisper/ggml-large-v3-turbo-q5_0.bin \
@@ -34,16 +36,14 @@ No auto download; the user runs, e.g.:
 (swap the file name for `ggml-small.bin`, `ggml-base.bin`, `ggml-medium.bin`).
 
 Settings keys: `modelId`, `language` (`auto` or ISO), `hotkey` (`keyCode`, Carbon
-`modifiers`; default ctrl+opt+space), `pushToTalk`, `serverURL`, `speakerLabels`
+`modifiers`; default ctrl+opt+space; set with the recorder in Settings), `pushToTalk`, `serverURL`, `speakerLabels`
 (placeholder).
 
-## Speaker identification (not implemented)
+## Speaker identification
 
-Options: (a) whisper.cpp tinydiarize (`-tdrz`, needs a `tdrz` model) gives turn markers
-only, no identities; (b) pyannote or sherpa-onnx speaker embeddings as a post-pass over
-the segments. Recommended: sherpa-onnx speaker embeddings (small ONNX models, no Python,
-runs on CPU): take segment timestamps from `verbose_json`, embed each, cluster, label
-`Speaker 1..n`. `speakerLabels` stays false and is ignored until then.
+The label logic (diarization turns plus whisper segments, `Speaker 1..n`) exists as pure code in
+`PAIMenuBarCore/Speakers.swift` but is not wired into the controller yet, so `speakerLabels` stays
+false and is ignored. Design and install notes: [dictation-speakers.md](dictation-speakers.md).
 
 ## VoiceInk replacement checklist
 
@@ -51,12 +51,12 @@ runs on CPU): take segment timestamps from `verbose_json`, embed each, cluster, 
 - [x] Local whisper.cpp model reuse (VoiceInk model dir is searched)
 - [x] Paste into frontmost app with pasteboard restore
 - [x] Language auto or fixed
-- [ ] Hotkey recorder UI (hotkey editable only in the JSON now)
+- [x] Hotkey recorder UI (with reset)
 - [ ] Per-app prompts / vocabulary, text replacements
 - [ ] Recording indicator overlay and sounds
 - [ ] Server lifecycle (start/stop with model switch) from the app or `pai`
-- [ ] Setup-flow step that lists models and writes `modelId`
-- [ ] Speaker labels
+- [x] Setup-flow step that lists models and writes `modelId` (`pai setup --dictation-model`)
+- [ ] Speaker labels (core done, not wired in)
 
 ## Permissions
 
