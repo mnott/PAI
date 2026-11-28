@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runBuild } from "./gate.js";
 import { enqueue, listBuilds, patchTicket, tryStart } from "./queue.js";
-import { directAlert, realReleaseDeps, stallTick, type StallDeps, type StallReleaseDeps, type StallState } from "./stall.js";
+import { buildStallTick, directAlert, realReleaseDeps, stallTick, type StallDeps, type StallReleaseDeps, type StallState } from "./stall.js";
 
 // 2026-11-17: a mac build lock was held 3 h 45 min with no output while the machine ran at load ~160;
 // every worker of the project queued behind it and failed, and the stall alert reached the session 10 h late.
@@ -199,5 +199,39 @@ describe("waiter timeout", () => {
     expect(line).toContain(hold);
     expect(line).toMatch(/for \d+m/);
     expect(line).toMatch(/last output never/);
+  });
+});
+
+describe("daemon tick reentrancy", () => {
+  it("a tick still in flight is never stacked: the overlapping call returns [] and a later one runs again", async () => {
+    await holder();
+    const tickets = await listBuilds(dir, { isAlive: alive });
+    let busyCalls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow: Partial<StallDeps> = {
+      size: () => 0,
+      lastLine: () => "last",
+      now: () => clock,
+      log: () => undefined,
+      busy: async () => {
+        busyCalls++;
+        await gate;
+        return { busy: true, why: "slow" };
+      },
+    };
+    const tell = async () => undefined;
+    await buildStallTick(dir, 5, tell, tickets, slow); // first sight: records size
+    clock += 6 * 60_000;
+    const first = buildStallTick(dir, 5, tell, tickets, slow);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(busyCalls).toBe(1);
+    expect(await buildStallTick(dir, 5, tell, tickets, slow)).toEqual([]);
+    expect(busyCalls).toBe(1);
+    release();
+    await first;
+    clock += 6 * 60_000;
+    await buildStallTick(dir, 5, tell, tickets, slow);
+    expect(busyCalls).toBe(2);
   });
 });
