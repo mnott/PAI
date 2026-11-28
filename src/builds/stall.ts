@@ -251,16 +251,23 @@ export async function directAlert(
 }
 
 const daemonState: StallState = new Map();
+let ticking = false;
 
 /** Daemon tick: real files, ledger-less BUILD-STALL on stderr, owner told through `tell`. */
 export async function buildStallTick(dir: string, minutes: number, tell: (t: BuildTicket, text: string) => Promise<unknown>, tickets: BuildTicket[], deps: Partial<StallDeps> = {}): Promise<string[]> {
-  return stallTick(dir, tickets, minutes, daemonState, {
-    size: realSize,
-    lastLine: realLastLine,
-    now: Date.now,
-    log: (l) => process.stderr.write(l + "\n"),
-    notify: tell,
-    busy: treeBusy,
-    ...deps,
-  });
+  if (ticking) return []; // a tick in flight is never stacked: both would mutate daemonState and alert/kill twice
+  ticking = true;
+  try {
+    return await stallTick(dir, tickets, minutes, daemonState, {
+      size: realSize,
+      lastLine: realLastLine,
+      now: Date.now,
+      log: (l) => process.stderr.write(l + "\n"),
+      notify: tell,
+      busy: treeBusy,
+      ...deps,
+    });
+  } finally {
+    ticking = false;
+  }
 }

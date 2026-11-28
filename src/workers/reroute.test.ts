@@ -773,6 +773,13 @@ describe("progress-based time budget", () => {
     expect(budgetCheck(snap({}), snap({}), { minutes: 20, cfg, load: 2, cores: 8, turns: 10, tools: 7 })).toEqual({ action: "review", why: "no progress in its 20-min allowance (10 turns, 7 tool calls, load 2.0)" });
   });
 
+  it("host-load deferral is finite: at the ceiling a loaded host still gets a review", () => {
+    const ceiling = cfg.cap;
+    expect(budgetCheck(snap({}), snap({}), { minutes: ceiling, cfg, load: 100, cores: 10, maxMinutes: ceiling }).action).toBe("review");
+    const d = budgetCheck(snap({}), snap({}), { minutes: 20, cfg, load: 100, cores: 10 });
+    expect(d.action === "extend" && d.minutes).toBeGreaterThan(20);
+  });
+
   it("an owned running build/test job at the checkpoint extends instead of stopping", () => {
     const d = budgetCheck(snap({ commits: 2 }), snap({ commits: 2, jobActive: true }), { minutes: 20, cfg });
     expect(d).toEqual({ action: "extend", minutes: 40, why: "extended to 40 min: build/test job running" });
