@@ -1962,16 +1962,6 @@ async function mergeWorkerInner(
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
   const reapply = findRevertedMerge(st.cwd, st.branch!);
   if (incoming <= 0 && !reapply) {
-    // everything already landed and the tree holds nothing but the harness marker: nothing to protect
-    if (!live && !slot && existsSync(st.worktreeDir!) && uncommittedPaths(st.worktreeDir!).length === 0) {
-      removeWorktree(st.cwd, st.worktreeDir!, true);
-      try {
-        git(st.cwd, ["branch", "-d", st.branch!]);
-      } catch {
-        // branch still checked out or unmerged: leave it, the worktree is gone
-      }
-      return `worker ${id}: branch ${st.branch} has no commits to merge and its worktree held only the harness marker; removed the worktree and branch`;
-    }
     throw new Error(
       `worker ${id}: branch ${st.branch} has no commits to merge. ` +
         `The worktree ${st.worktreeDir} was NOT removed — uncommitted work there would be destroyed. ` +
