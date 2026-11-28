@@ -99,8 +99,10 @@ Install the package from the latest GitHub Release (no npm registry) and update 
 
 ```bash
 npm i -g https://github.com/mnott/PAI/releases/latest/download/pai.tgz
-pai update          # later: install the newest release; --check only reports
+pai update          # later: install the newest release (and the installed AIBroker, restarted); --check only reports
 ```
+
+Other commands: `pai brainstorm "<goal>"` (a moderator and cloud participants discuss a goal on a shared board, [docs](docs/commands/brainstorm.md)) and `pai notes audit` (read-only scan for generic, mismatched, mixed-topic and empty session notes, [docs](docs/commands/notes.md)).
 
 Without the plugin, from a clone, or for a one-session plugin load: [docs/install/index.md](docs/install/index.md). Memory works as soon as setup is done; workers are optional ([First workers](docs/install/first-workers.md)).
 
