@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { smokeStart, startStubServer, stubMessage } from "./smoke-start.js";
+import { smokeBound, SMOKE_TIMEOUT_MS, smokeStart, startStubServer, stubMessage } from "./smoke-start.js";
 import { startDetachedWorker } from "./reroute.js";
 import { readWorkersSection } from "./config.js";
 import { workersLogDir } from "./paths.js";
@@ -105,7 +105,7 @@ describe("a slow start against the smoke's window", () => {
       return child.pid ?? process.pid;
     }) as typeof import("./reroute.js").spawnSession;
     const t0 = Date.now();
-    await expect(startDetachedWorker(join(dir, "logs"), ["--print-id"], { cwd: dir, env: {}, timeoutMs: 2_000, start: slowSpawn })).rejects.toThrow(/did not start within/);
+    await expect(startDetachedWorker(join(dir, "logs"), ["--print-id"], { cwd: dir, env: {}, timeoutMs: 2_000, start: slowSpawn, load: { load: 1, cores: 16 } })).rejects.toThrow(/did not start within 2s \(bound 2 s at load 1\/16; process \d+ still alive/);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1_500);
   }, 30_000);
 
@@ -164,4 +164,37 @@ describe("smoke stub server", () => {
     }
     expect(stubMessage({}).json).toContain("smoke-stub");
   });
+});
+
+describe("smokeBound (load-scaled start bound)", () => {
+  it("low load keeps the base bound", () => {
+    expect(smokeBound(60_000, 3, 16).ms).toBe(60_000);
+    expect(smokeBound(60_000, 16, 16).ms).toBe(60_000);
+  });
+  it("high load scales linearly and states bound and load", () => {
+    const b = smokeBound(60_000, 32, 16);
+    expect(b.ms).toBe(120_000);
+    expect(b.note).toBe("smoke start: bound 120 s at load 32/16");
+  });
+  it("is capped at 6x", () => {
+    expect(smokeBound(60_000, 250, 16).ms).toBe(6 * SMOKE_TIMEOUT_MS);
+  });
+});
+
+describe("startDetachedWorker bound under load", () => {
+  it("scales the window with host load and names bound and load in the failure", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "smoke-window-load-"));
+    dirs.push(dir);
+    const deadSpawn = (() => 2_147_483_000) as unknown as typeof import("./reroute.js").spawnSession;
+    // a dead process fails at once (no wait), so prove the scaling through the live-process path with a tiny base
+    const slowSpawn = (() => {
+      const child = spawn("/bin/sh", ["-c", "sleep 5"], { detached: true, stdio: "ignore" });
+      child.unref();
+      return child.pid ?? process.pid;
+    }) as unknown as typeof import("./reroute.js").spawnSession;
+    void deadSpawn;
+    const t0 = Date.now();
+    await expect(startDetachedWorker(join(dir, "logs"), ["x"], { cwd: dir, env: {}, timeoutMs: 400, start: slowSpawn, load: { load: 32, cores: 16 } })).rejects.toThrow(/did not start within 1s \(bound 1 s at load 32\/16/);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(700); // 2x of 400 ms, not 400
+  }, 30_000);
 });
